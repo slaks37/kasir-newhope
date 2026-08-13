@@ -12,9 +12,17 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { LogIn, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, Store, ArrowRight } from 'lucide-react';
+import { LogIn, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, Store, ArrowRight, ArrowLeft, Zap } from 'lucide-react';
 
-export const LoginPage: React.FC = () => {
+interface LoginPageProps {
+  onBackToLanding?: () => void;
+  onStartDemo?: () => void;
+}
+
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onBackToLanding,
+  onStartDemo,
+}) => {
   const { signInWithGoogle, signInWithEmail, signUpWithEmail, configured } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -49,7 +57,7 @@ export const LoginPage: React.FC = () => {
         if (err) {
           setError(err.message);
         } else {
-          setSuccess('Akun berhasil dibuat! Cek email Anda untuk verifikasi.');
+          setSuccess('Akun berhasil dibuat! Cek email Anda untuk verifikasi atau coba login.');
         }
       }
     } finally {
@@ -59,8 +67,22 @@ export const LoginPage: React.FC = () => {
 
   const handleGoogleSignIn = async () => {
     setError(null);
-    const { error: err } = await signInWithGoogle();
-    if (err) setError(err.message);
+    try {
+      const { error: err } = await signInWithGoogle();
+      if (err) {
+        if (err.message?.includes('not enabled') || err.message?.includes('validation_failed')) {
+          setError(
+            'Google Login belum diaktifkan di Supabase Dashboard (Auth > Providers > Google). Silakan gunakan Email & Password atau klik "Masuk Mode Demo" di atas.'
+          );
+        } else {
+          setError(err.message);
+        }
+      }
+    } catch {
+      setError(
+        'Google Login belum diaktifkan di Supabase Dashboard. Silakan gunakan Email & Password atau klik "Masuk Mode Demo".'
+      );
+    }
   };
 
   return (
@@ -80,21 +102,46 @@ export const LoginPage: React.FC = () => {
       </div>
 
       <div className="relative z-10 w-full max-w-md mx-4 animate-scale-up">
-        {/* Logo & Brand */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-2xl shadow-amber-500/25 mb-5">
-            <Store className="w-10 h-10 text-white" />
+        {/* Back to Landing Page Link */}
+        {onBackToLanding && (
+          <div className="mb-4">
+            <button
+              onClick={onBackToLanding}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-300 hover:text-amber-400 bg-white/5 hover:bg-white/10 px-3.5 py-1.5 rounded-xl transition-all border border-white/10"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>← Kembali ke Halaman Depan</span>
+            </button>
           </div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight">
+        )}
+
+        {/* Logo & Brand */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-2xl shadow-amber-500/25 mb-3">
+            <Store className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             New Hope <span className="text-amber-400">POS</span>
           </h1>
-          <p className="text-slate-400 text-sm mt-2 font-medium">
-            Sistem Kasir Pintar untuk Bisnis Anda
+          <p className="text-slate-400 text-xs sm:text-sm mt-1 font-medium">
+            Masuk ke Akun Kasir atau Coba Mode Demo
           </p>
         </div>
 
         {/* Card */}
-        <div className="bg-white/[0.07] backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl">
+        <div className="bg-white/[0.07] backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl">
+          {/* Quick Demo Mode Access Button */}
+          {onStartDemo && (
+            <button
+              type="button"
+              onClick={onStartDemo}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs rounded-2xl transition-all mb-5 shadow-sm active:scale-98"
+            >
+              <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
+              <span>Coba Mode Demo Langsung (Tanpa Login) ➔</span>
+            </button>
+          )}
+
           {!configured && (
             <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs leading-relaxed">
               <div className="flex items-start gap-2.5">
@@ -115,7 +162,7 @@ export const LoginPage: React.FC = () => {
           <button
             onClick={handleGoogleSignIn}
             disabled={!configured || loading}
-            className="w-full flex items-center justify-center gap-3 py-3.5 px-4 bg-white hover:bg-slate-50 text-slate-800 font-bold text-sm rounded-2xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] mb-6"
+            className="w-full flex items-center justify-center gap-3 py-3.5 px-4 bg-white hover:bg-slate-50 text-slate-800 font-bold text-sm rounded-2xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] mb-5"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>

@@ -15,6 +15,7 @@ import { RecentTransactionsModal } from './components/pos/RecentTransactionsModa
 import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
 import { ClockInModal } from './components/pos/ClockInModal';
 import { LoginPage } from './components/auth/LoginPage';
+import { LandingPage } from './components/landing/LandingPage';
 import { HomePage } from './components/home/HomePage';
 import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
@@ -340,12 +341,21 @@ const POSAppContent: React.FC = () => {
 };
 
 export function App() {
-  const { user, loading, configured } = useAuth();
+  const { user, loading } = useAuth();
+  const [guestMode, setGuestMode] = useState<boolean>(() => {
+    return localStorage.getItem('newhope_pos_guest_mode') === 'true';
+  });
+  const [authView, setAuthView] = useState<'landing' | 'login'>('landing');
+
+  const handleStartDemo = () => {
+    localStorage.setItem('newhope_pos_guest_mode', 'true');
+    setGuestMode(true);
+  };
 
   // Loading spinner saat mengecek sesi.
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
           <p className="text-slate-400 text-sm font-semibold">Memeriksa sesi…</p>
@@ -354,10 +364,22 @@ export function App() {
     );
   }
 
-  // Belum login DAN Supabase sudah dikonfigurasi → tampilkan login page.
-  // Kalau Supabase belum dikonfigurasi, tetap tampilkan POS (mode dev lokal).
-  if (!user && configured) {
-    return <LoginPage />;
+  // Jika belum login dan belum masuk mode demo:
+  if (!user && !guestMode) {
+    if (authView === 'login') {
+      return (
+        <LoginPage
+          onBackToLanding={() => setAuthView('landing')}
+          onStartDemo={handleStartDemo}
+        />
+      );
+    }
+    return (
+      <LandingPage
+        onStartDemo={handleStartDemo}
+        onOpenLogin={() => setAuthView('login')}
+      />
+    );
   }
 
   return (
