@@ -269,7 +269,60 @@ const seedAttendanceFor = (sector: BusinessSector): AttendanceRecord[] =>
     return ((staff?.sector || rec.businessSector || 'FNB') as BusinessSector) === sector;
   });
 
+/**
+ * 12-Hour Demo Data Lifecycle
+ *
+ * Menghapus data demo lokal dan mengembalikan data ke kondisi default bersih
+ * setiap 12 jam (43.200.000 ms) agar sesi demo pengunjung selalu segar.
+ */
+const DEMO_LIFECYCLE_HOURS = 12;
+const DEMO_RESET_INTERVAL_MS = DEMO_LIFECYCLE_HOURS * 60 * 60 * 1000;
+const DEMO_TIMESTAMP_KEY = 'newhope_demo_session_created_at';
+
+const enforce12HourDemoReset = () => {
+  try {
+    const rawTimestamp = localStorage.getItem(DEMO_TIMESTAMP_KEY);
+    const now = Date.now();
+
+    if (!rawTimestamp) {
+      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
+      return;
+    }
+
+    const createdAt = parseInt(rawTimestamp, 10);
+    if (isNaN(createdAt) || now - createdAt >= DEMO_RESET_INTERVAL_MS) {
+      console.warn(`[Demo Lifecycle] 12 jam telah tercapai. Mereset data demo ke default bersih.`);
+      
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('newhope_') || key.startsWith('mokamajoo_') || key.startsWith('scoped_'))) {
+          // Jangan hapus token Supabase Auth kalau ada
+          if (!key.includes('supabase.auth')) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
+    }
+  } catch (e) {
+    console.error('Failed to enforce 12-hour demo reset:', e);
+  }
+};
+
+// Jalankan saat script dimuat
+enforce12HourDemoReset();
+
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  useEffect(() => {
+    // Cek berkala setiap 5 menit jika browser tetap terbuka
+    const interval = setInterval(() => {
+      enforce12HourDemoReset();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [activeTab, setActiveTab] = useState<'home' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('home');
 
   // Users & RBAC state
