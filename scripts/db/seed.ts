@@ -13,6 +13,7 @@
  * berubah, bukan undian yang berbeda.
  */
 
+import 'dotenv/config';
 import pg from 'pg';
 
 /**

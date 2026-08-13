@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
+import 'dotenv/config';
 
 const ROOT = process.cwd();
 const MIGRATION_DIR = join(ROOT, 'migrations');
