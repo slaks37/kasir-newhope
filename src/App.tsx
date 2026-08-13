@@ -1,0 +1,293 @@
+import React, { Suspense, lazy, useState } from 'react';
+import { POSProvider, usePOS } from './context/POSContext';
+import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { ProductGrid } from './components/pos/ProductGrid';
+import { VariantModal } from './components/pos/VariantModal';
+import { CartPanel } from './components/pos/CartPanel';
+import { CustomerSelectModal } from './components/pos/CustomerSelectModal';
+import { CheckoutModal } from './components/pos/CheckoutModal';
+import { ReceiptModal } from './components/pos/ReceiptModal';
+import { HoldOrdersModal } from './components/pos/HoldOrdersModal';
+import { RecentTransactionsModal } from './components/pos/RecentTransactionsModal';
+import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
+import { ClockInModal } from './components/pos/ClockInModal';
+import { HomePage } from './components/home/HomePage';
+import { TableManager } from './components/tables/TableManager';
+import { CustomerManager } from './components/customers/CustomerManager';
+import { SwitchUserModal } from './components/auth/SwitchUserModal';
+import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
+import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
+import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
+import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
+
+/*
+ * CODE SPLITTING
+ *
+ * The cashier opens on Home/POS and often never leaves them, but these four
+ * tabs were dragging their whole dependency graph into the first paint:
+ *   AIAssistant      -> the assistant engine (insights + intent router)
+ *   ReportsDashboard -> recharts
+ *   InventoryManager -> the largest screen in the app
+ *   SettingsManager  -> subscription + RBAC + branch management
+ *
+ * Loading them on demand keeps the initial bundle to what a cashier actually
+ * needs to take the first order. React.lazy needs a default export, hence the
+ * .then() shim around each named export.
+ */
+const InventoryManager = lazy(() =>
+  import('./components/inventory/InventoryManager').then((m) => ({ default: m.InventoryManager }))
+);
+const ReportsDashboard = lazy(() =>
+  import('./components/reports/ReportsDashboard').then((m) => ({ default: m.ReportsDashboard }))
+);
+const AIAssistant = lazy(() =>
+  import('./components/ai/AIAssistant').then((m) => ({ default: m.AIAssistant }))
+);
+const SettingsManager = lazy(() =>
+  import('./components/settings/SettingsManager').then((m) => ({ default: m.SettingsManager }))
+);
+
+const TabLoading: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center bg-slate-50/70">
+    <div className="flex items-center gap-2.5 text-slate-500 text-xs font-semibold">
+      <RefreshCw className="w-4 h-4 animate-spin text-amber-600" />
+      <span>Memuat halaman…</span>
+    </div>
+  </div>
+);
+
+const POSAppContent: React.FC = () => {
+  const {
+    activeTab,
+    setActiveTab,
+    addToCart,
+    settings,
+    currentUser,
+    hasPermission,
+  } = usePOS();
+
+  // Modals state
+  const [selectedProductForVariant, setSelectedProductForVariant] = useState<Product | null>(null);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showHoldOrdersModal, setShowHoldOrdersModal] = useState(false);
+  const [showRecentTransactionsModal, setShowRecentTransactionsModal] = useState(false);
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [showSwitchUserModal, setShowSwitchUserModal] = useState(false);
+  const [showClockInModal, setShowClockInModal] = useState(false);
+  const [showNavAuthModal, setShowNavAuthModal] = useState(false);
+  const [completedOrderForReceipt, setCompletedOrderForReceipt] = useState<Order | null>(null);
+
+  const isTabAllowed = hasPermission(activeTab as PermissionFeature);
+
+  const handleProductSelect = (product: Product) => {
+    if (
+      (product.variants && product.variants.length > 0) ||
+      (product.modifierGroups && product.modifierGroups.length > 0)
+    ) {
+      setSelectedProductForVariant(product);
+    } else {
+      addToCart(product);
+    }
+  };
+
+  const handleAddToCartWithVariant = (
+    product: Product,
+    variant?: ProductVariant,
+    selectedModifiers?: SelectedModifier[],
+    quantity?: number,
+    notes?: string
+  ) => {
+    addToCart(product, variant, selectedModifiers, quantity, notes);
+  };
+
+  const handlePaymentSuccess = (order: Order) => {
+    setShowCheckoutModal(false);
+    setCompletedOrderForReceipt(order);
+  };
+
+  return (
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100/80 text-slate-900 font-sans select-none">
+      {/* Top Header Bar */}
+      <Header
+        onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
+        onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
+        onOpenSwitchUser={() => setShowSwitchUserModal(true)}
+        onOpenClockIn={() => setShowClockInModal(true)}
+      />
+
+      {/* Main Container */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Navigation Sidebar */}
+        <Sidebar
+          onOpenAiCopilot={() => setActiveTab('ai')}
+          onOpenEndShift={() => setShowShiftModal(true)}
+          onOpenClockIn={() => setShowClockInModal(true)}
+        />
+
+        {/* View Switcher Container */}
+        <main className="flex-1 flex overflow-hidden bg-slate-100/60">
+          {!isTabAllowed ? (
+            /* RBAC Restricted Access View Guard */
+            <div className="flex-1 flex items-center justify-center p-6 bg-slate-50">
+              <div className="bg-white border border-slate-200 rounded-3xl p-8 max-w-lg w-full text-center shadow-xl space-y-5 animate-scale-up">
+                <div className="w-16 h-16 rounded-3xl bg-rose-100 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto shadow-inner">
+                  <Lock className="w-8 h-8" />
+                </div>
+
+                <div className="space-y-2">
+                  <span className="px-3 py-1 bg-rose-100 text-rose-800 rounded-full font-extrabold text-[10px] uppercase tracking-wider border border-rose-200">
+                    Akses Dibatasi Peran ({currentUser.role})
+                  </span>
+                  <h3 className="font-extrabold text-xl text-slate-900">
+                    Menu Terkunci Hak Akses
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Pengguna <b>{currentUser.name}</b> dengan role <b>{currentUser.role}</b> tidak memiliki wewenang untuk mengakses modul <b>{activeTab.toUpperCase()}</b>.
+                  </p>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs space-y-2">
+                  <p className="font-bold text-slate-800 flex items-center space-x-1">
+                    <ShieldAlert className="w-4 h-4 text-amber-600" />
+                    <span>Petunjuk Akses Modul:</span>
+                  </p>
+                  <ul className="text-slate-600 space-y-1 list-disc list-inside text-[11px]">
+                    <li>Minta Manager / Supervisor memasukkan PIN otorisasi sementara.</li>
+                    <li>Atau ganti ke akun Admin / Pemilik Toko.</li>
+                  </ul>
+                </div>
+
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => setActiveTab('pos')}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center justify-center space-x-1"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Ke Kasir (POS)</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowNavAuthModal(true)}
+                    className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    <span>PIN Manager Override</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'home' && <HomePage />}
+
+              {activeTab === 'pos' && (
+                <>
+                  {/* Product Catalog & Search Column
+                      (ProductGrid owns its own search box, category pills and toolbar) */}
+                  <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-200">
+                    <ProductGrid onSelectProduct={handleProductSelect} />
+                  </div>
+
+                  {/* Right Order Cart Panel */}
+                  <CartPanel
+                    onOpenCustomerSelect={() => setShowCustomerModal(true)}
+                    onOpenCheckout={() => setShowCheckoutModal(true)}
+                    onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
+                    onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
+                  />
+                </>
+              )}
+
+              {activeTab === 'tables' && <TableManager />}
+              {activeTab === 'customers' && <CustomerManager />}
+
+              {/* Lazily loaded tabs — see the code-splitting note above. */}
+              <Suspense fallback={<TabLoading />}>
+                {activeTab === 'inventory' && <InventoryManager />}
+                {activeTab === 'reports' && <ReportsDashboard />}
+                {activeTab === 'ai' && <AIAssistant />}
+                {activeTab === 'settings' && <SettingsManager />}
+              </Suspense>
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* Global Modals */}
+      {selectedProductForVariant && (
+        <VariantModal
+          product={selectedProductForVariant}
+          onClose={() => setSelectedProductForVariant(null)}
+          onAddToCart={handleAddToCartWithVariant}
+        />
+      )}
+
+      {showCustomerModal && (
+        <CustomerSelectModal onClose={() => setShowCustomerModal(false)} />
+      )}
+
+      {showCheckoutModal && (
+        <CheckoutModal
+          onClose={() => setShowCheckoutModal(false)}
+          onPaymentSuccess={handlePaymentSuccess}
+        />
+      )}
+
+      {completedOrderForReceipt && (
+        <ReceiptModal
+          order={completedOrderForReceipt}
+          settings={settings}
+          onClose={() => setCompletedOrderForReceipt(null)}
+        />
+      )}
+
+      {showHoldOrdersModal && (
+        <HoldOrdersModal onClose={() => setShowHoldOrdersModal(false)} />
+      )}
+
+      {showRecentTransactionsModal && (
+        <RecentTransactionsModal onClose={() => setShowRecentTransactionsModal(false)} />
+      )}
+
+      {settings.subscription?.status === 'EXPIRED' && (
+        <SubscriptionLockScreen onRenewSuccess={() => {}} />
+      )}
+
+      {showShiftModal && (
+        <ShiftManagerModal onClose={() => setShowShiftModal(false)} />
+      )}
+
+      {showSwitchUserModal && (
+        <SwitchUserModal onClose={() => setShowSwitchUserModal(false)} />
+      )}
+
+      {showClockInModal && (
+        <ClockInModal onClose={() => setShowClockInModal(false)} />
+      )}
+
+      {showNavAuthModal && (
+        <PinAuthorizationModal
+          title={`Buka Kunci Akses (${activeTab.toUpperCase()})`}
+          description="Masukkan PIN Manager atau Admin untuk membuka akses halaman ini."
+          requiredRoles={['ADMIN', 'MANAGER']}
+          onClose={() => setShowNavAuthModal(false)}
+          onAuthorized={() => {
+            setShowNavAuthModal(false);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export function App() {
+  return (
+    <POSProvider>
+      <POSAppContent />
+    </POSProvider>
+  );
+}
+
+export default App;

@@ -1,0 +1,22 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Database PGlite lokal — 62 MB data pengembangan, dibuat ulang dengan `npm run db:reset`.
+.pgdata/
+
+# Sisa scaffolding AI Studio: tidak dipakai satu baris kode pun, tapi berisi
+# Firebase API key dan OAuth client ID. Tidak ada alasan menerbitkannya.
+firebase-applet-config.json
+
+# Berkas kerja sementara.
+scratch-*
+*.tmp
+
+# Pengaturan Claude Code milik mesin ini, bukan milik proyek.
+.claude/settings.local.json

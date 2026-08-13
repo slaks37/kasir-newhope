@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Custom utilities used across the POS UI.
+   These class names are referenced by the components but are not part of stock
+   Tailwind v4, so without these definitions they silently did nothing.
+   --------------------------------------------------------------------------- */
+
+@keyframes nh-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes nh-scale-up {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: nh-fade-in 0.25s ease-out both;
+}
+
+.animate-scale-up {
+  animation: nh-scale-up 0.2s ease-out both;
+}
+
+/* Minimal stand-in for the `animate-in fade-in duration-200` enter animation. */
+.animate-in {
+  animation: nh-fade-in 0.2s ease-out both;
+}
+
+.fade-in {
+  animation-name: nh-fade-in;
+}
+
+/* Scrollbar helpers */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: var(--color-slate-300);
+  border-radius: 9999px;
+}
+
+.scrollbar-thumb-slate-200::-webkit-scrollbar-thumb {
+  background-color: var(--color-slate-200);
+}
+
+/* ---------------------------------------------------------------------------
+   Thermal receipt printing: "Cetak Struk" must print only the receipt paper,
+   not the whole POS dashboard behind the modal.
+   --------------------------------------------------------------------------- */
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt-paper,
+  #receipt-paper * {
+    visibility: visible;
+  }
+
+  #receipt-paper {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: none;
+    box-shadow: none;
+  }
+}

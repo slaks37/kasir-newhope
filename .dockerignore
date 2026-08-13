@@ -1,0 +1,8 @@
+node_modules
+dist
+.pgdata
+.git
+.env
+.env.*
+*.log
+scratch-*

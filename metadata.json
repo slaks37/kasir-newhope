@@ -1,0 +1,6 @@
+{
+  "name": "New Hope POS - Point of Sale & Business System",
+  "description": "Sistem Kasir (Point of Sale) All-in-One Multi-Bisnis New Hope untuk Kafe & Resto, Laundry, Ritel/Minimarket, Cuci Mobil (Carwash), dan Barbershop/Salon dengan manajemen produk, stok & inventori, transaksi cepat, rekap shift kasir, dan laporan usaha.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,97 @@
+# =============================================================================
+# OLTP PRIMARY  +  OLAP READ REPLICA  +  METABASE
+# =============================================================================
+# Delivers the separation required by the spec: cashier transactions hit the
+# primary, every analytical query hits the replica. An analyst's accidental
+# cross join can then never slow down a checkout.
+#
+#   docker compose -f docker-compose.analytics.yml up -d
+#   npm run db:apply                  # DATABASE_URL -> primary
+#   npm run batch:health              # ANALYTICS_DATABASE_URL -> replica
+#   open http://localhost:3001        # Metabase
+#
+# Streaming replication is configured with the stock postgres image; no
+# extensions required. The replica is read-only by construction — even if
+# someone points a writer at it, PostgreSQL refuses.
+# =============================================================================
+
+services:
+  postgres-primary:
+    image: postgres:18-alpine
+    container_name: nhpos-primary
+    environment:
+      POSTGRES_USER: nhpos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-in-env}
+      POSTGRES_DB: nhpos
+      # Replication slot user. Separate from the app user on purpose.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=8
+      -c max_replication_slots=8
+      -c hot_standby=on
+      -c archive_mode=off
+    ports:
+      - "5432:5432"
+    volumes:
+      - primary-data:/var/lib/postgresql/data
+      - ./scripts/db/init-replication.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nhpos -d nhpos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres-replica:
+    image: postgres:18-alpine
+    container_name: nhpos-replica
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${REPLICATION_PASSWORD:-change-me-in-env}
+    # Base-backup from the primary on first boot, then stream.
+    command: >
+      bash -c '
+      if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+        echo "seeding replica from primary...";
+        until pg_basebackup -h postgres-primary -U replicator -D /var/lib/postgresql/data -Fp -Xs -R -w; do
+          echo "waiting for primary..."; sleep 2;
+        done;
+        chmod 0700 /var/lib/postgresql/data;
+      fi;
+      exec postgres -c hot_standby=on'
+    user: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - replica-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nhpos -d nhpos"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: nhpos-metabase
+    depends_on:
+      postgres-replica:
+        condition: service_healthy
+    environment:
+      MB_DB_TYPE: h2
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_TIMEZONE: Asia/Jakarta
+    ports:
+      - "3001:3000"
+    volumes:
+      - metabase-data:/metabase-data
+    # Metabase must be pointed at the REPLICA (postgres-replica:5432) using the
+    # bi_readonly role created by migrations/0004 §7. Never the primary, and
+    # never the app's own credentials.
+
+volumes:
+  primary-data:
+  replica-data:
+  metabase-data:

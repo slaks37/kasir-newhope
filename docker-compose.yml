@@ -1,0 +1,143 @@
+# =============================================================================
+# New Hope POS — lima service, satu database, skema terpisah.
+#
+#   docker compose up --build
+#   -> http://localhost:3000        aplikasi kasir
+#   -> http://localhost:3000/admin  konsol internal
+#
+# PERBEDAAN DENGAN `npm run dev`
+#
+# Di sini database adalah PostgreSQL 18 sungguhan, bukan PGlite. Itu bukan
+# detail: PGlite memultipleks semua koneksi ke satu instance, sehingga state
+# sesi (search_path, SET LOCAL) bersifat global dan bocor antar service. Postgres
+# sungguhan mengisolasinya per koneksi.
+#
+# Kode service tidak berubah sama sekali — hanya DATABASE_URL.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: newhope
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newhope_dev}
+      POSTGRES_DB: newhope
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Dibuka hanya untuk perkakas lokal (psql, Metabase, seeder).
+      # Di produksi HAPUS baris ini — database tidak boleh terjangkau dari luar.
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U newhope -d newhope']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Berjalan SEKALI sampai selesai, lalu berhenti. Service menunggu ini sukses.
+  # Kalau tiap service memigrasi sendiri saat boot, lima proses akan berlomba
+  # mengubah skema yang sama dan yang kalah gagal dengan error membingungkan.
+  migrate:
+    build: .
+    command: ['npx', 'tsx', 'services/db-server/migrate.ts']
+    environment:
+      DATABASE_URL: postgres://newhope:${POSTGRES_PASSWORD:-newhope_dev}@postgres:5432/newhope
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  pos:
+    build: .
+    command: ['npx', 'tsx', 'services/pos/index.ts']
+    environment: &svcenv
+      NODE_ENV: production
+      DATABASE_URL: postgres://newhope:${POSTGRES_PASSWORD:-newhope_dev}@postgres:5432/newhope
+      URL_POS: http://pos:3101
+      URL_AI: http://ai:3102
+      URL_BILLING: http://billing:3103
+      URL_BACKOFFICE: http://backoffice:3104
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3101/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  ai:
+    build: .
+    command: ['npx', 'tsx', 'services/ai/index.ts']
+    environment:
+      <<: *svcenv
+      # Kunci LLM HANYA diberikan ke service yang memakainya. Service lain tidak
+      # perlu tahu kunci ini ada — kebocoran dari proses yang tidak memakainya
+      # adalah risiko yang tidak perlu diambil.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3102/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  billing:
+    build: .
+    command: ['npx', 'tsx', 'services/billing/index.ts']
+    environment: *svcenv
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3103/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  backoffice:
+    build: .
+    command: ['npx', 'tsx', 'services/backoffice/index.ts']
+    environment: *svcenv
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3104/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  gateway:
+    build: .
+    command: ['npx', 'tsx', 'services/gateway/index.ts']
+    environment: *svcenv
+    ports:
+      - '3000:3000'
+    # Menunggu SEHAT, bukan sekadar menyala. Gateway yang hidup lebih dulu akan
+    # menjawab 503 untuk request yang sebenarnya hanya datang terlalu cepat.
+    depends_on:
+      pos:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+      backoffice:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
