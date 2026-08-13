@@ -20,3 +20,5 @@ scratch-*
 
 # Pengaturan Claude Code milik mesin ini, bukan milik proyek.
 .claude/settings.local.json
+
+.vercel
