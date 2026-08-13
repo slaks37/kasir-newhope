@@ -15,6 +15,9 @@ import path from 'node:path';
 import pg from 'pg';
 
 const MIGRATIONS = [
+  // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
+  // PostgreSQL < 18 (Supabase, RDS, Cloud SQL umumnya masih 15-17).
+  'migrations/0001_compat.sql',
   'schema.sql',
   'schema_hybrid_pos.sql',
   'migrations/0003_smart_assistant.sql',
@@ -39,7 +42,16 @@ async function main() {
   // menyesatkan karena seolah-olah koneksinya berhasil.
   let client!: pg.Client;
   for (let i = 0; ; i++) {
-    client = new pg.Client({ connectionString });
+    // SSL wajib untuk layanan terkelola; dilewati untuk database lokal.
+    const lokal = /@(127\.0\.0\.1|localhost)/.test(connectionString);
+    client = new pg.Client({
+      connectionString,
+      ssl: lokal
+        ? undefined
+        : process.env.PGSSLROOTCERT
+          ? { ca: fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8'), rejectUnauthorized: true }
+          : { rejectUnauthorized: false },
+    });
     try {
       await client.connect();
       break;

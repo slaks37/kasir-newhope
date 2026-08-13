@@ -12,6 +12,7 @@
  * bukan gagal saat code review — gagal di Postgres, dengan pesan yang jelas.
  */
 
+import fs from 'node:fs';
 import pg from 'pg';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
@@ -36,12 +37,39 @@ export interface DbOptions {
   max?: number;
 }
 
+
+/**
+ * Konfigurasi SSL.
+ *
+ * Layanan terkelola (Supabase, RDS, Neon, Cloud SQL) MEWAJIBKAN TLS dan menolak
+ * koneksi polos. `pg` tidak menyalakan TLS hanya karena URL-nya jarak jauh —
+ * harus diminta eksplisit, kalau tidak koneksinya ditolak dengan pesan yang
+ * tidak menyebut SSL sama sekali.
+ *
+ * rejectUnauthorized:false dipakai karena Supabase memakai rantai sertifikat
+ * yang tidak selalu ada di trust store Node. Itu berarti koneksinya TERENKRIPSI
+ * tapi tidak memverifikasi identitas server. Untuk beban produksi sungguhan,
+ * unduh CA Supabase dan setel PGSSLROOTCERT — lalu hapus baris ini.
+ */
+function konfigurasiSsl(connectionString: string) {
+  const url = connectionString.toLowerCase();
+  const lokal =
+    url.includes('@127.0.0.1') || url.includes('@localhost') || url.includes('sslmode=disable');
+  if (lokal) return undefined;
+
+  if (process.env.PGSSLROOTCERT) {
+    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8'), rejectUnauthorized: true };
+  }
+  return { rejectUnauthorized: false };
+}
+
 export async function connectDb(opts: DbOptions): Promise<Db> {
   const connectionString =
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
 
   const pool = new pg.Pool({
     connectionString,
+    ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.

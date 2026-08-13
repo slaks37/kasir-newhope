@@ -68,13 +68,34 @@ AI Copilot dan admin panel melaporkan omzet yang identik karena keduanya **wajib
 
 ---
 
-## Produksi
+## Menyambung ke PostgreSQL sungguhan (Supabase, RDS, Neon)
+
+Isi `DATABASE_URL` di `.env`, lalu:
+
+```bash
+npm run db:migrate
+npm run dev
+```
+
+Kode service tidak berubah sama sekali. Yang berubah hanya satu variabel — itu memang tujuan lapisan `services/shared/db.ts`.
+
+### Supabase
+
+Ambil connection string dari **Dashboard → Project Settings → Database**, pilih **Session pooler** (port 5432).
+
+Jangan pakai Transaction pooler (6543): ia tidak mempertahankan state sesi, sehingga `SET ROLE` dan migrasi bertransaksi panjang gagal dengan cara yang sulit ditelusuri. Direct connection juga bisa, tapi Supabase kini menyediakannya lewat IPv6 saja — banyak jaringan rumah dan CI belum bisa menjangkaunya.
+
+**Satu hal yang harus ada:** `migrations/0001_compat.sql`. Fungsi `uuidv7()` yang dipakai migrasi 0005 dan 0006 adalah **bawaan PostgreSQL 18**, sedangkan Supabase masih di 15–17. Tanpa penambal itu, seluruh migrasi berhenti di tengah jalan dan database tertinggal setengah jadi. Penambalnya otomatis dilewati bila `uuidv7()` bawaan sudah ada.
+
+---
+
+## Produksi (Docker)
 
 ```bash
 docker compose up --build
 ```
 
-Di sini database-nya PostgreSQL 18 sungguhan, bukan PGlite. Kode service tidak berubah sama sekali — hanya `DATABASE_URL`.
+Di sini database-nya PostgreSQL 18 sungguhan, bukan PGlite.
 
 > **Belum diuji.** `docker-compose.yml` dan `Dockerfile` ditulis lengkap dengan healthcheck dan `depends_on: service_healthy`, tapi belum pernah dijalankan. Yang terbukti bekerja adalah `npm run dev`.
 
@@ -103,4 +124,4 @@ Salin `.env.example` menjadi `.env` dan isi seperlunya.
 
 ## Lisensi
 
-Belum ditentukan. Tanpa lisensi, hak cipta default berlaku dan orang lain tidak berhak memakai ulang kode ini.
+[Apache License 2.0](LICENSE) — bebas dipakai, diubah, dan didistribusikan, termasuk untuk keperluan komersial, selama pemberitahuan hak cipta dan lisensi dipertahankan. Termasuk pemberian lisensi paten eksplisit dari kontributor.

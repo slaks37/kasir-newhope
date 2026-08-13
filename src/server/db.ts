@@ -228,6 +228,9 @@ async function createPgliteDb(dataDir: string): Promise<Db> {
  * jalan sebelumnya, dan apa pun yang memasang foreign key harus sesudahnya.
  */
 const MIGRATIONS = [
+  // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
+  // PostgreSQL < 18 (Supabase, RDS, Cloud SQL umumnya masih 15-17).
+  'migrations/0001_compat.sql',
   'schema.sql',
   'schema_hybrid_pos.sql',
   'migrations/0003_smart_assistant.sql',
