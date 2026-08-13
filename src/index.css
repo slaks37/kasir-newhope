@@ -1,6 +1,48 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
+   Mobile, iOS & Android Touch & Safe-Area Optimizations
+   --------------------------------------------------------------------------- */
+
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+html, body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+/* Safe Area Spacing Helpers */
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+}
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+}
+.pl-safe {
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+}
+.pr-safe {
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+.bottom-safe {
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Prevent auto-zoom on input focus in iOS Safari */
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Custom utilities used across the POS UI.
    These class names are referenced by the components but are not part of stock
    Tailwind v4, so without these definitions they silently did nothing.
@@ -28,12 +70,25 @@
   }
 }
 
+@keyframes nh-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 .animate-fade-in {
   animation: nh-fade-in 0.25s ease-out both;
 }
 
 .animate-scale-up {
   animation: nh-scale-up 0.2s ease-out both;
+}
+
+.animate-slide-up {
+  animation: nh-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* Minimal stand-in for the `animate-in fade-in duration-200` enter animation. */

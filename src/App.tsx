@@ -3,6 +3,7 @@ import { POSProvider, usePOS } from './context/POSContext';
 import { useAuth } from './context/AuthContext';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
+import { MobileNavBar } from './components/MobileNavBar';
 import { ProductGrid } from './components/pos/ProductGrid';
 import { VariantModal } from './components/pos/VariantModal';
 import { CartPanel } from './components/pos/CartPanel';
@@ -21,7 +22,8 @@ import { SwitchUserModal } from './components/auth/SwitchUserModal';
 import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
 import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
-import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2 } from 'lucide-react';
+import { formatRupiah } from './utils/formatters';
+import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag } from 'lucide-react';
 
 /*
  * CODE SPLITTING
@@ -63,6 +65,7 @@ const POSAppContent: React.FC = () => {
   const {
     activeTab,
     setActiveTab,
+    cart,
     addToCart,
     settings,
     currentUser,
@@ -79,9 +82,13 @@ const POSAppContent: React.FC = () => {
   const [showSwitchUserModal, setShowSwitchUserModal] = useState(false);
   const [showClockInModal, setShowClockInModal] = useState(false);
   const [showNavAuthModal, setShowNavAuthModal] = useState(false);
+  const [showMobileCartSheet, setShowMobileCartSheet] = useState(false);
   const [completedOrderForReceipt, setCompletedOrderForReceipt] = useState<Order | null>(null);
 
   const isTabAllowed = hasPermission(activeTab as PermissionFeature);
+
+  const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalCartAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
   const handleProductSelect = (product: Product) => {
     if (
@@ -110,7 +117,7 @@ const POSAppContent: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100/80 text-slate-900 font-sans select-none">
+    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-slate-100/80 text-slate-900 font-sans select-none pb-14 lg:pb-0">
       {/* Top Header Bar */}
       <Header
         onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
@@ -120,16 +127,18 @@ const POSAppContent: React.FC = () => {
       />
 
       {/* Main Container */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Navigation Sidebar */}
-        <Sidebar
-          onOpenAiCopilot={() => setActiveTab('ai')}
-          onOpenEndShift={() => setShowShiftModal(true)}
-          onOpenClockIn={() => setShowClockInModal(true)}
-        />
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Left Navigation Sidebar (Desktop only) */}
+        <div className="hidden lg:flex shrink-0">
+          <Sidebar
+            onOpenAiCopilot={() => setActiveTab('ai')}
+            onOpenEndShift={() => setShowShiftModal(true)}
+            onOpenClockIn={() => setShowClockInModal(true)}
+          />
+        </div>
 
         {/* View Switcher Container */}
-        <main className="flex-1 flex overflow-hidden bg-slate-100/60">
+        <main className="flex-1 flex overflow-hidden bg-slate-100/60 relative">
           {!isTabAllowed ? (
             /* RBAC Restricted Access View Guard */
             <div className="flex-1 flex items-center justify-center p-6 bg-slate-50">
@@ -186,13 +195,36 @@ const POSAppContent: React.FC = () => {
 
               {activeTab === 'pos' && (
                 <>
-                  {/* Product Catalog & Search Column
-                      (ProductGrid owns its own search box, category pills and toolbar) */}
-                  <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-200">
+                  {/* Product Catalog & Search Column */}
+                  <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-200 relative">
                     <ProductGrid onSelectProduct={handleProductSelect} />
+
+                    {/* Mobile Floating Bottom Cart Bar */}
+                    {totalCartCount > 0 && (
+                      <div className="lg:hidden fixed bottom-16 left-3 right-3 z-30 animate-slide-up">
+                        <button
+                          onClick={() => setShowMobileCartSheet(true)}
+                          className="w-full bg-slate-900 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between border border-slate-700/80 active:scale-[0.98] transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 font-extrabold text-xs flex items-center justify-center shadow-xs">
+                              {totalCartCount}
+                            </div>
+                            <div className="text-left">
+                              <span className="text-[10px] text-slate-400 block leading-tight">Total Pesanan</span>
+                              <span className="text-sm font-extrabold text-amber-400 leading-tight">{formatRupiah(totalCartAmount)}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs font-extrabold bg-amber-500 text-slate-950 px-3.5 py-1.5 rounded-xl shadow-xs">
+                            <span>Buka Keranjang</span>
+                            <span className="text-sm font-bold">➔</span>
+                          </div>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Right Order Cart Panel */}
+                  {/* Desktop Right Order Cart Panel */}
                   <CartPanel
                     onOpenCustomerSelect={() => setShowCustomerModal(true)}
                     onOpenCheckout={() => setShowCheckoutModal(true)}
@@ -225,6 +257,29 @@ const POSAppContent: React.FC = () => {
           onAddToCart={handleAddToCartWithVariant}
         />
       )}
+
+      {/* Mobile Cart Sheet Modal */}
+      {showMobileCartSheet && (
+        <CartPanel
+          isMobileModal={true}
+          onCloseMobile={() => setShowMobileCartSheet(false)}
+          onOpenCustomerSelect={() => setShowCustomerModal(true)}
+          onOpenCheckout={() => {
+            setShowMobileCartSheet(false);
+            setShowCheckoutModal(true);
+          }}
+          onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
+          onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
+        />
+      )}
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileNavBar
+        onOpenAiCopilot={() => setActiveTab('ai')}
+        onOpenEndShift={() => setShowShiftModal(true)}
+        onOpenClockIn={() => setShowClockInModal(true)}
+        onOpenSwitchUser={() => setShowSwitchUserModal(true)}
+      />
 
       {showCustomerModal && (
         <CustomerSelectModal onClose={() => setShowCustomerModal(false)} />

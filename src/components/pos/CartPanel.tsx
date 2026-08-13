@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
@@ -28,6 +28,8 @@ interface CartPanelProps {
   onOpenCheckout: () => void;
   onOpenHoldOrders: () => void;
   onOpenRecentTransactions?: () => void;
+  isMobileModal?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const CartPanel: React.FC<CartPanelProps> = ({
@@ -35,6 +37,8 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   onOpenCheckout,
   onOpenHoldOrders,
   onOpenRecentTransactions,
+  isMobileModal = false,
+  onCloseMobile,
 }) => {
   const {
     cart,
@@ -94,8 +98,26 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     }
   };
 
-  return (
-    <aside className="w-full lg:w-96 bg-white border-l border-slate-200 text-slate-900 flex flex-col h-full shrink-0 shadow-lg select-none">
+  const cartContent = (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Mobile Drawer Header */}
+      {isMobileModal && (
+        <div className="p-3 bg-slate-900 text-white flex items-center justify-between shadow-xs">
+          <div className="flex items-center space-x-2">
+            <ShoppingBag className="w-5 h-5 text-amber-400" />
+            <h3 className="font-extrabold text-sm text-white">Keranjang Pesanan ({cart.reduce((s, i) => s + i.quantity, 0)} Item)</h3>
+          </div>
+          {onCloseMobile && (
+            <button
+              onClick={onCloseMobile}
+              className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Header: Order Type & Customer/Table Details */}
       <div className="p-3 border-b border-slate-200 space-y-3 bg-white">
         {/* Order Type Tabs */}
@@ -544,16 +566,35 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               >
                 Kosongkan Pilihan
               </button>
-              <button
-                onClick={() => setShowStaffModal(false)}
-                className="px-4 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-slate-800"
-              >
-                Selesai
-              </button>
+                <button
+                  onClick={() => setShowStaffModal(false)}
+                  className="px-4 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-slate-800"
+                >
+                  Selesai
+                </button>
+              </div>
             </div>
           </div>
+        )}
+    </div>
+  );
+
+  if (isMobileModal) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fade-in lg:hidden">
+        {/* Backdrop click to close */}
+        <div className="flex-1" onClick={onCloseMobile} />
+        {/* Bottom Sheet Modal Body */}
+        <div className="bg-white rounded-t-3xl shadow-2xl flex flex-col max-h-[88dvh] overflow-hidden animate-slide-up border-t border-slate-200">
+          {cartContent}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <aside className="hidden lg:flex lg:w-96 bg-white border-l border-slate-200 text-slate-900 flex-col h-full shrink-0 shadow-lg select-none">
+      {cartContent}
     </aside>
   );
 };

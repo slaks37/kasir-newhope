@@ -184,7 +184,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
       </div>
 
       {/* Product Display Area */}
-      <div className="flex-1 overflow-y-auto pr-1">
+      <div className="flex-1 overflow-y-auto pr-1 pb-32 lg:pb-4">
         {filteredProducts.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
             <Search className="w-10 h-10 stroke-1 text-slate-300" />
