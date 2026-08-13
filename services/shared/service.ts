@@ -28,7 +28,19 @@ export interface ServiceContext {
 
 /** Registri port. Satu tempat, supaya tidak ada dua service berebut angka sama. */
 export const PORTS = {
-  gateway: Number(process.env.PORT_GATEWAY || 3000),
+  /*
+   * `PORT` didahulukan karena itu konvensi yang dipakai hampir semua pengelola
+   * proses — Heroku, Cloud Run, Railway, dan harness preview Claude Code —
+   * untuk menetapkan port yang bebas.
+   *
+   * Tanpa ini, penetapan port otomatis GAGAL DIAM-DIAM: pengelola mengira
+   * gateway mendengarkan di port yang ia berikan, gateway tetap mengikat 3000,
+   * dan yang terlihat hanyalah "server tidak merespons" tanpa petunjuk sebab.
+   *
+   * PORT_GATEWAY tetap ada untuk menyetel port secara eksplisit saat kelima
+   * service dijalankan berdampingan.
+   */
+  gateway: Number(process.env.PORT || process.env.PORT_GATEWAY || 3000),
   pos: Number(process.env.PORT_POS || 3101),
   ai: Number(process.env.PORT_AI || 3102),
   billing: Number(process.env.PORT_BILLING || 3103),

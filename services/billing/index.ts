@@ -14,6 +14,9 @@
  * akses tidak. Lihat services/billing/store.ts.
  */
 
+// WAJIB paling awal: PORTS dan SERVICE_URL dievaluasi saat modul dimuat,
+// jadi .env harus sudah terbaca sebelum modul lain diimpor.
+import '../shared/env';
 import type express from 'express';
 import { startService, PORTS } from '../shared/service';
 import type { SaaSPlan } from '../../src/types';

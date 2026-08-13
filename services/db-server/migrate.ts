@@ -10,6 +10,8 @@
  *   npx tsx services/db-server/migrate.ts
  */
 
+import '../shared/env';
+import { ringkasTujuanDb, ringkasEnv } from '../shared/env';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
@@ -32,6 +34,7 @@ const MIGRATIONS = [
 ];
 
 async function main() {
+  console.log(`[migrate] ${ringkasEnv()}`);
   const connectionString =
     process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
 
@@ -62,7 +65,7 @@ async function main() {
     }
   }
 
-  console.log(`[migrate] tersambung: ${connectionString.replace(/:[^:@/]*@/, ':***@')}`);
+  console.log(`[migrate] tersambung: ${ringkasTujuanDb()}`);
 
   await client.query(`
     CREATE TABLE IF NOT EXISTS public.schema_migrations (

@@ -16,6 +16,9 @@
  * satu pun akses langsung ke tabel milik service lain.
  */
 
+// WAJIB paling awal: PORTS dan SERVICE_URL dievaluasi saat modul dimuat,
+// jadi .env harus sudah terbaca sebelum modul lain diimpor.
+import '../shared/env';
 import { startService, PORTS } from '../shared/service';
 import { ensureInternalUsers, registerAdminRoutes } from '../../src/server/adminRoutes';
 

@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useState } from 'react';
 import { POSProvider, usePOS } from './context/POSContext';
+import { useAuth } from './context/AuthContext';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ProductGrid } from './components/pos/ProductGrid';
@@ -12,6 +13,7 @@ import { HoldOrdersModal } from './components/pos/HoldOrdersModal';
 import { RecentTransactionsModal } from './components/pos/RecentTransactionsModal';
 import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
 import { ClockInModal } from './components/pos/ClockInModal';
+import { LoginPage } from './components/auth/LoginPage';
 import { HomePage } from './components/home/HomePage';
 import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
@@ -19,7 +21,7 @@ import { SwitchUserModal } from './components/auth/SwitchUserModal';
 import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
 import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
-import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2 } from 'lucide-react';
 
 /*
  * CODE SPLITTING
@@ -283,6 +285,26 @@ const POSAppContent: React.FC = () => {
 };
 
 export function App() {
+  const { user, loading, configured } = useAuth();
+
+  // Loading spinner saat mengecek sesi.
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+          <p className="text-slate-400 text-sm font-semibold">Memeriksa sesi…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Belum login DAN Supabase sudah dikonfigurasi → tampilkan login page.
+  // Kalau Supabase belum dikonfigurasi, tetap tampilkan POS (mode dev lokal).
+  if (!user && configured) {
+    return <LoginPage />;
+  }
+
   return (
     <POSProvider>
       <POSAppContent />

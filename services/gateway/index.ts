@@ -26,6 +26,9 @@
  * ikut teruji bersama domainnya.
  */
 
+// WAJIB paling awal: PORTS dan SERVICE_URL dievaluasi saat modul dimuat,
+// jadi .env harus sudah terbaca sebelum modul lain diimpor.
+import '../shared/env';
 import express from 'express';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';

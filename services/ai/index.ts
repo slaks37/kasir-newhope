@@ -15,6 +15,9 @@
  * copilot dan panel karenanya bersifat struktural, bukan hasil disiplin.
  */
 
+// WAJIB paling awal: PORTS dan SERVICE_URL dievaluasi saat modul dimuat,
+// jadi .env harus sudah terbaca sebelum modul lain diimpor.
+import '../shared/env';
 import express from 'express';
 import { startService, PORTS } from '../shared/service';
 import { getLlmConfig, callLlm, LLM_PROVIDER_LABEL, LLM_TIMEOUT_MS } from './llm';

@@ -10,6 +10,9 @@
  * tidak ada layar yang bisa memperbaikinya.
  */
 
+// WAJIB paling awal: PORTS dan SERVICE_URL dievaluasi saat modul dimuat,
+// jadi .env harus sudah terbaca sebelum modul lain diimpor.
+import '../shared/env';
 import express from 'express';
 import { startService, PORTS } from '../shared/service';
 import { registerSyncRoutes } from './sync';
