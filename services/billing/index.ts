@@ -132,31 +132,15 @@ startService({
       res.json({ ok: true, plans: SAAS_PLANS });
     });
 
-    app.post('/api/v1/auth/custom-signup', async (req, res) => {
-      const { email, password } = req.body || {};
-      if (!email || !password) return res.status(400).json({ ok: false, error: 'MISSING_CREDENTIALS' });
+    app.post('/api/v1/auth/send-welcome', async (req, res) => {
+      const { email } = req.body || {};
+      if (!email) return res.status(400).json({ ok: false, error: 'MISSING_EMAIL' });
       
       try {
         const { Resend } = await import('resend');
         const resend = new Resend(process.env.RESEND_API_KEY);
 
-        // Langsung insert ke auth.users untuk bypass Supabase Auth email limits
-        const dbRes = await svc.db.query(`
-          INSERT INTO auth.users (
-            instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, 
-            raw_app_meta_data, raw_user_meta_data, created_at, updated_at, 
-            confirmation_token, email_change, email_change_token_new, recovery_token
-          )
-          VALUES (
-            '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated', 
-            $1, crypt($2, gen_salt('bf')), NOW(), 
-            '{"provider":"email","providers":["email"]}', '{}', NOW(), NOW(), 
-            '', '', '', ''
-          )
-          RETURNING id
-        `, [email, password]);
-
-        // Kirim Welcome Email (karena email otomatis dikonfirmasi, kita anggap kode OTP = "AUTO-CONFIRMED")
+        // Kirim Welcome Email
         await resend.emails.send({
           from: 'welcome@newhopepos.id',
           to: email,
@@ -173,7 +157,7 @@ startService({
           \`
         });
 
-        res.json({ ok: true, user: { id: dbRes.rows[0].id, email } });
+        res.json({ ok: true });
       } catch (err: any) {
         svc.log.error('Custom signup gagal:', err);
         // Bila duplicate email, error code dari Postgres biasanya 23505

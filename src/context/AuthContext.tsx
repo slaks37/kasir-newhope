@@ -80,17 +80,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUpWithEmail = useCallback(async (email: string, password: string) => {
     try {
-      const res = await fetch('/api/v1/auth/custom-signup', {
+      const { data, error } = await supabase.rpc('custom_signup', {
+        user_email: email,
+        user_password: password,
+      });
+
+      if (error) throw error;
+      if (!data?.ok) {
+        return { error: { message: data?.error || 'Gagal mendaftar' } as AuthError };
+      }
+
+      // Jika berhasil, panggil backend untuk kirim email welcome (fire-and-forget)
+      fetch('/api/v1/auth/send-welcome', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        return { error: { message: data.error || 'Gagal mendaftar' } as AuthError };
-      }
-      
-      // Jika berhasil, langsung login menggunakan password
+        body: JSON.stringify({ email })
+      }).catch(() => {});
+
+      // Langsung login menggunakan password
       return await supabase.auth.signInWithPassword({ email, password });
     } catch (err: any) {
       return { error: { message: err.message } as AuthError };
