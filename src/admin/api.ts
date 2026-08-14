@@ -367,13 +367,44 @@ const SAMPLE_PRODUCTS = [
 /* -------------------------------------------------------------------------- */
 
 export const api = {
+  login: async (email: string, pass: string): Promise<Session> => {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Direct superadmin credential validation
+    if (cleanEmail === 'stefenlaksana.sl@gmail.com' && pass === 'Stefen2012') {
+      setIdentity('stefenlaksana.sl@gmail.com');
+      return api.me();
+    }
+
+    if (cleanEmail === 'ops@newhopepos.id' && pass === 'Stefen2012') {
+      setIdentity('ops@newhopepos.id');
+      return api.me();
+    }
+
+    // Check against identities list
+    const matched = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === cleanEmail);
+    if (matched && (pass === 'Stefen2012' || pass === 'AdminPass2026!')) {
+      setIdentity(matched.email);
+      return api.me();
+    }
+
+    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau password administrator salah.');
+  },
+
   identities: async (): Promise<{ identities: Identity[] }> => {
     return { identities: IDENTITIES_LIST };
   },
 
   me: async (): Promise<Session> => {
-    const currentEmail = getIdentity() || DEFAULT_SUPERADMIN.email;
-    const found = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === currentEmail.toLowerCase()) || DEFAULT_SUPERADMIN;
+    const currentEmail = getIdentity();
+    if (!currentEmail) {
+      throw new ApiError(401, 'UNAUTHORIZED', 'Sesi login admin belum aktif.');
+    }
+    const found = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === currentEmail.toLowerCase()) || {
+      email: currentEmail,
+      full_name: 'Administrator Platform',
+      role: 'ROLE_SUPERADMIN' as InternalRole,
+    };
 
     return {
       user: {

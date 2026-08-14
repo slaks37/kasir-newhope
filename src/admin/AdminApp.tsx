@@ -30,29 +30,27 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'audit', label: 'Jejak Akses', icon: ClipboardList, cap: 'VIEW_ACCESS_AUDIT' },
 ];
 
-function LoginScreen({ onPick }: { onPick: (email: string) => void }) {
-  const [identities, setIdentities] = useState<Identity[]>([]);
-  const [email, setEmail] = useState('stefenlaksana.sl@gmail.com');
-  const [password, setPassword] = useState('Stefen2012');
+function LoginScreen({ onLoginSuccess }: { onLoginSuccess: (session: Session) => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    api.identities().then((r) => setIdentities(r.identities));
-  }, []);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
-    setLoading(true);
 
+    if (!email.trim() || !password.trim()) {
+      setErr('Mohon masukkan Email dan Password administrator.');
+      return;
+    }
+
+    setLoading(true);
     try {
-      if (!email.trim()) {
-        setErr('Email admin wajib diisi.');
-        return;
-      }
-      // Direct pass for superadmin / preset identities
-      onPick(email.trim());
+      const sess = await api.login(email.trim(), password.trim());
+      onLoginSuccess(sess);
+    } catch (e: any) {
+      setErr(e.message || 'Login gagal. Periksa kembali kredensial admin Anda.');
     } finally {
       setLoading(false);
     }
@@ -60,113 +58,81 @@ function LoginScreen({ onPick }: { onPick: (email: string) => void }) {
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-slate-950 p-4 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/90 p-8 shadow-2xl backdrop-blur-xl">
+      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/95 p-8 shadow-2xl backdrop-blur-xl">
         {/* Return to POS Link */}
-        <div className="mb-5">
+        <div className="mb-6">
           <a
             href="/"
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-amber-400 transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
           >
-            ← Kembali ke Kasir Utama
+            ← Kembali ke Halaman Utama
           </a>
         </div>
 
-        <div className="mb-6 flex items-center gap-3">
+        <div className="mb-8 flex items-center gap-3.5">
           <div className="rounded-2xl bg-amber-500 p-3 text-slate-950 shadow-lg shadow-amber-500/20">
             <ShieldCheck className="h-6 w-6 text-slate-950" />
           </div>
           <div>
-            <h1 className="text-lg font-black text-white">
-              Back-Office & Admin
+            <h1 className="text-xl font-black text-white">
+              Back-Office Console
             </h1>
-            <p className="text-xs text-slate-400">New Hope POS — Konsol Penyedia & Superadmin</p>
+            <p className="text-xs text-slate-400">Portal Keamanan & Administrator Platform</p>
           </div>
         </div>
 
-        {/* 1-Click Superadmin Quick Access */}
-        <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-400">
-              Superadmin Account (Active)
-            </span>
-            <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[9px] rounded-full">
-              Full Access
-            </span>
-          </div>
-          <p className="text-xs font-bold text-white">stefenlaksana.sl@gmail.com</p>
-          <p className="text-[11px] text-slate-400 mb-3">Stefen Laksana (Platform Superadmin)</p>
-          <button
-            onClick={() => onPick('stefenlaksana.sl@gmail.com')}
-            className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Masuk Langsung sebagai Superadmin ➔</span>
-          </button>
-        </div>
-
-        {/* Email & Password Admin Form */}
+        {/* Secure Email & Password Admin Form */}
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1.5">
+            <label className="text-xs font-bold text-slate-300 block mb-1.5">
               Email Administrator
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@newhopepos.id"
+              placeholder="nama@perusahaan.com"
+              autoComplete="username"
+              required
               className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
 
           <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1.5">
+            <label className="text-xs font-bold text-slate-300 block mb-1.5">
               Password Administrator
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="••••••••••••"
+              autoComplete="current-password"
+              required
               className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
 
           {err && (
-            <p className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
-              {err}
-            </p>
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
+              <span className="font-bold">⚠️</span>
+              <span>{err}</span>
+            </div>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold text-xs rounded-xl transition-all"
+            className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
           >
-            Masuk dengan Akun Di Atas
+            {loading ? 'Memverifikasi Kredensial…' : 'Masuk ke Konsol Admin ➔'}
           </button>
         </form>
 
-        {/* Other Internal Roles */}
-        <div className="mt-6 pt-4 border-t border-slate-800">
-          <p className="text-[11px] font-bold text-slate-400 mb-2">Pilih Role Internal Lainnya:</p>
-          <div className="space-y-1.5">
-            {identities.filter(i => i.email !== 'stefenlaksana.sl@gmail.com').map((i) => (
-              <button
-                key={i.email}
-                onClick={() => onPick(i.email)}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800/80 hover:border-slate-700 text-left transition-all text-xs"
-              >
-                <div>
-                  <span className="font-bold text-white block">{i.full_name}</span>
-                  <span className="text-[10px] text-slate-500">{i.email}</span>
-                </div>
-                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md">
-                  {ROLE_LABEL[i.role]}
-                </span>
-              </button>
-            ))}
-          </div>
+        <div className="mt-8 pt-4 border-t border-slate-800 text-center">
+          <p className="text-[11px] text-slate-500 font-medium">
+            🔒 Akses dibatasi khusus developer & tim internal platform.
+          </p>
         </div>
       </div>
     </div>
@@ -224,10 +190,11 @@ export default function AdminApp() {
           </div>
         )}
         <LoginScreen
-          onPick={(email) => {
-            setIdentity(email);
-            setBooting(true);
-            load();
+          onLoginSuccess={(s) => {
+            setSession(s);
+            setError(null);
+            const allowed = NAV.filter((n) => s.capabilities.includes(n.cap));
+            if (allowed.length && !allowed.some((n) => n.id === page)) setPage(allowed[0].id);
           }}
         />
       </>
