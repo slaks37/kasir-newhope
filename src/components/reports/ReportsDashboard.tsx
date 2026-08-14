@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
+import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
 import {
   BarChart3,
   TrendingUp,
@@ -11,6 +12,15 @@ import {
   Download,
   Clock,
   X,
+  FileSpreadsheet,
+  Printer,
+  Receipt,
+  Percent,
+  Coins,
+  CreditCard,
+  Building,
+  CheckCircle2,
+  Calendar,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -27,115 +37,135 @@ import {
 } from 'recharts';
 
 export const ReportsDashboard: React.FC = () => {
-  const { orders, products, shift, shiftHistory, endShift } = usePOS();
+  const { orders, products, shift, shiftHistory, endShift, settings, currentUser } = usePOS();
 
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month'>('today');
   const [showEndShiftModal, setShowEndShiftModal] = useState(false);
-  const [actualCashInput, setActualCashInput] = useState<string>(String(shift.expectedCash));
+  const [actualCashInput, setActualCashInput] = useState<string>(String(shift.expectedCash || 0));
   const [shiftSummary, setShiftSummary] = useState<any>(null);
 
   // Filter orders based on date range (voided / held orders never count as revenue)
-  const filteredOrders = orders.filter((o) => {
-    if (o.status !== 'COMPLETED') return false;
-    const orderDate = new Date(o.date);
-    const now = new Date();
-    if (dateFilter === 'today') {
-      return orderDate.toDateString() === now.toDateString();
-    }
-    if (dateFilter === 'week') {
-      const sevenDaysAgo = new Date(now.setDate(now.getDate() - 7));
-      return orderDate >= sevenDaysAgo;
-    }
-    return true;
-  });
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      if (o.status !== 'COMPLETED') return false;
+      const orderDate = new Date(o.date);
+      const now = new Date();
+      if (dateFilter === 'today') {
+        return orderDate.toDateString() === now.toDateString();
+      }
+      if (dateFilter === 'week') {
+        const sevenDaysAgo = new Date(now.setDate(now.getDate() - 7));
+        return orderDate >= sevenDaysAgo;
+      }
+      return true;
+    });
+  }, [orders, dateFilter]);
+
+  const dateFilterLabel = useMemo(() => {
+    if (dateFilter === 'today') return 'Hari Ini';
+    if (dateFilter === 'week') return '7 Hari Terakhir';
+    return 'Bulan Ini';
+  }, [dateFilter]);
 
   // Aggregated High-level Metrics
-  const totalRevenue = filteredOrders.reduce((sum, o) => sum + o.total, 0);
+  const totalRevenue = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.total || 0), 0), [filteredOrders]);
+  const totalSubtotal = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.subtotal || o.total), 0), [filteredOrders]);
+  const totalDiscount = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.discountTotal || 0), 0), [filteredOrders]);
+  const totalTax = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.taxTotal || 0), 0), [filteredOrders]);
+  const totalServiceCharge = useMemo(() => filteredOrders.reduce((sum, o) => sum + (o.serviceChargeTotal || 0), 0), [filteredOrders]);
   const totalOrders = filteredOrders.length;
   const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
 
   // Calculate Net Profit
-  let totalCost = 0;
-  filteredOrders.forEach((o) => {
-    o.items.forEach((item) => {
-      const prod = products.find((p) => p.id === item.productId);
-      const cost = prod ? prod.costPrice * item.quantity : item.unitPrice * 0.5 * item.quantity;
-      totalCost += cost;
+  const netProfit = useMemo(() => {
+    let totalCost = 0;
+    filteredOrders.forEach((o) => {
+      o.items.forEach((item) => {
+        const prod = products.find((p) => p.id === item.productId);
+        const cost = prod ? prod.costPrice * item.quantity : item.unitPrice * 0.5 * item.quantity;
+        totalCost += cost;
+      });
     });
-  });
-  const netProfit = Math.max(0, totalRevenue - totalCost);
+    return Math.max(0, totalRevenue - totalCost - totalTax);
+  }, [filteredOrders, products, totalRevenue, totalTax]);
 
   // Payment Method Distribution Chart Data
-  const paymentBreakdown: Record<string, number> = {};
-  filteredOrders.forEach((o) => {
-    paymentBreakdown[o.paymentMethod] = (paymentBreakdown[o.paymentMethod] || 0) + o.total;
-  });
+  const paymentBreakdown = useMemo(() => {
+    const map: Record<string, number> = {};
+    filteredOrders.forEach((o) => {
+      map[o.paymentMethod] = (map[o.paymentMethod] || 0) + o.total;
+    });
+    return map;
+  }, [filteredOrders]);
 
-  const pieChartData = Object.keys(paymentBreakdown).map((method) => ({
-    name: method,
-    value: paymentBreakdown[method],
-  }));
+  const pieChartData = useMemo(() => {
+    return Object.keys(paymentBreakdown).map((method) => ({
+      name: method,
+      value: paymentBreakdown[method],
+    }));
+  }, [paymentBreakdown]);
 
-  const PIE_COLORS = ['#10b981', '#f59e0b', '#6366f1', '#ec4899', '#8b5cf6'];
+  const PIE_COLORS = ['#10b981', '#f59e0b', '#6366f1', '#ec4899', '#8b5cf6', '#06b6d4'];
 
   // Top 5 Selling Products Data
-  const productSalesCount: Record<string, { name: string; qty: number; revenue: number }> = {};
-  filteredOrders.forEach((o) => {
-    o.items.forEach((item) => {
-      if (!productSalesCount[item.name]) {
-        productSalesCount[item.name] = { name: item.name, qty: 0, revenue: 0 };
-      }
-      productSalesCount[item.name].qty += item.quantity;
-      productSalesCount[item.name].revenue += item.totalPrice;
+  const topProductsBarData = useMemo(() => {
+    const productSalesCount: Record<string, { name: string; qty: number; revenue: number }> = {};
+    filteredOrders.forEach((o) => {
+      o.items.forEach((item) => {
+        if (!productSalesCount[item.name]) {
+          productSalesCount[item.name] = { name: item.name, qty: 0, revenue: 0 };
+        }
+        productSalesCount[item.name].qty += item.quantity;
+        productSalesCount[item.name].revenue += item.totalPrice;
+      });
     });
-  });
 
-  const topProductsBarData = Object.values(productSalesCount)
-    .sort((a, b) => b.qty - a.qty)
-    .slice(0, 5);
+    return Object.values(productSalesCount)
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 5);
+  }, [filteredOrders]);
 
-  // Hourly Sales Trend Data (real transactions only, 08:00 - 22:00 operating window)
+  // Hourly Sales Trend Data
   const TREND_START_HOUR = 8;
   const TREND_END_HOUR = 22;
-  const hourlyTrendMap: Record<string, number> = {};
-  for (let h = TREND_START_HOUR; h <= TREND_END_HOUR; h++) {
-    hourlyTrendMap[`${String(h).padStart(2, '0')}:00`] = 0;
-  }
+  const areaChartData = useMemo(() => {
+    const hourlyTrendMap: Record<string, number> = {};
+    for (let h = TREND_START_HOUR; h <= TREND_END_HOUR; h++) {
+      hourlyTrendMap[`${String(h).padStart(2, '0')}:00`] = 0;
+    }
 
-  filteredOrders.forEach((o) => {
-    const hour = `${String(new Date(o.date).getHours()).padStart(2, '0')}:00`;
-    hourlyTrendMap[hour] = (hourlyTrendMap[hour] || 0) + o.total;
-  });
+    filteredOrders.forEach((o) => {
+      const hour = `${String(new Date(o.date).getHours()).padStart(2, '0')}:00`;
+      if (hourlyTrendMap[hour] !== undefined) {
+        hourlyTrendMap[hour] += o.total;
+      }
+    });
 
-  const areaChartData = Object.keys(hourlyTrendMap)
-    .sort()
-    .map((time) => ({
-      time,
-      Omset: hourlyTrendMap[time],
-    }));
+    return Object.keys(hourlyTrendMap)
+      .sort()
+      .map((time) => ({
+        time,
+        Omset: hourlyTrendMap[time],
+      }));
+  }, [filteredOrders]);
 
-  const handleExportCSV = () => {
-    const headers = ['No Faktur', 'Tanggal', 'Tipe Order', 'Pelanggan', 'Metode Bayar', 'Total'];
-    const rows = filteredOrders.map((o) => [
-      o.id,
-      formatDateTime(o.date),
-      o.orderType,
-      o.customer?.name || '-',
-      o.paymentMethod,
-      o.total,
-    ]);
+  // Export handlers
+  const handleExportExcel = () => {
+    exportOrdersToExcel({
+      orders: filteredOrders,
+      settings,
+      periodLabel: dateFilterLabel,
+      userName: currentUser?.name || 'Kasir / Admin',
+    });
+  };
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Laporan_Penjualan_NewHope_${dateFilter}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleExportPDF = () => {
+    exportOrdersToPDF({
+      orders: filteredOrders,
+      settings,
+      periodLabel: dateFilterLabel,
+      userName: currentUser?.name || 'Kasir / Admin',
+    });
   };
 
   const handleConfirmEndShift = (e: React.FormEvent) => {
@@ -147,26 +177,26 @@ export const ReportsDashboard: React.FC = () => {
 
   return (
     <div className="flex-1 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
-      {/* Header */}
+      {/* Header with Title, Period Selector & Export Actions */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="font-extrabold text-2xl text-slate-900 flex items-center space-x-2">
+          <h2 className="font-black text-2xl text-slate-900 flex items-center space-x-2.5">
             <BarChart3 className="w-7 h-7 text-amber-600" />
-            <span>Laporan Penjualan & Analitik Bisnis</span>
+            <span>Laporan Penjualan, Pajak & Analitik</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Ringkasan omset rill, estimasi laba bersih, preferensi metode bayar, dan rekap shift kasir.
+          <p className="text-xs text-slate-500 mt-1 font-medium">
+            Laporan lengkap omzet riil, rincian pungutan pajak PB1/PPN, service charge, profit margin, dan rekap shift kasir.
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Date Range Selector */}
           <div className="bg-white border border-slate-200 p-1 rounded-2xl flex items-center space-x-1 shadow-xs">
             {(['today', 'week', 'month'] as const).map((range) => (
               <button
                 key={range}
                 onClick={() => setDateFilter(range)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
                   dateFilter === range
                     ? 'bg-amber-500 text-slate-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -177,90 +207,128 @@ export const ReportsDashboard: React.FC = () => {
             ))}
           </div>
 
+          {/* Export to Excel (.xls) Button */}
           <button
-            onClick={handleExportCSV}
-            className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-3 py-2 rounded-2xl flex items-center space-x-1.5 text-xs transition-colors shadow-xs"
+            onClick={handleExportExcel}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+            title="Download Laporan Format Excel (.xls) dengan kolom Pajak & Service Charge"
           >
-            <Download className="w-4 h-4 text-amber-600" />
-            <span className="hidden sm:inline">Export CSV</span>
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Export Excel</span>
           </button>
 
+          {/* Export to PDF / Print Button */}
+          <button
+            onClick={handleExportPDF}
+            className="bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+            title="Cetak atau Simpan Laporan PDF Resmi A4"
+          >
+            <Printer className="w-4 h-4 text-amber-400" />
+            <span>Cetak / PDF</span>
+          </button>
+
+          {/* Tutup Kasir / Shift Button */}
           <button
             onClick={() => setShowEndShiftModal(true)}
-            className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-2xl text-xs shadow-md transition-all"
+            className="bg-rose-600 hover:bg-rose-700 text-white font-black px-4 py-2.5 rounded-2xl text-xs shadow-md transition-all active:scale-95 cursor-pointer"
           >
             Tutup Kasir / Shift
           </button>
         </div>
       </div>
 
-      {/* High-Level Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* High-Level Financial & Tax Metric Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Total Omset */}
         <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-2 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Omset</span>
+            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Total Omzet Bersih</span>
             <div className="p-2 bg-amber-50 text-amber-600 rounded-xl border border-amber-200">
               <DollarSign className="w-5 h-5" />
             </div>
           </div>
-          <span className="text-2xl font-extrabold text-slate-900 font-mono block">
+          <span className="text-2xl font-black text-slate-900 font-mono block">
             {formatRupiah(totalRevenue)}
           </span>
-          <span className="text-[11px] text-emerald-600 font-semibold block">
-            ↑ Penjualan Realtime
+          <span className="text-[11px] text-emerald-600 font-bold block">
+            ↑ {totalOrders} Pesanan Selesai
           </span>
         </div>
 
+        {/* Total Pajak (PB1/PPN) */}
+        <div className="bg-white border border-amber-200/80 p-5 rounded-3xl space-y-2 shadow-xs bg-amber-50/20">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-amber-800 uppercase tracking-wider">Pajak (PB1/PPN)</span>
+            <div className="p-2 bg-amber-100 text-amber-800 rounded-xl border border-amber-300">
+              <Percent className="w-5 h-5" />
+            </div>
+          </div>
+          <span className="text-2xl font-black text-amber-700 font-mono block">
+            {formatRupiah(totalTax)}
+          </span>
+          <span className="text-[11px] text-amber-800 font-semibold block">
+            Tarif Toko: {settings.taxRate || 0}%
+          </span>
+        </div>
+
+        {/* Total Service Charge */}
+        <div className="bg-white border border-blue-200/80 p-5 rounded-3xl space-y-2 shadow-xs bg-blue-50/20">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-blue-800 uppercase tracking-wider">Service Charge</span>
+            <div className="p-2 bg-blue-100 text-blue-800 rounded-xl border border-blue-300">
+              <Coins className="w-5 h-5" />
+            </div>
+          </div>
+          <span className="text-2xl font-black text-blue-700 font-mono block">
+            {formatRupiah(totalServiceCharge)}
+          </span>
+          <span className="text-[11px] text-blue-800 font-semibold block">
+            Tarif Layanan: {settings.serviceRate || 0}%
+          </span>
+        </div>
+
+        {/* Estimasi Profit Bersih */}
         <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-2 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Estimasi Profit Bersih</span>
+            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Estimasi Profit</span>
             <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
               <TrendingUp className="w-5 h-5" />
             </div>
           </div>
-          <span className="text-2xl font-extrabold text-emerald-600 font-mono block">
+          <span className="text-2xl font-black text-emerald-600 font-mono block">
             {formatRupiah(netProfit)}
           </span>
-          <span className="text-[11px] text-slate-500 block">
+          <span className="text-[11px] text-slate-500 font-semibold block">
             Margin Bersih ~{totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0}%
           </span>
         </div>
 
+        {/* Rata-Rata Order (AOV) */}
         <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-2 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Transaksi</span>
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-200">
-              <ShoppingBag className="w-5 h-5" />
-            </div>
-          </div>
-          <span className="text-2xl font-extrabold text-slate-900 font-mono block">
-            {totalOrders} Struk
-          </span>
-          <span className="text-[11px] text-slate-500 block">Pesanan Terkonfirmasi</span>
-        </div>
-
-        <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-2 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Rata-rata Order</span>
+            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Rata-Rata Struk</span>
             <div className="p-2 bg-purple-50 text-purple-600 rounded-xl border border-purple-200">
               <Users className="w-5 h-5" />
             </div>
           </div>
-          <span className="text-2xl font-extrabold text-slate-900 font-mono block">
+          <span className="text-2xl font-black text-slate-900 font-mono block">
             {formatRupiah(avgOrderValue)}
           </span>
-          <span className="text-[11px] text-slate-500 block">Nilai Per Struk (AOV)</span>
+          <span className="text-[11px] text-slate-500 font-semibold block">Nilai Belanja per Struk</span>
         </div>
       </div>
 
       {/* Visual Recharts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Hourly Sales Trend Area Chart */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs">
-          <h3 className="font-bold text-base text-slate-900 flex items-center space-x-2">
-            <TrendingUp className="w-5 h-5 text-amber-600" />
-            <span>Grafik Tren Penjualan Jam Ke Jam</span>
-          </h3>
+        <div className="lg:col-span-8 bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
+              <TrendingUp className="w-5 h-5 text-amber-600" />
+              <span>Grafik Tren Penjualan Jam Ke Jam</span>
+            </h3>
+            <span className="text-xs font-bold text-slate-400">08:00 - 22:00</span>
+          </div>
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -301,11 +369,13 @@ export const ReportsDashboard: React.FC = () => {
         </div>
 
         {/* Payment Methods Pie Chart */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs flex flex-col justify-between">
-          <h3 className="font-bold text-base text-slate-900 flex items-center space-x-2">
-            <PieChartIcon className="w-5 h-5 text-indigo-600" />
-            <span>Distribusi Pembayaran</span>
-          </h3>
+        <div className="lg:col-span-4 bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
+              <PieChartIcon className="w-5 h-5 text-indigo-600" />
+              <span>Distribusi Pembayaran</span>
+            </h3>
+          </div>
 
           <div className="h-52 w-full flex items-center justify-center">
             {pieChartData.length > 0 ? (
@@ -340,13 +410,13 @@ export const ReportsDashboard: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-[11px]">
+          <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100">
             {pieChartData.map((entry, idx) => (
               <div key={entry.name} className="flex items-center space-x-1.5">
                 <div
-                  className="w-2.5 h-2.5 rounded-full"
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: PIE_COLORS[idx % PIE_COLORS.length] }}
-                ></div>
+                />
                 <span className="text-slate-700 font-semibold truncate">{entry.name}</span>
               </div>
             ))}
@@ -354,9 +424,115 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* DETAIL TABLE: LAPORAN SEMUA TRANSAKSI, PAJAK & SERVICE CHARGE */}
+      <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
+              <Receipt className="w-5 h-5 text-amber-600" />
+              <span>Rincian Transaksi, Pajak &amp; Service Charge ({filteredOrders.length} Struk)</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Daftar seluruh transaksi yang masuk ke pembukuan lengkap dengan komponen pajak dan biaya layanan.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportExcel}
+              className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Unduh Excel</span>
+            </button>
+            <button
+              onClick={handleExportPDF}
+              className="text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Cetak PDF</span>
+            </button>
+          </div>
+        </div>
+
+        {filteredOrders.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-xs">
+            Tidak ada transaksi pada periode {dateFilterLabel}.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs font-sans">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-400 font-extrabold uppercase text-[10px] tracking-wider">
+                  <th className="py-3 px-3">No Faktur</th>
+                  <th className="py-3 px-3">Waktu</th>
+                  <th className="py-3 px-3">Pelanggan</th>
+                  <th className="py-3 px-3">Kasir</th>
+                  <th className="py-3 px-3 text-right">Subtotal</th>
+                  <th className="py-3 px-3 text-right">Diskon</th>
+                  <th className="py-3 px-3 text-right text-amber-700 font-black">Pajak (PB1)</th>
+                  <th className="py-3 px-3 text-right text-blue-700 font-black">Service</th>
+                  <th className="py-3 px-3 text-right text-slate-900 font-black">Total Akhir</th>
+                  <th className="py-3 px-3 text-center">Metode</th>
+                  <th className="py-3 px-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                {filteredOrders.map((o) => {
+                  const sub = o.subtotal || o.total;
+                  const disc = o.discountTotal || 0;
+                  const tax = o.taxTotal || 0;
+                  const svc = o.serviceChargeTotal || 0;
+                  const tot = o.total;
+
+                  return (
+                    <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3 px-3 font-bold text-slate-900">{o.id}</td>
+                      <td className="py-3 px-3 text-slate-600 font-sans text-[11px]">{formatDateTime(o.date)}</td>
+                      <td className="py-3 px-3 font-sans text-slate-800">{o.customer?.name || '-'}</td>
+                      <td className="py-3 px-3 font-sans text-slate-600">{o.cashierName || 'Kasir'}</td>
+                      <td className="py-3 px-3 text-right text-slate-700">{formatRupiah(sub)}</td>
+                      <td className="py-3 px-3 text-right text-rose-600">{disc > 0 ? `-${formatRupiah(disc)}` : '-'}</td>
+                      <td className="py-3 px-3 text-right text-amber-800 font-bold bg-amber-50/40">{formatRupiah(tax)}</td>
+                      <td className="py-3 px-3 text-right text-blue-800 font-bold bg-blue-50/40">{formatRupiah(svc)}</td>
+                      <td className="py-3 px-3 text-right text-slate-950 font-black">{formatRupiah(tot)}</td>
+                      <td className="py-3 px-3 text-center font-sans">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          o.paymentMethod === 'QRIS' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {o.paymentMethod}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-sans">
+                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] px-2 py-0.5 rounded-md">
+                          {o.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {/* Table Grand Total Summary Row */}
+                <tr className="bg-slate-900 text-white font-bold text-xs">
+                  <td colSpan={4} className="py-3.5 px-3 font-sans font-black uppercase tracking-wider text-amber-400">
+                    TOTAL KESELURUHAN ({filteredOrders.length} TRANSAKSI)
+                  </td>
+                  <td className="py-3.5 px-3 text-right font-mono">{formatRupiah(totalSubtotal)}</td>
+                  <td className="py-3.5 px-3 text-right font-mono text-rose-300">-{formatRupiah(totalDiscount)}</td>
+                  <td className="py-3.5 px-3 text-right font-mono text-amber-300 font-black">{formatRupiah(totalTax)}</td>
+                  <td className="py-3.5 px-3 text-right font-mono text-blue-300 font-black">{formatRupiah(totalServiceCharge)}</td>
+                  <td className="py-3.5 px-3 text-right font-mono text-emerald-400 font-black text-sm">{formatRupiah(totalRevenue)}</td>
+                  <td colSpan={2} className="py-3.5 px-3 text-center font-sans text-[10px] text-slate-300">LUNAS</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Top 5 Products Bar Chart */}
-      <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs">
-        <h3 className="font-bold text-base text-slate-900 flex items-center space-x-2">
+      <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
+        <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
           <ShoppingBag className="w-5 h-5 text-emerald-600" />
           <span>5 Produk Terlaris (Top Sellers)</span>
         </h3>
@@ -381,12 +557,12 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Laporan HPP & Profitabilitas per Porsi (Food & Beverage) */}
-      <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs">
+      {/* Laporan HPP & Profitabilitas per Menu */}
+      <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <h3 className="font-bold text-base text-slate-900 flex items-center space-x-2">
+          <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
             <DollarSign className="w-5 h-5 text-emerald-600" />
-            <span>Laporan HPP (Harga Pokok Penjualan) & Margin Profit per Porsi</span>
+            <span>Laporan HPP (Harga Pokok Penjualan) & Margin Profit per Item</span>
           </h3>
           <span className="text-xs text-slate-500 font-sans">
             Analisis profitabilitas modal bahan baku vs harga jual
@@ -442,14 +618,14 @@ export const ReportsDashboard: React.FC = () => {
       </div>
 
       {/* Shift Session Activity Log Table */}
-      <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-4 shadow-xs">
+      <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <h3 className="font-bold text-base text-slate-900 flex items-center space-x-2">
+          <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
             <Clock className="w-5 h-5 text-amber-600" />
             <span>Log Sesi & Rekap Shift Kasir</span>
           </h3>
           <span className="text-xs text-slate-500 font-mono">
-            Status Kasir Saat Ini: <strong className={shift.status === 'OPEN' ? 'text-emerald-600' : 'text-rose-600'}>{shift.status === 'OPEN' ? `● AKTIF (${shift.cashierName})` : '○ DITUTUP'}</strong>
+            Status Kasir: <strong className={shift.status === 'OPEN' ? 'text-emerald-600' : 'text-rose-600'}>{shift.status === 'OPEN' ? `● AKTIF (${shift.cashierName})` : '○ DITUTUP'}</strong>
           </span>
         </div>
 
@@ -521,7 +697,7 @@ export const ReportsDashboard: React.FC = () => {
               </h3>
               <button
                 onClick={() => setShowEndShiftModal(false)}
-                className="text-slate-400 hover:text-slate-700"
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -573,7 +749,7 @@ export const ReportsDashboard: React.FC = () => {
                     setShowEndShiftModal(false);
                     setShiftSummary(null);
                   }}
-                  className="w-full py-2.5 bg-amber-500 text-slate-950 font-bold rounded-xl text-xs font-sans hover:bg-amber-600"
+                  className="w-full py-2.5 bg-amber-500 text-slate-950 font-bold rounded-xl text-xs font-sans hover:bg-amber-600 cursor-pointer"
                 >
                   Selesai
                 </button>
@@ -612,13 +788,13 @@ export const ReportsDashboard: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowEndShiftModal(false)}
-                    className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl"
+                    className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs"
+                    className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
                   >
                     Konfirmasi Tutup Kasir
                   </button>
@@ -631,3 +807,5 @@ export const ReportsDashboard: React.FC = () => {
     </div>
   );
 };
+
+export default ReportsDashboard;
