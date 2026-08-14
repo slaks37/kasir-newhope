@@ -35,15 +35,17 @@ import { BusinessSector } from '../../data/businessPresets';
 interface LoginPageProps {
   onBackToLanding?: () => void;
   onStartDemo?: () => void;
+  initialMode?: 'login' | 'register';
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   onStartDemo,
+  initialMode = 'login',
 }) => {
   const { signInWithEmail, signUpWithEmail, configured } = useAuth();
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [fullName, setFullName] = useState('');
   const [storeName, setStoreName] = useState('');
   const [sector, setSector] = useState<BusinessSector>('FNB');

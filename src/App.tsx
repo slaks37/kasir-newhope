@@ -369,7 +369,7 @@ export function App() {
   const [guestMode, setGuestMode] = useState<boolean>(() => {
     return localStorage.getItem('newhope_pos_guest_mode') === 'true';
   });
-  const [authView, setAuthView] = useState<'home' | 'login'>('home');
+  const [authView, setAuthView] = useState<'home' | 'login' | 'register'>('home');
 
   const handleStartDemo = () => {
     localStorage.setItem('newhope_pos_guest_mode', 'true');
@@ -396,11 +396,12 @@ export function App() {
 
   // Jika belum login dan belum masuk mode demo kasir:
   if (!user && !guestMode) {
-    if (authView === 'login') {
+    if (authView === 'login' || authView === 'register') {
       return (
         <LoginPage
           onBackToLanding={() => setAuthView('home')}
           onStartDemo={handleStartDemo}
+          initialMode={authView}
         />
       );
     }
@@ -411,6 +412,7 @@ export function App() {
             isStandaloneLanding={true}
             onStartDemo={handleStartDemo}
             onOpenLogin={() => setAuthView('login')}
+            onOpenRegister={() => setAuthView('register')}
           />
         </div>
       </POSProvider>
