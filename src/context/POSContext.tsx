@@ -470,7 +470,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [shift, setShift] = useState<Shift>(() => {
-    return loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT);
+    const loaded = loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT);
+    if (!loaded.cashierName || loaded.cashierName === 'Ahmad Kasir') {
+      return { ...loaded, cashierName: currentUser.name || 'Budi Santoso' };
+    }
+    return loaded;
   });
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
@@ -852,7 +856,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders(loadScopedData('orders', newUId, userSec, []));
     setHeldOrders(loadScopedData('held_orders', newUId, userSec, []));
     setInventoryLogs(loadScopedData('inventory_logs', newUId, userSec, []));
-    setShift(loadScopedData('shift', newUId, userSec, INITIAL_SHIFT));
+    const loadedShift = loadScopedData('shift', newUId, userSec, INITIAL_SHIFT);
+    setShift({
+      ...loadedShift,
+      cashierName: user.name,
+    });
     setShiftHistory(loadScopedData('shift_history', newUId, userSec, []));
 
     setCustomers(loadScopedData('customers', newUId, userSec, seedCustomersFor(userSec)));

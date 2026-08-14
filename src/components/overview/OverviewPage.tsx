@@ -46,6 +46,7 @@ import {
   PieChart as PieChartIcon,
   HelpCircle,
   CheckCircle,
+  Star,
 } from 'lucide-react';
 
 interface OverviewPageProps {
@@ -114,7 +115,19 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     let totalCOGS = 0; // Modal Bahan Baku / HPP
     let itemsSold = 0;
     let cashSales = 0;
+    let cashCount = 0;
     let cashlessSales = 0;
+    let cashlessCount = 0;
+
+    const methodMap: Record<string, { name: string; count: number; total: number }> = {
+      QRIS: { name: 'QRIS', count: 0, total: 0 },
+      CASH: { name: 'Tunai', count: 0, total: 0 },
+      DEBIT: { name: 'Kartu Debit', count: 0, total: 0 },
+      TRANSFER: { name: 'Transfer Bank', count: 0, total: 0 },
+      SHOPEEPAY: { name: 'ShopeePay', count: 0, total: 0 },
+      GOPAY: { name: 'GoPay', count: 0, total: 0 },
+      OVO: { name: 'OVO', count: 0, total: 0 },
+    };
 
     filteredOrders.forEach((o) => {
       netRevenue += o.total || 0;
@@ -123,10 +136,19 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
       taxTotal += o.taxTotal || 0;
       serviceChargeTotal += o.serviceChargeTotal || 0;
 
-      if (o.paymentMethod === 'CASH') {
+      const m = o.paymentMethod || 'CASH';
+      if (!methodMap[m]) {
+        methodMap[m] = { name: m, count: 0, total: 0 };
+      }
+      methodMap[m].count += 1;
+      methodMap[m].total += o.total;
+
+      if (m === 'CASH') {
         cashSales += o.total;
+        cashCount += 1;
       } else {
         cashlessSales += o.total;
+        cashlessCount += 1;
       }
 
       o.items.forEach((item) => {
@@ -141,6 +163,22 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     const netProfitMargin = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
     const averageOrderValue = filteredOrders.length > 0 ? Math.round(netRevenue / filteredOrders.length) : 0;
 
+    const cashPercent = netRevenue > 0 ? Math.round((cashSales / netRevenue) * 100) : 0;
+    const cashlessPercent = netRevenue > 0 ? Math.round((cashlessSales / netRevenue) * 100) : 0;
+
+    const sortedMethods = Object.entries(methodMap)
+      .filter(([_, data]) => data.count > 0)
+      .map(([key, data]) => ({
+        key,
+        name: data.name,
+        count: data.count,
+        total: data.total,
+        percentage: netRevenue > 0 ? Math.round((data.total / netRevenue) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    const mostUsedMethod = sortedMethods.length > 0 ? sortedMethods[0] : null;
+
     return {
       grossSales,
       discountTotal,
@@ -153,7 +191,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
       averageOrderValue,
       itemsSold,
       cashSales,
+      cashCount,
+      cashPercent,
       cashlessSales,
+      cashlessCount,
+      cashlessPercent,
+      sortedMethods,
+      mostUsedMethod,
       orderCount: filteredOrders.length,
     };
   }, [filteredOrders, products]);
@@ -246,6 +290,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     BARBERSHOP: Scissors,
   };
 
+  const activeCashierName = currentUser?.name || (shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : 'Budi Santoso');
+
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
       {/* Toast Alert */}
@@ -277,12 +323,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 text-slate-300 text-xs font-semibold border border-slate-700">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Kasir On-Duty: {currentUser?.name || 'Kasir'} ({currentUser?.role || 'ADMIN'})</span>
+                <span>Pengguna Aktif: {currentUser?.name || 'Budi Santoso'} ({currentUser?.role || 'ADMIN'})</span>
               </span>
               {shift.status === 'OPEN' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 animate-pulse">
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Shift Terbuka (Kas Awal: {formatRupiah(shift.initialCash || 0)})</span>
+                  <span>Shift Terbuka (Petugas: {activeCashierName}, Kas Awal: {formatRupiah(shift.initialCash || 0)})</span>
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/40">
@@ -301,7 +347,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
                 </span>
               </h1>
               <p className="text-xs lg:text-sm text-slate-300 max-w-2xl mt-1 font-medium leading-relaxed">
-                Pusat kontrol & analitik bisnis: pantau omzet riil, modal terpakai (HPP), estimasi laba bersih (*net profit*), pajak terkumpul, dan efisiensi operasional toko.
+                Pusat kontrol & analitik bisnis: pantau omzet riil, modal terpakai (HPP), estimasi laba bersih (*net profit*), pajak terkumpul, dan preferensi cara bayar pelanggan.
               </p>
             </div>
           </div>
@@ -420,31 +466,62 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
         </div>
 
-        {/* Arus Kas Fisik vs Digital (Cash vs Cashless) */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
+        {/* Arus Kas Fisik vs Digital (Cash vs Cashless) DENGAN BAR & BREAKDOWN POPULER */}
+        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-2.5 relative overflow-hidden">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Arus Kas Masuk</span>
             <div className="p-2.5 rounded-2xl bg-purple-50 text-purple-700 border border-purple-100">
               <Wallet className="w-5 h-5" />
             </div>
           </div>
-          <div>
-            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-              <span className="flex items-center gap-1"><Banknote className="w-3.5 h-3.5 text-emerald-600" /> Tunai:</span>
-              <span className="font-mono text-slate-900">{formatRupiah(financialMetrics.cashSales)}</span>
+
+          {/* Dual Bar: Tunai vs Non-Tunai */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-700 flex items-center gap-1">
+                <Banknote className="w-3.5 h-3.5 text-emerald-600" /> Tunai ({financialMetrics.cashPercent}%):
+              </span>
+              <span className="font-mono font-extrabold text-slate-900">{formatRupiah(financialMetrics.cashSales)}</span>
             </div>
-            <div className="flex items-center justify-between text-xs font-bold text-slate-700 mt-1">
-              <span className="flex items-center gap-1"><QrCode className="w-3.5 h-3.5 text-purple-600" /> Non-Tunai:</span>
-              <span className="font-mono text-slate-900">{formatRupiah(financialMetrics.cashlessSales)}</span>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-700 flex items-center gap-1">
+                <QrCode className="w-3.5 h-3.5 text-purple-600" /> Non-Tunai ({financialMetrics.cashlessPercent}%):
+              </span>
+              <span className="font-mono font-extrabold text-slate-900">{formatRupiah(financialMetrics.cashlessSales)}</span>
             </div>
-            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2">
+
+            {/* Proportion Bar */}
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex mt-1">
               <div
-                style={{
-                  width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.cashSales / financialMetrics.netRevenue) * 100 : 50}%`,
-                }}
-                className="h-full bg-emerald-500 rounded-full"
+                style={{ width: `${financialMetrics.netRevenue > 0 ? financialMetrics.cashPercent : 50}%` }}
+                className="h-full bg-emerald-500 transition-all duration-500"
+                title={`Tunai: ${financialMetrics.cashPercent}%`}
+              />
+              <div
+                style={{ width: `${financialMetrics.netRevenue > 0 ? financialMetrics.cashlessPercent : 50}%` }}
+                className="h-full bg-purple-500 transition-all duration-500"
+                title={`Non-Tunai: ${financialMetrics.cashlessPercent}%`}
               />
             </div>
+          </div>
+
+          {/* Highlight Metode Paling Sering Digunakan Pelanggan */}
+          <div className="pt-2 border-t border-slate-100">
+            {financialMetrics.mostUsedMethod ? (
+              <div className="bg-amber-50/80 border border-amber-200/80 p-2 rounded-xl text-[11px] text-amber-900 flex items-center justify-between">
+                <span className="font-bold flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
+                  <span>Favorit: <strong>{financialMetrics.mostUsedMethod.name}</strong></span>
+                </span>
+                <span className="font-mono font-black text-amber-700">
+                  {financialMetrics.mostUsedMethod.count}x ({financialMetrics.mostUsedMethod.percentage}%)
+                </span>
+              </div>
+            ) : (
+              <div className="text-[10px] text-slate-400 text-center py-1">
+                Belum ada transaksi
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -569,7 +646,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
             <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 text-xs text-purple-100 space-y-2.5 leading-relaxed font-medium">
               <p className="font-bold text-amber-300 flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4" />
-                <span>Insight Profitabilitas Realtime:</span>
+                <span>Insight Finansial Realtime:</span>
               </p>
               <p>
                 {financialMetrics.netProfitMargin >= 50

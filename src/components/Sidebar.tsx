@@ -34,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenClockIn,
   onGoToHome,
 }) => {
-  const { activeTab, setActiveTab, products, heldOrders, shift, hasPermission, settings, staffMembers, getActiveAttendance } = usePOS();
+  const { activeTab, setActiveTab, products, heldOrders, shift, hasPermission, settings, staffMembers, getActiveAttendance, currentUser } = usePOS();
 
   const activePreset = BUSINESS_PRESETS[settings?.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
   const layoutTabLabel = activePreset.layoutTerm?.tabLabel || 'Denah Layout';
@@ -189,7 +189,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {shift.status === 'OPEN' ? 'Mulai / Akhiri Shift' : 'Mulai Shift Baru'}
               </span>
               <span className="text-[10px] text-slate-500 font-normal truncate">
-                {shift.status === 'OPEN' ? `Kasir: ${shift.cashierName}` : 'Status: Ditutup'}
+                {shift.status === 'OPEN'
+                  ? `Kasir: ${shift.cashierName && shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : currentUser?.name || 'Budi Santoso'}`
+                  : 'Status: Ditutup'}
               </span>
             </div>
           </div>

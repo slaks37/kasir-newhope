@@ -194,7 +194,9 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="hidden xl:flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl text-xs text-slate-700">
           <Clock className="w-3.5 h-3.5 text-amber-600" />
           <div>
-            <span className="text-slate-500 block text-[10px]">Kasir: {shift.cashierName}</span>
+            <span className="text-slate-500 block text-[10px]">
+              Kasir: {shift.cashierName && shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : currentUser?.name || 'Budi Santoso'}
+            </span>
             <span className="font-semibold text-emerald-700">{formatRupiah(shift.totalSales)}</span>
           </div>
         </div>
