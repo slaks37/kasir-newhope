@@ -25,62 +25,75 @@ import * as store from './store';
 
 const SAAS_PLANS: SaaSPlan[] = [
   {
-    id: 'plan-basic-monthly',
-    name: 'Basic Starter',
+    id: 'plan-free',
+    name: 'Free Tier',
     tierLevel: 1,
     billingCycle: 'MONTHLY',
-    priceIdr: 149000,
+    priceIdr: 0,
     currency: 'IDR',
     maxOutlets: 1,
     isActive: true,
+    productLimit: 30,
+    aiQuotaMonthly: 3,
+    dashboardAccessLevel: 'BASIC',
     features: [
-      'Sistem Kasir POS (Fast Checkout)',
+      'Basic POS & Transaksi',
+      'Ringkasan Penjualan Harian',
       '1 Outlet / Cabang Toko',
-      'Katalog Produk & Kategori Standar',
-      'Laporan Penjualan Harian',
-      'Manajemen Pelanggan basic',
+      'Maksimal 30 Produk',
+      'AI Analyst (3x / bulan)',
+    ],
+  },
+  {
+    id: 'plan-plus-monthly',
+    name: 'Tier Plus',
+    tierLevel: 2,
+    billingCycle: 'MONTHLY',
+    priceIdr: 99000,
+    priceYearlyIdr: 79000,
+    currency: 'IDR',
+    maxOutlets: 2,
+    isActive: true,
+    productLimit: 100,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: 'FULL',
+    extraOutletPriceIdr: 59000,
+    features: [
+      'Full POS & Transaksi Kasir',
+      'Manajemen Inventori Dasar',
+      'Laporan & Dashboard Analytics',
+      'Maksimal 100 Produk per Outlet',
+      'Up to 2 Outlet Terdaftar',
+      'AI Analyst (30x / bulan)',
     ],
   },
   {
     id: 'plan-pro-monthly',
-    name: 'Pro Growth',
-    tierLevel: 2,
-    billingCycle: 'MONTHLY',
-    priceIdr: 349000,
-    currency: 'IDR',
-    maxOutlets: 5,
-    isActive: true,
-    features: [
-      'Semua Fitur Basic Starter',
-      'Multi-Outlet & Cabang (s.d 5 Cabang)',
-      'Stok Bahan Baku (WIP & Potong Resep)',
-      'Manajemen Presensi Staff & Geo-Tagging',
-      'Denah Meja Resto & Cetak Struk Dapur',
-      'Laporan Profit / HPP & Margin Bersih',
-    ],
-  },
-  {
-    id: 'plan-enterprise-monthly',
-    name: 'Enterprise Ultra',
+    name: 'Tier Pro',
     tierLevel: 3,
     billingCycle: 'MONTHLY',
-    priceIdr: 699000,
+    priceIdr: 299000,
+    priceYearlyIdr: 239000,
     currency: 'IDR',
-    maxOutlets: 99,
+    maxOutlets: 4,
     isActive: true,
+    productLimit: -1, // Unlimited
+    aiQuotaMonthly: 90,
+    dashboardAccessLevel: 'ADVANCED',
+    extraOutletPriceIdr: 49000,
     features: [
-      'Semua Fitur Pro Growth (Unlimited Outlets)',
-      'AI Business Assistant & Stock Forecast',
-      'Multi-Tenant Data Isolation & Sub-Users',
-      'Advanced Geo-Fencing & Presensi GPS Strict',
-      'Integrasi WhatsApp Notification Customer',
-      'Dukungan Prioritas VIP 24/7',
+      'Full POS & Transaksi Lanjutan',
+      'Manajemen Stok Lanjut & Bahan Baku',
+      'Multi-Outlet Analytics & Laporan Lengkap',
+      'Produk Tidak Terbatas (Unlimited)',
+      'Up to 4 Outlet Terdaftar',
+      'AI Analyst (90x / bulan)',
     ],
   },
 ];
 
 const GRACE_DAYS = 3;
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = 45;
 const HARI_MS = 86_400_000;
 
 startService({
@@ -88,6 +101,7 @@ startService({
   port: PORTS.billing,
   schema: 'billing',
   register: async (app, svc) => {
+    await store.pastikanTabelFingerprint(svc.db);
     await store.pastikanPaket(svc.db, SAAS_PLANS);
     svc.log.info(`katalog paket disiapkan (${SAAS_PLANS.length} paket)`);
 
@@ -120,7 +134,7 @@ startService({
 
     app.get('/api/v1/subscription/status', async (req, res) => {
       const tenantId = tenantDari(req);
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) {
         // Merchant belum tersinkronisasi ke database. Bukan error — hanya belum
         // ada apa pun untuk ditagih.
@@ -145,7 +159,7 @@ startService({
       const plan = cariPaket(String(req.body?.planId || ''));
       if (!plan) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
       const faktur = await store.buatFaktur(svc.db, {
         nomor: newDocumentNumber('INV'),
@@ -179,7 +193,7 @@ startService({
       const lunas = await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED');
       if (!lunas) return res.status(404).json({ ok: false, error: 'INVOICE_NOT_FOUND_OR_PAID' });
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
       if (planId && cariPaket(planId)) await store.gantiPaket(svc.db, sub.id, planId);
 

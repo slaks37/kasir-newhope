@@ -88,16 +88,28 @@ async function keTenant(db: Db, id: string): Promise<{ uuid: string; terdaftar: 
   return { uuid: r.tenantId, terdaftar: r.terdaftar };
 }
 
+export async function pastikanTabelFingerprint(db: Db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS billing.device_fingerprints (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL,
+      device_id TEXT NOT NULL,
+      ip_address TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_fingerprints ON billing.device_fingerprints(device_id);
+  `);
+}
+
 export async function ambilAtauBuatLangganan(
   db: Db,
   tenantIdMentah: string,
   planTrial: string,
-  hariTrial = 14
+  hariTrial = 45,
+  deviceId?: string,
+  ipAddress?: string
 ): Promise<SaaSSubscription | null> {
   const { uuid: tenantId, terdaftar } = await keTenant(db, tenantIdMentah);
-  // Langganan hanya boleh menempel pada merchant yang benar-benar ada. FK di
-  // 0011 akan menolaknya juga, tapi menolak lebih awal memberi pesan yang bisa
-  // dimengerti alih-alih error database.
   if (!terdaftar) return null;
 
   const ada = await db.query(
@@ -107,13 +119,31 @@ export async function ambilAtauBuatLangganan(
   );
   if (ada.rows.length) return keLangganan(ada.rows[0]);
 
+  // Periksa apakah device_id ini sudah pernah mendapatkan TRIAL
+  let statusLangganan = 'TRIAL';
+  if (deviceId) {
+    const pernahTrial = await db.query(
+      `SELECT id FROM billing.device_fingerprints WHERE device_id = $1 LIMIT 1`,
+      [deviceId]
+    );
+    if (pernahTrial.rows.length > 0) {
+      statusLangganan = 'EXPIRED'; // Dihanguskan karena device sudah pernah terdaftar
+    }
+    
+    // Simpan fingerprint device
+    await db.query(
+      `INSERT INTO billing.device_fingerprints (tenant_id, device_id, ip_address) VALUES ($1, $2, $3)`,
+      [tenantId, deviceId, ipAddress]
+    );
+  }
+
   const { rows } = await db.query(
     `INSERT INTO billing.subscriptions
        (id, tenant_id, plan_id, status, current_period_start, current_period_end)
-     VALUES (uuidv7(), $1, $2, 'TRIAL',
+     VALUES (uuidv7(), $1, $2, $4,
              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + ($3::int || ' days')::interval)
      RETURNING *`,
-    [tenantId, planTrial, hariTrial]
+    [tenantId, planTrial, hariTrial, statusLangganan]
   );
   return keLangganan(rows[0]);
 }

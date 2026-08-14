@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { getDeviceId } from '../../utils/fingerprint';
 import { SaaSPlan, SaaSSubscription, SaaSInvoice, SubscriptionStatus } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import {
@@ -30,6 +31,7 @@ export const SubscriptionBillingTab: React.FC = () => {
   const [daysLeft, setDaysLeft] = useState<number>(90);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isProcessingPayment, setIsProcessingPayment] = useState<boolean>(false);
+  const [isYearly, setIsYearly] = useState<boolean>(false);
 
   // Proration Modal state
   const [showProrationModal, setShowProrationModal] = useState<boolean>(false);
@@ -45,7 +47,12 @@ export const SubscriptionBillingTab: React.FC = () => {
       if (plansJson.plans) setPlans(plansJson.plans);
 
       // Fetch Status
-      const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${currentUser?.id || 'tenant-default'}`);
+      const deviceId = await getDeviceId();
+      const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${currentUser?.id || 'tenant-default'}`, {
+        headers: {
+          'x-device-id': deviceId
+        }
+      });
       const statusJson = await statusRes.json();
 
       if (statusJson.subscription) {
@@ -70,9 +77,13 @@ export const SubscriptionBillingTab: React.FC = () => {
   const handleSelectUpgradePlan = async (plan: SaaSPlan) => {
     setSelectedPlanForUpgrade(plan);
     try {
+      const deviceId = await getDeviceId();
       const res = await fetch('/api/v1/subscription/prorated-upgrade', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-device-id': deviceId
+        },
         body: JSON.stringify({
           tenantId: currentUser?.id || 'tenant-default',
           targetPlanId: plan.id,
@@ -89,10 +100,14 @@ export const SubscriptionBillingTab: React.FC = () => {
   const handleSimulatePayment = async (planId?: string, invoiceId?: string) => {
     setIsProcessingPayment(true);
     try {
+      const deviceId = await getDeviceId();
       const targetId = planId || selectedPlanForUpgrade?.id || subscription?.planId || 'plan-pro-monthly';
       const res = await fetch('/api/v1/subscription/simulate-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-device-id': deviceId
+        },
         body: JSON.stringify({
           tenantId: currentUser?.id || 'tenant-default',
           targetPlanId: targetId,
@@ -271,11 +286,35 @@ export const SubscriptionBillingTab: React.FC = () => {
               Pilih paket yang paling sesuai dengan kebutuhan skala bisnis dan jumlah cabang Anda.
             </p>
           </div>
+          {/* Annual Toggle */}
+          <div className="flex items-center space-x-3 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+            <button
+              onClick={() => setIsYearly(false)}
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                !isYearly ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Bulanan
+            </button>
+            <button
+              onClick={() => setIsYearly(true)}
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 ${
+                isYearly ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <span>Tahunan</span>
+              <span className="px-1.5 py-0.5 bg-rose-500 text-white rounded text-[9px] uppercase leading-none animate-pulse">
+                Hemat 20%
+              </span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {plans.map((p) => {
             const isCurrent = subscription?.planId === p.id;
+            const price = isYearly && p.priceYearlyIdr !== undefined ? p.priceYearlyIdr : p.priceIdr;
+            
             return (
               <div
                 key={p.id}
@@ -303,10 +342,15 @@ export const SubscriptionBillingTab: React.FC = () => {
                   <div className="border-b border-slate-100 pb-4">
                     <div className="flex items-baseline space-x-1">
                       <span className="text-2xl font-black font-mono text-slate-900">
-                        {formatRupiah(p.priceIdr)}
+                        {price === 0 ? 'Gratis' : formatRupiah(price)}
                       </span>
-                      <span className="text-xs text-slate-500 font-bold">/ bulan</span>
+                      {price !== 0 && <span className="text-xs text-slate-500 font-bold">/ bulan</span>}
                     </div>
+                    {isYearly && price > 0 && (
+                      <div className="text-[10px] text-slate-400 font-medium mt-1">
+                        Ditagih {formatRupiah(price * 12)} / tahun
+                      </div>
+                    )}
                   </div>
 
                   {/* Feature Bullets */}
@@ -317,6 +361,14 @@ export const SubscriptionBillingTab: React.FC = () => {
                         <span>{f}</span>
                       </li>
                     ))}
+                    {p.extraOutletPriceIdr && (
+                      <li className="flex items-start space-x-2 mt-4 pt-4 border-t border-slate-100">
+                        <Building2 className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                        <span className="text-slate-500 italic">
+                          Tersedia Add-on Tambah Outlet ({formatRupiah(p.extraOutletPriceIdr)}/outlet/bln)
+                        </span>
+                      </li>
+                    )}
                   </ul>
                 </div>
 

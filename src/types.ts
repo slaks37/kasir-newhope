@@ -394,7 +394,7 @@ export interface PromoCode {
 export type BillingCycle = 'MONTHLY' | 'YEARLY';
 export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'EXPIRED' | 'CANCELED';
 export type SaaSPaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
-export type PlanTierLevel = 1 | 2 | 3;
+export type PlanTierLevel = 1 | 2 | 3 | 4;
 
 export interface SaaSPlan {
   id: string;
@@ -402,10 +402,17 @@ export interface SaaSPlan {
   tierLevel: PlanTierLevel;
   billingCycle: BillingCycle;
   priceIdr: number;
+  priceYearlyIdr?: number; // Biaya per bulan jika ditagih tahunan
   currency: string;
   features: string[];
   maxOutlets: number;
   isActive: boolean;
+  
+  // New SaaS Parameters
+  productLimit: number; // -1 untuk unlimited
+  aiQuotaMonthly: number; // Jumlah total interaksi AI
+  dashboardAccessLevel: 'BASIC' | 'FULL' | 'ADVANCED';
+  extraOutletPriceIdr?: number; // Harga add-on per ekstra outlet per bulan
 }
 
 export interface SaaSSubscription {

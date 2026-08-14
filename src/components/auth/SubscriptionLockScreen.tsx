@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { getDeviceId } from '../../utils/fingerprint';
 import { formatRupiah } from '../../utils/formatters';
 import {
   CreditCard,
@@ -25,9 +26,13 @@ export const SubscriptionLockScreen: React.FC<SubscriptionLockScreenProps> = ({ 
   const handleSimulatePayment = async () => {
     setIsProcessing(true);
     try {
+      const deviceId = await getDeviceId();
       const res = await fetch('/api/v1/subscription/simulate-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-device-id': deviceId 
+        },
         body: JSON.stringify({
           tenantId: currentUser?.id || 'tenant-default',
           targetPlanId: sub?.planId || 'plan-pro-monthly',
