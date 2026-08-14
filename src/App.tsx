@@ -16,6 +16,7 @@ import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
 import { ClockInModal } from './components/pos/ClockInModal';
 import { LoginPage } from './components/auth/LoginPage';
 import { HomePage } from './components/home/HomePage';
+import { OverviewPage } from './components/overview/OverviewPage';
 import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
 import { SwitchUserModal } from './components/auth/SwitchUserModal';
@@ -61,7 +62,11 @@ const TabLoading: React.FC = () => (
   </div>
 );
 
-const POSAppContent: React.FC = () => {
+interface POSAppContentProps {
+  onBackToHome?: () => void;
+}
+
+const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
   const {
     activeTab,
     setActiveTab,
@@ -134,6 +139,7 @@ const POSAppContent: React.FC = () => {
             onOpenAiCopilot={() => setActiveTab('ai')}
             onOpenEndShift={() => setShowShiftModal(true)}
             onOpenClockIn={() => setShowClockInModal(true)}
+            onGoToHome={onBackToHome}
           />
         </div>
 
@@ -148,35 +154,19 @@ const POSAppContent: React.FC = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <span className="px-3 py-1 bg-rose-100 text-rose-800 rounded-full font-extrabold text-[10px] uppercase tracking-wider border border-rose-200">
-                    Akses Dibatasi Peran ({currentUser.role})
-                  </span>
-                  <h3 className="font-extrabold text-xl text-slate-900">
-                    Menu Terkunci Hak Akses
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
+                  <h3 className="text-xl font-black text-slate-900">Akses Modul Dibatasi</h3>
+                  <p className="text-slate-500 text-xs leading-relaxed max-w-md mx-auto">
                     Pengguna <b>{currentUser.name}</b> dengan role <b>{currentUser.role}</b> tidak memiliki wewenang untuk mengakses modul <b>{activeTab.toUpperCase()}</b>.
                   </p>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs space-y-2">
-                  <p className="font-bold text-slate-800 flex items-center space-x-1">
-                    <ShieldAlert className="w-4 h-4 text-amber-600" />
-                    <span>Petunjuk Akses Modul:</span>
-                  </p>
-                  <ul className="text-slate-600 space-y-1 list-disc list-inside text-[11px]">
-                    <li>Minta Manager / Supervisor memasukkan PIN otorisasi sementara.</li>
-                    <li>Atau ganti ke akun Admin / Pemilik Toko.</li>
-                  </ul>
-                </div>
-
-                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                <div className="pt-2 flex gap-3">
                   <button
-                    onClick={() => setActiveTab('pos')}
-                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center justify-center space-x-1"
+                    onClick={() => setActiveTab('overview')}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all flex items-center justify-center space-x-1.5"
                   >
                     <ArrowLeft className="w-4 h-4" />
-                    <span>Ke Kasir (POS)</span>
+                    <span>Kembali ke Overview</span>
                   </button>
 
                   <button
@@ -191,7 +181,16 @@ const POSAppContent: React.FC = () => {
             </div>
           ) : (
             <>
-              {activeTab === 'home' && <HomePage />}
+              {activeTab === 'home' && (
+                <HomePage
+                  onStartDemo={() => setActiveTab('pos')}
+                  onOpenLogin={() => {}}
+                />
+              )}
+
+              {activeTab === 'overview' && (
+                <OverviewPage onBackToHome={onBackToHome} />
+              )}
 
               {activeTab === 'pos' && (
                 <>
@@ -258,19 +257,44 @@ const POSAppContent: React.FC = () => {
         />
       )}
 
-      {/* Mobile Cart Sheet Modal */}
+      {/* Mobile Cart Bottom Sheet Drawer */}
       {showMobileCartSheet && (
-        <CartPanel
-          isMobileModal={true}
-          onCloseMobile={() => setShowMobileCartSheet(false)}
-          onOpenCustomerSelect={() => setShowCustomerModal(true)}
-          onOpenCheckout={() => {
-            setShowMobileCartSheet(false);
-            setShowCheckoutModal(true);
-          }}
-          onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
-          onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
-        />
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up border-t border-slate-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-amber-500" />
+                <h3 className="font-extrabold text-sm text-slate-900">Keranjang Pesanan ({totalCartCount})</h3>
+              </div>
+              <button
+                onClick={() => setShowMobileCartSheet(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <CartPanel
+                onOpenCustomerSelect={() => {
+                  setShowMobileCartSheet(false);
+                  setShowCustomerModal(true);
+                }}
+                onOpenCheckout={() => {
+                  setShowMobileCartSheet(false);
+                  setShowCheckoutModal(true);
+                }}
+                onOpenHoldOrders={() => {
+                  setShowMobileCartSheet(false);
+                  setShowHoldOrdersModal(true);
+                }}
+                onOpenRecentTransactions={() => {
+                  setShowMobileCartSheet(false);
+                  setShowRecentTransactionsModal(true);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Mobile Bottom Navigation Bar */}
@@ -279,6 +303,7 @@ const POSAppContent: React.FC = () => {
         onOpenEndShift={() => setShowShiftModal(true)}
         onOpenClockIn={() => setShowClockInModal(true)}
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
+        onGoToHome={onBackToHome}
       />
 
       {showCustomerModal && (
@@ -340,7 +365,22 @@ const POSAppContent: React.FC = () => {
 };
 
 export function App() {
-  const { loading } = useAuth();
+  const { user, loading } = useAuth();
+  const [guestMode, setGuestMode] = useState<boolean>(() => {
+    return localStorage.getItem('newhope_pos_guest_mode') === 'true';
+  });
+  const [authView, setAuthView] = useState<'home' | 'login'>('home');
+
+  const handleStartDemo = () => {
+    localStorage.setItem('newhope_pos_guest_mode', 'true');
+    setGuestMode(true);
+  };
+
+  const handleBackToHome = () => {
+    localStorage.removeItem('newhope_pos_guest_mode');
+    setGuestMode(false);
+    setAuthView('home');
+  };
 
   // Loading spinner saat mengecek sesi awal.
   if (loading) {
@@ -354,9 +394,32 @@ export function App() {
     );
   }
 
+  // Jika belum login dan belum masuk mode demo kasir:
+  if (!user && !guestMode) {
+    if (authView === 'login') {
+      return (
+        <LoginPage
+          onBackToLanding={() => setAuthView('home')}
+          onStartDemo={handleStartDemo}
+        />
+      );
+    }
+    return (
+      <POSProvider>
+        <div className="min-h-screen bg-slate-50 flex flex-col">
+          <HomePage
+            isStandaloneLanding={true}
+            onStartDemo={handleStartDemo}
+            onOpenLogin={() => setAuthView('login')}
+          />
+        </div>
+      </POSProvider>
+    );
+  }
+
   return (
     <POSProvider>
-      <POSAppContent />
+      <POSAppContent onBackToHome={handleBackToHome} />
     </POSProvider>
   );
 }

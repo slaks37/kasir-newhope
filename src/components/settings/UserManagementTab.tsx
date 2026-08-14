@@ -96,7 +96,8 @@ export const UserManagementTab: React.FC = () => {
   };
 
   const featureLabels: Record<PermissionFeature, string> = {
-    home: 'Beranda & Overview Sistem',
+    home: 'Beranda Publik',
+    overview: 'Overview & Ringkasan Toko',
     pos: 'Transaksi Kasir POS',
     tables: 'Manajemen Denah Meja',
     inventory: 'Katalog Produk & Stok',

@@ -2,7 +2,7 @@ import React from 'react';
 import { usePOS } from '../context/POSContext';
 import { PermissionFeature } from '../types';
 import {
-  Home,
+  LayoutDashboard,
   ShoppingCart,
   Grid2X2,
   Package,
@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Lock,
   UserCheck,
+  Home,
 } from 'lucide-react';
 
 import { BUSINESS_PRESETS } from '../data/businessPresets';
@@ -24,12 +25,14 @@ interface SidebarProps {
   onOpenAiCopilot: () => void;
   onOpenEndShift: () => void;
   onOpenClockIn: () => void;
+  onGoToHome?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAiCopilot,
   onOpenEndShift,
   onOpenClockIn,
+  onGoToHome,
 }) => {
   const { activeTab, setActiveTab, products, heldOrders, shift, hasPermission, settings, staffMembers, getActiveAttendance } = usePOS();
 
@@ -41,9 +44,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems = [
     {
-      id: 'home' as const,
-      label: 'Beranda / Overview',
-      icon: Home,
+      id: 'overview' as const,
+      label: 'Overview',
+      icon: LayoutDashboard,
     },
     {
       id: 'pos' as const,
@@ -197,6 +200,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           />
         </button>
+
+        {onGoToHome && (
+          <button
+            onClick={onGoToHome}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 shadow-xs"
+            title="Kembali ke Landing Page / Halaman Beranda"
+          >
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <Home className="w-4 h-4 shrink-0 text-slate-600" />
+              <span className="hidden lg:inline truncate leading-tight">Halaman Depan</span>
+            </div>
+          </button>
+        )}
       </div>
     </aside>
   );

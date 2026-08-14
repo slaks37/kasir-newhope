@@ -6,6 +6,7 @@ import { PermissionFeature, UserRole } from '../types';
 export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
   ADMIN: [
     'home',
+    'overview',
     'pos',
     'tables',
     'inventory',
@@ -20,6 +21,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
   ],
   MANAGER: [
     'home',
+    'overview',
     'pos',
     'tables',
     'inventory',
@@ -34,6 +36,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
   ],
   CASHIER: [
     'home',
+    'overview',
     'pos',
     'tables',
     'customers',

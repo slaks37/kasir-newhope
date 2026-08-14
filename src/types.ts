@@ -334,6 +334,7 @@ export interface User {
 
 export type PermissionFeature = 
   | 'home'
+  | 'overview'
   | 'pos' 
   | 'tables' 
   | 'inventory' 

@@ -70,8 +70,8 @@ interface POSContextType {
    */
   tenant: TenantInfo;
 
-  activeTab: 'home' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings';
-  setActiveTab: (tab: 'home' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings') => void;
+  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings';
+  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings') => void;
   
   categories: Category[];
   products: Product[];
@@ -323,7 +323,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearInterval(interval);
   }, []);
 
-  const [activeTab, setActiveTab] = useState<'home' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('overview');
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {

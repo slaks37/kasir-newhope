@@ -36,7 +36,17 @@ import {
   CheckCircle,
 } from 'lucide-react';
 
-export const HomePage: React.FC = () => {
+interface HomePageProps {
+  onStartDemo?: () => void;
+  onOpenLogin?: () => void;
+  isStandaloneLanding?: boolean;
+}
+
+export const HomePage: React.FC<HomePageProps> = ({
+  onStartDemo,
+  onOpenLogin,
+  isStandaloneLanding = false,
+}) => {
   const {
     setActiveTab,
     products,
@@ -112,8 +122,47 @@ export const HomePage: React.FC = () => {
     BARBERSHOP: Scissors,
   };
 
+  const handleOpenPOS = () => {
+    if (onStartDemo) {
+      onStartDemo();
+    } else {
+      setActiveTab('pos');
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50/50 p-4 lg:p-8 space-y-8 animate-fade-in">
+      {/* Top Navbar when in Standalone Landing Mode */}
+      {isStandaloneLanding && (
+        <header className="flex items-center justify-between p-4 bg-slate-900 text-white rounded-2xl shadow-md border border-slate-800">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-amber-500 text-slate-950 rounded-xl font-bold">
+              <Store className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="font-black text-base text-white block">New Hope POS</span>
+              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Multi-Sector Smart POS</span>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            {onOpenLogin && (
+              <button
+                onClick={onOpenLogin}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 transition-all cursor-pointer"
+              >
+                Masuk (Login)
+              </button>
+            )}
+            <button
+              onClick={handleOpenPOS}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+            >
+              ⚡ Coba Demo Kasir (12 Jam)
+            </button>
+          </div>
+        </header>
+      )}
       {/* Registration Success Alert Toast */}
       {registerSuccessMsg && (
         <div className="bg-emerald-600 text-white px-5 py-4 rounded-2xl shadow-xl flex items-center justify-between animate-bounce">

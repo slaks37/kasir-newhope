@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { PermissionFeature } from '../types';
 import {
-  Home,
+  LayoutDashboard,
   ShoppingCart,
   Grid2X2,
   Package,
@@ -16,6 +16,7 @@ import {
   LogOut,
   Clock,
   Shield,
+  Home,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 
@@ -24,6 +25,7 @@ interface MobileNavBarProps {
   onOpenEndShift: () => void;
   onOpenClockIn: () => void;
   onOpenSwitchUser: () => void;
+  onGoToHome?: () => void;
 }
 
 export const MobileNavBar: React.FC<MobileNavBarProps> = ({
@@ -31,6 +33,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
   onOpenEndShift,
   onOpenClockIn,
   onOpenSwitchUser,
+  onGoToHome,
 }) => {
   const {
     activeTab,
@@ -52,9 +55,9 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
 
   const mainNavItems = [
     {
-      id: 'home' as const,
-      label: 'Beranda',
-      icon: Home,
+      id: 'overview' as const,
+      label: 'Overview',
+      icon: LayoutDashboard,
     },
     {
       id: 'pos' as const,
