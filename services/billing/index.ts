@@ -132,6 +132,58 @@ startService({
       res.json({ ok: true, plans: SAAS_PLANS });
     });
 
+    app.post('/api/v1/auth/custom-signup', async (req, res) => {
+      const { email, password } = req.body || {};
+      if (!email || !password) return res.status(400).json({ ok: false, error: 'MISSING_CREDENTIALS' });
+      
+      try {
+        const { Resend } = await import('resend');
+        const resend = new Resend(process.env.RESEND_API_KEY);
+
+        // Langsung insert ke auth.users untuk bypass Supabase Auth email limits
+        const dbRes = await svc.db.query(`
+          INSERT INTO auth.users (
+            instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, 
+            raw_app_meta_data, raw_user_meta_data, created_at, updated_at, 
+            confirmation_token, email_change, email_change_token_new, recovery_token
+          )
+          VALUES (
+            '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated', 
+            $1, crypt($2, gen_salt('bf')), NOW(), 
+            '{"provider":"email","providers":["email"]}', '{}', NOW(), NOW(), 
+            '', '', '', ''
+          )
+          RETURNING id
+        `, [email, password]);
+
+        // Kirim Welcome Email (karena email otomatis dikonfirmasi, kita anggap kode OTP = "AUTO-CONFIRMED")
+        await resend.emails.send({
+          from: 'welcome@newhopepos.id',
+          to: email,
+          subject: 'Selamat Datang di New Hope POS!',
+          html: \`
+            <div style="font-family: sans-serif; max-w-md; margin: 0 auto;">
+              <h2>Pendaftaran Berhasil!</h2>
+              <p>Halo,</p>
+              <p>Akun kasir Anda dengan email <strong>\${email}</strong> telah berhasil dibuat dan <strong>terkonfirmasi otomatis</strong>.</p>
+              <p>Anda sudah bisa langsung masuk (login) ke dalam sistem menggunakan password yang baru saja Anda buat tanpa perlu memasukkan kode OTP apa pun.</p>
+              <br/>
+              <p>Selamat berjualan!<br/>Tim New Hope POS</p>
+            </div>
+          \`
+        });
+
+        res.json({ ok: true, user: { id: dbRes.rows[0].id, email } });
+      } catch (err: any) {
+        svc.log.error('Custom signup gagal:', err);
+        // Bila duplicate email, error code dari Postgres biasanya 23505
+        if (err.code === '23505') {
+          return res.status(400).json({ ok: false, error: 'User already registered' });
+        }
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
     app.get('/api/v1/subscription/status', async (req, res) => {
       const tenantId = tenantDari(req);
       const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);

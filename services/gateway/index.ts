@@ -55,6 +55,7 @@ const ROUTES: Array<{ prefix: string; target: string; name: keyof typeof SERVICE
   { prefix: '/api/v1/analytics', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/admin', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/internal', target: SERVICE_URL.backoffice, name: 'backoffice' },
+  { prefix: '/api/v1/auth', target: SERVICE_URL.billing, name: 'billing' },
 ];
 
 const breakers: Record<string, Breaker> = {

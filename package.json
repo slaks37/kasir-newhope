@@ -16,6 +16,7 @@
     "batch:insights:dry": "node scripts/batch/daily-insights.mjs --dry-run",
     "batch:health": "node scripts/batch/merchant-health.mjs",
     "batch:health:dry": "node scripts/batch/merchant-health.mjs --dry-run",
+    "batch:billing": "node scripts/batch/billing-reminders.mjs",
     "db:verify": "node scripts/db/bootstrap.mjs",
     "db:apply": "node scripts/db/bootstrap.mjs --live",
     "db:seed": "tsx scripts/db/seed.ts",
@@ -46,6 +47,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
+    "resend": "^6.20.0",
     "vite": "^6.2.3"
   },
   "devDependencies": {
