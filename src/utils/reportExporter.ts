@@ -1,8 +1,9 @@
-import { Order, StoreSettings } from '../types';
+import { Order, StoreSettings, Product } from '../types';
 import { formatRupiah, formatDateTime } from './formatters';
 
 interface ExportReportOptions {
   orders: Order[];
+  products?: Product[];
   settings: StoreSettings;
   periodLabel: string;
   userName?: string;
@@ -10,19 +11,44 @@ interface ExportReportOptions {
 
 /**
  * EXPORT KE MICROSOFT EXCEL (.xls / XML Spreadsheet 2003)
- * Mendukung format styling, multi-kolom pajak & service charge, dan formula total.
+ * Mencakup Laporan Laba Rugi P&L, Modal Terpakai (HPP/COGS), Pajak PB1, Service Charge, dan Laba Bersih.
  */
-export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 'Administrator' }: ExportReportOptions) {
+export function exportOrdersToExcel({
+  orders,
+  products = [],
+  settings,
+  periodLabel,
+  userName = 'Administrator',
+}: ExportReportOptions) {
   const storeName = settings.storeName || 'New Hope POS';
   const taxRate = settings.taxRate || 0;
   const serviceRate = settings.serviceRate || 0;
 
   // Calculate totals
-  const totalSubtotal = orders.reduce((sum, o) => sum + (o.subtotal || 0), 0);
-  const totalDiscount = orders.reduce((sum, o) => sum + (o.discountTotal || 0), 0);
-  const totalTax = orders.reduce((sum, o) => sum + (o.taxTotal || 0), 0);
-  const totalServiceCharge = orders.reduce((sum, o) => sum + (o.serviceChargeTotal || 0), 0);
-  const grandTotal = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+  let totalGrossSales = 0;
+  let totalDiscount = 0;
+  let totalTax = 0;
+  let totalServiceCharge = 0;
+  let grandTotal = 0;
+  let totalCOGS = 0; // Modal Bahan Baku
+
+  orders.forEach((o) => {
+    grandTotal += o.total || 0;
+    totalGrossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
+    totalDiscount += o.discountTotal || 0;
+    totalTax += o.taxTotal || 0;
+    totalServiceCharge += o.serviceChargeTotal || 0;
+
+    o.items.forEach((item) => {
+      const prod = products.find((p) => p.id === item.productId);
+      const unitCost = prod ? prod.costPrice : item.unitPrice * 0.45;
+      totalCOGS += unitCost * item.quantity;
+    });
+  });
+
+  const netRevenue = grandTotal;
+  const grossProfit = Math.max(0, netRevenue - totalCOGS - totalTax);
+  const netProfitMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : '0';
 
   // Payment Breakdown
   const paymentMap: Record<string, { count: number; total: number }> = {};
@@ -65,6 +91,17 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
    <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
    <Interior ss:Color="#1E293B" ss:Pattern="Solid"/>
   </Style>
+  <Style ss:ID="HeaderCost">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+   </Borders>
+   <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#DC2626" ss:Pattern="Solid"/>
+  </Style>
   <Style ss:ID="HeaderTax">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
    <Borders>
@@ -87,7 +124,7 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
    <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
    <Interior ss:Color="#2563EB" ss:Pattern="Solid"/>
   </Style>
-  <Style ss:ID="HeaderTotal">
+  <Style ss:ID="HeaderProfit">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
@@ -140,47 +177,86 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
    <Alignment ss:Horizontal="Center"/>
   </Style>
  </Styles>
- <Worksheet ss:Name="Laporan Penjualan &amp; Pajak">
+ <Worksheet ss:Name="Laporan Laba Rugi &amp; Transaksi">
   <Table ss:DefaultRowHeight="20">
-   <Column ss:Width="40"/>
+   <Column ss:Width="35"/>
    <Column ss:Width="140"/>
    <Column ss:Width="120"/>
    <Column ss:Width="90"/>
    <Column ss:Width="100"/>
    <Column ss:Width="100"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="110"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="100"/>
+   <Column ss:Width="95"/>
    <Column ss:Width="90"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="100"/>
+   <Column ss:Width="105"/>
+   <Column ss:Width="105"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="80"/>
 
    <!-- Title Section -->
    <Row ss:Height="25">
-    <Cell ss:StyleID="Title"><Data ss:Type="String">${storeName} — Laporan Penjualan, Pajak &amp; Layanan</Data></Cell>
+    <Cell ss:StyleID="Title"><Data ss:Type="String">${storeName} — Laporan Keuangan, HPP, Pajak &amp; Laba Bersih</Data></Cell>
    </Row>
    <Row>
     <Cell ss:StyleID="Subtitle"><Data ss:Type="String">Periode: ${periodLabel} | Dicetak: ${exportDate} | Oleh: ${userName}</Data></Cell>
    </Row>
    <Row>
-    <Cell ss:StyleID="Subtitle"><Data ss:Type="String">Tarif Pajak Toko: ${taxRate}% | Tarif Service Charge: ${serviceRate}%</Data></Cell>
+    <Cell ss:StyleID="Subtitle"><Data ss:Type="String">Tarif Pajak (PB1/PPN): ${taxRate}% | Tarif Service Charge: ${serviceRate}% | Net Profit Margin: ${netProfitMargin}%</Data></Cell>
    </Row>
-   <Row ss:Height="10"/>
+   <Row ss:Height="12"/>
+
+   <!-- MINI P&L STATEMENT IN EXCEL -->
+   <Row ss:Height="22">
+    <Cell ss:StyleID="Header" ss:MergeAcross="3"><Data ss:Type="String">RINGKASAN LABA RUGI OPERASIONAL (P&amp;L)</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="DataCell" ss:MergeAcross="2"><Data ss:Type="String">Penjualan Kotor (Gross Sales)</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${totalGrossSales}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="DataCell" ss:MergeAcross="2"><Data ss:Type="String">(-) Potongan Diskon Promo</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">-${totalDiscount}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="TotalLabel" ss:MergeAcross="2"><Data ss:Type="String">(=) Total Omzet Penjualan Bersih</Data></Cell>
+    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${netRevenue}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="DataCell" ss:MergeAcross="2"><Data ss:Type="String">(-) Beban Pokok Penjualan / Modal Bahan Baku (HPP)</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">-${totalCOGS}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="DataCell" ss:MergeAcross="2"><Data ss:Type="String">(-) Kewajiban Setor Pajak Daerah (PB1/PPN)</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">-${totalTax}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="HeaderProfit" ss:MergeAcross="2"><Data ss:Type="String">(=) ESTIMASI LABA BERSIH TOKO (NET PROFIT)</Data></Cell>
+    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${grossProfit}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell ss:StyleID="DataCell" ss:MergeAcross="2"><Data ss:Type="String">Alokasi Dana Layanan Karyawan (Service Charge)</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${totalServiceCharge}</Data></Cell>
+   </Row>
+
+   <Row ss:Height="20"/>
 
    <!-- Table Headers -->
    <Row ss:Height="24">
     <Cell ss:StyleID="Header"><Data ss:Type="String">No</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">No Faktur / Invoice</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Tanggal &amp; Jam</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Tanggal &amp; Waktu</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Tipe Order</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Pelanggan</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Kasir</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Subtotal (Rp)</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Diskon (Rp)</Data></Cell>
+    <Cell ss:StyleID="HeaderCost"><Data ss:Type="String">Modal / HPP (Rp)</Data></Cell>
     <Cell ss:StyleID="HeaderTax"><Data ss:Type="String">Pajak / PB1 (Rp)</Data></Cell>
-    <Cell ss:StyleID="HeaderService"><Data ss:Type="String">Service Charge (Rp)</Data></Cell>
-    <Cell ss:StyleID="HeaderTotal"><Data ss:Type="String">Total Akhir / Net (Rp)</Data></Cell>
+    <Cell ss:StyleID="HeaderService"><Data ss:Type="String">Service (Rp)</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Total Tagihan (Rp)</Data></Cell>
+    <Cell ss:StyleID="HeaderProfit"><Data ss:Type="String">Profit Struk (Rp)</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Metode Bayar</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
    </Row>
@@ -194,6 +270,13 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
        const svc = o.serviceChargeTotal || 0;
        const tot = o.total;
 
+       let orderCost = 0;
+       o.items.forEach((item) => {
+         const prod = products.find((p) => p.id === item.productId);
+         orderCost += (prod ? prod.costPrice : item.unitPrice * 0.45) * item.quantity;
+       });
+       const orderProfit = Math.max(0, tot - orderCost - tax);
+
        return `
    <Row>
     <Cell ss:StyleID="DataCell"><Data ss:Type="Number">${idx + 1}</Data></Cell>
@@ -204,9 +287,11 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
     <Cell ss:StyleID="DataCell"><Data ss:Type="String">${o.cashierName || 'Kasir'}</Data></Cell>
     <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${sub}</Data></Cell>
     <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${disc}</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${orderCost}</Data></Cell>
     <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${tax}</Data></Cell>
     <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${svc}</Data></Cell>
     <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${tot}</Data></Cell>
+    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${orderProfit}</Data></Cell>
     <Cell ss:StyleID="DataCell"><Data ss:Type="String">${o.paymentMethod}</Data></Cell>
     <Cell ss:StyleID="DataCell"><Data ss:Type="String">${o.status}</Data></Cell>
    </Row>`;
@@ -216,31 +301,14 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
    <!-- Grand Total Summary Row -->
    <Row ss:Height="24">
     <Cell ss:StyleID="TotalLabel" ss:MergeAcross="5"><Data ss:Type="String">GRAND TOTAL RINGKASAN</Data></Cell>
-    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalSubtotal}</Data></Cell>
+    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${orders.reduce((s, o) => s + (o.subtotal || o.total), 0)}</Data></Cell>
     <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalDiscount}</Data></Cell>
+    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalCOGS}</Data></Cell>
     <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalTax}</Data></Cell>
     <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalServiceCharge}</Data></Cell>
     <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${grandTotal}</Data></Cell>
+    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${grossProfit}</Data></Cell>
     <Cell ss:StyleID="TotalLabel" ss:MergeAcross="1"><Data ss:Type="String">${orders.length} Transaksi</Data></Cell>
-   </Row>
-
-   <Row ss:Height="20"/>
-
-   <!-- Tax & Service Charge Breakdown Card -->
-   <Row ss:Height="22">
-    <Cell ss:StyleID="HeaderTax" ss:MergeAcross="2"><Data ss:Type="String">REKAPITULASI PAJAK &amp; BIAYA LAYANAN</Data></Cell>
-   </Row>
-   <Row>
-    <Cell ss:StyleID="DataCell" ss:MergeAcross="1"><Data ss:Type="String">Total Pajak Terkumpul (PB1/PPN)</Data></Cell>
-    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${totalTax}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell ss:StyleID="DataCell" ss:MergeAcross="1"><Data ss:Type="String">Total Service Charge Terkumpul</Data></Cell>
-    <Cell ss:StyleID="CurrencyCell"><Data ss:Type="Number">${totalServiceCharge}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell ss:StyleID="TotalLabel" ss:MergeAcross="1"><Data ss:Type="String">Total Pungutan Pajak &amp; Service</Data></Cell>
-    <Cell ss:StyleID="TotalRow"><Data ss:Type="Number">${totalTax + totalServiceCharge}</Data></Cell>
    </Row>
 
    <Row ss:Height="20"/>
@@ -268,7 +336,7 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
   const link = document.createElement('a');
   const sanitizedPeriod = periodLabel.replace(/\s+/g, '_');
   link.href = url;
-  link.download = `Laporan_Keuangan_Pajak_${storeName.replace(/\s+/g, '_')}_${sanitizedPeriod}.xls`;
+  link.download = `Laporan_Keuangan_Pajak_Profit_${storeName.replace(/\s+/g, '_')}_${sanitizedPeriod}.xls`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -276,11 +344,16 @@ export function exportOrdersToExcel({ orders, settings, periodLabel, userName = 
 }
 
 /**
- * EXPORT KE PDF RESMI BERKUALITAS TINGGI
- * Membuka jendela pratinjau cetak PDF beresolusi tinggi dengan kop toko,
- * ringkasan finansial, tabel lengkap dengan kolom Pajak & Service Charge, dan tanda tangan.
+ * EXPORT KE PDF RESMI BERKUALITAS TINGGI (A4 LANDSCAPE)
+ * Mencakup Laporan Laba Rugi, HPP Modal, Pajak PB1, Service Charge, Tabel Lengkap, dan Tanda Tangan.
  */
-export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'Administrator' }: ExportReportOptions) {
+export function exportOrdersToPDF({
+  orders,
+  products = [],
+  settings,
+  periodLabel,
+  userName = 'Administrator',
+}: ExportReportOptions) {
   const storeName = settings.storeName || 'New Hope POS';
   const storePhone = settings.phone || '-';
   const storeAddress = settings.address || 'Indonesia';
@@ -288,11 +361,29 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
   const serviceRate = settings.serviceRate || 0;
 
   // Totals
-  const totalSubtotal = orders.reduce((sum, o) => sum + (o.subtotal || o.total), 0);
-  const totalDiscount = orders.reduce((sum, o) => sum + (o.discountTotal || 0), 0);
-  const totalTax = orders.reduce((sum, o) => sum + (o.taxTotal || 0), 0);
-  const totalServiceCharge = orders.reduce((sum, o) => sum + (o.serviceChargeTotal || 0), 0);
-  const grandTotal = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+  let totalGrossSales = 0;
+  let totalDiscount = 0;
+  let totalTax = 0;
+  let totalServiceCharge = 0;
+  let grandTotal = 0;
+  let totalCOGS = 0;
+
+  orders.forEach((o) => {
+    grandTotal += o.total || 0;
+    totalGrossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
+    totalDiscount += o.discountTotal || 0;
+    totalTax += o.taxTotal || 0;
+    totalServiceCharge += o.serviceChargeTotal || 0;
+
+    o.items.forEach((item) => {
+      const prod = products.find((p) => p.id === item.productId);
+      totalCOGS += (prod ? prod.costPrice : item.unitPrice * 0.45) * item.quantity;
+    });
+  });
+
+  const netRevenue = grandTotal;
+  const grossProfit = Math.max(0, netRevenue - totalCOGS - totalTax);
+  const netProfitMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : '0';
 
   // Payment Breakdown
   const paymentMap: Record<string, { count: number; total: number }> = {};
@@ -305,7 +396,7 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
 
   const exportDate = formatDateTime(new Date());
 
-  const printWindow = window.open('', '_blank', 'width=1100,height=800');
+  const printWindow = window.open('', '_blank', 'width=1150,height=850');
   if (!printWindow) {
     alert('Pop-up terblokir oleh browser. Harap izinkan pop-up untuk mencetak / menyimpan PDF.');
     return;
@@ -316,11 +407,11 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Laporan Keuangan & Pajak - ${storeName}</title>
+  <title>Laporan Keuangan, Pajak & Laba Rugi - ${storeName}</title>
   <style>
     @page {
       size: A4 landscape;
-      margin: 12mm 10mm 12mm 10mm;
+      margin: 10mm 10mm 10mm 10mm;
     }
     * {
       box-sizing: border-box;
@@ -329,19 +420,19 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     body {
-      color: #1e293b;
+      color: #0f172a;
       background: #ffffff;
-      font-size: 11px;
+      font-size: 10.5px;
       line-height: 1.4;
-      padding: 15px;
+      padding: 12px;
     }
     .header-container {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       border-bottom: 2.5px solid #0f172a;
-      padding-bottom: 12px;
-      margin-bottom: 15px;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
     }
     .store-brand h1 {
       font-size: 20px;
@@ -351,86 +442,80 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
       letter-spacing: -0.5px;
     }
     .store-brand p {
-      color: #64748b;
-      font-size: 11px;
-      margin-top: 2px;
+      color: #475569;
+      font-size: 10.5px;
+      margin-top: 1px;
     }
     .report-title {
       text-align: right;
     }
     .report-title h2 {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 800;
       color: #d97706;
       text-transform: uppercase;
     }
     .report-title p {
-      font-size: 10.5px;
+      font-size: 10px;
       color: #475569;
-      margin-top: 2px;
+      margin-top: 1px;
     }
+    
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 10px;
-      margin-bottom: 15px;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
     }
     .kpi-card {
       background: #f8fafc;
       border: 1px solid #e2e8f0;
       border-radius: 8px;
-      padding: 8px 10px;
+      padding: 7px 8px;
     }
-    .kpi-card.tax-card {
-      background: #fffbeb;
-      border-color: #fde68a;
-    }
-    .kpi-card.service-card {
-      background: #eff6ff;
-      border-color: #bfdbfe;
-    }
-    .kpi-card.total-card {
-      background: #ecfdf5;
-      border-color: #a7f3d0;
-    }
+    .kpi-card.cogs-card { background: #fef2f2; border-color: #fecaca; }
+    .kpi-card.tax-card { background: #fffbeb; border-color: #fde68a; }
+    .kpi-card.service-card { background: #eff6ff; border-color: #bfdbfe; }
+    .kpi-card.profit-card { background: #ecfdf5; border-color: #a7f3d0; }
     .kpi-label {
-      font-size: 9.5px;
+      font-size: 9px;
       text-transform: uppercase;
       font-weight: 700;
       color: #64748b;
     }
     .kpi-value {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 900;
       color: #0f172a;
-      margin-top: 3px;
+      margin-top: 2px;
     }
+    .kpi-card.cogs-card .kpi-value { color: #dc2626; }
     .kpi-card.tax-card .kpi-value { color: #b45309; }
     .kpi-card.service-card .kpi-value { color: #1d4ed8; }
-    .kpi-card.total-card .kpi-value { color: #047857; }
+    .kpi-card.profit-card .kpi-value { color: #047857; }
 
     table.data-table {
       width: 100%;
       border-collapse: collapse;
-      margin-bottom: 15px;
-      font-size: 10px;
+      margin-bottom: 12px;
+      font-size: 9.5px;
     }
     table.data-table th {
       background: #0f172a;
       color: #ffffff;
-      padding: 7px 6px;
+      padding: 6px 5px;
       text-align: left;
       font-weight: 700;
-      font-size: 9.5px;
+      font-size: 9px;
       text-transform: uppercase;
-      letter-spacing: 0.3px;
     }
+    table.data-table th.cogs-th { background: #dc2626; }
     table.data-table th.tax-th { background: #d97706; }
     table.data-table th.svc-th { background: #2563eb; }
-    table.data-table th.tot-th { background: #059669; }
+    table.data-table th.profit-th { background: #059669; }
     table.data-table th.num-col, table.data-table td.num-col { text-align: right; }
     table.data-table td {
-      padding: 6px 6px;
+      padding: 5px 5px;
       border-bottom: 1px solid #e2e8f0;
       color: #334155;
     }
@@ -443,65 +528,63 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
       border-top: 2px solid #0f172a;
       border-bottom: 2px solid #0f172a;
       color: #0f172a;
-      font-size: 10.5px;
+      font-size: 10px;
     }
 
     .bottom-section {
       display: grid;
-      grid-template-columns: 1.2fr 1fr 1fr;
-      gap: 15px;
-      margin-top: 15px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
       page-break-inside: avoid;
     }
     .summary-box {
       border: 1px solid #e2e8f0;
       border-radius: 8px;
-      padding: 10px;
+      padding: 8px 10px;
       background: #fafafa;
     }
     .summary-box h3 {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 800;
       color: #0f172a;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       border-bottom: 1px solid #e2e8f0;
-      padding-bottom: 4px;
+      padding-bottom: 3px;
       text-transform: uppercase;
     }
     .summary-row {
       display: flex;
       justify-content: space-between;
-      padding: 3px 0;
-      font-size: 10px;
+      padding: 2.5px 0;
+      font-size: 9.5px;
       color: #475569;
     }
     .summary-row.bold {
       font-weight: 800;
       color: #0f172a;
       border-top: 1px dashed #cbd5e1;
-      margin-top: 4px;
-      padding-top: 4px;
+      margin-top: 3px;
+      padding-top: 3px;
     }
 
     .signature-container {
       display: flex;
-      justify-content: space-between;
-      margin-top: 25px;
-      padding-top: 10px;
-      page-break-inside: avoid;
+      justify-content: space-around;
+      margin-top: 15px;
     }
     .signature-box {
       text-align: center;
-      width: 180px;
+      width: 130px;
     }
     .signature-line {
-      margin-top: 45px;
+      margin-top: 35px;
       border-bottom: 1px solid #475569;
     }
     .signature-title {
-      font-size: 10px;
+      font-size: 9px;
       color: #64748b;
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     .no-print-toolbar {
@@ -525,9 +608,6 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
       padding: 8px 16px;
       border-radius: 25px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
     }
     .btn-close {
       background: #334155;
@@ -558,45 +638,48 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
     <div class="store-brand">
       <h1>${storeName}</h1>
       <p>${storeAddress} • Telp: ${storePhone}</p>
-      <p style="font-size: 10px; color: #94a3b8; margin-top: 1px;">Sistem POS: New Hope Multi-Business v2.5</p>
+      <p style="font-size: 9.5px; color: #64748b; margin-top: 1px;">Sistem POS: New Hope Multi-Business Enterprise Edition</p>
     </div>
     <div class="report-title">
-      <h2>Laporan Keuangan &amp; Pajak</h2>
-      <p><b>Periode:</b> ${periodLabel}</p>
-      <p><b>Dicetak:</b> ${exportDate} (Oleh: ${userName})</p>
-      <p><b>Tarif Toko:</b> Pajak (PB1/PPN) ${taxRate}% | Service Charge ${serviceRate}%</p>
+      <h2>Laporan Keuangan &amp; Laba Rugi</h2>
+      <p><b>Periode:</b> ${periodLabel} | <b>Dicetak:</b> ${exportDate} (Oleh: ${userName})</p>
+      <p><b>Tarif Toko:</b> Pajak (PB1) ${taxRate}% | Service Charge ${serviceRate}%</p>
     </div>
   </div>
 
-  <!-- KPI Summary Cards -->
+  <!-- KPI Summary Cards Grid -->
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-label">Total Transaksi</div>
-      <div class="kpi-value">${orders.length} Transaksi</div>
+      <div class="kpi-label">Total Omzet (Gross)</div>
+      <div class="kpi-value">${formatRupiah(netRevenue)}</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Subtotal Kotor</div>
-      <div class="kpi-value">${formatRupiah(totalSubtotal)}</div>
+    <div class="kpi-card cogs-card">
+      <div class="kpi-label">Modal Bahan (HPP)</div>
+      <div class="kpi-value">${formatRupiah(totalCOGS)}</div>
+    </div>
+    <div class="kpi-card profit-card">
+      <div class="kpi-label">Laba Bersih Toko</div>
+      <div class="kpi-value">${formatRupiah(grossProfit)}</div>
+    </div>
+    <div class="kpi-card profit-card">
+      <div class="kpi-label">Net Profit Margin</div>
+      <div class="kpi-value">${netProfitMargin}%</div>
     </div>
     <div class="kpi-card tax-card">
-      <div class="kpi-label">Pajak (PB1/PPN)</div>
+      <div class="kpi-label">Setor Pajak (PB1)</div>
       <div class="kpi-value">${formatRupiah(totalTax)}</div>
     </div>
     <div class="kpi-card service-card">
-      <div class="kpi-label">Service Charge</div>
+      <div class="kpi-label">Dana Service Charge</div>
       <div class="kpi-value">${formatRupiah(totalServiceCharge)}</div>
-    </div>
-    <div class="kpi-card total-card">
-      <div class="kpi-label">Omzet Bersih Diterima</div>
-      <div class="kpi-value">${formatRupiah(grandTotal)}</div>
     </div>
   </div>
 
-  <!-- Full Transaction Data Table -->
+  <!-- Full Detailed Transaction Table -->
   <table class="data-table">
     <thead>
       <tr>
-        <th style="width: 25px;">No</th>
+        <th style="width: 20px;">No</th>
         <th>No Faktur</th>
         <th>Waktu</th>
         <th>Tipe</th>
@@ -604,9 +687,11 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
         <th>Kasir</th>
         <th class="num-col">Subtotal</th>
         <th class="num-col">Diskon</th>
+        <th class="num-col cogs-th">Modal (HPP)</th>
         <th class="num-col tax-th">Pajak</th>
         <th class="num-col svc-th">Service</th>
-        <th class="num-col tot-th">Total Akhir</th>
+        <th class="num-col">Total Net</th>
+        <th class="num-col profit-th">Laba Bersih</th>
         <th style="text-align: center;">Metode</th>
         <th style="text-align: center;">Status</th>
       </tr>
@@ -620,6 +705,13 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
           const svc = o.serviceChargeTotal || 0;
           const tot = o.total;
 
+          let orderCost = 0;
+          o.items.forEach((item) => {
+            const prod = products.find((p) => p.id === item.productId);
+            orderCost += (prod ? prod.costPrice : item.unitPrice * 0.45) * item.quantity;
+          });
+          const orderProfit = Math.max(0, tot - orderCost - tax);
+
           return `
       <tr>
         <td style="text-align: center;">${idx + 1}</td>
@@ -630,11 +722,13 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
         <td>${o.cashierName || 'Kasir'}</td>
         <td class="num-col">${formatRupiah(sub)}</td>
         <td class="num-col" style="color: #dc2626;">${disc > 0 ? `-${formatRupiah(disc)}` : '-'}</td>
+        <td class="num-col" style="font-weight: 700; color: #dc2626;">${formatRupiah(orderCost)}</td>
         <td class="num-col" style="font-weight: 700; color: #b45309;">${formatRupiah(tax)}</td>
         <td class="num-col" style="font-weight: 700; color: #1d4ed8;">${formatRupiah(svc)}</td>
-        <td class="num-col" style="font-weight: 900; color: #047857;">${formatRupiah(tot)}</td>
-        <td style="text-align: center; font-weight: 700; font-size: 9px;">${o.paymentMethod}</td>
-        <td style="text-align: center; font-size: 9px; color: #059669; font-weight: 700;">${o.status}</td>
+        <td class="num-col" style="font-weight: 900; color: #0f172a;">${formatRupiah(tot)}</td>
+        <td class="num-col" style="font-weight: 900; color: #047857;">${formatRupiah(orderProfit)}</td>
+        <td style="text-align: center; font-weight: 700; font-size: 8.5px;">${o.paymentMethod}</td>
+        <td style="text-align: center; font-size: 8.5px; color: #059669; font-weight: 700;">${o.status}</td>
       </tr>`;
         })
         .join('')}
@@ -642,33 +736,42 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
       <!-- Total Summary Row -->
       <tr class="total-row">
         <td colspan="6" style="text-align: center; letter-spacing: 0.5px;">TOTAL KESELURUHAN (${orders.length} PESANAN)</td>
-        <td class="num-col">${formatRupiah(totalSubtotal)}</td>
+        <td class="num-col">${formatRupiah(orders.reduce((s, o) => s + (o.subtotal || o.total), 0))}</td>
         <td class="num-col" style="color: #dc2626;">-${formatRupiah(totalDiscount)}</td>
+        <td class="num-col" style="color: #dc2626;">${formatRupiah(totalCOGS)}</td>
         <td class="num-col" style="color: #b45309;">${formatRupiah(totalTax)}</td>
         <td class="num-col" style="color: #1d4ed8;">${formatRupiah(totalServiceCharge)}</td>
-        <td class="num-col" style="color: #047857;">${formatRupiah(grandTotal)}</td>
-        <td colspan="2" style="text-align: center; font-size: 9px;">LUNAS</td>
+        <td class="num-col" style="color: #0f172a;">${formatRupiah(grandTotal)}</td>
+        <td class="num-col" style="color: #047857;">${formatRupiah(grossProfit)}</td>
+        <td colspan="2" style="text-align: center; font-size: 8.5px;">LUNAS</td>
       </tr>
     </tbody>
   </table>
 
   <!-- Bottom Breakdown & Signatures -->
   <div class="bottom-section">
-    <!-- Payment Breakdown -->
+    <!-- P&L Summary Box -->
     <div class="summary-box">
-      <h3>Rekapitulasi Pembayaran</h3>
-      ${Object.entries(paymentMap)
-        .map(
-          ([method, data]) => `
+      <h3>Struktur Laba Rugi Operasional</h3>
       <div class="summary-row">
-        <span>${method} (${data.count} tx)</span>
-        <span style="font-weight: 700;">${formatRupiah(data.total)}</span>
-      </div>`
-        )
-        .join('')}
-      <div class="summary-row bold">
-        <span>Total Pembayaran Masuk</span>
-        <span>${formatRupiah(grandTotal)}</span>
+        <span>Total Omzet Penjualan Kotor</span>
+        <span style="font-weight: 700;">${formatRupiah(totalGrossSales)}</span>
+      </div>
+      <div class="summary-row" style="color: #dc2626;">
+        <span>(-) Potongan Diskon Promo</span>
+        <span>-${formatRupiah(totalDiscount)}</span>
+      </div>
+      <div class="summary-row" style="color: #dc2626;">
+        <span>(-) Beban Modal Bahan Baku (HPP)</span>
+        <span>-${formatRupiah(totalCOGS)}</span>
+      </div>
+      <div class="summary-row" style="color: #b45309;">
+        <span>(-) Alokasi Setor Pajak Daerah</span>
+        <span>-${formatRupiah(totalTax)}</span>
+      </div>
+      <div class="summary-row bold" style="color: #047857; font-size: 10.5px;">
+        <span>(=) Laba Bersih Toko (Net Profit)</span>
+        <span>${formatRupiah(grossProfit)} (${netProfitMargin}%)</span>
       </div>
     </div>
 
@@ -676,39 +779,41 @@ export function exportOrdersToPDF({ orders, settings, periodLabel, userName = 'A
     <div class="summary-box">
       <h3>Rekapitulasi Pajak &amp; Layanan</h3>
       <div class="summary-row">
-        <span>Pajak PB1 / PPN (${taxRate}%)</span>
+        <span>Pajak Daerah PB1 / PPN (${taxRate}%)</span>
         <span style="color: #b45309; font-weight: 700;">${formatRupiah(totalTax)}</span>
       </div>
       <div class="summary-row">
-        <span>Biaya Layanan / Service (${serviceRate}%)</span>
+        <span>Dana Service Charge Staf (${serviceRate}%)</span>
         <span style="color: #1d4ed8; font-weight: 700;">${formatRupiah(totalServiceCharge)}</span>
       </div>
       <div class="summary-row bold">
-        <span>Total Pungutan Tambahan</span>
+        <span>Total Pungutan Non-Produk</span>
         <span>${formatRupiah(totalTax + totalServiceCharge)}</span>
+      </div>
+      <div class="summary-row" style="margin-top: 4px; font-size: 8.5px; color: #64748b;">
+        <span>*Pajak wajib disetor ke Bapenda/DJP, service charge dialokasikan untuk insentif staf.</span>
       </div>
     </div>
 
     <!-- Signatures -->
     <div class="summary-box" style="display: flex; flex-direction: column; justify-content: space-between;">
-      <div style="font-size: 10px; color: #64748b; text-align: center;">
-        Pengesahan Laporan Finansial Toko
+      <div style="font-size: 9.5px; color: #64748b; text-align: center;">
+        Pengesahan Laporan Finansial &amp; Pajak
       </div>
-      <div style="display: flex; justify-content: space-around; margin-top: 15px;">
-        <div class="signature-box" style="width: 100px;">
+      <div class="signature-container">
+        <div class="signature-box">
           <div class="signature-line"></div>
           <div class="signature-title">Dibuat Kasir</div>
         </div>
-        <div class="signature-box" style="width: 100px;">
+        <div class="signature-box">
           <div class="signature-line"></div>
-          <div class="signature-title">Manager / Owner</div>
+          <div class="signature-title">Owner / Manager</div>
         </div>
       </div>
     </div>
   </div>
 
   <script>
-    // Auto trigger print dialog after page rendering
     window.addEventListener('load', () => {
       setTimeout(() => {
         window.print();

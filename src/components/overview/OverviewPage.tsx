@@ -39,6 +39,13 @@ import {
   Calendar,
   RefreshCw,
   PlusCircle,
+  Percent,
+  Coins,
+  Wallet,
+  TrendingDown,
+  PieChart as PieChartIcon,
+  HelpCircle,
+  CheckCircle,
 } from 'lucide-react';
 
 interface OverviewPageProps {
@@ -68,24 +75,88 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [timeFilter, setTimeFilter] = useState<'TODAY' | '7DAYS' | '30DAYS'>('TODAY');
 
-  // Today & Historical Metrics calculation
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayOrders = useMemo(
-    () => orders.filter((o) => o.date.startsWith(todayStr) && o.status === 'COMPLETED'),
-    [orders, todayStr]
-  );
+  // Filtered Orders based on Time Range
+  const filteredOrders = useMemo(() => {
+    const now = new Date();
+    return orders.filter((o) => {
+      if (o.status !== 'COMPLETED') return false;
+      const oDate = new Date(o.date);
+      if (timeFilter === 'TODAY') {
+        return oDate.toDateString() === now.toDateString();
+      }
+      if (timeFilter === '7DAYS') {
+        const past7 = new Date();
+        past7.setDate(past7.getDate() - 7);
+        return oDate >= past7;
+      }
+      if (timeFilter === '30DAYS') {
+        const past30 = new Date();
+        past30.setDate(past30.getDate() - 30);
+        return oDate >= past30;
+      }
+      return true;
+    });
+  }, [orders, timeFilter]);
 
-  const todaySales = useMemo(
-    () => todayOrders.reduce((sum, o) => sum + o.total, 0),
-    [todayOrders]
-  );
+  const timeFilterLabel = useMemo(() => {
+    if (timeFilter === 'TODAY') return 'Hari Ini';
+    if (timeFilter === '7DAYS') return '7 Hari Terakhir';
+    return '30 Hari Terakhir';
+  }, [timeFilter]);
 
-  const todayItemsSold = useMemo(
-    () => todayOrders.reduce((sum, o) => sum + o.items.reduce((iSum, i) => iSum + i.quantity, 0), 0),
-    [todayOrders]
-  );
+  // Comprehensive Financial & Unit Economics Calculations
+  const financialMetrics = useMemo(() => {
+    let grossSales = 0;
+    let discountTotal = 0;
+    let taxTotal = 0;
+    let serviceChargeTotal = 0;
+    let netRevenue = 0;
+    let totalCOGS = 0; // Modal Bahan Baku / HPP
+    let itemsSold = 0;
+    let cashSales = 0;
+    let cashlessSales = 0;
 
-  const averageOrderValue = todayOrders.length > 0 ? Math.round(todaySales / todayOrders.length) : 0;
+    filteredOrders.forEach((o) => {
+      netRevenue += o.total || 0;
+      grossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
+      discountTotal += o.discountTotal || 0;
+      taxTotal += o.taxTotal || 0;
+      serviceChargeTotal += o.serviceChargeTotal || 0;
+
+      if (o.paymentMethod === 'CASH') {
+        cashSales += o.total;
+      } else {
+        cashlessSales += o.total;
+      }
+
+      o.items.forEach((item) => {
+        itemsSold += item.quantity;
+        const prod = products.find((p) => p.id === item.productId);
+        const unitCost = prod ? prod.costPrice : item.unitPrice * 0.45;
+        totalCOGS += unitCost * item.quantity;
+      });
+    });
+
+    const grossProfit = Math.max(0, netRevenue - totalCOGS - taxTotal);
+    const netProfitMargin = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
+    const averageOrderValue = filteredOrders.length > 0 ? Math.round(netRevenue / filteredOrders.length) : 0;
+
+    return {
+      grossSales,
+      discountTotal,
+      taxTotal,
+      serviceChargeTotal,
+      netRevenue,
+      totalCOGS,
+      grossProfit,
+      netProfitMargin: Math.round(netProfitMargin * 10) / 10,
+      averageOrderValue,
+      itemsSold,
+      cashSales,
+      cashlessSales,
+      orderCount: filteredOrders.length,
+    };
+  }, [filteredOrders, products]);
 
   const lowStockProducts = useMemo(
     () => products.filter((p) => p.stock <= p.minStockAlert),
@@ -97,96 +168,68 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     [tables]
   );
 
-  const activeStaffCount = useMemo(
-    () => staffMembers.filter((s) => getActiveAttendance(s.id)).length,
-    [staffMembers, getActiveAttendance]
-  );
-
   // 7-day Sales Trend Calculation
   const last7DaysData = useMemo(() => {
-    const days: { label: string; date: string; sales: number; count: number }[] = [];
+    const days: { label: string; date: string; sales: number; profit: number; count: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateKey = d.toISOString().split('T')[0];
       const dayLabel = d.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric' });
-      
+
       const dayOrders = orders.filter(
         (o) => o.date.startsWith(dateKey) && o.status === 'COMPLETED'
       );
-      const daySum = dayOrders.reduce((sum, o) => sum + o.total, 0);
+      const daySales = dayOrders.reduce((sum, o) => sum + o.total, 0);
+
+      let dayCost = 0;
+      dayOrders.forEach((o) => {
+        o.items.forEach((item) => {
+          const prod = products.find((p) => p.id === item.productId);
+          dayCost += (prod ? prod.costPrice : item.unitPrice * 0.45) * item.quantity;
+        });
+      });
 
       days.push({
         label: dayLabel,
         date: dateKey,
-        sales: daySum,
+        sales: daySales,
+        profit: Math.max(0, daySales - dayCost),
         count: dayOrders.length,
       });
     }
     return days;
-  }, [orders]);
+  }, [orders, products]);
 
   const maxDailySales = useMemo(
     () => Math.max(...last7DaysData.map((d) => d.sales), 100000),
     [last7DaysData]
   );
 
-  // Payment Breakdown
-  const paymentBreakdown = useMemo(() => {
-    const breakdown: Record<string, { count: number; total: number }> = {
-      CASH: { count: 0, total: 0 },
-      QRIS: { count: 0, total: 0 },
-      DEBIT: { count: 0, total: 0 },
-      TRANSFER: { count: 0, total: 0 },
-      SHOPEEPAY: { count: 0, total: 0 },
-      GOPAY: { count: 0, total: 0 },
-      OVO: { count: 0, total: 0 },
-    };
-
-    todayOrders.forEach((o) => {
-      const method = o.paymentMethod || 'CASH';
-      if (!breakdown[method]) {
-        breakdown[method] = { count: 0, total: 0 };
-      }
-      breakdown[method].count += 1;
-      breakdown[method].total += o.total;
+  // Top Selling Products with Margin
+  const topProducts = useMemo(() => {
+    const map: Record<string, { product: (typeof products)[0]; qty: number; revenue: number; profit: number }> = {};
+    filteredOrders.forEach((o) => {
+      o.items.forEach((item) => {
+        if (!map[item.productId]) {
+          const found = products.find((p) => p.id === item.productId);
+          if (found) {
+            map[item.productId] = { product: found, qty: 0, revenue: 0, profit: 0 };
+          }
+        }
+        if (map[item.productId]) {
+          const unitCost = map[item.productId].product.costPrice || map[item.productId].product.price * 0.45;
+          map[item.productId].qty += item.quantity;
+          map[item.productId].revenue += item.totalPrice;
+          map[item.productId].profit += item.totalPrice - unitCost * item.quantity;
+        }
+      });
     });
 
-    return Object.entries(breakdown)
-      .filter(([_, data]) => data.count > 0)
-      .map(([method, data]) => ({
-        method,
-        count: data.count,
-        total: data.total,
-        percentage: todaySales > 0 ? Math.round((data.total / todaySales) * 100) : 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [todayOrders, todaySales]);
-
-  // Top Selling Products Calculation
-  const topProducts = useMemo(() => {
-    const map: Record<string, { product: (typeof products)[0]; qty: number; revenue: number }> = {};
-    orders
-      .filter((o) => o.status === 'COMPLETED')
-      .forEach((o) => {
-        o.items.forEach((item) => {
-          if (!map[item.productId]) {
-            const found = products.find((p) => p.id === item.productId);
-            if (found) {
-              map[item.productId] = { product: found, qty: 0, revenue: 0 };
-            }
-          }
-          if (map[item.productId]) {
-            map[item.productId].qty += item.quantity;
-            map[item.productId].revenue += item.totalPrice;
-          }
-        });
-      });
-
     return Object.values(map)
-      .sort((a, b) => b.qty - a.qty)
+      .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 4);
-  }, [orders, products]);
+  }, [filteredOrders, products]);
 
   const handleSwitchSector = (sec: BusinessSector) => {
     activateBusinessSector(sec);
@@ -215,7 +258,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
         </div>
       )}
 
-      {/* 1. TOP HEADER: STORE PROFILE, SHIFT BAR & QUICK ACTIONS */}
+      {/* 1. TOP HEADER: STORE PROFILE, SHIFT STATUS & TIME RANGE FILTER */}
       <div className="relative overflow-hidden rounded-3xl bg-slate-900 text-white p-6 lg:p-8 shadow-2xl border border-slate-800">
         <div className="absolute -top-24 -right-24 w-96 h-96 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-blue-500/15 rounded-full blur-3xl pointer-events-none" />
@@ -234,7 +277,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 text-slate-300 text-xs font-semibold border border-slate-700">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Petugas: {currentUser?.name || 'Kasir'} ({currentUser?.role || 'ADMIN'})</span>
+                <span>Kasir On-Duty: {currentUser?.name || 'Kasir'} ({currentUser?.role || 'ADMIN'})</span>
               </span>
               {shift.status === 'OPEN' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 animate-pulse">
@@ -251,243 +294,307 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
 
             {/* Title & Welcome */}
             <div>
-              <h1 className="text-2xl lg:text-3xl font-black text-white tracking-tight">
-                Dashboard & Ringkasan Toko
+              <h1 className="text-2xl lg:text-3xl font-black text-white tracking-tight flex items-center gap-3">
+                <span>Executive Store Dashboard</span>
+                <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
+                  Live Insight
+                </span>
               </h1>
               <p className="text-xs lg:text-sm text-slate-300 max-w-2xl mt-1 font-medium leading-relaxed">
-                Pantau kinerja penjualan kasir secara realtime, pergerakan stok barang, status meja pelanggan, dan analisis kecerdasan buatan AI untuk bisnis Anda.
+                Pusat kontrol & analitik bisnis: pantau omzet riil, modal terpakai (HPP), estimasi laba bersih (*net profit*), pajak terkumpul, dan efisiensi operasional toko.
               </p>
             </div>
           </div>
 
-          {/* Quick Launch Buttons */}
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
+          {/* Quick Actions & Range Selector */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 shrink-0">
+            {/* Time Filter Pill */}
+            <div className="bg-slate-800/90 border border-slate-700 p-1 rounded-2xl flex items-center space-x-1 shadow-inner">
+              {(['TODAY', '7DAYS', '30DAYS'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTimeFilter(t)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                    timeFilter === t
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {t === 'TODAY' ? 'Hari Ini' : t === '7DAYS' ? '7 Hari' : '30 Hari'}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => setActiveTab('pos')}
-              className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center gap-2.5 active:scale-95 cursor-pointer"
+              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
             >
-              <ShoppingCart className="w-5 h-5 text-slate-950" />
-              <span>Buka Mesin Kasir (POS)</span>
-              <ArrowRight className="w-4 h-4 text-slate-950" />
+              <ShoppingCart className="w-4 h-4 text-slate-950" />
+              <span>Buka Kasir (POS)</span>
             </button>
-
-            <button
-              onClick={() => setActiveTab('ai')}
-              className="px-4 py-3.5 rounded-2xl bg-purple-600/80 hover:bg-purple-600 border border-purple-400/30 text-white font-bold text-xs transition-all flex items-center gap-2 active:scale-95 cursor-pointer shadow-md"
-            >
-              <Bot className="w-4 h-4 text-purple-300" />
-              <span>AI Copilot</span>
-            </button>
-
-            {onBackToHome && (
-              <button
-                onClick={onBackToHome}
-                className="px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Kembali ke Landing Page Beranda"
-              >
-                <span>Halaman Depan</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
         </div>
       </div>
 
-      {/* 2. REALTIME CORE KPI CARDS GRID */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Omzet Hari Ini */}
+      {/* 2. EXECUTIVE FINANCIAL & PROFITABILITY CARDS GRID (5 INSIGHT CARDS) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Omzet Penjualan (Gross Revenue) */}
         <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Omzet Hari Ini</span>
+            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Omzet Penjualan</span>
             <div className="p-2.5 rounded-2xl bg-amber-50 text-amber-600 border border-amber-100">
               <DollarSign className="w-5 h-5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">{formatRupiah(todaySales)}</p>
+            <p className="text-2xl font-black text-slate-900 tracking-tight font-mono">
+              {formatRupiah(financialMetrics.netRevenue)}
+            </p>
             <div className="flex items-center gap-1.5 mt-1">
               <span className="inline-flex items-center text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>{todayOrders.length} Pesanan</span>
+                <span>{financialMetrics.orderCount} Transaksi</span>
               </span>
-              <span className="text-xs text-slate-400">selesai hari ini</span>
+              <span className="text-[11px] text-slate-400">{timeFilterLabel}</span>
             </div>
           </div>
         </div>
 
-        {/* Rata-Rata Transaksi (AOV) & Total Qty */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
+        {/* Modal HPP / Bahan Baku Terpakai (COGS) */}
+        <div className="bg-white rounded-3xl p-5 border border-rose-200/80 shadow-xs space-y-3 relative overflow-hidden bg-rose-50/15">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Rata-Rata Struk</span>
-            <div className="p-2.5 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100">
-              <Package className="w-5 h-5" />
+            <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Modal Terpakai (HPP)</span>
+            <div className="p-2.5 rounded-2xl bg-rose-100 text-rose-700 border border-rose-200">
+              <TrendingDown className="w-5 h-5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">{formatRupiah(averageOrderValue)}</p>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className="inline-flex items-center text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
-                {todayItemsSold} Item
-              </span>
-              <span className="text-xs text-slate-400">terjual keluar toko</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Meja / Slot Operasional */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">
-              {activePreset.layoutTerm?.tabLabel || 'Denah Layout'} Terisi
-            </span>
-            <div className="p-2.5 rounded-2xl bg-purple-50 text-purple-600 border border-purple-100">
-              <Grid2X2 className="w-5 h-5" />
-            </div>
-          </div>
-          <div>
-            <p className="text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">
-              {occupiedTables} <span className="text-sm text-slate-400 font-semibold">/ {tables.length} {activePreset.layoutTerm?.itemNoun || 'Meja'}</span>
+            <p className="text-2xl font-black text-rose-700 tracking-tight font-mono">
+              {formatRupiah(financialMetrics.totalCOGS)}
             </p>
             <div className="flex items-center gap-1.5 mt-1">
-              <span className="inline-flex items-center text-xs font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded-md">
-                {tables.length > 0 ? Math.round((occupiedTables / tables.length) * 100) : 0}% Kapasitas
+              <span className="inline-flex items-center text-xs font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md">
+                Beban Modal
               </span>
-              <span className="text-xs text-slate-400">sedang digunakan</span>
+              <span className="text-[11px] text-slate-500">untuk {financialMetrics.itemsSold} item terjual</span>
             </div>
           </div>
         </div>
 
-        {/* Status Stok & Peringatan */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
+        {/* Estimasi Laba Bersih (Net Profit) */}
+        <div className="bg-white rounded-3xl p-5 border border-emerald-200/80 shadow-xs space-y-3 relative overflow-hidden bg-emerald-50/20">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Alert Stok Kritis</span>
-            <div className={`p-2.5 rounded-2xl border ${lowStockProducts.length > 0 ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-              <AlertTriangle className="w-5 h-5" />
+            <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Estimasi Laba Bersih</span>
+            <div className="p-2.5 rounded-2xl bg-emerald-100 text-emerald-700 border border-emerald-200">
+              <TrendingUp className="w-5 h-5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl lg:text-3xl font-black text-slate-900 tracking-tight">
-              {lowStockProducts.length} <span className="text-sm text-slate-400 font-semibold">Produk</span>
+            <p className="text-2xl font-black text-emerald-700 tracking-tight font-mono">
+              {formatRupiah(financialMetrics.grossProfit)}
             </p>
             <div className="flex items-center gap-1.5 mt-1">
-              <span className={`inline-flex items-center text-xs font-bold px-2 py-0.5 rounded-md ${lowStockProducts.length > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                {lowStockProducts.length > 0 ? 'Segera Restok' : 'Aman'}
+              <span className="inline-flex items-center text-xs font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                Margin Bersih {financialMetrics.netProfitMargin}%
               </span>
-              <span className="text-xs text-slate-400">dari {products.length} item</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Total Pajak & Service Charge */}
+        <div className="bg-white rounded-3xl p-5 border border-blue-200/80 shadow-xs space-y-3 relative overflow-hidden bg-blue-50/15">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-blue-800 uppercase tracking-wider">Pajak &amp; Service</span>
+            <div className="p-2.5 rounded-2xl bg-blue-100 text-blue-700 border border-blue-200">
+              <Coins className="w-5 h-5" />
+            </div>
+          </div>
+          <div>
+            <p className="text-2xl font-black text-blue-800 tracking-tight font-mono">
+              {formatRupiah(financialMetrics.taxTotal + financialMetrics.serviceChargeTotal)}
+            </p>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 font-semibold mt-1">
+              <span className="text-amber-700">Pajak: {formatRupiah(financialMetrics.taxTotal)}</span>
+              <span className="text-blue-700">Svc: {formatRupiah(financialMetrics.serviceChargeTotal)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Arus Kas Fisik vs Digital (Cash vs Cashless) */}
+        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Arus Kas Masuk</span>
+            <div className="p-2.5 rounded-2xl bg-purple-50 text-purple-700 border border-purple-100">
+              <Wallet className="w-5 h-5" />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+              <span className="flex items-center gap-1"><Banknote className="w-3.5 h-3.5 text-emerald-600" /> Tunai:</span>
+              <span className="font-mono text-slate-900">{formatRupiah(financialMetrics.cashSales)}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 mt-1">
+              <span className="flex items-center gap-1"><QrCode className="w-3.5 h-3.5 text-purple-600" /> Non-Tunai:</span>
+              <span className="font-mono text-slate-900">{formatRupiah(financialMetrics.cashlessSales)}</span>
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2">
+              <div
+                style={{
+                  width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.cashSales / financialMetrics.netRevenue) * 100 : 50}%`,
+                }}
+                className="h-full bg-emerald-500 rounded-full"
+              />
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. CHARTS & VISUAL ANALYTICS (7-DAY SALES & PAYMENT SHARE) */}
+      {/* 3. MINI P&L STATEMENT (RINGKASAN LABA RUGI) & SMART AI ADVISOR */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 7-Day Trend Interactive Chart */}
+        {/* Laporan Laba Rugi Eksekutif (Mini P&L Statement) */}
         <div className="lg:col-span-2 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
             <div>
               <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-amber-500" />
-                <span>Tren Penjualan 7 Hari Terakhir</span>
+                <BarChart3 className="w-5 h-5 text-amber-500" />
+                <span>Ringkasan Laba Rugi Operasional ({timeFilterLabel})</span>
               </h2>
-              <p className="text-xs text-slate-500">Performa transaksi dan omzet harian outlet Anda</p>
+              <p className="text-xs text-slate-500">Transparansi struktur pendapatan, modal bahan baku, potongan diskon, dan margin</p>
             </div>
-            <span className="text-xs font-extrabold text-amber-600 bg-amber-50 px-3 py-1 rounded-xl border border-amber-100">
-              Total 7 Hari: {formatRupiah(last7DaysData.reduce((s, d) => s + d.sales, 0))}
+            <span className={`text-xs font-extrabold px-3 py-1 rounded-xl border ${
+              financialMetrics.netProfitMargin >= 50
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}>
+              Kesehatan Margin: {financialMetrics.netProfitMargin >= 50 ? '🌟 Sangat Sehat' : '👍 Baik'} ({financialMetrics.netProfitMargin}%)
             </span>
           </div>
 
-          {/* Bar Chart Visualization */}
-          <div className="pt-4 flex items-end justify-between gap-2 h-52 px-2">
-            {last7DaysData.map((d, idx) => {
-              const heightPercent = Math.max(Math.round((d.sales / maxDailySales) * 100), 8);
-              const isToday = idx === last7DaysData.length - 1;
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-medium">
+            {/* Kolom 1: Pendapatan & Diskon */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Penjualan Kotor (Gross Sales):</span>
+                <span className="font-mono font-bold text-slate-900">{formatRupiah(financialMetrics.grossSales)}</span>
+              </div>
+              <div className="flex justify-between text-rose-600">
+                <span>(-) Potongan Diskon Promo:</span>
+                <span className="font-mono font-bold">-{formatRupiah(financialMetrics.discountTotal)}</span>
+              </div>
+              <div className="flex justify-between text-slate-800 pt-2 border-t border-slate-200 font-bold">
+                <span>(=) Total Omzet Kasir:</span>
+                <span className="font-mono text-slate-950 font-black text-sm">{formatRupiah(financialMetrics.netRevenue)}</span>
+              </div>
+              <div className="flex justify-between text-slate-500 text-[11px] pt-1">
+                <span>Rata-Rata per Struk (AOV):</span>
+                <span className="font-mono">{formatRupiah(financialMetrics.averageOrderValue)}</span>
+              </div>
+            </div>
 
-              return (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-2 group h-full justify-end">
-                  {/* Tooltip on hover */}
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-[10px] font-bold py-1 px-2 rounded-lg pointer-events-none mb-1 text-center whitespace-nowrap shadow-lg z-20">
-                    <p>{d.label}</p>
-                    <p className="text-amber-300">{formatRupiah(d.sales)}</p>
-                    <p className="text-slate-400">{d.count} Transaksi</p>
-                  </div>
+            {/* Kolom 2: Beban Modal & Profit Bersih */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+              <div className="flex justify-between text-rose-700">
+                <span>(-) Beban Pokok / Modal HPP:</span>
+                <span className="font-mono font-bold">-{formatRupiah(financialMetrics.totalCOGS)}</span>
+              </div>
+              <div className="flex justify-between text-amber-700">
+                <span>(-) Alokasi Setor Pajak (PB1):</span>
+                <span className="font-mono font-bold">-{formatRupiah(financialMetrics.taxTotal)}</span>
+              </div>
+              <div className="flex justify-between text-emerald-700 pt-2 border-t border-slate-200 font-extrabold">
+                <span>(=) Estimasi Laba Bersih:</span>
+                <span className="font-mono text-emerald-700 font-black text-sm">{formatRupiah(financialMetrics.grossProfit)}</span>
+              </div>
+              <div className="flex justify-between text-blue-700 text-[11px] pt-1">
+                <span>Alokasi Dana Layanan (Service):</span>
+                <span className="font-mono">{formatRupiah(financialMetrics.serviceChargeTotal)}</span>
+              </div>
+            </div>
+          </div>
 
-                  {/* Bar */}
-                  <div className="w-full max-w-[48px] bg-slate-100 rounded-2xl overflow-hidden flex flex-col justify-end p-1 h-36">
-                    <div
-                      style={{ height: `${heightPercent}%` }}
-                      className={`w-full rounded-xl transition-all duration-500 ${
-                        isToday
-                          ? 'bg-gradient-to-t from-amber-500 to-amber-400 shadow-md shadow-amber-500/20'
-                          : 'bg-gradient-to-t from-slate-400 to-slate-300 group-hover:from-amber-400 group-hover:to-amber-300'
-                      }`}
-                    />
-                  </div>
-
-                  {/* Day Label */}
-                  <span className={`text-[11px] font-bold ${isToday ? 'text-amber-600 font-black' : 'text-slate-500'}`}>
-                    {d.label}
-                  </span>
-                </div>
-              );
-            })}
+          {/* Progress Margin Bar */}
+          <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-amber-400">Komposisi Omzet Terhadap Modal &amp; Laba:</span>
+              <span className="text-slate-300 font-mono">
+                Modal: {financialMetrics.netRevenue > 0 ? Math.round((financialMetrics.totalCOGS / financialMetrics.netRevenue) * 100) : 0}% | Laba: {financialMetrics.netProfitMargin}%
+              </span>
+            </div>
+            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden flex">
+              <div
+                style={{
+                  width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.totalCOGS / financialMetrics.netRevenue) * 100 : 40}%`,
+                }}
+                className="h-full bg-rose-500"
+                title="Beban Modal HPP"
+              />
+              <div
+                style={{
+                  width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.taxTotal / financialMetrics.netRevenue) * 100 : 10}%`,
+                }}
+                className="h-full bg-amber-500"
+                title="Pajak PB1"
+              />
+              <div
+                style={{
+                  width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.grossProfit / financialMetrics.netRevenue) * 100 : 50}%`,
+                }}
+                className="h-full bg-emerald-500"
+                title="Laba Bersih"
+              />
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Modal Bahan Baku</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Pajak Daerah</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Laba Bersih Toko</span>
+            </div>
           </div>
         </div>
 
-        {/* Payment Method Distribution */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4 flex flex-col justify-between">
-          <div>
-            <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-blue-500" />
-              <span>Metode Pembayaran</span>
-            </h2>
-            <p className="text-xs text-slate-500">Distribusi cara bayar pelanggan hari ini</p>
-          </div>
+        {/* Smart AI Financial & Business Advisor Card */}
+        <div className="bg-gradient-to-br from-purple-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 border border-purple-700/40 shadow-xl space-y-4 flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/15 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="space-y-3 py-2">
-            {paymentBreakdown.length === 0 ? (
-              <div className="text-center py-8 text-slate-400 text-xs">
-                Belum ada data pembayaran hari ini.
+          <div className="space-y-3.5 relative z-10">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-purple-500 text-white rounded-xl">
+                <Bot className="w-5 h-5" />
               </div>
-            ) : (
-              paymentBreakdown.map((item) => (
-                <div key={item.method} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="text-slate-700 flex items-center gap-1.5">
-                      {item.method === 'CASH' && <Banknote className="w-4 h-4 text-emerald-600" />}
-                      {item.method === 'QRIS' && <QrCode className="w-4 h-4 text-purple-600" />}
-                      {item.method !== 'CASH' && item.method !== 'QRIS' && <CreditCard className="w-4 h-4 text-blue-600" />}
-                      <span>{item.method}</span>
-                    </span>
-                    <span className="text-slate-900 font-extrabold">{formatRupiah(item.total)} ({item.percentage}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div
-                      style={{ width: `${item.percentage}%` }}
-                      className={`h-full rounded-full ${
-                        item.method === 'QRIS'
-                          ? 'bg-purple-500'
-                          : item.method === 'CASH'
-                          ? 'bg-emerald-500'
-                          : 'bg-blue-500'
-                      }`}
-                    />
-                  </div>
-                </div>
-              ))
-            )}
+              <div>
+                <h3 className="font-black text-base text-white">AI Financial Copilot</h3>
+                <p className="text-[11px] text-purple-300">Analisis Otomatis Kinerja Toko</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 text-xs text-purple-100 space-y-2.5 leading-relaxed font-medium">
+              <p className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" />
+                <span>Insight Profitabilitas Realtime:</span>
+              </p>
+              <p>
+                {financialMetrics.netProfitMargin >= 50
+                  ? `Margin keuntungan toko Anda sangat kuat di angka ${financialMetrics.netProfitMargin}%. Modal bahan baku (${formatRupiah(financialMetrics.totalCOGS)}) terkendali dengan sangat efisien!`
+                  : `Toko mencatatkan omzet ${formatRupiah(financialMetrics.netRevenue)} dengan estimasi laba ${formatRupiah(financialMetrics.grossProfit)}. Tingkatkan penjualan menu bermargin tinggi untuk mendongkrak profit!`}
+              </p>
+              {lowStockProducts.length > 0 && (
+                <p className="text-amber-200 text-[11px] pt-1 border-t border-white/10">
+                  ⚠️ Peringatan: Ada {lowStockProducts.length} produk yang stoknya menipis. Segera restok agar penjualan tidak terhambat!
+                </p>
+              )}
+            </div>
           </div>
 
           <button
-            onClick={() => setActiveTab('reports')}
-            className="w-full py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-extrabold text-xs transition-all flex items-center justify-center gap-1.5"
+            onClick={() => setActiveTab('ai')}
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95 relative z-10"
           >
-            <span>Lihat Rekap Kas & Laporan Lengkap</span>
-            <ChevronRight className="w-4 h-4" />
+            <Sparkles className="w-4 h-4 text-slate-950" />
+            <span>Konsultasi AI Copilot Lengkap ➔</span>
           </button>
         </div>
       </div>
 
-      {/* 4. SECTOR SWITCHER & TOP SELLING PRODUCTS */}
+      {/* 4. SECTOR SWITCHER & TOP PROFITABLE PRODUCTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Sektor Mode Switcher (5 Business Presets) */}
         <div className="lg:col-span-2 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
@@ -497,7 +604,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
                 <Layers className="w-5 h-5 text-amber-500" />
                 <span>Pilih Mode Format Bisnis Toko</span>
               </h2>
-              <p className="text-xs text-slate-500">Sesuaikan katalog, tata letak, dan alur kerja sesuai bidang usaha:</p>
+              <p className="text-xs text-slate-500">Sesuaikan katalog produk, layout denah, dan alur kerja sesuai jenis usaha:</p>
             </div>
           </div>
 
@@ -538,7 +645,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-                Fitur Spesifik Mode {activePreset.name}:
+                Fitur Unggulan Format {activePreset.name}:
               </span>
               <span className="text-[11px] text-slate-400 font-medium">{activePreset.products.length} produk katalog bawaan</span>
             </div>
@@ -553,12 +660,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
         </div>
 
-        {/* Top Selling Products List */}
+        {/* Top Profitable Products List */}
         <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
               <Flame className="w-5 h-5 text-amber-500" />
-              <span>Produk Terlaris</span>
+              <span>Produk Kontributor Profit</span>
             </h2>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Top Sales</span>
           </div>
@@ -566,7 +673,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           <div className="space-y-3">
             {topProducts.length === 0 ? (
               <div className="text-center py-8 text-slate-400 text-xs">
-                Belum ada data penjualan produk.
+                Belum ada data penjualan produk pada periode {timeFilterLabel}.
               </div>
             ) : (
               topProducts.map((item, idx) => (
@@ -581,11 +688,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
                   />
                   <div className="min-w-0 flex-1">
                     <p className="font-extrabold text-xs text-slate-900 truncate">{item.product.name}</p>
-                    <p className="text-[11px] text-slate-500 font-semibold">{formatRupiah(item.product.price)}</p>
+                    <p className="text-[11px] text-slate-500 font-semibold">
+                      Harga: {formatRupiah(item.product.price)} (HPP: {formatRupiah(item.product.costPrice)})
+                    </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-black text-xs text-amber-600">{item.qty} terjual</p>
-                    <p className="text-[10px] text-slate-400">{formatRupiah(item.revenue)}</p>
+                    <p className="font-black text-xs text-emerald-700">+{formatRupiah(item.profit)}</p>
+                    <p className="text-[10px] text-slate-400">{item.qty} item terjual</p>
                   </div>
                 </div>
               ))
@@ -594,88 +703,48 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
         </div>
       </div>
 
-      {/* 5. AI COPILOT SMART ADVISOR & LIVE RECENT TRANSACTIONS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* AI Copilot Card */}
-        <div className="bg-gradient-to-br from-purple-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 border border-purple-700/40 shadow-xl space-y-4 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/15 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="space-y-3 relative z-10">
-            <div className="flex items-center space-x-2">
-              <div className="p-2 bg-purple-500 text-white rounded-xl">
-                <Bot className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-black text-base text-white">New Hope AI Copilot</h3>
-                <p className="text-[11px] text-purple-300">Asisten Pintar Bisnis Anda</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-md border border-white/10 text-xs text-purple-100 space-y-2 leading-relaxed font-medium">
-              <p className="font-bold text-amber-300 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" />
-                <span>Insight Operasional Hari Ini:</span>
-              </p>
-              <p>
-                {todayOrders.length > 5
-                  ? `Volume transaksi hari ini mencapai ${todayOrders.length} pesanan dengan omzet ${formatRupiah(todaySales)}. Produk kategori "${activePreset.name.split('&')[0]}" mendominasi 70% penjualan!`
-                  : `Toko dalam mode "${activePreset.name}". Pastikan kasir mengaktifkan shift kas dan memeriksa stok bahan baku sebelum jam sibuk!`}
-              </p>
-            </div>
-          </div>
-
+      {/* 5. LIVE RECENT TRANSACTIONS FEED */}
+      <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+            <Receipt className="w-5 h-5 text-slate-700" />
+            <span>Transaksi Terkini Kasir ({orders.length})</span>
+          </h2>
           <button
-            onClick={() => setActiveTab('ai')}
-            className="w-full py-3 rounded-2xl bg-white hover:bg-purple-50 text-slate-950 font-black text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95 relative z-10"
+            onClick={() => setActiveTab('reports')}
+            className="text-xs font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer"
           >
-            <Sparkles className="w-4 h-4 text-purple-700" />
-            <span>Buka Obrolan AI Copilot ➔</span>
+            <span>Lihat Semua di Laporan Lengkap</span>
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Live Recent Transactions Feed */}
-        <div className="lg:col-span-2 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-slate-700" />
-              <span>Transaksi Terkini Kasir ({orders.length})</span>
-            </h2>
-            <button
-              onClick={() => setActiveTab('reports')}
-              className="text-xs font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 cursor-pointer"
-            >
-              <span>Lihat Semua di Laporan</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+        {orders.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 text-xs">
+            Belum ada riwayat transaksi hari ini. Buka Kasir untuk melakukan penjualan pertama!
           </div>
-
-          {orders.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-xs">
-              Belum ada riwayat transaksi hari ini. Buka Kasir untuk melakukan penjualan pertama!
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 overflow-x-auto">
-              {orders.slice(0, 5).map((order) => (
-                <div key={order.id} className="py-3.5 flex items-center justify-between gap-4 text-xs hover:bg-slate-50/80 px-2 rounded-xl transition-colors">
-                  <div className="space-y-0.5">
-                    <p className="font-mono font-bold text-slate-900">{order.id.slice(0, 16).toUpperCase()}</p>
-                    <p className="text-slate-500 text-[11px]">
-                      {new Date(order.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {order.items.length} item • Kasir: {order.cashierName}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-black text-slate-900 text-sm">{formatRupiah(order.total)}</p>
-                    <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
-                      order.paymentMethod === 'QRIS' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
-                    }`}>
-                      {order.paymentMethod}
-                    </span>
-                  </div>
+        ) : (
+          <div className="divide-y divide-slate-100 overflow-x-auto">
+            {orders.slice(0, 5).map((order) => (
+              <div key={order.id} className="py-3.5 flex items-center justify-between gap-4 text-xs hover:bg-slate-50/80 px-2 rounded-xl transition-colors">
+                <div className="space-y-0.5">
+                  <p className="font-mono font-bold text-slate-900">{order.id.slice(0, 16).toUpperCase()}</p>
+                  <p className="text-slate-500 text-[11px]">
+                    {new Date(order.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {order.items.length} item • Kasir: {order.cashierName}
+                  </p>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <div className="text-right">
+                  <p className="font-black text-slate-900 text-sm">{formatRupiah(order.total)}</p>
+                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
+                    order.paymentMethod === 'QRIS' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
+                  }`}>
+                    {order.paymentMethod}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
