@@ -499,15 +499,98 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </div>
 
+      {/* Pricing / Tier Plans */}
+      <div className="bg-slate-900 rounded-3xl p-6 lg:p-8 space-y-8 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        
+        <div className="space-y-2 text-center relative z-10">
+          <h2 className="text-2xl sm:text-3xl font-black text-white">
+            Pilihan Paket <span className="text-amber-400">Langganan</span>
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-2xl mx-auto">
+            Mulai dari gratis selamanya hingga fitur enterprise multi-outlet. Sesuaikan dengan skala bisnis Anda.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 relative z-10">
+          {/* Free Trial */}
+          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
+            <h3 className="font-extrabold text-lg text-white">Free Trial</h3>
+            <p className="text-xs text-amber-400 font-bold mb-4">45 Hari Coba Gratis</p>
+            <div className="text-2xl font-black text-white mb-6">Rp 0</div>
+            
+            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>1 Outlet</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Limit 100 Produk</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Full Access POS & Dash</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 10x Interaksi Total</span></li>
+            </ul>
+            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
+          </div>
+
+          {/* Free Tier */}
+          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
+            <h3 className="font-extrabold text-lg text-white">Free Tier</h3>
+            <p className="text-xs text-slate-400 mb-4">Gratis Selamanya</p>
+            <div className="text-2xl font-black text-white mb-6">Rp 0<span className="text-xs font-normal text-slate-500"> / bln</span></div>
+            
+            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>1 Outlet</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Limit 30 Produk</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Basic POS + Daily Sales</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 3x / bulan</span></li>
+            </ul>
+            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
+          </div>
+
+          {/* Tier Plus */}
+          <div className="bg-gradient-to-b from-amber-500/10 to-slate-800/80 rounded-2xl border border-amber-500/50 p-5 flex flex-col relative overflow-hidden">
+            <div className="absolute top-0 right-0 bg-amber-500 text-slate-950 text-[10px] font-black px-3 py-1 rounded-bl-lg">POPULER</div>
+            <h3 className="font-extrabold text-lg text-amber-400">Tier Plus</h3>
+            <p className="text-xs text-slate-400 mb-4">UMKM & Kedai Menengah</p>
+            <div className="mb-6">
+              <div className="text-2xl font-black text-white">Rp 99rb<span className="text-xs font-normal text-slate-500"> / bln</span></div>
+              <div className="text-[10px] text-slate-400 mt-1">Atau Rp 79rb/bln (Tahunan)</div>
+            </div>
+            
+            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Up to 2 Outlet (+59rb/cabang/bln)</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Limit 100 Produk / outlet</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Full POS + Inventory + Analytics</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>AI Analyst: 30x / bulan</span></li>
+            </ul>
+            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition-colors shadow-lg shadow-amber-500/20 cursor-pointer">Mulai Tier Plus</button>
+          </div>
+
+          {/* Tier Pro */}
+          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
+            <h3 className="font-extrabold text-lg text-white">Tier Pro</h3>
+            <p className="text-xs text-slate-400 mb-4">Restoran & Multi Cabang</p>
+            <div className="mb-6">
+              <div className="text-2xl font-black text-white">Rp 299rb<span className="text-xs font-normal text-slate-500"> / bln</span></div>
+              <div className="text-[10px] text-slate-400 mt-1">Atau Rp 239rb/bln (Tahunan)</div>
+            </div>
+            
+            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Up to 4 Outlet (+49rb/cabang/bln)</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Unlimited Produk</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Full POS + Adv. Stock + Analisa</span></li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 90x / bulan</span></li>
+            </ul>
+            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
+          </div>
+        </div>
+      </div>
+
       {/* Store Information Footer */}
       <div className="bg-slate-900 text-slate-300 rounded-3xl p-6 lg:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
         <div className="space-y-2 text-center md:text-left">
           <div className="flex items-center justify-center md:justify-start space-x-2 text-amber-400 font-bold text-sm">
             <Store className="w-5 h-5" />
-            <span>{settings.storeName || 'New Hope Multi-Business POS'}</span>
+            <span>New Hope Multi-Business POS</span>
           </div>
           <p className="text-xs text-slate-400 max-w-md font-medium">
-            {settings.address || 'Jl. New Hope Raya No. 88, Jakarta Selatan'} &bull; Telp: {settings.phone || '0812-3456-7890'}
+            Graha Suryamas Blok K no 4 Sidoarjo &bull; Telp: 0812-3456-7890
           </p>
           <p className="text-[11px] text-slate-500">
             Dikelola oleh sistem <b>New Hope POS</b> &bull; Mode: <b>{settings.storeMode}</b> &bull; Hak Cipta &copy; 2026.
