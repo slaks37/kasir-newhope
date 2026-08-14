@@ -74,14 +74,14 @@ export const UserManagementTab: React.FC = () => {
         return (
           <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-purple-100 text-purple-900 border border-purple-300 flex items-center space-x-1 shrink-0 w-max">
             <UserCog className="w-3.5 h-3.5 text-purple-700" />
-            <span>ADMIN (Super)</span>
+            <span>ADMIN (Owner Toko)</span>
           </span>
         );
       case 'MANAGER':
         return (
           <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-100 text-blue-900 border border-blue-300 flex items-center space-x-1 shrink-0 w-max">
             <Briefcase className="w-3.5 h-3.5 text-blue-700" />
-            <span>MANAGER</span>
+            <span>MANAGER / SPV</span>
           </span>
         );
       case 'CASHIER':
@@ -89,7 +89,7 @@ export const UserManagementTab: React.FC = () => {
         return (
           <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center space-x-1 shrink-0 w-max">
             <Store className="w-3.5 h-3.5 text-emerald-700" />
-            <span>KASIR</span>
+            <span>KASIR / OPERATOR</span>
           </span>
         );
     }
@@ -116,12 +116,18 @@ export const UserManagementTab: React.FC = () => {
       {/* Tab Header & Sub-nav */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2">
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-extrabold border border-blue-200 uppercase tracking-wider">
+              Data Pengguna Toko (Client Users)
+            </span>
+            <span className="text-[11px] text-slate-400">Tabel: pos.users</span>
+          </div>
+          <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2 mt-1">
             <ShieldCheck className="w-6 h-6 text-amber-600" />
-            <span>Manajemen Pengguna & Hak Akses (RBAC)</span>
+            <span>Manajemen Staf & Hak Akses Kasir (Client RBAC)</span>
           </h3>
           <p className="text-xs text-slate-500 mt-1">
-            Atur peran pengguna (Admin, Manager, Kasir), PIN otentikasi, dan matriks batas akses fitur.
+            Atur akun Owner Toko, Manager, dan Kasir beserta PIN 4 digit untuk otentikasi kasir & pergantian pengguna.
           </p>
         </div>
 
@@ -130,23 +136,41 @@ export const UserManagementTab: React.FC = () => {
             onClick={() => setActiveSubTab('USERS')}
             className={`px-4 py-2 rounded-xl transition-all ${
               activeSubTab === 'USERS'
-                ? 'bg-amber-500 text-slate-950 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            Daftar Pengguna ({users.length})
+            Daftar Staf Toko ({users.length})
           </button>
           <button
             onClick={() => setActiveSubTab('PERMISSIONS')}
             className={`px-4 py-2 rounded-xl transition-all ${
               activeSubTab === 'PERMISSIONS'
-                ? 'bg-amber-500 text-slate-950 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             Matriks Hak Akses
           </button>
         </div>
+      </div>
+
+      {/* Admin Isolation Banner Notice */}
+      <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center space-x-2.5 text-amber-900">
+          <Info className="w-4 h-4 text-amber-700 shrink-0" />
+          <span>
+            <b>Pemisahan Akun:</b> Halaman ini hanya mengelola <b>Staf Toko / Client</b>. Akun <b>Superadmin & Tim Platform (Admin Users)</b> berada di database terpisah (<code>internal.internal_users</code>) dan dikelola melalui portal Back-Office.
+          </span>
+        </div>
+        <a
+          href="/admin"
+          target="_blank"
+          rel="noreferrer"
+          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl shrink-0 transition-colors shadow-xs"
+        >
+          Buka Portal Admin ➔
+        </a>
       </div>
 
       {/* Sub-tab 1: User Accounts Table */}

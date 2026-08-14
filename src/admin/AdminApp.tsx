@@ -10,8 +10,9 @@ import Transactions from './pages/Transactions';
 import Products from './pages/Products';
 import ActivityPage from './pages/Activity';
 import Audit from './pages/Audit';
+import UserManagement from './pages/UserManagement';
 
-type PageId = 'overview' | 'merchants' | 'transactions' | 'products' | 'activity' | 'audit';
+type PageId = 'overview' | 'merchants' | 'transactions' | 'products' | 'activity' | 'audit' | 'users';
 
 /**
  * Setiap menu menyatakan capability yang dibutuhkannya. Menu yang tidak dimiliki
@@ -22,6 +23,7 @@ type PageId = 'overview' | 'merchants' | 'transactions' | 'products' | 'activity
 const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'overview', label: 'Ringkasan Sektor', icon: LayoutDashboard, cap: 'VIEW_SECTOR_ANALYTICS' },
   { id: 'merchants', label: 'Merchant', icon: Store, cap: 'VIEW_MERCHANT_HEALTH' },
+  { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'VIEW_ACCESS_AUDIT' },
   { id: 'transactions', label: 'Log Transaksi', icon: Receipt, cap: 'VIEW_TRANSACTION_LOG' },
   { id: 'products', label: 'Produk Terjual', icon: Package, cap: 'VIEW_PRODUCT_SALES' },
   { id: 'activity', label: 'Jejak Aktivitas', icon: Activity, cap: 'VIEW_ACTIVITY_LOG' },
@@ -291,6 +293,7 @@ export default function AdminApp() {
       <main className="mx-auto max-w-7xl p-4">
         {page === 'overview' && <Overview onOpenSector={openSector} />}
         {page === 'merchants' && <Merchants sector={sector} onSector={setSector} />}
+        {page === 'users' && <UserManagement />}
         {page === 'transactions' && <Transactions sector={sector} onSector={setSector} />}
         {page === 'products' && <Products sector={sector} onSector={setSector} />}
         {page === 'activity' && <ActivityPage sector={sector} onSector={setSector} />}
