@@ -23,6 +23,7 @@ import {
   AttendanceRecord,
   StoreBranch,
   GeoLocationInfo,
+  ProductBundle,
 } from '../types';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 import { ROLE_PERMISSIONS } from '../data/rolePermissions';
@@ -59,6 +60,7 @@ import {
   INITIAL_STOCK_ITEMS,
   INITIAL_ATTENDANCE_LOGS,
   INITIAL_BRANCHES,
+  INITIAL_BUNDLES,
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
@@ -127,6 +129,11 @@ interface POSContextType {
   saveStockItem: (item: StockItem) => void;
   deleteStockItem: (id: string) => void;
   adjustStockItemQuantity: (id: string, qtyChange: number, reason: string) => void;
+
+  // Product Bundles (Paket Promo & Bundling)
+  bundles: ProductBundle[];
+  saveBundle: (bundle: ProductBundle) => void;
+  deleteBundle: (id: string) => void;
 
   // RBAC & User Management
   users: User[];
@@ -504,6 +511,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('stock_items', currentUser.id, activeSector, INITIAL_STOCK_ITEMS);
   });
 
+  // Product Bundles State
+  const [bundles, setBundles] = useState<ProductBundle[]>(() => {
+    return loadScopedData('bundles', currentUser.id, activeSector, INITIAL_BUNDLES);
+  });
+
   // Attendance Logs State (Clock In / Out)
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>(() => {
     return loadScopedData('attendance_logs', currentUser.id, activeSector, seedAttendanceFor(activeSector));
@@ -533,6 +545,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('stock_items', uId, sec), JSON.stringify(stockItems));
   }, [stockItems, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('bundles', uId, sec), JSON.stringify(bundles));
+  }, [bundles, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
@@ -773,6 +791,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteStockItem = (id: string) => {
     setStockItems((prev) => prev.filter((s) => s.id !== id));
+    if (soundEnabled) playPOSSound('delete');
+  };
+
+  const saveBundle = (bundle: ProductBundle) => {
+    setBundles((prev) => {
+      const idx = prev.findIndex((b) => b.id === bundle.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = bundle;
+        return copy;
+      }
+      return [bundle, ...prev];
+    });
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const deleteBundle = (id: string) => {
+    setBundles((prev) => prev.filter((b) => b.id !== id));
     if (soundEnabled) playPOSSound('delete');
   };
 
@@ -1702,6 +1738,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveStockItem,
         deleteStockItem,
         adjustStockItemQuantity,
+        bundles,
+        saveBundle,
+        deleteBundle,
         users,
         currentUser,
         switchUser,

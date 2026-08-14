@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { Product } from '../../types';
+import { Product, ProductBundle } from '../../types';
 import { ProductCard } from './ProductCard';
 import {
   Search,
@@ -15,6 +15,7 @@ import {
   Cake,
   ShoppingBag,
   Layers,
+  Sparkles,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 
@@ -30,6 +31,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
     setSelectedCategory,
     searchQuery,
     setSearchQuery,
+    bundles,
+    addToCart,
   } = usePOS();
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -160,6 +163,18 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           <span>Semua Menu ({products.length})</span>
         </button>
 
+        <button
+          onClick={() => setSelectedCategory('bundles')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+            selectedCategory === 'bundles'
+              ? 'bg-amber-500 text-slate-950 shadow-xs font-bold'
+              : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-600" />
+          <span>🎁 Paket Bundling ({bundles?.length || 0})</span>
+        </button>
+
         {categories.map((cat) => {
           const count = products.filter((p) => p.categoryId === cat.id).length;
           const isSelected = selectedCategory === cat.id;
@@ -185,7 +200,81 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
       {/* Product Display Area */}
       <div className="flex-1 overflow-y-auto pr-1 pb-32 lg:pb-4">
-        {filteredProducts.length === 0 ? (
+        {selectedCategory === 'bundles' ? (
+          (bundles || []).length === 0 ? (
+            <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
+              <Sparkles className="w-10 h-10 stroke-1 text-slate-300" />
+              <p className="font-semibold text-slate-600">Belum ada paket bundling aktif</p>
+              <p className="text-xs text-slate-400">Buat paket bundling di menu Manajemen Inventori.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(bundles || []).map((bundle) => (
+                <div
+                  key={bundle.id}
+                  onClick={() => {
+                    const bundleProd: Product = {
+                      id: bundle.id,
+                      sku: bundle.sku,
+                      name: `[PAKET] ${bundle.name}`,
+                      categoryId: 'cat-bundle',
+                      price: bundle.bundlePrice,
+                      costPrice: Math.round(bundle.bundlePrice * 0.5),
+                      stock: 99,
+                      minStockAlert: 5,
+                      unit: 'paket',
+                      image: bundle.image,
+                      description: bundle.description,
+                      isAvailable: true,
+                    };
+                    addToCart(bundleProd);
+                  }}
+                  className="bg-white border-2 border-amber-400/80 hover:border-amber-500 p-3.5 rounded-2xl cursor-pointer transition-all shadow-xs hover:shadow-md space-y-3 relative group"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center space-x-2.5">
+                      <img
+                        src={bundle.image || 'https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=200'}
+                        alt={bundle.name}
+                        className="w-11 h-11 rounded-xl object-cover bg-slate-100 shrink-0 border border-slate-200"
+                      />
+                      <div>
+                        <span className="font-mono text-[10px] font-bold text-slate-400 block">{bundle.sku}</span>
+                        <h4 className="font-black text-xs text-slate-950 leading-snug">{bundle.name}</h4>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-black text-[10px] shrink-0">
+                      Hemat {bundle.discountPercent}%
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-slate-50 rounded-xl text-[11px] space-y-0.5 text-slate-700 font-medium">
+                    {bundle.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>• {item.quantity}x {item.productName}</span>
+                        <span className="font-mono text-slate-400">{formatRupiah(item.subtotalPrice)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                    <div>
+                      <span className="text-[10px] text-slate-400 line-through font-bold font-mono block">
+                        {formatRupiah(bundle.regularPrice)}
+                      </span>
+                      <span className="font-mono font-black text-sm text-slate-950">
+                        {formatRupiah(bundle.bundlePrice)}
+                      </span>
+                    </div>
+                    <span className="bg-amber-500 group-hover:bg-amber-400 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl flex items-center space-x-1 shadow-2xs">
+                      <span>+ Tambah</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : filteredProducts.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
             <Search className="w-10 h-10 stroke-1 text-slate-300" />
             <p className="font-semibold text-slate-600">Tidak ada produk ditemukan</p>

@@ -1,4 +1,4 @@
-import { Category, Product, Table, Customer, StoreSettings, Order, Shift, User, PromoCode, StaffMember, StockItem, AttendanceRecord, StoreBranch } from '../types';
+import { Category, Product, Table, Customer, StoreSettings, Order, Shift, User, PromoCode, StaffMember, StockItem, AttendanceRecord, StoreBranch, ProductBundle } from '../types';
 
 export const INITIAL_CATEGORIES: Category[] = [
   { id: 'cat-makanan', name: 'Makanan', icon: 'Utensils', color: 'bg-amber-500' },
@@ -1038,6 +1038,39 @@ export const INITIAL_STOCK_ITEMS: StockItem[] = [
     unit: 'pcs',
     costPrice: 45000,
     location: 'Rak Display Kasir',
+  },
+];
+
+export const INITIAL_BUNDLES: ProductBundle[] = [
+  {
+    id: 'bun-1',
+    sku: 'BUN-NG-ESKOP',
+    name: 'Paket Kenyang Hemat (Nasi Goreng + Es Kopi)',
+    description: '1x Nasi Goreng Spesial + 1x Es Kopi Susu Aren dengan harga hemat promo',
+    image: 'https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400',
+    items: [
+      { productId: 'prod-1', productName: 'Nasi Goreng Spesial', quantity: 1, unitPrice: 25000, subtotalPrice: 25000 },
+      { productId: 'prod-5', productName: 'Es Kopi Susu Gula Aren', quantity: 1, unitPrice: 18000, subtotalPrice: 18000 },
+    ],
+    regularPrice: 43000,
+    bundlePrice: 35000,
+    discountPercent: 18.6,
+    isAvailable: true,
+  },
+  {
+    id: 'bun-2',
+    sku: 'BUN-MIE-TEH',
+    name: 'Paket Sarapan Santai (Mie Goreng + Teh Manis)',
+    description: '1x Mie Goreng Spesial + 1x Es Teh Manis Segar',
+    image: 'https://images.unsplash.com/photo-1552611052-33e04de081de?auto=format&fit=crop&q=80&w=400',
+    items: [
+      { productId: 'prod-2', productName: 'Mie Goreng', quantity: 1, unitPrice: 22000, subtotalPrice: 22000 },
+      { productId: 'prod-6', productName: 'Es Teh Manis', quantity: 1, unitPrice: 8000, subtotalPrice: 8000 },
+    ],
+    regularPrice: 30000,
+    bundlePrice: 25000,
+    discountPercent: 16.7,
+    isAvailable: true,
   },
 ];
 

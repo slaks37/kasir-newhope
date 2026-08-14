@@ -40,6 +40,38 @@ export interface ProductVariant {
   priceExtra: number; // additional price e.g. +5000 for Large
 }
 
+export interface RecipeIngredient {
+  ingredientId: string; // ID of the StockItem (BAHAN_BAKU or SETENGAH_JADI)
+  ingredientName: string;
+  quantity: number; // Takaran per porsi (e.g. 18 for gram, 150 for ml)
+  unit: string; // "gram", "ml", "liter", "pcs", "porsi"
+  costPerUnit: number;
+  subtotalCost: number; // quantity * costPerUnit
+}
+
+export interface BundleItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotalPrice: number;
+}
+
+export interface ProductBundle {
+  id: string;
+  sku: string;
+  name: string;
+  description?: string;
+  image?: string;
+  items: BundleItem[];
+  regularPrice: number; // Sum of item standard prices
+  bundlePrice: number; // Promotional combo package price
+  discountPercent: number; // Auto-computed discount %
+  isAvailable: boolean;
+  businessSector?: BusinessSector;
+  createdAt?: string;
+}
+
 export interface Product {
   id: string;
   sku: string;
@@ -59,6 +91,7 @@ export interface Product {
   businessSector?: BusinessSector;
   linkedStockItemId?: string;
   recipeQty?: number;
+  recipeIngredients?: RecipeIngredient[]; // Multi-ingredient Bill of Materials
 }
 
 export interface StaffMember {
