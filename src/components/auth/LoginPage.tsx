@@ -46,6 +46,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const { signInWithEmail, signUpWithEmail, configured } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  
+  React.useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
+
+  React.useEffect(() => {
+    window.location.hash = mode;
+  }, [mode]);
+
   const [fullName, setFullName] = useState('');
   const [storeName, setStoreName] = useState('');
   const [sector, setSector] = useState<BusinessSector>('FNB');

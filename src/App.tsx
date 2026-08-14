@@ -369,7 +369,24 @@ export function App() {
   const [guestMode, setGuestMode] = useState<boolean>(() => {
     return localStorage.getItem('newhope_pos_guest_mode') === 'true';
   });
-  const [authView, setAuthView] = useState<'home' | 'login' | 'register'>('home');
+  const [authView, setAuthView] = useState<'home' | 'login' | 'register'>(() => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash === 'login' || hash === 'register') return hash;
+    return 'home';
+  });
+
+  React.useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '');
+      if (hash === 'login' || hash === 'register') {
+        setAuthView(hash);
+      } else if (hash === '') {
+        setAuthView('home');
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const handleStartDemo = () => {
     localStorage.setItem('newhope_pos_guest_mode', 'true');
@@ -399,7 +416,7 @@ export function App() {
     if (authView === 'login' || authView === 'register') {
       return (
         <LoginPage
-          onBackToLanding={() => setAuthView('home')}
+          onBackToLanding={() => { window.location.hash = ''; }}
           onStartDemo={handleStartDemo}
           initialMode={authView}
         />
@@ -411,8 +428,8 @@ export function App() {
           <HomePage
             isStandaloneLanding={true}
             onStartDemo={handleStartDemo}
-            onOpenLogin={() => setAuthView('login')}
-            onOpenRegister={() => setAuthView('register')}
+            onOpenLogin={() => { window.location.hash = 'login'; }}
+            onOpenRegister={() => { window.location.hash = 'register'; }}
           />
         </div>
       </POSProvider>
