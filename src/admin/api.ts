@@ -1437,39 +1437,206 @@ export const api = {
   },
 
   activity: async (p?: Record<string, unknown>) => {
+    let list = [
+      {
+        id: 'act-1',
+        occurred_at: new Date().toISOString(),
+        business_sector: 'FNB',
+        app_module: 'POS',
+        event_type: 'ORDER_COMPLETED',
+        summary: 'Transaksi pembayaran QRIS berhasil Rp 35.000 (Paket Kenyang Hemat)',
+        merchant_name: 'Kopi Kenangan Senopati',
+        actor_name: 'Budi Santoso',
+        actor_role: 'KASIR',
+        amount_idr: 35000,
+        severity: 'INFO',
+        business_id: 'usr-1_FNB',
+        detail: { invoice: 'INV-20260814-0101', payment_method: 'QRIS', items_count: 2 },
+      },
+      {
+        id: 'act-2',
+        occurred_at: new Date(Date.now() - 3600000).toISOString(),
+        business_sector: 'RETAIL',
+        app_module: 'INVENTORY',
+        event_type: 'RESTOCK_IN',
+        summary: 'Restok Beras Premium 5kg (+20 pcs) dari Distributor Utama',
+        merchant_name: 'Toko Berkah Sembako Retail',
+        actor_name: 'Ahmad Manager',
+        actor_role: 'MANAGER',
+        amount_idr: 1200000,
+        severity: 'NOTICE',
+        business_id: 'usr-6_RETAIL',
+        detail: { supplier: 'PT Beras Nusantara', new_stock: 45 },
+      },
+      {
+        id: 'act-3',
+        occurred_at: new Date(Date.now() - 7200000).toISOString(),
+        business_sector: 'LAUNDRY',
+        app_module: 'INVENTORY',
+        event_type: 'STOCK_LOW_ALERT',
+        summary: 'Peringatan stok Deterjen Konsentrat mendekati batas minimum (Sisa 8L)',
+        merchant_name: 'Laundry Kilat Dago',
+        actor_name: 'Sistem POS',
+        actor_role: 'SYSTEM',
+        amount_idr: null,
+        severity: 'WARNING',
+        business_id: 'usr-3_LAUNDRY',
+        detail: { min_threshold: 10, current_stock: 8 },
+      },
+      {
+        id: 'act-4',
+        occurred_at: new Date(Date.now() - 14400000).toISOString(),
+        business_sector: 'CARWASH',
+        app_module: 'POS',
+        event_type: 'ORDER_COMPLETED',
+        summary: 'Selesai pengerjaan Paket Ceramic Coating 9H Sultan Rp 450.000',
+        merchant_name: 'Auto Clean Carwash Express',
+        actor_name: 'Rian Kasir',
+        actor_role: 'KASIR',
+        amount_idr: 450000,
+        severity: 'INFO',
+        business_id: 'usr-4_CARWASH',
+        detail: { vehicle_plate: 'B 1234 NHP', wash_bay: 2 },
+      },
+      {
+        id: 'act-5',
+        occurred_at: new Date(Date.now() - 21600000).toISOString(),
+        business_sector: 'BARBERSHOP',
+        app_module: 'AUTH',
+        event_type: 'LOGIN_FAILED',
+        summary: 'Percobaan login gagal dengan PIN salah (3x) di terminal kasir',
+        merchant_name: 'Gentlemen Cut Barbershop',
+        actor_name: 'Kasir Shift Sore',
+        actor_role: 'CASHIER',
+        amount_idr: null,
+        severity: 'CRITICAL',
+        business_id: 'usr-5_BARBERSHOP',
+        detail: { terminal_ip: '192.168.1.45', attempts: 3 },
+      },
+    ];
+
+    if (p?.sector) {
+      list = list.filter((a) => a.business_sector === p.sector);
+    }
+    if (p?.module) {
+      list = list.filter((a) => a.app_module === p.module);
+    }
+    if (p?.severity) {
+      list = list.filter((a) => a.severity === p.severity);
+    }
+    if (p?.search) {
+      const q = String(p.search).toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.summary.toLowerCase().includes(q) ||
+          a.merchant_name.toLowerCase().includes(q) ||
+          a.event_type.toLowerCase().includes(q)
+      );
+    }
+
     return {
-      rows: [
-        { id: 'act-1', event_type: 'TRANSACTION_SUCCESS', merchant_name: 'Kopi Kenangan Senopati', description: 'Transaksi INV-20260814-0101 berhasil (QRIS)', severity: 'INFO', created_at: new Date().toISOString() },
-        { id: 'act-2', event_type: 'SHIFT_START', merchant_name: 'Berkah Mart Sudirman', description: 'Shift kasir pagi dibuka oleh Kasir Siti', severity: 'NOTICE', created_at: new Date(Date.now() - 7200000).toISOString() },
-        { id: 'act-3', event_type: 'STOCK_LOW_ALERT', merchant_name: 'Clean & Fresh Express Laundry', description: 'Stok Deterjen Konsentrat tersisa 8 Liter', severity: 'WARNING', created_at: new Date(Date.now() - 14400000).toISOString() },
-      ],
-      total: 3,
-      offset: 0,
-      limit: 20,
+      rows: list,
+      total: list.length,
+      offset: Number(p?.offset || 0),
+      limit: Number(p?.limit || 50),
     };
   },
 
   activityBreakdown: async () => {
     return {
       breakdown: [
-        { event_type: 'TRANSACTION_SUCCESS', count: 1240 },
-        { event_type: 'SHIFT_START', count: 48 },
+        { event_type: 'ORDER_COMPLETED', count: 1240 },
+        { event_type: 'RESTOCK_IN', count: 85 },
         { event_type: 'STOCK_LOW_ALERT', count: 12 },
+        { event_type: 'LOGIN_FAILED', count: 3 },
       ],
     };
   },
 
-  audit: async () => {
-    const list = [
-      { id: 'aud-1', user_email: 'stefenlaksana.sl@gmail.com', role: 'ROLE_SUPERADMIN', action: 'VIEW_OVERVIEW', target: 'ALL_SECTORS', ip_address: '127.0.0.1', created_at: new Date().toISOString() },
-      { id: 'aud-2', user_email: 'stefenlaksana.sl@gmail.com', role: 'ROLE_SUPERADMIN', action: 'AUTH_LOGIN', target: 'BACKOFFICE_CONSOLE', ip_address: '127.0.0.1', created_at: new Date(Date.now() - 3600000).toISOString() },
+  audit: async (p?: Record<string, unknown>) => {
+    let list = [
+      {
+        id: 'aud-1',
+        accessed_at: new Date().toISOString(),
+        internal_name: 'Stefen Laksana (Superadmin)',
+        internal_email: 'stefenlaksana.sl@gmail.com',
+        internal_role: 'ROLE_SUPERADMIN',
+        action: 'VIEW_EXECUTIVE_OVERVIEW',
+        merchant_name: null,
+        justification: 'Monitoring performa makro dan leaderboard omzet platform',
+        ip_address: '127.0.0.1 (Local Session)',
+      },
+      {
+        id: 'aud-2',
+        accessed_at: new Date(Date.now() - 1800000).toISOString(),
+        internal_name: 'Stefen Laksana (Superadmin)',
+        internal_email: 'stefenlaksana.sl@gmail.com',
+        internal_role: 'ROLE_SUPERADMIN',
+        action: 'EXPORT_MERCHANT_FINANCIALS',
+        merchant_name: 'Kopi Kenangan Senopati',
+        justification: 'Audit laporan laba rugi, HPP bahan baku, dan pajak PB1',
+        ip_address: '127.0.0.1 (Local Session)',
+      },
+      {
+        id: 'aud-3',
+        accessed_at: new Date(Date.now() - 5400000).toISOString(),
+        internal_name: 'Platform Operations Root',
+        internal_email: 'ops@newhopepos.id',
+        internal_role: 'ROLE_SUPERADMIN',
+        action: 'UPDATE_SAAS_TIER',
+        merchant_name: 'New Hope Resto & Cafe',
+        justification: 'Aktivasi paket langganan Pro Growth Rp 88.000/bln',
+        ip_address: '10.0.1.5 (Cloud Gateway)',
+      },
+      {
+        id: 'aud-4',
+        accessed_at: new Date(Date.now() - 10800000).toISOString(),
+        internal_name: 'Customer Support Lead',
+        internal_email: 'support@newhopepos.id',
+        internal_role: 'ROLE_INTERNAL_SUPPORT',
+        action: 'INSPECT_TRANSACTION_LOG',
+        merchant_name: 'Laundry Kilat Dago',
+        justification: 'Investigasi komplain struk transaksi gantung oleh merchant',
+        ip_address: '192.168.1.102',
+      },
+      {
+        id: 'aud-5',
+        accessed_at: new Date(Date.now() - 25200000).toISOString(),
+        internal_name: 'Guest / Anonymous Probe',
+        internal_email: 'unknown@external.net',
+        internal_role: 'ROLE_UNAUTHORIZED',
+        action: 'DENIED_UNAUTHORIZED_ACCESS',
+        merchant_name: 'Auto Clean Carwash Express',
+        justification: 'Percobaan akses endpoint /admin/merchants tanpa token valid',
+        ip_address: '203.0.113.45',
+      },
     ];
+
+    if (p?.filter && p.filter !== 'ALL') {
+      if (p.filter === 'DENIED') {
+        list = list.filter((r) => r.action.startsWith('DENIED_'));
+      } else if (p.filter === 'FINANCIAL') {
+        list = list.filter((r) => r.action.includes('FINANCIAL') || r.action.includes('OVERVIEW'));
+      }
+    }
+
+    if (p?.search) {
+      const q = String(p.search).toLowerCase();
+      list = list.filter(
+        (r) =>
+          r.internal_name.toLowerCase().includes(q) ||
+          r.internal_email.toLowerCase().includes(q) ||
+          r.action.toLowerCase().includes(q) ||
+          (r.merchant_name && r.merchant_name.toLowerCase().includes(q))
+      );
+    }
+
     return {
       rows: list,
       audits: list,
       total: list.length,
-      offset: 0,
-      limit: 20,
+      offset: Number(p?.offset || 0),
+      limit: Number(p?.limit || 50),
     };
   },
 };
