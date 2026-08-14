@@ -112,7 +112,8 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
   const wrap = (runner: { query: (s: string, p?: unknown[]) => Promise<any> }): Db => ({
     async query(sql, params) {
       const r = await runner.query(sql, params as any[]);
-      return { rows: r.rows, rowCount: r.rowCount ?? r.rows.length };
+      const rows = r?.rows ?? [];
+      return { rows, rowCount: r?.rowCount ?? rows.length };
     },
     async exec(sql) {
       await runner.query(sql);

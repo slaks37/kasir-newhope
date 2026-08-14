@@ -327,7 +327,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           <button
-            onClick={() => setShowRegisterModal(true)}
+            onClick={() => onOpenRegister?.()}
             className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-2xl shadow-sm transition-all flex items-center space-x-2 cursor-pointer w-fit"
           >
             <UserCheck className="w-4 h-4 text-amber-400" />

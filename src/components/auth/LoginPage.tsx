@@ -120,11 +120,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             setError(err.message);
           }
         } else {
-          setSuccess('Pendaftaran berhasil! Silakan masuk dengan email dan password Anda.');
-          // Auto login attempt or switch to login tab
+          if (storeName.trim()) {
+            try {
+              const currentSettings = JSON.parse(localStorage.getItem('newhope_settings') || '{}');
+              localStorage.setItem('newhope_settings', JSON.stringify({
+                ...currentSettings,
+                storeName: storeName.trim(),
+                businessSector: sector,
+                storeMode: sector,
+              }));
+            } catch (e) {
+              console.error('Failed to update store settings', e);
+            }
+          }
+          setSuccess('Pendaftaran berhasil! Membuka kasir toko baru Anda...');
           setTimeout(() => {
-            setMode('login');
-          }, 1500);
+            window.location.hash = '';
+          }, 800);
         }
       }
     } finally {

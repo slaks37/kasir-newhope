@@ -33,6 +33,50 @@ export interface AuthContextType {
 
 const AuthCtx = createContext<AuthContextType | undefined>(undefined);
 
+const LOCAL_SESSION_KEY = 'nhpos_local_session';
+const LOCAL_USERS_KEY = 'nhpos_local_auth_users';
+
+function getLocalUsers(): Record<string, { email: string; passwordHash?: string; fullName?: string }> {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalUser(email: string, pass: string, fullName?: string) {
+  const users = getLocalUsers();
+  users[email.toLowerCase()] = { email, fullName, passwordHash: pass };
+  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+}
+
+function createLocalSession(email: string, fullName?: string): { user: User; session: Session } {
+  const u: User = {
+    id: 'usr-' + email.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 20),
+    app_metadata: { provider: 'email', providers: ['email'] },
+    user_metadata: { email, full_name: fullName || email.split('@')[0] },
+    aud: 'authenticated',
+    confirmation_sent_at: new Date().toISOString(),
+    confirmed_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    email,
+    phone: '',
+    role: 'authenticated',
+    updated_at: new Date().toISOString(),
+  } as unknown as User;
+
+  const s: Session = {
+    access_token: 'local-session-token-' + Date.now(),
+    refresh_token: 'local-session-refresh-' + Date.now(),
+    expires_in: 86400 * 30,
+    expires_at: Math.floor(Date.now() / 1000) + 86400 * 30,
+    token_type: 'bearer',
+    user: u,
+  };
+
+  return { user: u, session: s };
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -40,6 +84,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
+      try {
+        const saved = localStorage.getItem(LOCAL_SESSION_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setUser(parsed.user);
+          setSession(parsed.session);
+        }
+      } catch (e) {
+        console.error('Failed to restore local session', e);
+      }
       setLoading(false);
       return;
     }
@@ -63,6 +117,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
+      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+      setUser(sess.user);
+      setSession(sess.session);
+      return { error: null };
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -74,11 +135,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
+    if (!isSupabaseConfigured) {
+      const cleanEmail = email.trim().toLowerCase();
+      const localUsers = getLocalUsers();
+      const userRecord = localUsers[cleanEmail];
+
+      const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin') || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
+      if (userRecord || isDemo) {
+        if (userRecord && userRecord.passwordHash && userRecord.passwordHash !== password) {
+          return { error: { message: 'Password salah!' } as AuthError };
+        }
+        const sess = createLocalSession(email, userRecord?.fullName);
+        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+        setUser(sess.user);
+        setSession(sess.session);
+        return { error: null };
+      }
+
+      return { error: { message: 'Akun dengan email ini belum terdaftar atau password salah.' } as AuthError };
+    }
+
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
   }, []);
 
   const signUpWithEmail = useCallback(async (email: string, password: string) => {
+    if (!isSupabaseConfigured) {
+      const cleanEmail = email.trim().toLowerCase();
+      const localUsers = getLocalUsers();
+      if (localUsers[cleanEmail]) {
+        return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
+      }
+      saveLocalUser(email, password);
+      const sess = createLocalSession(email);
+      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+      setUser(sess.user);
+      setSession(sess.session);
+
+      // Kirim email welcome via backend jika service aktif (fire-and-forget)
+      fetch('/api/v1/auth/send-welcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      }).catch(() => {});
+
+      return { error: null };
+    }
+
     try {
       const { data, error } = await supabase.rpc('custom_signup', {
         user_email: email,
@@ -105,6 +208,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signOut = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      localStorage.removeItem(LOCAL_SESSION_KEY);
+      setUser(null);
+      setSession(null);
+      return;
+    }
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);

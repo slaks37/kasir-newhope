@@ -145,16 +145,16 @@ startService({
           from: 'welcome@newhopepos.id',
           to: email,
           subject: 'Selamat Datang di New Hope POS!',
-          html: \`
+          html: `
             <div style="font-family: sans-serif; max-w-md; margin: 0 auto;">
               <h2>Pendaftaran Berhasil!</h2>
               <p>Halo,</p>
-              <p>Akun kasir Anda dengan email <strong>\${email}</strong> telah berhasil dibuat dan <strong>terkonfirmasi otomatis</strong>.</p>
+              <p>Akun kasir Anda dengan email <strong>${email}</strong> telah berhasil dibuat dan <strong>terkonfirmasi otomatis</strong>.</p>
               <p>Anda sudah bisa langsung masuk (login) ke dalam sistem menggunakan password yang baru saja Anda buat tanpa perlu memasukkan kode OTP apa pun.</p>
               <br/>
               <p>Selamat berjualan!<br/>Tim New Hope POS</p>
             </div>
-          \`
+          `
         });
 
         res.json({ ok: true });

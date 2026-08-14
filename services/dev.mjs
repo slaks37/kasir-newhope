@@ -34,6 +34,7 @@ function jalankan(nama, args, extraEnv = {}) {
   const p = spawn('npx', ['tsx', ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
+    detached: process.platform !== 'win32',
     env: { ...process.env, ...extraEnv },
   });
 
@@ -93,7 +94,12 @@ function matikan(kode = 0) {
   mematikan = true;
   for (const { proc } of anak) {
     try {
-      proc.kill('SIGTERM');
+      if (proc.pid) {
+        if (process.platform !== 'win32') {
+          try { process.kill(-proc.pid, 'SIGTERM'); } catch {}
+        }
+        proc.kill('SIGTERM');
+      }
     } catch {
       /* sudah mati */
     }
