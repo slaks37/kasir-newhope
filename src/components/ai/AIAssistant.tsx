@@ -129,8 +129,8 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   });
 }
 
-const MarkdownBlock: React.FC<{ text: string }> = ({ text }) => {
-  const lines = text.split('\n');
+const MarkdownBlock: React.FC<{ text?: string }> = ({ text }) => {
+  const lines = (text ?? '').split('\n');
   const blocks: React.ReactNode[] = [];
   let bullets: string[] = [];
 
@@ -918,7 +918,7 @@ export const AIAssistant: React.FC = () => {
 
         push({
           sender: 'ai',
-          text: answer.markdown,
+          text: answer.markdown ?? '',
           source: answer.source,
           title: answer.title,
           dataSource: data?.dataSource ?? 'CLIENT',

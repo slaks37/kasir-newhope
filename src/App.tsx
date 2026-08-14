@@ -62,6 +62,38 @@ const TabLoading: React.FC = () => (
   </div>
 );
 
+/** Catches render errors in AIAssistant so the full app doesn't white-screen. */
+class AIErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(err: unknown) {
+    return { hasError: true, message: err instanceof Error ? err.message : String(err) };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-slate-50/70 p-8 text-center">
+          <ShieldAlert className="w-10 h-10 text-rose-400 mb-3" />
+          <p className="font-bold text-slate-700">Smart Assistant mengalami kesalahan.</p>
+          <p className="text-xs text-slate-500 mt-1 mb-4 max-w-sm">{this.state.message}</p>
+          <button
+            onClick={() => this.setState({ hasError: false, message: '' })}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-sm flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" /> Coba Lagi
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 interface POSAppContentProps {
   onBackToHome?: () => void;
 }
@@ -240,7 +272,11 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
               <Suspense fallback={<TabLoading />}>
                 {activeTab === 'inventory' && <InventoryManager />}
                 {activeTab === 'reports' && <ReportsDashboard />}
-                {activeTab === 'ai' && <AIAssistant />}
+                {activeTab === 'ai' && (
+                  <AIErrorBoundary>
+                    <AIAssistant />
+                  </AIErrorBoundary>
+                )}
                 {activeTab === 'settings' && <SettingsManager />}
               </Suspense>
             </>
