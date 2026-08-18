@@ -64,6 +64,7 @@ import {
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
+import { applyPurchase } from '../lib/loyalty';
 
 interface POSContextType {
   /**
@@ -1220,29 +1221,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // 2. Update Customer Points & Total Spent if customer selected
-    if (selectedCustomer) {
-      const pointsEarned = Math.floor(grandTotal / settings.loyaltyEarnRate);
-      setCustomers((prevCusts) =>
-        prevCusts.map((c) => {
-          if (c.id === selectedCustomer.id) {
-            const newTotalSpent = c.totalSpent + grandTotal;
-            const newPoints = c.points + pointsEarned;
-            let tier = c.tier;
-            if (newTotalSpent >= 5000000) tier = 'PLATINUM';
-            else if (newTotalSpent >= 2500000) tier = 'GOLD';
-            else if (newTotalSpent >= 1000000) tier = 'SILVER';
+    //
+    // Dihitung sekali di sini, bukan di dalam updater, karena hasilnya dipakai
+    // dua kali: untuk state dan untuk payload sinkronisasi di langkah 6. Kalau
+    // payload memakai `newOrder.customer`, yang terkirim adalah keadaan SEBELUM
+    // transaksi ini — dan database akan selamanya tertinggal satu kunjungan.
+    const updatedCustomer = selectedCustomer
+      ? applyPurchase(selectedCustomer, grandTotal, settings.loyaltyEarnRate)
+      : null;
 
-            return {
-              ...c,
-              points: newPoints,
-              totalSpent: newTotalSpent,
-              visitCount: c.visitCount + 1,
-              lastVisit: new Date().toISOString().split('T')[0],
-              tier,
-            };
-          }
-          return c;
-        })
+    if (updatedCustomer) {
+      setCustomers((prevCusts) =>
+        prevCusts.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c))
       );
     }
 
@@ -1287,7 +1277,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // terkirim saat aplikasi dibuka lagi. Pengirimannya sendiri sengaja tidak
     // di-await: kasir tidak boleh menunggu jaringan untuk menyelesaikan
     // penjualan.
-    enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role));
+    enqueueSync(
+      tenant.businessId,
+      orderToPayload({ ...newOrder, customer: updatedCustomer ?? undefined }, currentUser.role)
+    );
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 

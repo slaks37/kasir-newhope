@@ -29,6 +29,8 @@ const MIGRATIONS = [
   'migrations/0009_service_schemas.sql',
   'migrations/0010_credit_uuid.sql',
   'migrations/0011_identity_grants.sql',
+  'migrations/0012_customers.sql',
+  'migrations/0013_merchant_tenant_invariant.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';
@@ -95,7 +97,7 @@ for (const berkas of MIGRATIONS) {
   console.log(`  ${String(jumlah).padStart(2)}. ${berkas}  (${sql.split('\n').length} baris)`);
 }
 
-keluar += `\n\n-- ${'='.repeat(74)}\n-- SELESAI. Verifikasi dengan:\n--\n--   SELECT table_schema, COUNT(*) FROM information_schema.tables\n--    WHERE table_schema IN ('pos','billing','ai','internal','contract')\n--      AND table_type = 'BASE TABLE'\n--    GROUP BY table_schema ORDER BY 1;\n--\n-- Harusnya: ai=5  billing=4  internal=4  pos=10\n-- ${'='.repeat(74)}\n`;
+keluar += `\n\n-- ${'='.repeat(74)}\n-- SELESAI. Verifikasi dengan:\n--\n--   SELECT table_schema, COUNT(*) FROM information_schema.tables\n--    WHERE table_schema IN ('pos','billing','ai','internal','contract')\n--      AND table_type = 'BASE TABLE'\n--    GROUP BY table_schema ORDER BY 1;\n--\n-- Harusnya: ai=5  billing=4  internal=4  pos=11\n-- ${'='.repeat(74)}\n`;
 
 fs.writeFileSync(KELUARAN, keluar, 'utf8');
 

@@ -1,9 +1,8 @@
 # ERD — New Hope POS
 
-**24 tabel dan 8 view, dalam 5 domain.** Diturunkan langsung dari keenam file
-migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL 18.3 — jadi
-diagram ini menunjukkan apa yang benar-benar dibuat Postgres, bukan yang
-diniatkan.
+**25 tabel dan 14 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
+migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
+menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
 Semua primary key `UUID` (v7) setelah `0005_uuid_keys.sql`, kecuali `plans.id`
 yang tetap kode terbaca dan `feature_usage_events.id` yang `BIGSERIAL`.
@@ -25,10 +24,12 @@ erDiagram
     tenants ||--o{ ingredients      : ""
     tenants ||--o{ product_recipes  : ""
     tenants ||--o{ transactions     : ""
+    tenants ||--o{ customers        : "member toko"
 
     products      ||--o{ product_recipes   : "resep"
     ingredients   ||--o{ product_recipes   : "dipakai di"
     users         |o--o{ transactions      : "kasir (SET NULL)"
+    customers     |o--o{ transactions      : "member (SET NULL)"
     transactions  ||--o{ transaction_items : "baris struk"
     products      |o--o{ transaction_items : "katalog (SET NULL)"
     ingredients   |o--o{ inventory_logs    : "mutasi stok"
@@ -76,10 +77,23 @@ erDiagram
         uuid ingredient_id FK
         numeric quantity_required
     }
+    customers {
+        uuid id PK
+        uuid tenant_id FK
+        varchar external_ref "id sisi klien — kunci pencocokan sinkron"
+        varchar name
+        varchar phone "TIDAK unik — satu nomor bisa dipakai sekeluarga"
+        int points
+        numeric total_spent
+        int visit_count
+        varchar tier "BRONZE / SILVER / GOLD / PLATINUM"
+        timestamptz last_visit_at
+    }
     transactions {
         uuid id PK
         uuid tenant_id FK
         uuid cashier_user_id FK "nullable — riwayat tetap ada"
+        uuid customer_id FK "nullable — SET NULL saat member dihapus"
         varchar business_sector "SUMBU KLASIFIKASI UTAMA"
         varchar business_id "partition key unit usaha"
         varchar app_module "POS / TABLES / INVENTORY / ..."
@@ -406,17 +420,46 @@ transaksi, 310 baris item, 43 kejadian, dan menyisakan **nol baris yatim**.
 dari daftar 0005; ketahuan hanya karena 0006 mencoba memasang FK-nya dan
 Postgres menolak `uuid = character varying`.
 
+### Sudah (0012)
+
+**Pelanggan pindah ke database.** `pos.customers` menyimpan poin, tier, total
+belanja, dan jumlah kunjungan; `transactions.customer_id` menautkannya ke struk.
+Keduanya ikut terkirim lewat jalur sinkronisasi yang sama dengan transaksi, jadi
+member tidak lagi hilang saat browser dibersihkan.
+
+`ON DELETE SET NULL`, dan di sini alasannya lebih kuat daripada di `product_id`:
+pelanggan berhak meminta datanya dihapus. Dengan `CASCADE`, memenuhi permintaan
+itu ikut menghapus struk penjualannya — omzet berkurang surut dan laporan pajak
+yang sudah dikirim menjadi salah. Karena itu pula nama pembeli **tidak** ikut
+di-snapshot ke baris transaksi: itu satu-satunya hal yang memang harus hilang.
+
+**Analisis RFM sekarang bisa dijalankan.** `contract.customer_rfm` menyajikan
+recency, frequency, dan monetary per member — lewat view kontrak, bukan dengan
+memberi ai-service dan backoffice-service akses ke skema `pos`.
+
+### Sudah (0013)
+
+**`merchant_id` = `tenant_id` sekarang dijaga database.** Tujuh tabel mendapat
+`CHECK (merchant_id IS NOT DISTINCT FROM tenant_id) NOT VALID`. Ditinjau lebih
+dulu: setiap penulisan di repo mengisi keduanya dari satu parameter yang sama
+(`VALUES ($1, $1, ...)`), jadi batasan ini hanya menuliskan apa yang sudah benar.
+
 ### Belum
 
-**`merchant_id` dan `tenant_id` masih selalu sama.** Di seluruh domain 0003/0004
-keduanya diisi nilai identik. Kalau memang sinonim, salah satunya harus dibuang.
-Kalau nanti satu akun boleh punya banyak merchant — dan `business_id` menyiratkan
-itu — maka `merchants` harus jadi tabel tersendiri **sekarang**, bukan setelah
-ada data produksi.
+**Salah satu dari `merchant_id`/`tenant_id` tetap harus dibuang.** 0013 baru
+mencegah keduanya menyimpang, bukan menghapus duplikasinya — dan itu menunggu
+satu keputusan produk: apakah satu akun boleh punya beberapa merchant? Kalau
+tidak, buang `merchant_id`. Kalau ya, `merchants` harus jadi tabel tersendiri
+**sekarang**, sebelum ada data produksi; `business_id` (`userId_sector`) sudah
+menyiratkan arah itu.
 
-**Belum ada tabel `customers`.** Aplikasi menyimpan pelanggan di localStorage dan
-transaksi tidak punya `customer_id`. Selama itu, analisis churn pelanggan dan RFM
-tidak bisa dijalankan dari database.
+**Poin belum bisa ditukar.** `settings.loyaltyRedeemRate` dirender di layar
+member tapi tidak pernah dipakai menghitung apa pun — poin hanya bertambah.
+Tier pun belum memberi diskon atau akses apa pun, hanya warna badge.
+
+**Member yang belum pernah belanja belum tersinkron.** Baris `pos.customers`
+lahir dari transaksi pertama. Pendaftaran member yang belum pernah bertransaksi
+masih berhenti di localStorage sampai ada endpoint sinkronisasi tersendiri.
 
 **Replikasi belum pernah diuji.** Konfigurasi di `docker-compose.analytics.yml`
 sudah ada, tapi belum pernah dinyalakan.

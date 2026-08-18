@@ -194,12 +194,12 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0001_compat.
 -- New Hope POS SaaS Multi-Tenant Architecture
 
 -- 1. Enum Types for Subscription & Payment Status
-DO $$ BEGIN CREATE TYPE billing_cycle_enum AS ENUM ('MONTHLY', 'YEARLY'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE subscription_status_enum AS ENUM ('TRIAL', 'ACTIVE', 'PAST_DUE', 'EXPIRED', 'CANCELED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE payment_status_enum AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE TYPE billing_cycle_enum AS ENUM ('MONTHLY', 'YEARLY');
+CREATE TYPE subscription_status_enum AS ENUM ('TRIAL', 'ACTIVE', 'PAST_DUE', 'EXPIRED', 'CANCELED');
+CREATE TYPE payment_status_enum AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED');
 
 -- 2. Plans Table
-CREATE TABLE IF NOT EXISTS plans (
+CREATE TABLE plans (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     tier_level INT NOT NULL DEFAULT 1, -- 1: Basic, 2: Pro, 3: Enterprise
@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 
 -- 3. Subscriptions Table
-CREATE TABLE IF NOT EXISTS subscriptions (
+CREATE TABLE subscriptions (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
     plan_id VARCHAR(64) NOT NULL REFERENCES plans(id),
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 -- 4. Invoices / Transactions Table
-CREATE TABLE IF NOT EXISTS invoices (
+CREATE TABLE invoices (
     id VARCHAR(64) PRIMARY KEY,
     subscription_id VARCHAR(64) NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     tenant_id VARCHAR(64) NOT NULL,
@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 
 -- 5. Webhook Logs Table (For Idempotency)
-CREATE TABLE IF NOT EXISTS webhook_logs (
+CREATE TABLE webhook_logs (
     id VARCHAR(64) PRIMARY KEY,
     event_id VARCHAR(128) NOT NULL UNIQUE,
     event_type VARCHAR(64) NOT NULL,
@@ -253,9 +253,9 @@ CREATE TABLE IF NOT EXISTS webhook_logs (
 );
 
 -- Indexing for High Performance Lookup
-CREATE INDEX IF NOT EXISTS idx_subscriptions_tenant_status ON subscriptions(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id);
-CREATE INDEX IF NOT EXISTS idx_invoices_tenant ON invoices(tenant_id);
+CREATE INDEX idx_subscriptions_tenant_status ON subscriptions(tenant_id, status);
+CREATE INDEX idx_invoices_subscription ON invoices(subscription_id);
+CREATE INDEX idx_invoices_tenant ON invoices(tenant_id);
 
 INSERT INTO public.schema_migrations (filename) VALUES ('schema.sql')
   ON CONFLICT (filename) DO NOTHING;
@@ -269,7 +269,7 @@ INSERT INTO public.schema_migrations (filename) VALUES ('schema.sql')
 -- Includes Bill of Materials (BOM) Recipe Stock Deduction & Analytics Indexes
 
 -- 1. Tenants & Users (Multi-Tenancy & Access Control)
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE tenants (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     business_sector VARCHAR(32) NOT NULL DEFAULT 'FNB',
@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- 2. Raw Materials & Ingredients (Inventory Management)
-CREATE TABLE IF NOT EXISTS ingredients (
+CREATE TABLE ingredients (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -302,7 +302,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
 );
 
 -- 3. Products Catalog
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE products (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 -- 4. Bill of Materials (Product Recipe Mapping BOM)
-CREATE TABLE IF NOT EXISTS product_recipes (
+CREATE TABLE product_recipes (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     product_id VARCHAR(64) NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS product_recipes (
 );
 
 -- 5. Financial Transactions & Line Items
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE transactions (
     id VARCHAR(64) PRIMARY KEY, -- e.g. INV-20260811-001
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     cashier_user_id VARCHAR(64) NOT NULL REFERENCES users(id),
@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS transaction_items (
+CREATE TABLE transaction_items (
     id VARCHAR(64) PRIMARY KEY,
     transaction_id VARCHAR(64) NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
     tenant_id VARCHAR(64) NOT NULL,
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS transaction_items (
 );
 
 -- 6. Inventory Deduction Log Audit Trail
-CREATE TABLE IF NOT EXISTS inventory_logs (
+CREATE TABLE inventory_logs (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
     ingredient_id VARCHAR(64) NOT NULL REFERENCES ingredients(id),
@@ -364,9 +364,9 @@ CREATE TABLE IF NOT EXISTS inventory_logs (
 );
 
 -- High-Performance Analytics Indexes
-CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_transaction_items_tenant_product ON transaction_items(tenant_id, product_id);
-CREATE INDEX IF NOT EXISTS idx_inventory_logs_tenant_ingredient ON inventory_logs(tenant_id, ingredient_id, created_at DESC);
+CREATE INDEX idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
+CREATE INDEX idx_transaction_items_tenant_product ON transaction_items(tenant_id, product_id);
+CREATE INDEX idx_inventory_logs_tenant_ingredient ON inventory_logs(tenant_id, ingredient_id, created_at DESC);
 
 INSERT INTO public.schema_migrations (filename) VALUES ('schema_hybrid_pos.sql')
   ON CONFLICT (filename) DO NOTHING;
@@ -2853,6 +2853,292 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0011_identit
   ON CONFLICT (filename) DO NOTHING;
 
 
+-- --------------------------------------------------------------------------
+-- BAGIAN 13: migrations/0012_customers.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0012_customers.sql
+--
+-- Memindahkan pelanggan dari localStorage ke database.
+--
+-- KENAPA INI PERLU. Aplikasi kasir sudah menghitung poin, kunjungan, total
+-- belanja, dan tier loyalitas sejak lama — semuanya di localStorage, per
+-- perangkat. Akibatnya tiga hal yang tidak kelihatan sampai ditanyakan:
+--
+--   1. Ganti perangkat atau bersihkan browser, riwayat member hilang dan tidak
+--      ada salinan di mana pun untuk dipulihkan.
+--   2. `transactions` tidak punya customer_id, jadi tidak ada satu pun cara
+--      menjawab "siapa yang belum belanja 60 hari terakhir" dari database.
+--      Analisis RFM dan churn pelanggan mustahil, bukan sekadar belum dibuat.
+--   3. Tier dihitung di browser dari angka yang hanya browser itu yang tahu.
+--      Dua perangkat pada toko yang sama bisa memberi tier berbeda untuk orang
+--      yang sama, dan keduanya "benar" menurut datanya masing-masing.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0012_customers.sql
+--
+-- HARUS dijalankan SESUDAH 0009_service_schemas.sql — tabel ini dibuat langsung
+-- di skema `pos`, bukan di `public` lalu dipindahkan.
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. TABEL PELANGGAN ----------------------------------------------------------
+--
+-- external_ref adalah id sisi klien (`cust-...`). Pola yang sama dipakai
+-- products dan users di 0006: server tidak pernah menebak identitas dari nama,
+-- dan kiriman ulang dari perangkat yang sama selalu mengenai baris yang sama.
+
+CREATE TABLE IF NOT EXISTS pos.customers (
+    id              UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id       UUID NOT NULL REFERENCES pos.tenants(id) ON DELETE CASCADE,
+    external_ref    VARCHAR(96),
+    name            VARCHAR(100) NOT NULL,
+    phone           VARCHAR(32),
+    email           VARCHAR(160),
+
+    -- Angka loyalitas. Tetap dihitung aplikasi kasir supaya kasir offline
+    -- tidak kehilangan fungsi; database menyimpan nilai terakhir yang dikirim,
+    -- dan itulah yang dibaca laporan serta batch job.
+    points          INT           NOT NULL DEFAULT 0 CHECK (points      >= 0),
+    total_spent     NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total_spent >= 0),
+    visit_count     INT           NOT NULL DEFAULT 0 CHECK (visit_count >= 0),
+    tier            VARCHAR(16)   NOT NULL DEFAULT 'BRONZE'
+                    CHECK (tier IN ('BRONZE', 'SILVER', 'GOLD', 'PLATINUM')),
+    last_visit_at   TIMESTAMP WITH TIME ZONE,
+
+    -- Disalin dari tenant supaya laporan per sektor tidak perlu join, sama
+    -- seperti transactions dan products.
+    business_sector VARCHAR(16),
+    business_id     VARCHAR(96),
+
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE pos.customers IS
+    'Member toko: poin, tier, dan rekap belanja. Sumber kebenaran pindah dari localStorage ke sini sejak 0012.';
+COMMENT ON COLUMN pos.customers.external_ref IS
+    'Id pelanggan di sisi aplikasi kasir. Kunci pencocokan saat sinkronisasi — bukan nama, bukan nomor telepon.';
+COMMENT ON COLUMN pos.customers.tier IS
+    'Disimpan, bukan dihitung ulang saat dibaca. Ambangnya bisa berubah, dan tier yang pernah diberikan ke pelanggan tidak boleh berubah surut karena aturannya diganti.';
+
+-- Satu external_ref hanya boleh menunjuk satu pelanggan per merchant.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_tenant_ref
+    ON pos.customers (tenant_id, external_ref) WHERE external_ref IS NOT NULL;
+
+-- Nomor telepon SENGAJA tidak unik: kartu keluarga, satu nomor dipakai suami
+-- dan istri, dan nomor yang salah ketik lalu diperbaiki. Menjadikannya unik
+-- akan menolak pendaftaran member yang sah di depan antrian kasir.
+CREATE INDEX IF NOT EXISTS idx_customers_tenant_phone
+    ON pos.customers (tenant_id, phone) WHERE phone IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_customers_tenant_last_visit
+    ON pos.customers (tenant_id, last_visit_at DESC NULLS LAST);
+
+
+-- 2. TAUTAN KE TRANSAKSI ------------------------------------------------------
+--
+-- SET NULL, bukan CASCADE — dan di sini alasannya lebih kuat daripada di
+-- product_id.
+--
+-- Pelanggan berhak meminta datanya dihapus. Dengan CASCADE, memenuhi permintaan
+-- itu berarti ikut menghapus struk penjualannya: omzet toko berkurang surut,
+-- pembukuan tidak lagi cocok dengan kas, dan laporan pajak yang sudah dikirim
+-- menjadi salah. Dengan SET NULL, transaksinya tetap utuh sebagai penjualan —
+-- hanya identitas pembelinya yang hilang, yang memang itulah yang diminta.
+--
+-- Karena itu pula nama pelanggan TIDAK ikut disalin ke baris transaksi.
+-- Snapshot nama produk dan nama kasir ada supaya riwayat tetap terbaca; nama
+-- pembeli justru satu-satunya hal yang harus benar-benar hilang saat dihapus.
+
+ALTER TABLE pos.transactions
+    ADD COLUMN IF NOT EXISTS customer_id UUID;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_transactions_customer') THEN
+        ALTER TABLE pos.transactions
+            ADD CONSTRAINT fk_transactions_customer
+            FOREIGN KEY (customer_id) REFERENCES pos.customers(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN pos.transactions.customer_id IS
+    'NULL berarti pembelian tanpa member — mayoritas transaksi ritel. Bukan penanda data hilang.';
+
+-- Dipakai setiap query RFM: "transaksi milik pelanggan ini, terbaru dulu".
+CREATE INDEX IF NOT EXISTS idx_transactions_customer
+    ON pos.transactions (customer_id, created_at DESC) WHERE customer_id IS NOT NULL;
+
+
+-- 3. PERMUKAAN BACA ANTAR-SERVICE ---------------------------------------------
+--
+-- ai-service dan backoffice-service tidak punya hak baca ke skema `pos`, dan
+-- itu memang batas yang dijaga sejak 0009. Supaya analisis RFM tetap bisa
+-- dijalankan tanpa membongkar batas itu, agregatnya disajikan sebagai view
+-- kontrak — bukan dengan memberi akses tabel.
+--
+-- Recency dihitung dari transaksi yang benar-benar tercatat, bukan dari
+-- customers.last_visit_at. Keduanya bisa berbeda kalau perangkat kasir belum
+-- selesai sinkron, dan yang boleh dipakai mengambil keputusan hanyalah yang
+-- sudah ada struknya.
+
+DROP VIEW IF EXISTS contract.customer_rfm CASCADE;
+CREATE VIEW contract.customer_rfm AS
+SELECT
+    c.id                                   AS customer_id,
+    c.tenant_id                            AS merchant_id,
+    c.business_sector,
+    c.business_id,
+    c.name,
+    c.tier,
+    c.points,
+    c.total_spent                          AS lifetime_spent_reported,
+    COALESCE(SUM(x.total_amount), 0)       AS lifetime_spent_recorded,
+    COUNT(x.id)                            AS transaction_count,
+    COALESCE(AVG(x.total_amount), 0)       AS avg_basket,
+    MAX(x.created_at)                      AS last_transaction_at,
+    -- NULL untuk pelanggan yang terdaftar tapi belum pernah bertransaksi.
+    -- Itu keadaan yang berbeda dari "sudah lama tidak datang", dan menyamakan
+    -- keduanya jadi 0 akan menempatkan member baru di daftar churn.
+    CASE WHEN MAX(x.created_at) IS NULL THEN NULL
+         ELSE (CURRENT_DATE - MAX(x.created_at)::date)
+    END                                    AS days_since_last_transaction
+  FROM pos.customers c
+  LEFT JOIN pos.transactions x
+         ON x.customer_id = c.id
+        AND x.payment_status <> 'CANCELLED'
+ GROUP BY c.id, c.tenant_id, c.business_sector, c.business_id,
+          c.name, c.tier, c.points, c.total_spent;
+
+COMMENT ON VIEW contract.customer_rfm IS
+    'Recency/Frequency/Monetary per member. lifetime_spent_reported datang dari perangkat kasir; lifetime_spent_recorded dihitung dari struk yang sudah tersinkron — selisihnya adalah antrian yang belum terkirim.';
+
+
+-- 4. HAK AKSES ----------------------------------------------------------------
+--
+-- Mengikuti pola 0009/0011: hanya diberikan kalau perannya memang ada, supaya
+-- migrasi ini tetap jalan di database pengembangan yang belum punya peran
+-- terpisah.
+
+DO $$
+DECLARE
+    svc TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT ALL ON pos.customers TO svc_pos;
+    END IF;
+
+    FOREACH svc IN ARRAY ARRAY['svc_pos', 'svc_billing', 'svc_ai', 'svc_internal'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = svc) THEN
+            EXECUTE format('GRANT SELECT ON contract.customer_rfm TO %I', svc);
+        END IF;
+    END LOOP;
+
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bi_readonly') THEN
+        GRANT SELECT ON contract.customer_rfm TO bi_readonly;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0012_customers.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 14: migrations/0013_merchant_tenant_invariant.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0013_merchant_tenant_invariant.sql
+--
+-- Mengunci kenyataan bahwa `merchant_id` dan `tenant_id` adalah SINONIM.
+--
+-- INI BUKAN PERBAIKAN AKHIRNYA. Perbaikan akhirnya adalah membuang salah satu
+-- kolom, dan itu menuntut satu keputusan produk yang belum diambil:
+--
+--   Apakah satu akun boleh memiliki BEBERAPA merchant?
+--
+--   - Tidak  -> keduanya memang sinonim selamanya. Buang `merchant_id`,
+--               sisakan `tenant_id`, dan seluruh domain 0003/0004 ikut ringkas.
+--   - Ya     -> `merchants` harus menjadi tabel tersendiri SEKARANG, sebelum
+--               ada data produksi. `business_id` (`userId_sector`) sudah
+--               menyiratkan arah ini.
+--
+-- Sampai keputusan itu diambil, yang berbahaya bukan duplikasinya — melainkan
+-- tidak adanya yang mencegah keduanya MENYIMPANG. Dua kolom yang seharusnya
+-- sama tapi diam-diam berbeda menghasilkan merchant yang punya dua identitas:
+-- transaksinya di satu id, kreditnya di id lain, dan tidak ada satu pun error
+-- yang muncul. Kerusakan seperti itu baru ketahuan berbulan-bulan kemudian,
+-- saat angkanya sudah tidak bisa direkonsiliasi.
+--
+-- Ditinjau saat migrasi ini ditulis: SETIAP penulisan di seluruh repo mengisi
+-- keduanya dari satu parameter yang sama (`VALUES ($1, $1, ...)`) — wallet.ts,
+-- ai_query_logs, activity.ts, seed, dan ketiga batch job. Jadi batasan ini
+-- hanya menuliskan apa yang sudah benar hari ini.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0013_merchant_tenant_invariant.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- NOT VALID, pola yang sama seperti foreign key di 0011.
+--
+-- Baris lama yang terlanjur menyimpang TIDAK menghalangi migrasi ini — kalau
+-- ada, justru itu temuan yang perlu ditangani sendiri, bukan alasan menunda
+-- penjagaan untuk penulisan baru. Semua INSERT dan UPDATE setelah ini langsung
+-- diperiksa.
+--
+-- Untuk memvalidasi baris lama nanti (akan gagal bila ada yang menyimpang):
+--   ALTER TABLE ai.merchant_ai_credits VALIDATE CONSTRAINT ck_credits_merchant_is_tenant;
+
+DO $$
+DECLARE
+    -- skema, tabel, nama batasan
+    specs TEXT[][] := ARRAY[
+        ['ai',       'daily_merchant_insights', 'ck_insights_merchant_is_tenant'],
+        ['ai',       'merchant_targets',        'ck_targets_merchant_is_tenant'],
+        ['ai',       'merchant_ai_credits',     'ck_credits_merchant_is_tenant'],
+        ['ai',       'ai_query_logs',           'ck_query_logs_merchant_is_tenant'],
+        ['internal', 'feature_usage_events',    'ck_feature_events_merchant_is_tenant'],
+        ['internal', 'merchant_health_logs',    'ck_health_merchant_is_tenant'],
+        ['pos',      'merchant_activity_log',   'ck_activity_merchant_is_tenant']
+    ];
+    s   TEXT[];
+    sch TEXT;
+    tbl TEXT;
+    con TEXT;
+BEGIN
+    FOREACH s SLICE 1 IN ARRAY specs LOOP
+        sch := s[1]; tbl := s[2]; con := s[3];
+
+        CONTINUE WHEN to_regclass(sch || '.' || tbl) IS NULL;
+        CONTINUE WHEN EXISTS (SELECT 1 FROM pg_constraint WHERE conname = con);
+
+        -- Kolomnya nullable di beberapa tabel (log audit sengaja SET NULL saat
+        -- merchantnya dihapus), jadi NULL harus lolos. `IS NOT DISTINCT FROM`
+        -- memperlakukan NULL = NULL sebagai benar; `=` biasa menghasilkan NULL
+        -- dan batasan CHECK meloloskan NULL — kebetulan hasilnya sama, tapi
+        -- yang pertama menyatakan maksudnya.
+        EXECUTE format(
+            'ALTER TABLE %I.%I ADD CONSTRAINT %I '
+            'CHECK (merchant_id IS NOT DISTINCT FROM tenant_id) NOT VALID',
+            sch, tbl, con
+        );
+        RAISE NOTICE '0013: %.% dijaga oleh %', sch, tbl, con;
+    END LOOP;
+END $$;
+
+
+COMMENT ON COLUMN ai.merchant_ai_credits.tenant_id IS
+    'Selalu sama dengan merchant_id — dijaga ck_credits_merchant_is_tenant sejak 0013. Salah satunya harus dibuang begitu diputuskan apakah satu akun boleh punya banyak merchant.';
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0013_merchant_tenant_invariant.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
 -- ==========================================================================
 -- SELESAI. Verifikasi dengan:
 --
@@ -2861,5 +3147,5 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0011_identit
 --      AND table_type = 'BASE TABLE'
 --    GROUP BY table_schema ORDER BY 1;
 --
--- Harusnya: ai=5  billing=4  internal=4  pos=10
+-- Harusnya: ai=5  billing=4  internal=4  pos=11
 -- ==========================================================================

@@ -75,6 +75,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = getPool();
 
+  // Whether the numbers below actually came out of the database. A reply built
+  // on defaults must not claim otherwise: "omzet Rp 0" reads as a quiet shop,
+  // and that is the one answer a broken query must never be able to give.
+  let dataSource: 'DATABASE' | 'UNAVAILABLE' = 'UNAVAILABLE';
+
   /** Helper: build a proper AssistantAnswer-shaped response */
   const answer = (
     markdown: string,
@@ -87,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: true,
       answer: { markdown, source, title, intent, costCredits, chips: [] },
       credits: { balance: 30, monthlyGrant: 30, usedThisMonth: 0 },
-      dataSource: 'DATABASE',
+      dataSource,
     });
 
   try {
@@ -95,35 +100,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let revenueSum = 0;
     let orderCount = 0;
     let topProducts: string[] = [];
+    let lapsedCustomers: Array<{ name: string; tier: string; hari: number; belanja: string }> = [];
 
     try {
-      const stats = await db.query(
-        `SELECT COUNT(*)::int as orders, COALESCE(SUM(total_amount), 0)::numeric as total
-         FROM pos.transactions
-         WHERE merchant_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`,
+      // merchantId arrives as a business unit key (`usr-1_FNB`) or an account
+      // ref (`usr-1`), never as the tenant UUID the tables are keyed by. This
+      // mirrors the lookup order in services/shared/identity.ts: business unit
+      // first, then owner — and only when that owner has exactly one unit, since
+      // guessing between a café and a laundry silently reports the wrong shop.
+      const tenant = await db.query(
+        `SELECT merchant_id FROM contract.merchant_directory
+          WHERE business_id = $1
+             OR (owner_user_ref = $1 AND (SELECT COUNT(*) FROM contract.merchant_directory
+                                           WHERE owner_user_ref = $1) = 1)
+          LIMIT 1`,
         [merchantId]
       );
-      if (stats.rows[0]?.orders > 0) {
-        orderCount = stats.rows[0].orders;
-        revenueSum = Number(stats.rows[0].total);
-      }
 
-      const prods = await db.query(
-        `SELECT p.name, SUM(oi.quantity)::int as qty
-         FROM pos.order_items oi
-         JOIN pos.products p ON p.id = oi.product_id
-         JOIN pos.transactions t ON t.id = oi.transaction_id
-         WHERE t.merchant_id = $1 AND t.created_at >= NOW() - INTERVAL '7 days'
-         GROUP BY p.name ORDER BY qty DESC LIMIT 3`,
-        [merchantId]
-      );
-      topProducts = prods.rows.map((r: any) => `${r.name} (${r.qty}x)`);
-    } catch {
-      // DB lookup optional — continue with defaults
+      if (!tenant.rows.length) {
+        // Not an error: a merchant that has never synced simply has no rows yet.
+        console.warn(`[query] merchant belum tersinkronisasi: ${merchantId}`);
+      } else {
+        const tenantId = tenant.rows[0].merchant_id;
+
+        const stats = await db.query(
+          `SELECT COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0)::numeric AS total
+             FROM pos.transactions
+            WHERE tenant_id = $1
+              AND payment_status <> 'CANCELLED'
+              AND created_at >= NOW() - INTERVAL '30 days'`,
+          [tenantId]
+        );
+        orderCount = stats.rows[0]?.orders ?? 0;
+        revenueSum = Number(stats.rows[0]?.total ?? 0);
+
+        // Receipt lines live in transaction_items; pos.order_items has never
+        // existed. product_name is snapshotted on the line, so no join to the
+        // catalog is needed — and a renamed product keeps its old sales history.
+        const prods = await db.query(
+          `SELECT i.product_name AS name, SUM(i.quantity)::int AS qty
+             FROM pos.transaction_items i
+             JOIN pos.transactions t ON t.id = i.transaction_id
+            WHERE t.tenant_id = $1
+              AND t.payment_status <> 'CANCELLED'
+              AND t.created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY i.product_name
+            ORDER BY qty DESC
+            LIMIT 3`,
+          [tenantId]
+        );
+        topProducts = prods.rows.map((r: any) => `${r.name} (${r.qty}x)`);
+
+        // Members who used to come and stopped. Excludes those who never
+        // bought at all — a member registered yesterday is not churning.
+        const lapsed = await db.query(
+          `SELECT name, tier, days_since_last_transaction AS hari, lifetime_spent_recorded AS belanja
+             FROM contract.customer_rfm
+            WHERE merchant_id = $1 AND days_since_last_transaction > 14
+            ORDER BY lifetime_spent_recorded DESC
+            LIMIT 5`,
+          [tenantId]
+        );
+        lapsedCustomers = lapsed.rows;
+
+        dataSource = 'DATABASE';
+      }
+    } catch (dbErr: any) {
+      // Never swallowed. A schema mistake here looks exactly like an empty
+      // shop, and that is how the wrong column name survived unnoticed.
+      console.error('[query] gagal membaca metrik toko:', dbErr?.message);
     }
 
     const fmtRp = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
-    const dataCtx = `Omzet 30 hari: ${fmtRp(revenueSum)}, Transaksi: ${orderCount}, Produk terlaris minggu ini: ${topProducts.join(', ') || 'belum ada data'}.`;
+    const dataCtx =
+      dataSource === 'DATABASE'
+        ? `Omzet 30 hari: ${fmtRp(revenueSum)}, Transaksi: ${orderCount}, Produk terlaris minggu ini: ${topProducts.join(', ') || 'belum ada data'}.`
+        : `Data toko belum tersedia di server. JANGAN menyebut angka apa pun.`;
+
+    // Shown instead of a figure when the shop's data never arrived, so the
+    // reader can tell "belum tersinkron" apart from "belum ada penjualan".
+    const belumAdaData =
+      `**Data toko belum tersedia di server.**\n\n` +
+      `Transaksi ${storeName} belum selesai tersinkronisasi, jadi angkanya belum bisa ditampilkan di sini. ` +
+      `Periksa indikator sinkronisasi di aplikasi kasir, lalu coba lagi.`;
 
     // --- Deterministic path (gratis) ---
     const matched = matchIntent(q);
@@ -133,16 +192,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (matched.intent === 'REVENUE_ANALYSIS') {
         const avg = orderCount > 0 ? Math.round(revenueSum / orderCount) : 0;
         markdown =
-          `**Omzet 30 Hari Terakhir — ${storeName}**\n\n` +
-          `- **Total Omzet:** ${fmtRp(revenueSum)}\n` +
-          `- **Jumlah Transaksi:** ${orderCount} struk\n` +
-          `- **Rata-rata per Transaksi:** ${fmtRp(avg)}\n\n` +
-          `💡 Dorong penjualan produk bundling atau up-selling untuk meningkatkan nilai rata-rata transaksi.`;
+          dataSource !== 'DATABASE'
+            ? belumAdaData
+            : `**Omzet 30 Hari Terakhir — ${storeName}**\n\n` +
+              `- **Total Omzet:** ${fmtRp(revenueSum)}\n` +
+              `- **Jumlah Transaksi:** ${orderCount} struk\n` +
+              `- **Rata-rata per Transaksi:** ${fmtRp(avg)}\n\n` +
+              `💡 Dorong penjualan produk bundling atau up-selling untuk meningkatkan nilai rata-rata transaksi.`;
       } else if (matched.intent === 'STOCK_MANAGEMENT') {
         markdown =
-          `**Status Stok — ${storeName}**\n\n` +
-          `Produk terlaris minggu ini: ${topProducts.join(', ') || 'belum ada data'}\n\n` +
-          `💡 Restok produk-produk terlaris sebelum akhir pekan untuk menghindari kehabisan stok saat lonjakan transaksi.`;
+          dataSource !== 'DATABASE'
+            ? belumAdaData
+            : `**Status Stok — ${storeName}**\n\n` +
+              `Produk terlaris minggu ini: ${topProducts.join(', ') || 'belum ada data'}\n\n` +
+              `💡 Restok produk-produk terlaris sebelum akhir pekan untuk menghindari kehabisan stok saat lonjakan transaksi.`;
       } else if (matched.intent === 'MARKETING_PROMO') {
         markdown =
           `**Ide Promo untuk ${storeName}**\n\n` +
@@ -150,11 +213,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `- **Bundle Hemat:** Paket makanan + minuman lebih hemat Rp 5.000\n` +
           `- **Loyalty:** Poin ganda untuk pembayaran QRIS`;
       } else if (matched.intent === 'CRM_CHURN') {
-        markdown =
-          `**Analisa Pelanggan — ${storeName}**\n\n` +
-          `- Identifikasi pelanggan yang sudah >14 hari tidak bertransaksi\n` +
-          `- Kirim notifikasi WhatsApp dengan promo eksklusif untuk pelanggan setia\n` +
-          `- Aktifkan program loyalty poin untuk meningkatkan retensi`;
+        if (dataSource !== 'DATABASE') {
+          markdown = belumAdaData;
+        } else if (!lapsedCustomers.length) {
+          markdown =
+            `**Analisa Pelanggan — ${storeName}**\n\n` +
+            `Tidak ada member yang lebih dari 14 hari tidak berkunjung. Retensinya sedang sehat.\n\n` +
+            `💡 Pertahankan dengan poin ganda di hari sepi, biasanya Senin–Selasa.`;
+        } else {
+          markdown =
+            `**Member yang Mulai Menjauh — ${storeName}**\n\n` +
+            lapsedCustomers
+              .map(
+                (c) =>
+                  `- **${c.name}** (${c.tier}) — ${c.hari} hari tidak datang, total belanja ${fmtRp(Number(c.belanja))}`
+              )
+              .join('\n') +
+            `\n\n💡 Mulai dari yang total belanjanya paling besar: merekalah yang paling mahal kalau benar-benar hilang.`;
+        }
       }
 
       return answer(markdown, 'RULE_ENGINE', matched.title, matched.intent, 0);

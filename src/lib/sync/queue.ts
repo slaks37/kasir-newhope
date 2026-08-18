@@ -46,6 +46,26 @@ export interface SyncPayloadItem {
   totalPrice: number;
 }
 
+/**
+ * Member yang dilekatkan pada satu struk.
+ *
+ * Angka loyalitasnya ikut dikirim, bukan dihitung ulang server. Kasir offline
+ * yang sudah menambahkan poin di layar tidak boleh melihat angkanya berubah
+ * setelah sinkron — dan server tidak punya cara menghitung ulang tanpa tahu
+ * `loyaltyEarnRate` toko pada saat transaksi itu terjadi.
+ */
+export interface SyncPayloadCustomer {
+  ref: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  points: number;
+  tier: string;
+  totalSpent: number;
+  visitCount: number;
+  lastVisitAt?: string;
+}
+
 export interface SyncPayloadTxn {
   clientTxnId: string;
   invoiceNumber?: string;
@@ -62,6 +82,8 @@ export interface SyncPayloadTxn {
   orderType?: string;
   appModule?: string;
   createdAt?: string;
+  /** Tidak ada untuk pembelian tanpa member — mayoritas transaksi. */
+  customer?: SyncPayloadCustomer;
   items: SyncPayloadItem[];
 }
 
@@ -165,6 +187,8 @@ function batchKey(businessId: string, txns: SyncPayloadTxn[]): string {
 
 /** Mengubah Order aplikasi menjadi bentuk yang diterima server. */
 export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadTxn {
+  const dibatalkan = order.status === 'VOID';
+
   return {
     clientTxnId: order.id,
     invoiceNumber: order.id,
@@ -176,10 +200,28 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
     serviceChargeAmount: order.serviceChargeTotal || 0,
     totalAmount: order.total,
     paymentMethod: order.paymentMethod,
-    paymentStatus: order.status === 'VOID' ? 'CANCELLED' : 'COMPLETED',
+    paymentStatus: dibatalkan ? 'CANCELLED' : 'COMPLETED',
     orderType: order.orderType,
     appModule: order.tableId ? 'TABLES' : 'POS',
     createdAt: order.date,
+    // TIDAK dikirim pada pembatalan. `order.customer` adalah potret member
+    // SEBELUM struk ini dibayar, dan pembatalan selalu menyusul belakangan —
+    // mengirimnya berarti menimpa poin terkini di server dengan angka lama.
+    // Pembatalan hanya perlu mengubah status transaksinya.
+    customer:
+      order.customer && !dibatalkan
+        ? {
+            ref: order.customer.id,
+            name: order.customer.name,
+            phone: order.customer.phone,
+            email: order.customer.email,
+            points: order.customer.points,
+            tier: order.customer.tier,
+            totalSpent: order.customer.totalSpent,
+            visitCount: order.customer.visitCount,
+            lastVisitAt: order.customer.lastVisit,
+          }
+        : undefined,
     items: order.items.map((i) => ({
       productRef: i.productId,
       productName: i.variantName ? `${i.name} (${i.variantName})` : i.name,

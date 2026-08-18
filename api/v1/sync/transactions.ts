@@ -38,25 +38,128 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await client.query('BEGIN');
 
-    // 1. Ensure Tenant
+    // 1. Ensure Tenant, keyed on external_ref.
+    // This is the same key services/shared/identity.ts resolves through
+    // (contract.merchant_directory.business_id). Keying on legacy_uuid(id)
+    // instead produced a tenant that resolveTenant could never find, so the
+    // AI wallet and the subscription attached to a different merchant than
+    // the transactions did.
     const tenantRes = await client.query(
-      `INSERT INTO pos.tenants (id, name, business_sector, is_active)
-       VALUES (legacy_uuid($1), $2, $3, true)
-       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
+      `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), $1, $2, $3, $4, true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+       DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
        RETURNING id`,
-      [businessId, storeName || 'New Hope Store', sector]
+      [storeName || 'New Hope Store', sector, businessId, ownerRef || null]
     );
     const tenantId = tenantRes.rows[0].id;
 
-    // 2. Ensure User / Cashier
+    // 2. Ensure the cashier this batch is attributed to.
+    const cashierName = String(txns.find((t: any) => t.cashierName)?.cashierName || 'Kasir');
+    const cashierRef = ownerRef || 'usr-1';
     const userRes = await client.query(
-      `INSERT INTO pos.users (id, tenant_id, name, username, pin, role)
-       VALUES (legacy_uuid($1), $2, $3, $4, '1234', 'ADMIN')
-       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+      `INSERT INTO pos.users (id, tenant_id, name, username, pin, role, external_ref)
+       VALUES (uuidv7(), $1, $2, $3, '----', 'ADMIN', $4)
+       ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+       DO UPDATE SET name = EXCLUDED.name
        RETURNING id`,
-      [ownerRef || 'usr-1', tenantId, 'Budi Santoso', 'budi.admin']
+      [tenantId, cashierName.slice(0, 100), `${businessId}.${cashierRef}`.slice(0, 50), cashierRef]
     );
     const defaultUserId = userRes.rows[0].id;
+
+    // 3. Resolve catalog rows on demand, matched on external_ref.
+    // Cached per request: a busy day sends the same drink on dozens of receipts.
+    const productIds = new Map<string, string>();
+
+    const resolveProduct = async (item: any): Promise<string | null> => {
+      const ref = String(item.productRef || item.productName || '').slice(0, 96);
+      if (!ref) return null;
+      if (productIds.has(ref)) return productIds.get(ref)!;
+
+      const found = await client.query(
+        `SELECT id FROM pos.products
+          WHERE tenant_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
+        [tenantId, ref, item.productName]
+      );
+
+      let id: string;
+      if (found.rows.length) {
+        id = found.rows[0].id;
+      } else {
+        // A product sold but never present in the catalog sync still has to
+        // land, or the receipt line is lost along with its revenue.
+        const ins = await client.query(
+          `INSERT INTO pos.products
+             (id, tenant_id, name, sku, price, cost_price, business_sector,
+              business_id, category_name, description, external_ref)
+           VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id`,
+          [
+            tenantId,
+            String(item.productName || ref).slice(0, 100),
+            ref.slice(0, 50),
+            Number(item.unitPrice) || 0,
+            Number(item.unitCost) || 0,
+            sector,
+            businessId,
+            item.categoryName || 'General',
+            item.productDescription || null,
+            ref,
+          ]
+        );
+        id = ins.rows[0].id;
+      }
+
+      productIds.set(ref, id);
+      return id;
+    };
+
+    // 4. Ensure Customers referenced by this batch.
+    // Matched on external_ref like products and staff, never on name or phone.
+    // Loyalty figures are overwritten, not accumulated: a replayed batch would
+    // otherwise double every member's lifetime spend.
+    const customerIds = new Map<string, string>();
+    const TIERS = ['BRONZE', 'SILVER', 'GOLD', 'PLATINUM'];
+
+    for (const t of txns) {
+      const c = t.customer;
+      if (!c?.ref || !c?.name || customerIds.has(c.ref)) continue;
+
+      const tier = String(c.tier || '').toUpperCase();
+      const custRes = await client.query(
+        `INSERT INTO pos.customers
+           (id, tenant_id, external_ref, name, phone, email, points, total_spent,
+            visit_count, tier, last_visit_at, business_sector, business_id)
+         VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11, $12)
+         ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET
+           name          = EXCLUDED.name,
+           phone         = COALESCE(EXCLUDED.phone, pos.customers.phone),
+           email         = COALESCE(EXCLUDED.email, pos.customers.email),
+           points        = EXCLUDED.points,
+           total_spent   = EXCLUDED.total_spent,
+           visit_count   = EXCLUDED.visit_count,
+           tier          = EXCLUDED.tier,
+           last_visit_at = GREATEST(EXCLUDED.last_visit_at, pos.customers.last_visit_at),
+           updated_at    = CURRENT_TIMESTAMP
+         RETURNING id`,
+        [
+          tenantId,
+          String(c.ref).slice(0, 96),
+          String(c.name).slice(0, 100),
+          c.phone ? String(c.phone).slice(0, 32) : null,
+          c.email ? String(c.email).slice(0, 160) : null,
+          Math.max(0, Math.trunc(Number(c.points) || 0)),
+          Math.max(0, Number(c.totalSpent) || 0),
+          Math.max(0, Math.trunc(Number(c.visitCount) || 0)),
+          TIERS.includes(tier) ? tier : 'BRONZE',
+          c.lastVisitAt || null,
+          sector,
+          businessId,
+        ]
+      );
+      customerIds.set(c.ref, custRes.rows[0].id);
+    }
 
     let accepted = 0;
     let duplicates = 0;
@@ -78,21 +181,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const txnId = await client.query('SELECT uuidv7() as id');
       const realTxnId = txnId.rows[0].id;
 
+      // cashier_name / cashier_role are NOT columns here — the cashier's name
+      // is reached through cashier_user_id, and contract.transaction_log joins
+      // it in. Naming them made every insert fail, which rolled back the whole
+      // batch: this endpoint had never written a single transaction.
+      // business_sector and business_id are NOT NULL since 0006.
       await client.query(
         `INSERT INTO pos.transactions (
-          id, client_txn_id, tenant_id, cashier_user_id, cashier_name, cashier_role,
+          id, client_txn_id, tenant_id, cashier_user_id, customer_id,
           invoice_number, subtotal, discount_amount, tax_amount, service_charge_amount,
-          total_amount, payment_method, payment_status, order_type, app_module, created_at
+          total_amount, payment_method, payment_status, order_type, app_module,
+          business_sector, business_id, created_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, COALESCE($17::timestamptz, CURRENT_TIMESTAMP)
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+          COALESCE($18::timestamptz, CURRENT_TIMESTAMP)
         )`,
         [
           realTxnId,
           t.clientTxnId,
           tenantId,
           defaultUserId,
-          t.cashierName || 'Budi Santoso',
-          t.cashierRole || 'ADMIN',
+          t.customer?.ref ? customerIds.get(t.customer.ref) ?? null : null,
           t.invoiceNumber || `INV-${Date.now()}`,
           Number(t.subtotal) || 0,
           Number(t.discountAmount) || 0,
@@ -103,30 +212,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           t.paymentStatus || 'COMPLETED',
           t.orderType || 'DINE_IN',
           t.appModule || 'POS',
+          sector,
+          businessId,
           t.createdAt || null,
         ]
       );
 
       if (Array.isArray(t.items)) {
         for (const item of t.items) {
+          // product_id carries a foreign key, so it must point at a real
+          // catalog row. legacy_uuid() only mints a synthetic id that no
+          // product has, which failed the constraint and rolled back the batch.
+          const productId = await resolveProduct(item);
+          const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1));
+
           await client.query(
             `INSERT INTO pos.transaction_items (
               id, transaction_id, tenant_id, product_id, product_name, product_description,
-              category_name, unit_price, unit_cost, quantity, total_price
+              category_name, unit_price, unit_cost, quantity, total_price, business_sector
             ) VALUES (
-              uuidv7(), $1, $2, legacy_uuid($3), $4, $5, $6, $7, $8, $9, $10
+              uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
             )`,
             [
               realTxnId,
               tenantId,
-              item.productRef || item.productName,
+              productId,
               item.productName,
               item.productDescription || '',
               item.categoryName || 'General',
               Number(item.unitPrice) || 0,
               Number(item.unitCost) || 0,
-              Number(item.quantity) || 1,
-              Number(item.totalPrice) || (Number(item.unitPrice) * Number(item.quantity)),
+              quantity,
+              Number(item.totalPrice) || (Number(item.unitPrice) || 0) * quantity,
+              sector,
             ]
           );
         }
@@ -135,13 +253,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       accepted++;
     }
 
-    // Log sync receipt
+    // Log sync receipt. idempotency_key is the primary key — there is no
+    // separate id column, and the timestamp is received_at.
     if (idempotencyKey) {
       await client.query(
-        `INSERT INTO pos.sync_receipts (id, tenant_id, idempotency_key, rows_accepted, rows_duplicate, created_at)
-         VALUES (uuidv7(), $1, $2, $3, $4, CURRENT_TIMESTAMP)
+        `INSERT INTO pos.sync_receipts
+           (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (idempotency_key) DO NOTHING`,
-        [tenantId, idempotencyKey, accepted, duplicates]
+        [idempotencyKey, tenantId, businessId, accepted, duplicates]
       );
     }
 

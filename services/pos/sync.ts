@@ -34,6 +34,20 @@ interface SyncItem {
   totalPrice?: number;
 }
 
+interface SyncCustomer {
+  ref: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  points?: number;
+  tier?: string;
+  totalSpent?: number;
+  visitCount?: number;
+  lastVisitAt?: string;
+}
+
+const TIERS = new Set(['BRONZE', 'SILVER', 'GOLD', 'PLATINUM']);
+
 interface SyncTxn {
   clientTxnId: string;
   invoiceNumber?: string;
@@ -50,6 +64,7 @@ interface SyncTxn {
   orderType?: string;
   appModule?: string;
   createdAt?: string;
+  customer?: SyncCustomer;
   items: SyncItem[];
 }
 
@@ -163,6 +178,63 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           return id;
         };
 
+        /**
+         * Member toko. Dicocokkan lewat external_ref, sama seperti staf dan
+         * produk — bukan lewat nama atau nomor telepon, yang keduanya berubah.
+         *
+         * Angka loyalitas ditimpa apa adanya dari perangkat kasir. Menjumlahkan
+         * di server akan menggandakan total belanja pada setiap kiriman ulang,
+         * dan kiriman ulang adalah kejadian normal di sini.
+         */
+        const customerCache = new Map<string, string>();
+
+        const resolveCustomer = async (cust: SyncCustomer | undefined) => {
+          const ref = str(cust?.ref, 96);
+          const name = str(cust?.name, 100);
+          if (!cust || !ref || !name) return null;
+          if (customerCache.has(ref)) return customerCache.get(ref)!;
+
+          const tier = String(cust.tier ?? '').toUpperCase();
+          const ins = await c.query(
+            `INSERT INTO pos.customers
+               (id, tenant_id, external_ref, name, phone, email, points, total_spent,
+                visit_count, tier, last_visit_at, business_sector, business_id)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11, $12)
+             ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET
+               name          = EXCLUDED.name,
+               phone         = COALESCE(EXCLUDED.phone, pos.customers.phone),
+               email         = COALESCE(EXCLUDED.email, pos.customers.email),
+               points        = EXCLUDED.points,
+               total_spent   = EXCLUDED.total_spent,
+               visit_count   = EXCLUDED.visit_count,
+               tier          = EXCLUDED.tier,
+               last_visit_at = GREATEST(
+                                 EXCLUDED.last_visit_at,
+                                 pos.customers.last_visit_at
+                               ),
+               updated_at    = CURRENT_TIMESTAMP
+             RETURNING id`,
+            [
+              tenantId,
+              ref,
+              name,
+              str(cust.phone, 32),
+              str(cust.email, 160),
+              Math.max(0, Math.trunc(num(cust.points))),
+              Math.max(0, num(cust.totalSpent)),
+              Math.max(0, Math.trunc(num(cust.visitCount))),
+              TIERS.has(tier) ? tier : 'BRONZE',
+              cust.lastVisitAt ?? null,
+              sector,
+              businessId,
+            ]
+          );
+          const id: string = ins.rows[0].id;
+          customerCache.set(ref, id);
+          return id;
+        };
+
         const resolveProduct = async (i: SyncItem) => {
           const key = i.productRef || i.productName;
           if (!key) return null;
@@ -224,20 +296,23 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             ? String(x.appModule)
             : 'POS';
 
+          const customerId = await resolveCustomer(x.customer);
+
           const ins = await c.query(
             `INSERT INTO pos.transactions
-               (id, tenant_id, cashier_user_id, subtotal, discount_amount, tax_amount,
-                service_charge_amount, total_amount, payment_method, payment_status,
-                business_sector, business_id, app_module, order_type, invoice_number,
-                client_txn_id, created_at)
+               (id, tenant_id, cashier_user_id, customer_id, subtotal, discount_amount,
+                tax_amount, service_charge_amount, total_amount, payment_method,
+                payment_status, business_sector, business_id, app_module, order_type,
+                invoice_number, client_txn_id, created_at)
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                     COALESCE($16::timestamptz, CURRENT_TIMESTAMP))
+                     $16, COALESCE($17::timestamptz, CURRENT_TIMESTAMP))
              ON CONFLICT (tenant_id, client_txn_id) WHERE client_txn_id IS NOT NULL
                DO NOTHING
              RETURNING id`,
             [
               tenantId,
               cashierId,
+              customerId,
               subtotal,
               discount,
               tax,

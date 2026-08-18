@@ -31,6 +31,8 @@ const MIGRATIONS = [
   'migrations/0009_service_schemas.sql',
   'migrations/0010_credit_uuid.sql',
   'migrations/0011_identity_grants.sql',
+  'migrations/0012_customers.sql',
+  'migrations/0013_merchant_tenant_invariant.sql',
 ];
 
 async function main() {
