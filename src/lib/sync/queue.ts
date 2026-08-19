@@ -302,6 +302,74 @@ export async function pushCatalog(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* SINKRONISASI CABANG                                                         */
+/* -------------------------------------------------------------------------- */
+
+export interface BranchPayload {
+  id: string;
+  name: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  allowedRadiusMeters?: number;
+  businessSector?: string;
+  isActive?: boolean;
+  notes?: string;
+}
+
+export interface HasilSinkronCabang {
+  ok: boolean;
+  /** Cabang yang server tolak karena batas paket, berikut alasannya. */
+  ditolak: Array<{ ref: string; nama: string; alasan: string }>;
+  maxOutlets: number;
+  activeOutlets: number;
+}
+
+/**
+ * Mengirim seluruh daftar cabang, bukan yang berubah saja.
+ *
+ * Servernya yang memutuskan mana yang muat dalam batas paket, karena hanya
+ * server yang tahu berapa cabang yang sudah tersimpan dari perangkat LAIN.
+ * Perangkat kedua yang menghitung dari salinan localStorage-nya sendiri selalu
+ * menghitung terlalu sedikit.
+ *
+ * Yang ditolak dikembalikan berikut alasannya supaya layar Pengaturan bisa
+ * menyampaikannya apa adanya — penolakan yang tidak terlihat hanya menghasilkan
+ * cabang yang "tersimpan" di satu perangkat dan tidak ada di mana pun lagi.
+ */
+export async function pushBranches(
+  target: SyncTarget,
+  branches: BranchPayload[],
+  activeBranchRef?: string
+): Promise<HasilSinkronCabang> {
+  const kosong: HasilSinkronCabang = { ok: false, ditolak: [], maxOutlets: 0, activeOutlets: 0 };
+  try {
+    const res = await fetch('/api/v1/sync/branches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: target.businessId,
+        branches,
+        activeBranchRef,
+      }),
+    });
+    if (!res.ok) return kosong;
+
+    const d = await res.json();
+    return {
+      ok: Boolean(d?.ok),
+      ditolak: Array.isArray(d?.rejected) ? d.rejected : [],
+      maxOutlets: Number(d?.maxOutlets ?? 0),
+      activeOutlets: Number(d?.activeOutlets ?? 0),
+    };
+  } catch {
+    // Gagal jaringan bukan penolakan paket. Layar Pengaturan tidak boleh
+    // menuduh merchant melewati batas hanya karena internetnya putus.
+    return kosong;
+  }
+}
+
 /**
  * Memasukkan satu transaksi ke antrian.
  *

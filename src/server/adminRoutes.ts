@@ -476,6 +476,14 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   );
 
   app.get(
+    '/api/admin/branches',
+    guard('VIEW_MERCHANT_DETAIL'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, ...(await repo.branches(db, req.query as repo.ListFilter)) });
+    })
+  );
+
+  app.get(
     '/api/admin/bundles',
     guard('VIEW_PRODUCT_SALES'),
     wrap(async (req, res, db) => {

@@ -439,6 +439,39 @@ export async function rawMaterials(db: Db, f: ListFilter = {}) {
   return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
 }
 
+/**
+ * Cabang merchant beserta pemakaiannya terhadap batas paket.
+ *
+ * Digabung dalam satu kueri karena pertanyaannya selalu satu paket: "toko ini
+ * punya cabang apa saja, dan apakah sudah mentok?" Menyajikan daftarnya tanpa
+ * kuotanya membuat staf support harus membuka layar lain untuk tahu apakah
+ * keluhan "tidak bisa tambah cabang" itu batas paket atau kerusakan.
+ */
+export async function branches(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const { rows } = await db.query(
+    `SELECT b.*, t.name AS merchant_name,
+            u.max_outlets, u.outlet_aktif, u.sisa_kuota
+       FROM contract.branches b
+       JOIN pos.tenants t ON t.id = b.merchant_id
+       LEFT JOIN contract.merchant_outlet_usage u ON u.merchant_id = b.merchant_id
+      WHERE ($1::text IS NULL OR b.business_sector = $1)
+        AND ($2::text IS NULL OR b.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')
+      ORDER BY t.name, b.is_active DESC, b.name
+      LIMIT $3 OFFSET $4`,
+    [c.sector, c.search, c.limit, c.offset]
+  );
+  const total = await db.query(
+    `SELECT COUNT(*)::int AS n
+       FROM contract.branches b
+       JOIN pos.tenants t ON t.id = b.merchant_id
+      WHERE ($1::text IS NULL OR b.business_sector = $1)
+        AND ($2::text IS NULL OR b.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')`,
+    [c.sector, c.search]
+  );
+  return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
+}
+
 export async function bundles(db: Db, f: ListFilter = {}) {
   const c = cleanFilter(f);
   const { rows } = await db.query(

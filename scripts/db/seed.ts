@@ -214,6 +214,37 @@ async function main() {
     );
     const tenantId: string = tRows[0].id;
 
+    // Cabang. Jumlahnya sengaja bervariasi supaya panel admin punya ketiga
+    // keadaan yang perlu bisa dibedakan staf support: merchant yang mentok
+    // batas outletnya, yang masih longgar, dan yang baru punya satu.
+    //
+    // Paket seed adalah Tier Pro (4 outlet), jadi 4 cabang berarti mentok.
+    const jumlahCabang = m.owner === 'usr-budi' && m.sector === 'FNB' ? 4 : m.days >= 60 ? 2 : 1;
+    let cabangUtama: string | null = null;
+    for (let i = 0; i < jumlahCabang; i++) {
+      const { rows } = await db.query(
+        `INSERT INTO branches
+           (id, tenant_id, external_ref, name, address, latitude, longitude,
+            allowed_radius_meters, business_sector, is_active)
+         VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, 200, $7, TRUE)
+         RETURNING id`,
+        [
+          tenantId,
+          `branch-${businessId}-${i}`,
+          i === 0 ? `${m.name} - Pusat` : `${m.name} - Cabang ${i + 1}`,
+          i === 0 ? 'Jl. Utama No. 1' : `Jl. Cabang ${i + 1} No. ${i + 1}`,
+          -6.2215 - i / 100,
+          106.8014 + i / 100,
+          m.sector,
+        ]
+      );
+      if (i === 0) cabangUtama = rows[0].id;
+    }
+    await db.query(`UPDATE tenants SET active_branch_id = $2 WHERE id = $1`, [
+      tenantId,
+      cabangUtama,
+    ]);
+
     // Staf — terpisah per sektor, persis seperti di aplikasi.
     const staffIds: Array<{ id: string; name: string; role: string }> = [];
     const names = STAFF_BY_SECTOR[m.sector];

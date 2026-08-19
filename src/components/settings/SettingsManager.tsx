@@ -41,6 +41,7 @@ export const SettingsManager: React.FC = () => {
     deleteBranch,
     currentUser,
     hasPermission,
+    cabangDitolak,
   } = usePOS();
 
   const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING'>('STORE');
@@ -275,6 +276,30 @@ export const SettingsManager: React.FC = () => {
       ) : activeTab === 'BRANCHES' ? (
         /* BRANCHES & GEO-TAGGING TAB */
         <div className="space-y-6 animate-fade-in">
+          {/* Penolakan dari SERVER, bukan dari layar ini.
+              Aplikasi kasir menolak di muka berdasarkan cabang yang dia tahu;
+              server menolak berdasarkan cabang yang benar-benar ada, termasuk
+              yang dibuat dari perangkat lain. Cabang yang tersimpan di sini tapi
+              ditolak di sana akan hilang begitu browsernya dibersihkan — jadi
+              merchant harus melihatnya sekarang, bukan nanti. */}
+          {cabangDitolak.length > 0 && (
+            <div className="p-4 rounded-3xl border border-rose-200 bg-rose-50">
+              <p className="text-xs font-extrabold text-rose-900">
+                {cabangDitolak.length} cabang tidak tersimpan di server
+              </p>
+              <ul className="mt-2 space-y-1">
+                {cabangDitolak.map((pesan) => (
+                  <li key={pesan} className="text-[11px] text-rose-800/90 leading-relaxed">
+                    &bull; {pesan}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-rose-800/80 mt-2 leading-relaxed">
+                Cabang ini hanya ada di perangkat ini. Nonaktifkan cabang yang sudah tidak dipakai
+                untuk membebaskan kuota, atau tingkatkan paket.
+              </p>
+            </div>
+          )}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-1">
               <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2">

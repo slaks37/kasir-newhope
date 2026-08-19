@@ -45,6 +45,7 @@ import {
   pushCatalog,
   type SyncStatus,
   type SyncTarget,
+  pushBranches,
 } from '../lib/sync/queue';
 import {
   INITIAL_CATEGORIES,
@@ -118,6 +119,8 @@ interface POSContextType {
   activeBranch?: StoreBranch;
   setActiveBranchId: (branchId: string) => void;
   saveBranch: (branch: StoreBranch) => HasilSimpan;
+  /** Cabang yang DITOLAK server karena batas paket, berikut alasannya. */
+  cabangDitolak: string[];
   deleteBranch: (branchId: string) => void;
 
   // Staff & Service Assignment & Attendance (Clock In / Out)
@@ -803,6 +806,62 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
     if (soundEnabled) playPOSSound('delete');
   };
+
+  /*
+   * SINKRONISASI CABANG.
+   *
+   * Dikirim utuh setiap daftarnya berubah, dengan penundaan seperti katalog.
+   * Server yang memutuskan mana yang muat dalam batas paket — hanya server yang
+   * tahu berapa cabang sudah tersimpan dari PERANGKAT LAIN. Perangkat kedua
+   * yang menghitung dari salinan localStorage-nya sendiri selalu menghitung
+   * terlalu sedikit, dan itulah yang membuat penegakan di klien saja tidak
+   * pernah cukup.
+   *
+   * Yang ditolak server dikembalikan ke layar, tidak ditelan: cabang yang
+   * "tersimpan" di satu perangkat tapi tidak ada di server adalah cabang yang
+   * hilang begitu browsernya dibersihkan.
+   */
+  const [cabangDitolak, setCabangDitolak] = useState<string[]>([]);
+
+  useEffect(() => {
+    const daftar = settings.branches || INITIAL_BRANCHES;
+    if (daftar.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      void pushBranches(
+        {
+          businessId: makeBusinessId(currentUser.id, activeSector),
+          sector: activeSector,
+          storeName: settings.storeName,
+          ownerRef: currentUser.id,
+        },
+        daftar.map((b) => ({
+          id: b.id,
+          name: b.name,
+          address: b.address,
+          latitude: b.latitude,
+          longitude: b.longitude,
+          allowedRadiusMeters: b.allowedRadiusMeters,
+          businessSector: b.businessSector,
+          isActive: b.isActive,
+          notes: b.notes,
+        })),
+        settings.activeBranchId
+      ).then((hasil) => {
+        setCabangDitolak(
+          hasil.ditolak.map((d) => `${d.nama}: ${d.alasan}`)
+        );
+      });
+    }, 8000);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    settings.branches,
+    settings.activeBranchId,
+    settings.storeName,
+    currentUser.id,
+    activeSector,
+  ]);
 
   const clockInStaff = (
     staffId: string,
@@ -1870,6 +1929,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setActiveBranchId,
         saveBranch,
         deleteBranch,
+        cabangDitolak,
         staffMembers: sectorStaffMembers,
         allStaffMembers: staffMembers,
         selectedStaff: scopedSelectedStaff,
