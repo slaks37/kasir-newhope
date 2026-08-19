@@ -1,6 +1,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { ENTITLEMENT_DARURAT, TANPA_BATAS } from '../../../src/lib/plans/entitlements.js';
 
 let pool: pg.Pool | null = null;
 
@@ -74,6 +75,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
     const defaultUserId = userRes.rows[0].id;
 
+    // 2b. BATAS PRODUK PAKET — ditegakkan DI SINI, bukan hanya di aplikasi kasir.
+    //
+    // Penegakan di klien bisa dilewati siapa pun yang mengirim POST sendiri ke
+    // endpoint ini. Diuji dan terbukti sebelum perbaikan ini: merchant paket
+    // Free (batas 30) mengirim 40 produk lewat sinkron, dan keempat puluhnya
+    // masuk katalog.
+    //
+    // Tanpa baris langganan, yang dipakai batas darurat yang sama dengan
+    // aplikasi kasir — bukan "tanpa batas". Merchant yang belum berlangganan
+    // bukan merchant dengan paket termahal.
+    const batasRes = await client.query(
+      `SELECT product_limit FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+      [tenantId]
+    );
+    const batasProduk = batasRes.rows.length
+      ? Number(batasRes.rows[0].product_limit)
+      : ENTITLEMENT_DARURAT.productLimit;
+
+    const jumlahRes = await client.query(
+      `SELECT COUNT(*)::int AS n FROM pos.products WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    let jumlahProduk = jumlahRes.rows[0].n as number;
+    let katalogDitahan = 0;
+
     // 3. Resolve catalog rows on demand, matched on external_ref.
     // Cached per request: a busy day sends the same drink on dozens of receipts.
     const productIds = new Map<string, string>();
@@ -93,6 +119,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (found.rows.length) {
         id = found.rows[0].id;
       } else {
+        // KATALOG PENUH: barisnya tetap masuk, produknya tidak.
+        //
+        // Uang yang sudah diterima merchant TIDAK BOLEH hilang karena batas
+        // paket — menolak transaksinya berarti omzet hari itu tidak pernah
+        // tercatat, dan itu kerugian yang jauh lebih besar daripada satu baris
+        // katalog. product_id boleh NULL dan product_name disalin pada baris
+        // struk, jadi nama, jumlah, dan nilainya tetap utuh di laporan.
+        //
+        // Yang tidak didapat merchant adalah produknya masuk katalog: tidak
+        // muncul di daftar barang, tidak ikut laporan per-produk, tidak bisa
+        // diatur stoknya. Itulah yang dijual paket berikutnya.
+        if (batasProduk !== TANPA_BATAS && jumlahProduk >= batasProduk) {
+          katalogDitahan++;
+          return null;
+        }
+
         // A product sold but never present in the catalog sync still has to
         // land, or the receipt line is lost along with its revenue.
         const ins = await client.query(
@@ -115,6 +157,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ]
         );
         id = ins.rows[0].id;
+        jumlahProduk++;
       }
 
       productIds.set(ref, id);
@@ -279,7 +322,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       accepted,
       duplicates,
       tenantId,
-      message: 'Transactions synced successfully to Supabase',
+      // Dilaporkan, tidak didiamkan. Merchant harus tahu ada barang yang
+      // terjual tapi tidak masuk katalognya, berikut alasannya — batas yang
+      // ditegakkan diam-diam hanya menghasilkan laporan yang terasa salah
+      // tanpa ada yang tahu sebabnya.
+      catalogSkipped: katalogDitahan,
+      productLimit: batasProduk,
+      message: katalogDitahan > 0
+        ? `Transaksi tersimpan. ${katalogDitahan} produk tidak masuk katalog karena batas paket (${batasProduk} produk) sudah tercapai.`
+        : 'Transactions synced successfully to Supabase',
     });
   } catch (err: any) {
     await client.query('ROLLBACK');

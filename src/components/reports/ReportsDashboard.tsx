@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
+import { bolehLevelDashboard } from '../../lib/plans/entitlements';
 import {
   BarChart3,
   TrendingUp,
@@ -44,7 +45,27 @@ import {
 } from 'recharts';
 
 export const ReportsDashboard: React.FC = () => {
-  const { orders, products, shift, shiftHistory, endShift, settings, currentUser } = usePOS();
+  const { orders, products, shift, shiftHistory, endShift, settings, currentUser, entitlements, planName } =
+    usePOS();
+
+  /*
+   * LEVEL DASHBOARD DITEGAKKAN DI SINI.
+   *
+   * Sebelumnya `dashboardAccessLevel` diambil dari langganan, disimpan di
+   * state, lalu tidak pernah dibaca satu baris pun. Ketiga levelnya bisa
+   * disunting admin di panel harga, tapi apa pun yang dipilih, semua merchant
+   * yang punya modul Laporan melihat laporan laba rugi, HPP, dan margin bersih
+   * yang sama — Tier Plus mendapat seluruh isi Tier Pro secara cuma-cuma.
+   *
+   * Pembagiannya mengikuti LEVEL_DASHBOARD di src/lib/plans/entitlements.ts,
+   * yang teksnya juga yang dibaca calon pelanggan di kartu harga:
+   *
+   *   BASIC    ringkasan penjualan harian saja
+   *   FULL     + grafik tren, metode bayar, produk terlaris
+   *   ADVANCED + laba rugi, HPP, dan margin bersih
+   */
+  const bolehFull = bolehLevelDashboard(entitlements, 'FULL');
+  const bolehAdvanced = bolehLevelDashboard(entitlements, 'ADVANCED');
 
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('today');
   const [searchQuery, setSearchQuery] = useState('');
@@ -231,10 +252,14 @@ export const ReportsDashboard: React.FC = () => {
         <div>
           <h2 className="font-black text-2xl lg:text-3xl text-slate-900 flex items-center space-x-3">
             <BarChart3 className="w-8 h-8 text-amber-600" />
-            <span>Laporan Finansial, HPP &amp; Pajak</span>
+            <span>{bolehAdvanced ? 'Laporan Finansial, HPP & Pajak' : 'Laporan Penjualan'}</span>
           </h2>
           <p className="text-xs lg:text-sm text-slate-500 mt-1 font-medium">
-            Laporan pembukuan lengkap tingkat enterprise: omzet riil, modal terpakai (HPP), estimasi laba bersih, setoran pajak daerah (PB1), dan service charge.
+            {bolehAdvanced
+              ? 'Laporan pembukuan lengkap: omzet riil, modal terpakai (HPP), estimasi laba bersih, setoran pajak daerah (PB1), dan service charge.'
+              : bolehFull
+                ? 'Omzet, pajak, service charge, tren penjualan, dan sebaran metode pembayaran.'
+                : 'Ringkasan penjualan: omzet, pajak, dan service charge pada periode terpilih.'}
           </p>
         </div>
 
@@ -256,7 +281,10 @@ export const ReportsDashboard: React.FC = () => {
             ))}
           </div>
 
-          {/* Export to Excel (.xls) Button */}
+          {/* Ekspor memuat kolom HPP dan laba bersih, jadi ikut level ADVANCED.
+              Membiarkannya terbuka berarti seluruh isi paket teratas bisa
+              diunduh dari paket bawah lewat satu tombol. */}
+          {bolehAdvanced && (
           <button
             onClick={handleExportExcel}
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
@@ -266,7 +294,9 @@ export const ReportsDashboard: React.FC = () => {
             <span>Export Excel</span>
           </button>
 
-          {/* Export to PDF / Print Button */}
+          )}
+
+          {bolehAdvanced && (
           <button
             onClick={handleExportPDF}
             className="bg-slate-900 hover:bg-slate-800 text-white font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
@@ -275,6 +305,7 @@ export const ReportsDashboard: React.FC = () => {
             <Printer className="w-4 h-4 text-amber-400" />
             <span>Cetak / PDF</span>
           </button>
+          )}
 
           {/* Tutup Kasir / Shift Button */}
           <button
@@ -286,8 +317,13 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 1. PRIMARY FINANCIAL & TAX METRICS CARDS (5 BIG CARDS) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* 1. KARTU METRIK — dua di antaranya (HPP, Laba Bersih) hanya ADVANCED,
+             jadi kolom grid mengikuti jumlah kartu yang benar-benar tampil. */}
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${
+          bolehAdvanced ? 'lg:grid-cols-5' : 'lg:grid-cols-3'
+        }`}
+      >
         {/* Total Omset Bersih */}
         <div className="bg-white border border-slate-200 p-5 rounded-3xl space-y-2 shadow-xs">
           <div className="flex items-center justify-between">
@@ -304,7 +340,8 @@ export const ReportsDashboard: React.FC = () => {
           </span>
         </div>
 
-        {/* Modal HPP / Bahan Baku Terpakai */}
+        {/* Modal HPP / Bahan Baku Terpakai — ADVANCED */}
+        {bolehAdvanced && (
         <div className="bg-white border border-rose-200/80 p-5 rounded-3xl space-y-2 shadow-xs bg-rose-50/20">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Modal Terpakai (HPP)</span>
@@ -320,7 +357,10 @@ export const ReportsDashboard: React.FC = () => {
           </span>
         </div>
 
-        {/* Estimasi Laba Bersih (Net Profit) */}
+        )}
+
+        {/* Estimasi Laba Bersih (Net Profit) — ADVANCED */}
+        {bolehAdvanced && (
         <div className="bg-white border border-emerald-200/80 p-5 rounded-3xl space-y-2 shadow-xs bg-emerald-50/25">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Estimasi Laba Bersih</span>
@@ -335,6 +375,8 @@ export const ReportsDashboard: React.FC = () => {
             Net Margin {financialSummary.netProfitMargin}%
           </span>
         </div>
+
+        )}
 
         {/* Pajak Daerah (PB1/PPN) */}
         <div className="bg-white border border-amber-200/80 p-5 rounded-3xl space-y-2 shadow-xs bg-amber-50/25">
@@ -369,7 +411,28 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. COMPREHENSIVE P&L STATEMENT (LAPORAN LABA RUGI OPERASIONAL) */}
+      {/* Batas yang ditegakkan diam-diam terlihat seperti laporan yang rusak.
+          Merchant harus tahu apa yang tidak dia lihat dan mengapa. */}
+      {!bolehAdvanced && (
+        <div className="p-4 rounded-3xl border border-amber-200 bg-amber-50 flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-extrabold text-amber-900">
+              Paket {planName ?? 'Anda'} mencakup dashboard tingkat{' '}
+              {entitlements.dashboardAccessLevel}
+            </p>
+            <p className="text-[11px] text-amber-800/90 mt-1 leading-relaxed">
+              {bolehFull
+                ? 'Laporan laba rugi, modal terpakai (HPP), margin bersih, dan ekspor Excel/PDF tersedia di paket dengan dashboard Advanced.'
+                : 'Grafik tren penjualan dan sebaran metode pembayaran tersedia di paket dengan dashboard Full; laporan laba rugi, HPP, dan margin bersih di paket Advanced.'}{' '}
+              Transaksi Anda tetap tercatat lengkap — yang dibatasi hanya tampilan analisanya.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 2. COMPREHENSIVE P&L STATEMENT — ADVANCED */}
+      {bolehAdvanced && (
       <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
           <div>
@@ -439,7 +502,10 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. CHARTS SECTION (HOURLY TREND & PAYMENT METHOD DISTRIBUTION) */}
+      )}
+
+      {/* 3. CHARTS SECTION — FULL ke atas */}
+      {bolehFull && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Hourly Sales Trend Area Chart */}
         <div className="lg:col-span-8 bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
@@ -545,7 +611,9 @@ export const ReportsDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. DETAIL TABLE: LAPORAN SEMUA TRANSAKSI, MODAL HPP, PAJAK & SERVICE CHARGE */}
+      )}
+
+      {/* 4. DETAIL TABLE: LAPORAN SEMUA TRANSAKSI */}
       <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
@@ -600,11 +668,15 @@ export const ReportsDashboard: React.FC = () => {
                   <th className="py-3 px-3">Kasir</th>
                   <th className="py-3 px-3 text-right">Subtotal</th>
                   <th className="py-3 px-3 text-right">Diskon</th>
-                  <th className="py-3 px-3 text-right text-rose-700 font-black">Modal (HPP)</th>
+                  {bolehAdvanced && (
+                    <th className="py-3 px-3 text-right text-rose-700 font-black">Modal (HPP)</th>
+                  )}
                   <th className="py-3 px-3 text-right text-amber-700 font-black">Pajak (PB1)</th>
                   <th className="py-3 px-3 text-right text-blue-700 font-black">Service</th>
                   <th className="py-3 px-3 text-right text-slate-900 font-black">Total Net</th>
-                  <th className="py-3 px-3 text-right text-emerald-700 font-black">Laba Bersih</th>
+                  {bolehAdvanced && (
+                    <th className="py-3 px-3 text-right text-emerald-700 font-black">Laba Bersih</th>
+                  )}
                   <th className="py-3 px-3 text-center">Metode</th>
                   <th className="py-3 px-3 text-center">Status</th>
                 </tr>
@@ -632,11 +704,15 @@ export const ReportsDashboard: React.FC = () => {
                       <td className="py-3 px-3 font-sans text-slate-600">{o.cashierName || 'Kasir'}</td>
                       <td className="py-3 px-3 text-right text-slate-700">{formatRupiah(sub)}</td>
                       <td className="py-3 px-3 text-right text-rose-600">{disc > 0 ? `-${formatRupiah(disc)}` : '-'}</td>
-                      <td className="py-3 px-3 text-right text-rose-700 font-bold bg-rose-50/30">{formatRupiah(orderCost)}</td>
+                      {bolehAdvanced && (
+                        <td className="py-3 px-3 text-right text-rose-700 font-bold bg-rose-50/30">{formatRupiah(orderCost)}</td>
+                      )}
                       <td className="py-3 px-3 text-right text-amber-800 font-bold bg-amber-50/40">{formatRupiah(tax)}</td>
                       <td className="py-3 px-3 text-right text-blue-800 font-bold bg-blue-50/40">{formatRupiah(svc)}</td>
                       <td className="py-3 px-3 text-right text-slate-950 font-black">{formatRupiah(tot)}</td>
-                      <td className="py-3 px-3 text-right text-emerald-700 font-black bg-emerald-50/40">{formatRupiah(orderProfit)}</td>
+                      {bolehAdvanced && (
+                        <td className="py-3 px-3 text-right text-emerald-700 font-black bg-emerald-50/40">{formatRupiah(orderProfit)}</td>
+                      )}
                       <td className="py-3 px-3 text-center font-sans">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           o.paymentMethod === 'QRIS' ? 'bg-purple-100 text-purple-800' : 'bg-emerald-100 text-emerald-800'
@@ -660,11 +736,15 @@ export const ReportsDashboard: React.FC = () => {
                   </td>
                   <td className="py-3.5 px-3 text-right font-mono">{formatRupiah(financialSummary.totalGrossSales)}</td>
                   <td className="py-3.5 px-3 text-right font-mono text-rose-300">-{formatRupiah(financialSummary.totalDiscount)}</td>
-                  <td className="py-3.5 px-3 text-right font-mono text-rose-300 font-black">{formatRupiah(financialSummary.totalCOGS)}</td>
+                  {bolehAdvanced && (
+                    <td className="py-3.5 px-3 text-right font-mono text-rose-300 font-black">{formatRupiah(financialSummary.totalCOGS)}</td>
+                  )}
                   <td className="py-3.5 px-3 text-right font-mono text-amber-300 font-black">{formatRupiah(financialSummary.totalTax)}</td>
                   <td className="py-3.5 px-3 text-right font-mono text-blue-300 font-black">{formatRupiah(financialSummary.totalServiceCharge)}</td>
                   <td className="py-3.5 px-3 text-right font-mono text-white font-black text-sm">{formatRupiah(financialSummary.totalNetRevenue)}</td>
-                  <td className="py-3.5 px-3 text-right font-mono text-emerald-400 font-black text-sm">{formatRupiah(financialSummary.grossProfit)}</td>
+                  {bolehAdvanced && (
+                    <td className="py-3.5 px-3 text-right font-mono text-emerald-400 font-black text-sm">{formatRupiah(financialSummary.grossProfit)}</td>
+                  )}
                   <td colSpan={2} className="py-3.5 px-3 text-center font-sans text-[10px] text-slate-300">LUNAS</td>
                 </tr>
               </tbody>
@@ -673,7 +753,8 @@ export const ReportsDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* 5. LAPORAN HPP & PROFITABILITAS PER MENU PRODUK */}
+      {/* 5. LAPORAN HPP & PROFITABILITAS PER MENU PRODUK — ADVANCED */}
+      {bolehAdvanced && (
       <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <h3 className="font-black text-base text-slate-900 flex items-center space-x-2">
@@ -732,6 +813,8 @@ export const ReportsDashboard: React.FC = () => {
           </table>
         </div>
       </div>
+
+      )}
 
       {/* 6. SHIFT SESSION ACTIVITY LOG TABLE */}
       <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-4 shadow-xs">
