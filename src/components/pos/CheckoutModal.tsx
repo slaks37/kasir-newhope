@@ -71,7 +71,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   // Totals Calculation — memakai fungsi yang sama dengan processPayment, supaya
   // angka di layar ini dan angka yang tercatat di struk tidak bisa berbeda.
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  const { loyaltyDiscount, pointsUsed, taxTotal, serviceChargeTotal, grandTotal } = hitungTotal({
+  const {
+    loyaltyDiscount,
+    tierDiscount,
+    tierDiscountPercent,
+    pointsUsed,
+    taxTotal,
+    serviceChargeTotal,
+    grandTotal,
+  } = hitungTotal({
     subtotal,
     pointsToRedeem,
     availablePoints: selectedCustomer?.points ?? 0,
@@ -80,15 +88,33 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     serviceRate: settings.serviceRate,
     enableTax: settings.enableTax,
     enableService: settings.enableService,
+    enableLoyalty: settings.enableLoyalty,
+    customerTier: selectedCustomer?.tier,
+    loyaltyTiers: settings.loyaltyTiers,
   });
 
   // Poin maksimum yang masuk akal ditukar: dibatasi saldo member DAN nilai
   // belanjanya, supaya tombol "tukar semua" tidak pernah menghasilkan kembalian
   // dari poin.
-  const poinMaksimal = Math.min(
-    selectedCustomer?.points ?? 0,
-    settings.loyaltyRedeemRate > 0 ? Math.floor(subtotal / settings.loyaltyRedeemRate) : 0
-  );
+  // Dihitung dari subtotal SETELAH potongan tier, sama seperti di hitungTotal.
+  // Kalau tidak, tombol "tukar semua" menawarkan lebih banyak poin daripada
+  // yang benar-benar bisa dipakai, dan sisanya diam-diam tidak terpakai.
+  const poinMaksimal = settings.enableLoyalty === false
+    ? 0
+    : Math.min(
+        selectedCustomer?.points ?? 0,
+        settings.loyaltyRedeemRate > 0
+          ? Math.floor(Math.max(0, subtotal - tierDiscount) / settings.loyaltyRedeemRate)
+          : 0
+      );
+
+  // Pembagi nol menghasilkan Infinity, dan layar kasir menampilkan
+  // "+ Infinity Poin Member" kepada pelanggan. earnRate 0 berarti toko belum
+  // mengisi pengaturannya — jawabannya nol poin, bukan tak terhingga.
+  const poinDidapat =
+    settings.enableLoyalty !== false && settings.loyaltyEarnRate > 0
+      ? Math.floor(grandTotal / settings.loyaltyEarnRate)
+      : 0;
 
   const cashReceivedNumber = Number(cashReceivedInput) || 0;
   const changeAmount = Math.max(0, cashReceivedNumber - grandTotal);
@@ -224,8 +250,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
               })}
             </div>
 
-            {/* Penukaran Poin Member */}
-            {selectedCustomer && selectedCustomer.points > 0 && (
+            {/* Penukaran Poin Member — hanya bila program loyalitas dinyalakan
+                merchant. Toko yang mematikannya tidak melihat kolom ini sama
+                sekali, bukan melihatnya dalam keadaan tidak bisa dipakai. */}
+            {settings.enableLoyalty !== false && selectedCustomer && selectedCustomer.points > 0 && (
               <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-extrabold text-emerald-900">Tukar Poin Member</span>
@@ -283,29 +311,39 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
 
             {/* Total Summary Block */}
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-              {loyaltyDiscount > 0 && (
+              {(loyaltyDiscount > 0 || tierDiscount > 0) && (
                 <div className="space-y-1 pb-2 border-b border-slate-200 text-xs font-mono">
                   <div className="flex justify-between text-slate-600">
                     <span>Subtotal</span>
                     <span>{formatRupiah(subtotal)}</span>
                   </div>
-                  <div className="flex justify-between text-emerald-700 font-bold">
-                    <span>Potongan {pointsUsed} poin</span>
-                    <span>&minus; {formatRupiah(loyaltyDiscount)}</span>
-                  </div>
+                  {tierDiscount > 0 && (
+                    <div className="flex justify-between text-amber-700 font-bold">
+                      <span>
+                        Manfaat {selectedCustomer?.tier} ({tierDiscountPercent}%)
+                      </span>
+                      <span>&minus; {formatRupiah(tierDiscount)}</span>
+                    </div>
+                  )}
+                  {loyaltyDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-700 font-bold">
+                      <span>Potongan {pointsUsed} poin</span>
+                      <span>&minus; {formatRupiah(loyaltyDiscount)}</span>
+                    </div>
+                  )}
                 </div>
               )}
               <span className="text-xs text-slate-500 block">Total Tagihan:</span>
               <span className="text-2xl font-extrabold text-amber-800 font-mono block">
                 {formatRupiah(grandTotal)}
               </span>
-              {selectedCustomer && (
+              {settings.enableLoyalty !== false && selectedCustomer && (
                 <div className="text-[11px] text-emerald-700 font-semibold pt-1 border-t border-slate-200">
-                  + {Math.floor(grandTotal / settings.loyaltyEarnRate)} Poin Member ({selectedCustomer.name})
+                  + {poinDidapat} Poin Member ({selectedCustomer.name})
                   {pointsUsed > 0 && (
                     <span className="text-slate-500 font-medium">
                       {' '}&middot; sisa poin setelah transaksi:{' '}
-                      {selectedCustomer.points - pointsUsed + Math.floor(grandTotal / settings.loyaltyEarnRate)}
+                      {selectedCustomer.points - pointsUsed + poinDidapat}
                     </span>
                   )}
                 </div>

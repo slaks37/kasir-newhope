@@ -99,7 +99,22 @@ export const CustomerManager: React.FC = () => {
         </button>
       </div>
 
+      {/* Program loyalitas dimatikan merchant: daftar member tetap berguna
+          sebagai buku alamat pelanggan, jadi halaman ini tidak disembunyikan —
+          yang disembunyikan hanya janji poin yang tidak akan ditepati. */}
+      {settings.enableLoyalty === false && (
+        <div className="p-4 rounded-3xl border border-amber-200 bg-amber-50 text-amber-900">
+          <p className="text-xs font-extrabold">Program loyalitas sedang dimatikan</p>
+          <p className="text-[11px] mt-1 leading-relaxed text-amber-800/90">
+            Poin baru tidak dikumpulkan dan tidak bisa ditukar di kasir. Saldo poin yang sudah
+            terkumpul tetap tersimpan dan bisa dipakai lagi begitu program dinyalakan dari
+            Pengaturan &rsaquo; Program Loyalitas &amp; Member.
+          </p>
+        </div>
+      )}
+
       {/* Program Loyalty Rule Cards */}
+      {settings.enableLoyalty !== false && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 p-4 rounded-3xl flex items-center space-x-3 shadow-xs">
           <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-700">
@@ -137,6 +152,7 @@ export const CustomerManager: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Search Bar */}
       <div className="flex-1 relative max-w-md">

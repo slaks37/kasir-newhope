@@ -16,6 +16,13 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { resolveTenantId } from '../../_lib/tenant.js';
+import {
+  statusEfektif,
+  langgananAktif,
+  dalamTenggang,
+  sisaHari,
+} from '../../../src/lib/plans/expiry.js';
 
 let pool: pg.Pool | null = null;
 
@@ -37,28 +44,6 @@ function getPool() {
   return pool;
 }
 
-const DAY_MS = 86_400_000;
-const GRACE_DAYS = 3;
-
-/**
- * Expiry is COMPUTED, never stored — same rule as billing-service.
- *
- * Storing it needs a cron that flips the status on time. A cron that runs a
- * minute late lets an expired merchant keep selling; one that dies overnight
- * leaves everyone active in the morning. Deriving it from current_period_end
- * is always right and needs no moving parts.
- */
-function effectiveStatus(status: string, periodEnd: string | null): string {
-  if (status === 'CANCELED') return 'CANCELED';
-  if (!periodEnd) return status;
-
-  const end = new Date(periodEnd).getTime();
-  const now = Date.now();
-  if (now <= end) return status;
-  if (now <= end + GRACE_DAYS * DAY_MS) return 'PAST_DUE';
-  return 'EXPIRED';
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -75,20 +60,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = getPool();
 
   try {
-    // Resolved the same way services/shared/identity.ts does it: the business
-    // unit key first, then the account ref, and only when that account owns
-    // exactly one unit. Guessing between a café and a laundry would report one
-    // shop's subscription on the other's screen.
-    const tenant = await db.query(
-      `SELECT merchant_id FROM contract.merchant_directory
-        WHERE business_id = $1
-           OR (owner_user_ref = $1 AND (SELECT COUNT(*) FROM contract.merchant_directory
-                                         WHERE owner_user_ref = $1) = 1)
-        LIMIT 1`,
-      [tenantRef]
-    );
+    const tenantId = await resolveTenantId(db, tenantRef);
 
-    if (!tenant.rows.length) {
+    if (!tenantId) {
       // Not an error — there is simply nothing to bill yet.
       return res.status(200).json({
         ok: true,
@@ -101,8 +75,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         reason: 'MERCHANT_BELUM_SINKRON',
       });
     }
-
-    const tenantId = tenant.rows[0].merchant_id;
 
     const subRes = await db.query(
       `SELECT s.id, s.tenant_id AS "tenantId", s.plan_id AS "planId", s.status,
@@ -149,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const row = subRes.rows[0];
-    const status = effectiveStatus(row.status, row.currentPeriodEnd);
+    const status = statusEfektif(row.status, row.currentPeriodEnd);
 
     // Entitlement ikut dikirim, bukan cuma nama dan harga. Inilah yang dipakai
     // aplikasi kasir untuk menegakkan batas produk, batas outlet, dan modul apa
@@ -191,14 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       [tenantId]
     );
 
-    // Floored, so "0 hari lagi" means the period ends today rather than
-    // rounding a few remaining hours up into a whole day of access.
-    const daysLeft = row.currentPeriodEnd
-      ? Math.max(
-          0,
-          Math.floor((new Date(row.currentPeriodEnd).getTime() - Date.now()) / DAY_MS)
-        )
-      : 0;
+    const daysLeft = sisaHari(row.currentPeriodEnd);
 
     return res.status(200).json({
       ok: true,
@@ -219,8 +184,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       plan,
       invoices: invoices.rows,
       daysLeft,
-      isActive: status === 'ACTIVE' || status === 'TRIAL',
-      inGrace: status === 'PAST_DUE',
+      isActive: langgananAktif(status),
+      inGrace: dalamTenggang(status),
     });
   } catch (err: any) {
     // A database failure is not the same as "not subscribed". Reporting it as

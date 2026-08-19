@@ -324,7 +324,7 @@ export function computeMarketBasket(orders, opts = {}) {
 
 const idFor = (merchantId, date, category) => `ins-${merchantId}-${date}-${category}`;
 
-export function buildInsightRows(merchantId, tenantId, date, { reorder, basket }) {
+export function buildInsightRows(merchantId, date, { reorder, basket }) {
   const rows = [];
 
   if (reorder.length > 0) {
@@ -332,7 +332,6 @@ export function buildInsightRows(merchantId, tenantId, date, { reorder, basket }
     rows.push({
       id: idFor(merchantId, date, 'INVENTORY_ALERT'),
       merchant_id: merchantId,
-      tenant_id: tenantId,
       insight_date: date,
       category: 'INVENTORY_ALERT',
       priority: urgent.length > 0 ? 1 : 2,
@@ -352,7 +351,6 @@ export function buildInsightRows(merchantId, tenantId, date, { reorder, basket }
     rows.push({
       id: idFor(merchantId, date, 'CROSS_SELL_OPPORTUNITY'),
       merchant_id: merchantId,
-      tenant_id: tenantId,
       insight_date: date,
       category: 'CROSS_SELL_OPPORTUNITY',
       priority: 3,
@@ -371,11 +369,16 @@ export function buildInsightRows(merchantId, tenantId, date, { reorder, basket }
 /* PERSISTENCE                                                                */
 /* -------------------------------------------------------------------------- */
 
+// Tidak ada cast ke `insight_category_enum` — tipe itu memang SENGAJA tidak
+// pernah dibuat (lihat catatan penutup 0003: domain kategori dijaga oleh
+// CHECK ck_insight_category, bukan ENUM, supaya kosakata kategori bisa
+// bertambah tanpa migrasi ALTER TYPE). Cast ke tipe yang tidak ada membuat
+// setiap penulisan gagal.
 const UPSERT_SQL = `
 INSERT INTO daily_merchant_insights
-  (id, merchant_id, tenant_id, insight_date, category, priority, title, summary, metric_label, payload, actions, status, created_at, updated_at)
+  (id, merchant_id, insight_date, category, priority, title, summary, metric_label, payload, actions, status, created_at, updated_at)
 VALUES
-  ($1, $2, $3, $4, $5::insight_category_enum, $6, $7, $8, $9, $10::jsonb, $11::jsonb, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  (legacy_uuid($1), $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (merchant_id, insight_date, category) DO UPDATE SET
   priority     = EXCLUDED.priority,
   title        = EXCLUDED.title,
@@ -390,7 +393,7 @@ ON CONFLICT (merchant_id, insight_date, category) DO UPDATE SET
 async function upsertInsights(client, rows) {
   for (const r of rows) {
     await client.query(UPSERT_SQL, [
-      r.id, r.merchant_id, r.tenant_id, r.insight_date, r.category, r.priority,
+      r.id, r.merchant_id, r.insight_date, r.category, r.priority,
       r.title, r.summary, r.metric_label,
       JSON.stringify(r.payload), JSON.stringify(r.actions),
     ]);
@@ -401,13 +404,15 @@ async function upsertInsights(client, rows) {
 async function loadMerchantData(client, merchantId, windowDays) {
   const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
 
-  const [products, stockItems, orders, items, logs] = await Promise.all([
-    client.query('SELECT id, name, price, cost_price, 0 AS stock, 0 AS min_stock_alert FROM products WHERE tenant_id = $1', [merchantId]),
-    client.query('SELECT id, name, current_stock AS stock, min_stock_alert, unit, cost_price FROM ingredients WHERE tenant_id = $1', [merchantId]),
-    client.query('SELECT id, created_at AS date, payment_status FROM transactions WHERE tenant_id = $1 AND created_at >= $2', [merchantId, since]),
-    client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE tenant_id = $1', [merchantId]),
-    client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE tenant_id = $1 AND created_at >= $2", [merchantId, since]),
-  ]);
+  // Berurutan, bukan Promise.all. Satu pg.Client hanya punya SATU koneksi:
+  // lima query yang dikirim bersamaan tetap dijalankan satu per satu dalam
+  // antrean internal pg — tidak ada yang lebih cepat — sambil memicu peringatan
+  // usang yang akan menjadi galat di pg@9.
+  const products = await client.query('SELECT id, name, price, cost_price, 0 AS stock, 0 AS min_stock_alert FROM products WHERE tenant_id = $1', [merchantId]);
+  const stockItems = await client.query('SELECT id, name, current_stock AS stock, min_stock_alert, unit, cost_price FROM ingredients WHERE tenant_id = $1', [merchantId]);
+  const orders = await client.query('SELECT id, created_at AS date, payment_status FROM transactions WHERE tenant_id = $1 AND created_at >= $2', [merchantId, since]);
+  const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE tenant_id = $1', [merchantId]);
+  const logs = await client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE tenant_id = $1 AND created_at >= $2", [merchantId, since]);
 
   const itemsByTx = new Map();
   for (const li of items.rows) {
@@ -460,6 +465,27 @@ function demoData() {
 /* MAIN                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Catatan satu kali eksekusi — DITULIS SETELAH pekerjaannya selesai.
+ *
+ * Sama seperti di merchant-health.mjs: baris berstatus 'SUCCESS' yang
+ * disisipkan sebelum pekerjaannya dimulai akan bertahan sebagai pengakuan
+ * palsu bila prosesnya dibunuh di tengah jalan. Dan `id` yang dibuatnya
+ * (`run-1787…`) bukan UUID, padahal kolomnya UUID sejak 0005 — jadi INSERT
+ * pertamanya selalu gagal dan job ini tidak pernah berhasil dijalankan.
+ */
+async function catatRun(client, merchantId, status, ditulis, durasiMs, error) {
+  await client.query(
+    `INSERT INTO batch_job_runs
+       (id, job_name, merchant_id, started_at, finished_at, status,
+        insights_written, duration_ms, error_text)
+     VALUES (uuidv7(), 'daily-insights', $1,
+             CURRENT_TIMESTAMP - ($4::int || ' milliseconds')::interval,
+             CURRENT_TIMESTAMP, $2, $3, $4, $5)`,
+    [merchantId, status, ditulis, durasiMs, error]
+  );
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const startedAt = Date.now();
@@ -507,7 +533,7 @@ async function main() {
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, args.merchantId, insightDate, { reorder, basket });
+    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket });
 
     console.log(JSON.stringify({ mode: 'DRY_RUN', insightDate, rows }, null, 2));
     log(`Done in ${Date.now() - startedAt} ms — ${rows.length} insight(s) computed, 0 written.`);
@@ -516,45 +542,27 @@ async function main() {
 
   /* ---- LIVE ------------------------------------------------------------- */
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  const runId = `run-${Date.now()}`;
   await client.connect();
 
   try {
-    await client.query(
-      `INSERT INTO batch_job_runs (id, job_name, merchant_id, started_at, status)
-       VALUES ($1, 'daily-insights', $2, CURRENT_TIMESTAMP, 'SUCCESS')`,
-      [runId, args.merchantId]
-    );
-
     const data = await loadMerchantData(client, args.merchantId, args.windowDays);
     if (aborted) throw new Error('aborted by SIGINT');
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, args.merchantId, insightDate, { reorder, basket });
+    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket });
 
     await client.query('BEGIN');
     const written = await upsertInsights(client, rows);
-    await client.query(
-      `UPDATE batch_job_runs
-          SET finished_at = CURRENT_TIMESTAMP, status = 'SUCCESS',
-              insights_written = $2, duration_ms = $3
-        WHERE id = $1`,
-      [runId, written, Date.now() - startedAt]
-    );
+    await catatRun(client, args.merchantId, 'SUCCESS', written, Date.now() - startedAt, null);
     await client.query('COMMIT');
 
     log(`Done in ${Date.now() - startedAt} ms — ${written} insight(s) upserted.`);
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* connection may be gone */ }
     try {
-      await client.query(
-        `UPDATE batch_job_runs
-            SET finished_at = CURRENT_TIMESTAMP, status = 'FAILED',
-                duration_ms = $2, error_text = $3
-          WHERE id = $1`,
-        [runId, Date.now() - startedAt, String(err && err.message ? err.message : err)]
-      );
+      await catatRun(client, args.merchantId, 'FAILED', 0, Date.now() - startedAt,
+                     String(err && err.message ? err.message : err));
     } catch { /* best effort */ }
     throw err;
   } finally {

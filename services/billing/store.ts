@@ -57,18 +57,44 @@ function keFaktur(r: any): SaaSInvoice {
 }
 
 /** Memastikan katalog paket ada di database. Aman dijalankan berulang. */
-export async function pastikanPaket(db: Db, paket: Array<{ id: string; name: string; tierLevel: number; priceIdr: number; features: string[] }>) {
-  for (const p of paket) {
-    await db.query(
-      `INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, features)
-       VALUES ($1, $2, $3, 'MONTHLY', $4, $5::jsonb)
-       ON CONFLICT (id) DO UPDATE SET
-         name = EXCLUDED.name, tier_level = EXCLUDED.tier_level,
-         price_idr = EXCLUDED.price_idr, features = EXCLUDED.features,
-         updated_at = CURRENT_TIMESTAMP`,
-      [p.id, p.name, p.tierLevel, p.priceIdr, JSON.stringify(p.features)]
-    );
-  }
+/**
+ * Katalog paket dibaca, TIDAK ditulis dari sini.
+ *
+ * Fungsi sebelumnya (`pastikanPaket`) melakukan ON CONFLICT DO UPDATE atas
+ * harga pada setiap boot service. Sejak panel admin bisa mengubah harga, itu
+ * berarti setiap restart mengembalikannya ke angka yang ditulis di kode —
+ * diam-diam, tanpa jejak di plan_change_log, dan baru ketahuan saat ada
+ * merchant yang menagih selisihnya.
+ *
+ * Yang mengisi katalog awal adalah migrasi 0014, dan ia sengaja tidak menimpa
+ * baris yang sudah pernah disunting admin (`WHERE updated_by IS NULL`).
+ */
+
+const KOLOM_PAKET = `
+  id, name, tier_level AS "tierLevel", billing_cycle AS "billingCycle",
+  price_idr AS "priceIdr", price_yearly_idr AS "priceYearlyIdr",
+  extra_outlet_price_idr AS "extraOutletPriceIdr", currency, features,
+  product_limit AS "productLimit", max_outlets AS "maxOutlets",
+  ai_quota_monthly AS "aiQuotaMonthly",
+  dashboard_access_level AS "dashboardAccessLevel",
+  module_access AS "moduleAccess", is_active AS "isActive"`;
+
+export async function hitungPaket(db: Db): Promise<number> {
+  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM billing.plans`);
+  return rows[0].n;
+}
+
+export async function ambilPaket(db: Db, id: string) {
+  if (!id) return null;
+  const { rows } = await db.query(`SELECT ${KOLOM_PAKET} FROM billing.plans WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
+export async function daftarPaketAktif(db: Db) {
+  const { rows } = await db.query(
+    `SELECT ${KOLOM_PAKET} FROM billing.plans WHERE is_active ORDER BY sort_order, tier_level`
+  );
+  return rows;
 }
 
 /**

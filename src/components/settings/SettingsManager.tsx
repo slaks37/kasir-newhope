@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
+import { StoreSettings, StoreBranch, BusinessSector, LoyaltyTier } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
 import { SubscriptionBillingTab } from './SubscriptionBillingTab';
 import {
@@ -24,9 +24,11 @@ import {
   Globe,
   Compass,
   CreditCard,
+  Award,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
+import { TIER_BAWAAN, tierAktif } from '../../lib/loyalty';
 
 export const SettingsManager: React.FC = () => {
   const {
@@ -61,6 +63,27 @@ export const SettingsManager: React.FC = () => {
   const [branchRadius, setBranchRadius] = useState(200);
   const [branchSector, setBranchSector] = useState<BusinessSector>('FNB');
   const [isGettingGps, setIsGettingGps] = useState(false);
+
+  /**
+   * Menyunting satu sel tabel tier.
+   *
+   * Selalu menulis SELURUH daftar, bukan menambal sebagian: kalau merchant
+   * belum pernah menyentuh tier sama sekali, `loyaltyTiers` masih kosong dan
+   * yang tampil di layar adalah bawaan. Menyimpan satu baris saja akan membuat
+   * tiga tier lainnya hilang.
+   */
+  const ubahTier = (tier: LoyaltyTier['tier'], medan: 'minSpend' | 'discountPercent', nilai: number) => {
+    setFormSettings((p) => {
+      const dasar = p.loyaltyTiers?.length ? p.loyaltyTiers : TIER_BAWAAN;
+      return {
+        ...p,
+        loyaltyTiers: dasar.map((t) =>
+          t.tier === tier ? { ...t, [medan]: Math.max(0, nilai) } : { ...t }
+        ),
+      };
+    });
+  };
+
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -599,6 +622,132 @@ export const SettingsManager: React.FC = () => {
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Program Loyalitas & Member */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2">
+                    <Award className="w-5 h-5 text-amber-600" />
+                    <span>Program Loyalitas &amp; Member</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed max-w-xl">
+                    Opsional. Kalau dimatikan, kolom tukar poin hilang dari layar kasir dan
+                    manfaat tier tidak diberikan &mdash; tapi saldo poin member yang sudah
+                    terkumpul <span className="font-bold">tidak dihapus</span>, jadi program bisa
+                    dinyalakan lagi kapan saja tanpa ada yang kehilangan poin.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={formSettings.enableLoyalty !== false}
+                  onChange={(e) =>
+                    setFormSettings((p) => ({ ...p, enableLoyalty: e.target.checked }))
+                  }
+                  className="w-5 h-5 mt-1 accent-amber-500 rounded cursor-pointer shrink-0"
+                />
+              </div>
+
+              {formSettings.enableLoyalty !== false && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-500 font-semibold">
+                        Belanja per 1 poin (Rp)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={formSettings.loyaltyEarnRate}
+                        onChange={(e) =>
+                          setFormSettings((p) => ({
+                            ...p,
+                            loyaltyEarnRate: Math.max(0, Number(e.target.value) || 0),
+                          }))
+                        }
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-amber-700"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Belanja {formatRupiah(formSettings.loyaltyEarnRate)} = 1 poin. Isi 0 untuk
+                        berhenti membagikan poin baru.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-500 font-semibold">
+                        Nilai 1 poin saat ditukar (Rp)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={formSettings.loyaltyRedeemRate}
+                        onChange={(e) =>
+                          setFormSettings((p) => ({
+                            ...p,
+                            loyaltyRedeemRate: Math.max(0, Number(e.target.value) || 0),
+                          }))
+                        }
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-amber-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900">
+                        Tingkat Member &amp; Manfaatnya
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Naik tier dihitung dari total belanja seumur hidup
+                      </span>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-500">
+                          <tr>
+                            <th className="text-left font-bold px-3 py-2">Tier</th>
+                            <th className="text-left font-bold px-3 py-2">Minimal belanja (Rp)</th>
+                            <th className="text-left font-bold px-3 py-2">Potongan otomatis (%)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tierAktif(formSettings.loyaltyTiers).map((t) => (
+                            <tr key={t.tier} className="border-t border-slate-100">
+                              <td className="px-3 py-2 font-extrabold text-slate-800">{t.tier}</td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={t.minSpend}
+                                  disabled={t.tier === 'BRONZE'}
+                                  onChange={(e) => ubahTier(t.tier, 'minSpend', Number(e.target.value) || 0)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 font-mono font-bold text-slate-700 disabled:bg-slate-50 disabled:text-slate-400"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={t.discountPercent}
+                                  onChange={(e) =>
+                                    ubahTier(t.tier, 'discountPercent', Number(e.target.value) || 0)
+                                  }
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 font-mono font-bold text-amber-700"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      BRONZE adalah tier awal semua member, jadi ambangnya selalu 0. Potongan tier
+                      dihitung dari subtotal sebelum poin ditukar dan sebelum pajak.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex justify-end">

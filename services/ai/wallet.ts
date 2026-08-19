@@ -127,8 +127,8 @@ async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet
 
   const dibuat = await db.query(
     `INSERT INTO ai.merchant_ai_credits
-       (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
-     VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
+       (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+     VALUES ($1, $2, $2, 0, $3::timestamptz)
      ON CONFLICT (merchant_id) DO NOTHING
      RETURNING *`,
     [merchantId, jatah, periodeBerikutnya()]
@@ -246,9 +246,9 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
     const merchantId = await keUuid(db, a.merchantId, a.businessId ?? undefined);
     await db.query(
       `INSERT INTO ai.ai_query_logs
-         (id, merchant_id, tenant_id, query_text, resolved_intent, source,
+         (id, merchant_id, query_text, resolved_intent, source,
           credits_charged, latency_ms, model, prompt_tokens, completion_tokens)
-       VALUES (uuidv7(), $1, $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         merchantId,
         a.query.slice(0, 2000),

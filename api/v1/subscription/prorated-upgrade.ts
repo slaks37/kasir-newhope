@@ -13,6 +13,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { resolveTenantId } from '../../_lib/tenant.js';
 
 let pool: pg.Pool | null = null;
 
@@ -48,15 +49,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = getPool();
 
   try {
-    const tenant = await db.query(
-      `SELECT merchant_id FROM contract.merchant_directory
-        WHERE business_id = $1
-           OR (owner_user_ref = $1 AND (SELECT COUNT(*) FROM contract.merchant_directory
-                                         WHERE owner_user_ref = $1) = 1)
-        LIMIT 1`,
-      [tenantRef]
-    );
-    if (!tenant.rows.length) {
+    const tenantId = await resolveTenantId(db, tenantRef);
+    if (!tenantId) {
       return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
     }
 
@@ -71,7 +65,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          FROM billing.subscriptions s
          JOIN billing.plans p ON p.id = s.plan_id
         WHERE s.tenant_id = $1`,
-      [tenant.rows[0].merchant_id]
+      [tenantId]
     );
 
     const lama = sekarang.rows[0] ?? null;

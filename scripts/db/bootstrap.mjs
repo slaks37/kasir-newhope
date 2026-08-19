@@ -92,13 +92,13 @@ SELECT uuidv7(), legacy_uuid('tenant-laundry'), legacy_uuid('u-laundry-1'),
        CURRENT_TIMESTAMP - INTERVAL '25 days' - (g || ' hours')::interval
   FROM generate_series(1, 12) g;
 
-INSERT INTO feature_usage_events (merchant_id, tenant_id, business_id, feature_key, occurred_at)
-SELECT legacy_uuid('tenant-warung'), legacy_uuid('tenant-warung'), 'warung_FNB', k,
+INSERT INTO feature_usage_events (merchant_id, business_id, feature_key, occurred_at)
+SELECT legacy_uuid('tenant-warung'), 'warung_FNB', k,
        CURRENT_TIMESTAMP - (row_number() over () || ' hours')::interval
   FROM unnest(ARRAY['pos.checkout','ai.digest','ai.stock_critical','reports.margin','inventory.restock','crm.loyalty']) k;
 
-INSERT INTO feature_usage_events (merchant_id, tenant_id, business_id, feature_key, occurred_at)
-SELECT legacy_uuid('tenant-kopi'), legacy_uuid('tenant-kopi'), 'kopi_FNB', k,
+INSERT INTO feature_usage_events (merchant_id, business_id, feature_key, occurred_at)
+SELECT legacy_uuid('tenant-kopi'), 'kopi_FNB', k,
        CURRENT_TIMESTAMP - INTERVAL '9 days'
   FROM unnest(ARRAY['pos.checkout','ai.digest']) k;
 `;
@@ -109,7 +109,7 @@ SELECT legacy_uuid('tenant-kopi'), legacy_uuid('tenant-kopi'), 'kopi_FNB', k,
 
 const HEALTH_SQL = `
 INSERT INTO merchant_health_logs (
-  id, merchant_id, tenant_id, log_date,
+  id, merchant_id, log_date,
   daily_revenue, daily_transaction_count, active_cashiers_count,
   login_status, last_activity_at, days_since_last_txn, active_days_last_7,
   revenue_trend_pct, feature_usage_payload, distinct_features_used,
@@ -156,7 +156,7 @@ calc AS (
     LEFT JOIN plans p ON p.id = s.plan_id
     LEFT JOIN feat f ON f.merchant_id = a.merchant_id
 )
-SELECT uuidv7(), c.merchant_id, c.merchant_id, CURRENT_DATE,
+SELECT uuidv7(), c.merchant_id, CURRENT_DATE,
        c.rev_today, c.txn_today, c.cashiers_today,
        (c.days_since <= 1), c.last_txn_at, LEAST(c.days_since, 999)::int, LEAST(c.active_days_7, 7)::int,
        ROUND(c.trend_pct, 2), c.payload, c.features::int,

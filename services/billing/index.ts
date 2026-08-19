@@ -19,80 +19,37 @@
 import '../shared/env';
 import type express from 'express';
 import { startService, PORTS } from '../shared/service';
-import type { SaaSPlan } from '../../src/types';
 import { newDocumentNumber } from '../../src/lib/ids';
+import {
+  statusEfektif,
+  langgananAktif,
+  dalamTenggang,
+  sisaHari,
+} from '../../src/lib/plans/expiry';
 import * as store from './store';
 
-const SAAS_PLANS: SaaSPlan[] = [
-  {
-    id: 'plan-free',
-    name: 'Free Tier',
-    tierLevel: 1,
-    billingCycle: 'MONTHLY',
-    priceIdr: 0,
-    currency: 'IDR',
-    maxOutlets: 1,
-    isActive: true,
-    productLimit: 30,
-    aiQuotaMonthly: 3,
-    dashboardAccessLevel: 'BASIC',
-    features: [
-      'Basic POS & Transaksi',
-      'Ringkasan Penjualan Harian',
-      '1 Outlet / Cabang Toko',
-      'Maksimal 30 Produk',
-      'AI Analyst (3x / bulan)',
-    ],
-  },
-  {
-    id: 'plan-plus-monthly',
-    name: 'Tier Plus',
-    tierLevel: 2,
-    billingCycle: 'MONTHLY',
-    priceIdr: 99000,
-    priceYearlyIdr: 79000,
-    currency: 'IDR',
-    maxOutlets: 2,
-    isActive: true,
-    productLimit: 100,
-    aiQuotaMonthly: 30,
-    dashboardAccessLevel: 'FULL',
-    extraOutletPriceIdr: 59000,
-    features: [
-      'Full POS & Transaksi Kasir',
-      'Manajemen Inventori Dasar',
-      'Laporan & Dashboard Analytics',
-      'Maksimal 100 Produk per Outlet',
-      'Up to 2 Outlet Terdaftar',
-      'AI Analyst (30x / bulan)',
-    ],
-  },
-  {
-    id: 'plan-pro-monthly',
-    name: 'Tier Pro',
-    tierLevel: 3,
-    billingCycle: 'MONTHLY',
-    priceIdr: 299000,
-    priceYearlyIdr: 239000,
-    currency: 'IDR',
-    maxOutlets: 4,
-    isActive: true,
-    productLimit: -1, // Unlimited
-    aiQuotaMonthly: 90,
-    dashboardAccessLevel: 'ADVANCED',
-    extraOutletPriceIdr: 49000,
-    features: [
-      'Full POS & Transaksi Lanjutan',
-      'Manajemen Stok Lanjut & Bahan Baku',
-      'Multi-Outlet Analytics & Laporan Lengkap',
-      'Produk Tidak Terbatas (Unlimited)',
-      'Up to 4 Outlet Terdaftar',
-      'AI Analyst (90x / bulan)',
-    ],
-  },
-];
+/**
+ * KATALOG PAKET TIDAK LAGI DITULIS DI SINI.
+ *
+ * Dulu berkas ini memegang `SAAS_PLANS` sebagai konstanta, lalu melakukan dua
+ * hal yang saling meniadakan dengan panel admin:
+ *
+ *   1. `pastikanPaket()` menjalankan ON CONFLICT DO UPDATE atas harga pada
+ *      SETIAP boot. Admin menurunkan harga Tier Plus lewat panel, service
+ *      di-restart, dan harganya kembali ke angka yang ditulis di kode — tanpa
+ *      error, tanpa jejak, dan tanpa ada yang menyadarinya sampai ada merchant
+ *      yang menagih selisihnya.
+ *   2. `/api/v1/subscription/plans` menyajikan konstanta itu, bukan isi
+ *      database. Jadi merchant tidak pernah melihat harga yang benar-benar
+ *      berlaku.
+ *
+ * Sejak 0014 katalognya ada di `billing.plans` dan di-seed oleh migrasi — yang
+ * sengaja TIDAK menimpa baris yang sudah pernah disunting admin. Service ini
+ * sekarang membacanya, tidak memilikinya.
+ */
 
-const GRACE_DAYS = 3;
+const PAKET_BAWAAN = 'plan-free';
+
 const TRIAL_DAYS = 45;
 const HARI_MS = 86_400_000;
 
@@ -102,34 +59,25 @@ startService({
   schema: 'billing',
   register: async (app, svc) => {
     await store.pastikanTabelFingerprint(svc.db);
-    await store.pastikanPaket(svc.db, SAAS_PLANS);
-    svc.log.info(`katalog paket disiapkan (${SAAS_PLANS.length} paket)`);
+    const jumlahPaket = await store.hitungPaket(svc.db);
+    svc.log.info(`katalog paket dibaca dari database (${jumlahPaket} paket)`);
+    if (jumlahPaket === 0) {
+      // Migrasi 0014 yang mengisinya. Kalau kosong, migrasinya belum jalan —
+      // dan menambal diam-diam di sini akan menyembunyikan penyebabnya.
+      svc.log.warn('billing.plans kosong. Jalankan `npm run db:migrate` sebelum melayani langganan.');
+    }
 
-    const cariPaket = (id: string) => SAAS_PLANS.find((p) => p.id === id) ?? null;
+    const cariPaket = (id: string) => store.ambilPaket(svc.db, id);
     const tenantDari = (req: express.Request) =>
       String(
         req.body?.tenantId || req.query?.tenantId || req.headers['x-tenant-id'] || 'tenant-default'
       );
 
-    /**
-     * Kedaluwarsa DIHITUNG, tidak disimpan.
-     *
-     * Menyimpannya menuntut cron yang mengubah status tepat waktu; cron yang
-     * telat semenit berarti merchant kedaluwarsa masih bisa berjualan, dan cron
-     * yang mati semalam berarti semuanya masih aktif esok paginya. Menghitung
-     * dari current_period_end selalu benar tanpa proses tambahan apa pun.
-     */
-    function statusEfektif(sub: { status: string; currentPeriodEnd: string }) {
-      if (sub.status === 'CANCELED') return 'CANCELED';
-      const akhir = new Date(sub.currentPeriodEnd).getTime();
-      const now = Date.now();
-      if (now <= akhir) return sub.status;
-      if (now <= akhir + GRACE_DAYS * HARI_MS) return 'PAST_DUE';
-      return 'EXPIRED';
-    }
-
-    app.get('/api/v1/subscription/plans', (_req, res) => {
-      res.json({ ok: true, plans: SAAS_PLANS });
+    // Hanya paket yang sedang DIJUAL. Paket yang disembunyikan admin tetap
+    // berlaku bagi yang sudah berlangganan, tapi tidak boleh muncul di kartu
+    // harga sebagai pilihan baru.
+    app.get('/api/v1/subscription/plans', async (_req, res) => {
+      res.json({ ok: true, plans: await store.daftarPaketAktif(svc.db) });
     });
 
     app.post('/api/v1/auth/send-welcome', async (req, res) => {
@@ -170,32 +118,39 @@ startService({
 
     app.get('/api/v1/subscription/status', async (req, res) => {
       const tenantId = tenantDari(req);
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, PAKET_BAWAAN, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) {
         // Merchant belum tersinkronisasi ke database. Bukan error — hanya belum
         // ada apa pun untuk ditagih.
         return res.json({
-          ok: true, subscription: null, plan: null, invoices: [],
+          ok: true, subscription: null, plan: null, invoices: [], daysLeft: 0,
           isActive: false, inGrace: false, reason: 'MERCHANT_BELUM_SINKRON',
         });
       }
-      const efektif = statusEfektif(sub);
+      const efektif = statusEfektif(sub.status, sub.currentPeriodEnd);
+      const paket = await cariPaket(sub.planId);
       res.json({
         ok: true,
-        subscription: { ...sub, status: efektif },
-        plan: cariPaket(sub.planId),
+        // `plan` dikirim dua kali dengan sengaja: di dalam `subscription` untuk
+        // pemanggil yang membaca langganan sebagai satu objek utuh, dan di akar
+        // untuk yang langsung membaca entitlement. Jalur Vercel mengirim
+        // keduanya juga — bentuk balasan kedua jalur harus sama persis, karena
+        // aplikasi kasir tidak tahu jalur mana yang melayaninya.
+        subscription: { ...sub, status: efektif, plan: paket },
+        plan: paket,
         invoices: await store.daftarFaktur(svc.db, tenantId),
-        isActive: efektif === 'ACTIVE' || efektif === 'TRIAL',
-        inGrace: efektif === 'PAST_DUE',
+        daysLeft: sisaHari(sub.currentPeriodEnd),
+        isActive: langgananAktif(efektif),
+        inGrace: dalamTenggang(efektif),
       });
     });
 
     app.post('/api/v1/subscription/checkout', async (req, res) => {
       const tenantId = tenantDari(req);
-      const plan = cariPaket(String(req.body?.planId || ''));
+      const plan = await cariPaket(String(req.body?.planId || ''));
       if (!plan) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, PAKET_BAWAAN, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
       const faktur = await store.buatFaktur(svc.db, {
         nomor: newDocumentNumber('INV'),
@@ -229,9 +184,9 @@ startService({
       const lunas = await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED');
       if (!lunas) return res.status(404).json({ ok: false, error: 'INVOICE_NOT_FOUND_OR_PAID' });
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
+      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, PAKET_BAWAAN, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
-      if (planId && cariPaket(planId)) await store.gantiPaket(svc.db, sub.id, planId);
+      if (planId && (await cariPaket(planId))) await store.gantiPaket(svc.db, sub.id, planId);
 
       const mulai = new Date();
       const diperbarui = await store.ubahStatusLangganan(svc.db, sub.id, 'ACTIVE', {
@@ -245,13 +200,13 @@ startService({
 
     app.post('/api/v1/subscription/prorated-upgrade', async (req, res) => {
       const tenantId = tenantDari(req);
-      const planBaru = cariPaket(String(req.body?.planId || ''));
+      const planBaru = await cariPaket(String(req.body?.planId || ''));
       if (!planBaru) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
       const sub = await store.ambilLangganan(svc.db, tenantId);
       if (!sub) return res.status(404).json({ ok: false, error: 'NO_SUBSCRIPTION' });
 
-      const lama = cariPaket(sub.planId);
+      const lama = await cariPaket(sub.planId);
       const sisaHari = Math.max(
         0,
         Math.ceil((new Date(sub.currentPeriodEnd).getTime() - Date.now()) / HARI_MS)
@@ -305,7 +260,7 @@ startService({
 
         if (tenantId) {
           const sub = await store.ambilAtauBuatLangganan(
-            svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS
+            svc.db, tenantId, PAKET_BAWAAN, TRIAL_DAYS
           );
           if (!sub) {
             svc.log.warn('webhook untuk merchant yang belum tersinkronisasi', { tenantId, eventId });

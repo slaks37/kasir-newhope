@@ -105,9 +105,8 @@ async function fixSupabase() {
       current_period_end = EXCLUDED.current_period_end;
 
     -- AI Credits untuk Budi Santoso
-    INSERT INTO ai.merchant_ai_credits (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
+    INSERT INTO ai.merchant_ai_credits (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
     VALUES (
-      legacy_uuid('usr-1_FNB'),
       legacy_uuid('usr-1_FNB'),
       100,
       100,

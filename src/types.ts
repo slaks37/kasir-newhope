@@ -9,6 +9,21 @@ export type PaymentStatus = 'PAID' | 'PENDING' | 'CANCELLED' | 'REFUNDED';
 
 export type TableStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'BILLING';
 
+/**
+ * Satu tingkat member: mulai dari belanja berapa, dan dapat potongan berapa.
+ *
+ * Manfaatnya disimpan bersama ambangnya, bukan di tabel terpisah — "GOLD mulai
+ * 2,5 juta" dan "GOLD dapat 7%" adalah satu keputusan yang selalu diubah
+ * bersamaan.
+ */
+export interface LoyaltyTier {
+  tier: CustomerTier;
+  /** Total belanja seumur hidup minimum untuk masuk tier ini. */
+  minSpend: number;
+  /** Potongan otomatis tiap transaksi, dalam persen. 0 = tier tanpa potongan. */
+  discountPercent: number;
+}
+
 export type CustomerTier = 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM';
 
 export interface Category {
@@ -266,6 +281,8 @@ export interface Order {
   pointsRedeemed?: number;
   /** Bagian discountTotal yang berasal dari penukaran poin. */
   loyaltyDiscount?: number;
+  /** Bagian discountTotal yang berasal dari manfaat tier member. */
+  tierDiscount?: number;
   taxTotal: number;
   serviceChargeTotal: number;
   total: number;
@@ -341,8 +358,23 @@ export interface StoreSettings {
   storeMode: StoreMode;
   businessSector?: BusinessSector;
   autoPrintReceipt: boolean;
+  /**
+   * Program loyalitas menyala di toko ini.
+   *
+   * Opt-in per merchant: tidak semua usaha memakainya. Bengkel yang melayani
+   * pelanggan sekali setahun tidak butuh poin, dan memaksakan kolom member di
+   * layar kasir hanya memperlambat antrean. Saat mati, poin tidak dikumpulkan,
+   * tidak bisa ditukar, dan manfaat tier tidak berlaku — tapi saldo poin lama
+   * TIDAK dihapus.
+   */
+  enableLoyalty: boolean;
   loyaltyEarnRate: number; // Rp 10.000 per 1 point
   loyaltyRedeemRate: number; // 1 point = Rp 100 discount
+  /**
+   * Ambang dan manfaat tiap tier, diatur merchant. Kosong = pakai bawaan
+   * (lihat TIER_BAWAAN di src/lib/loyalty.ts).
+   */
+  loyaltyTiers?: LoyaltyTier[];
   /**
    * Target omzet bulanan. Opsional: kalau merchant tidak mengisinya, Smart
    * Assistant menurunkan target otomatis dari rata-rata 3 bulan terakhir.

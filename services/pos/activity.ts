@@ -28,8 +28,12 @@ function pick<T extends string>(allowed: readonly T[], v: unknown): T | null {
 }
 
 export interface ActivityInput {
+  /**
+   * pos.tenants.id. Dulu ada `tenantId` terpisah di sini yang selalu diisi
+   * nilai yang sama; kolomnya dibuang di migrasi 0019, dan medannya ikut —
+   * dua nama untuk satu hal hanya menunggu keduanya berbeda.
+   */
   merchantId: string;
-  tenantId?: string;
   businessSector: string;
   businessId?: string | null;
   appModule: string;
@@ -52,15 +56,14 @@ export async function writeActivity(db: Db, a: ActivityInput): Promise<string | 
 
   const { rows } = await db.query(
     `INSERT INTO pos.merchant_activity_log
-       (merchant_id, tenant_id, business_sector, business_id, app_module,
+       (merchant_id, business_sector, business_id, app_module,
         event_type, severity, actor_user_id, actor_name, actor_role,
         transaction_id, amount_idr, summary, detail, occurred_at)
-     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9, $10,
-             $11::uuid, $12, $13, $14::jsonb, COALESCE($15::timestamptz, CURRENT_TIMESTAMP))
+     VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9,
+             $10::uuid, $11, $12, $13::jsonb, COALESCE($14::timestamptz, CURRENT_TIMESTAMP))
      RETURNING id`,
     [
       a.merchantId,
-      a.tenantId && UUID_RE.test(a.tenantId) ? a.tenantId : a.merchantId,
       sector,
       a.businessId ?? null,
       mod,

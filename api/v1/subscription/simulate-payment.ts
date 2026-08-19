@@ -1,6 +1,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { resolveTenantId } from '../../_lib/tenant.js';
 
 let pool: pg.Pool | null = null;
 
@@ -74,22 +75,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // pernah ditemukan resolveTenant — langganannya menempel pada identitas
     // berbeda dari transaksinya, dan merchant merasa sudah bayar sementara
     // aplikasinya tetap terkunci.
-    const tenant = await db.query(
-      `SELECT merchant_id FROM contract.merchant_directory
-        WHERE business_id = $1
-           OR (owner_user_ref = $1 AND (SELECT COUNT(*) FROM contract.merchant_directory
-                                         WHERE owner_user_ref = $1) = 1)
-        LIMIT 1`,
-      [tId]
-    );
-    if (!tenant.rows.length) {
+    const tenantId = await resolveTenantId(db, tId);
+    if (!tenantId) {
       return res.status(409).json({
         ok: false,
         error: 'MERCHANT_BELUM_SINKRON',
         detail: 'Toko ini belum tersinkronisasi ke server, jadi belum ada yang bisa ditagih.',
       });
     }
-    const tenantId = tenant.rows[0].merchant_id;
 
     // Paket harus benar-benar ada dan sedang dijual. Tanpa pemeriksaan ini,
     // kode paket yang salah ketik akan tersimpan sebagai langganan yang tidak

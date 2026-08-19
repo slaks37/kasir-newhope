@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { resolveTenantId } from '../../_lib/tenant.js';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -97,8 +98,8 @@ async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null
   try {
     const dibuat = await db.query(
       `INSERT INTO ai.merchant_ai_credits
-         (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
-       VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
+         (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+       VALUES ($1, $2, $2, 0, $3::timestamptz)
        ON CONFLICT (merchant_id) DO NOTHING
        RETURNING balance, monthly_grant, used_this_month`,
       [tenantId, jatah, periodeBerikutnya()]
@@ -190,24 +191,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       // merchantId arrives as a business unit key (`usr-1_FNB`) or an account
-      // ref (`usr-1`), never as the tenant UUID the tables are keyed by. This
-      // mirrors the lookup order in services/shared/identity.ts: business unit
-      // first, then owner — and only when that owner has exactly one unit, since
-      // guessing between a café and a laundry silently reports the wrong shop.
-      const tenant = await db.query(
-        `SELECT merchant_id FROM contract.merchant_directory
-          WHERE business_id = $1
-             OR (owner_user_ref = $1 AND (SELECT COUNT(*) FROM contract.merchant_directory
-                                           WHERE owner_user_ref = $1) = 1)
-          LIMIT 1`,
-        [merchantId]
-      );
+      // ref (`usr-1`), never as the tenant UUID the tables are keyed by.
+      tenantId = await resolveTenantId(db, merchantId);
 
-      if (!tenant.rows.length) {
+      if (!tenantId) {
         // Not an error: a merchant that has never synced simply has no rows yet.
         console.warn(`[query] merchant belum tersinkronisasi: ${merchantId}`);
       } else {
-        tenantId = tenant.rows[0].merchant_id;
 
         const stats = await db.query(
           `SELECT COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0)::numeric AS total

@@ -120,7 +120,6 @@ features AS (
    GROUP BY f.merchant_id
 )
 SELECT te.id                                    AS merchant_id,
-       te.id                                    AS tenant_id,
        COALESCE(td.revenue_today, 0)            AS daily_revenue,
        COALESCE(td.txn_today, 0)                AS daily_transaction_count,
        COALESCE(td.cashiers_today, 0)           AS active_cashiers_count,
@@ -143,13 +142,13 @@ SELECT te.id                                    AS merchant_id,
 
 const UPSERT_SQL = `
 INSERT INTO merchant_health_logs
-  (id, merchant_id, tenant_id, log_date, daily_revenue, daily_transaction_count,
+  (id, merchant_id, log_date, daily_revenue, daily_transaction_count,
    active_cashiers_count, login_status, last_activity_at, days_since_last_txn,
    active_days_last_7, revenue_trend_pct, feature_usage_payload,
    distinct_features_used, support_tickets_count, subscription_status, mrr_idr,
    contract_mrr_idr, churn_risk_score, churn_risk_reasons, created_at, updated_at)
 VALUES
-  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18,$19,$20::jsonb,
+  (legacy_uuid($1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19::jsonb,
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (merchant_id, log_date) DO UPDATE SET
   daily_revenue           = EXCLUDED.daily_revenue,
@@ -195,9 +194,11 @@ export function toHealthRow(raw, today = new Date()) {
 
   const logDate = today.toISOString().slice(0, 10);
   return {
+    // Kunci alami yang stabil, dibungkus legacy_uuid() saat disimpan: kolom id
+    // sudah menjadi UUID sejak 0005, sementara string ini tidak pernah ikut
+    // berubah. Setiap penulisan karena itu ditolak Postgres.
     id: `mhl-${raw.merchant_id}-${logDate}`,
     merchant_id: raw.merchant_id,
-    tenant_id: raw.tenant_id || raw.merchant_id,
     log_date: logDate,
     daily_revenue: Number(raw.daily_revenue || 0),
     daily_transaction_count: Number(raw.daily_transaction_count || 0),
@@ -240,6 +241,29 @@ function demoData() {
 }
 
 const log = (...a) => console.log(`[${new Date().toISOString()}]`, ...a);
+
+/**
+ * Catatan satu kali eksekusi — DITULIS SETELAH pekerjaannya selesai, bukan
+ * sebelumnya.
+ *
+ * Versi sebelumnya menyisipkan baris berstatus 'SUCCESS' sebagai langkah
+ * PERTAMA, lalu mengoreksinya di akhir. Dua akibatnya: proses yang dibunuh di
+ * tengah jalan (OOM, SIGKILL, mesin mati) meninggalkan catatan permanen yang
+ * mengaku berhasil, dan `id` yang dibuatnya (`run-health-1787…`) bukan UUID —
+ * padahal kolomnya sudah menjadi UUID sejak 0005. Jadi INSERT itu SELALU
+ * gagal, dan job ini tidak pernah sekali pun berhasil dijalankan sejak
+ * migrasi tersebut. Baru terlihat setelah benar-benar dijalankan.
+ */
+async function catatRun(client, status, ditulis, durasiMs, error) {
+  await client.query(
+    `INSERT INTO batch_job_runs
+       (id, job_name, started_at, finished_at, status, insights_written, duration_ms, error_text)
+     VALUES (uuidv7(), 'merchant-health',
+             CURRENT_TIMESTAMP - ($3::int || ' milliseconds')::interval,
+             CURRENT_TIMESTAMP, $1, $2, $3, $4)`,
+    [status, ditulis, durasiMs, error]
+  );
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -293,21 +317,15 @@ async function main() {
   }
 
   const client = new pg.Client({ connectionString: dbUrl });
-  const runId = `run-health-${Date.now()}`;
   await client.connect();
   try {
-    await client.query(
-      `INSERT INTO batch_job_runs (id, job_name, started_at, status) VALUES ($1, 'merchant-health', CURRENT_TIMESTAMP, 'SUCCESS')`,
-      [runId]
-    );
-
     const { rows: raws } = await client.query(HEALTH_SQL);
     const rows = raws.map((r) => toHealthRow(r));
 
     await client.query('BEGIN');
     for (const r of rows) {
       await client.query(UPSERT_SQL, [
-        r.id, r.merchant_id, r.tenant_id, r.log_date, r.daily_revenue,
+        r.id, r.merchant_id, r.log_date, r.daily_revenue,
         r.daily_transaction_count, r.active_cashiers_count, r.login_status,
         r.last_activity_at, r.days_since_last_txn, r.active_days_last_7,
         r.revenue_trend_pct, JSON.stringify(r.feature_usage_payload),
@@ -315,19 +333,14 @@ async function main() {
         r.mrr_idr, r.contract_mrr_idr, r.churn_risk_score, JSON.stringify(r.churn_risk_reasons),
       ]);
     }
-    await client.query(
-      `UPDATE batch_job_runs SET finished_at = CURRENT_TIMESTAMP, status = 'SUCCESS', insights_written = $2, duration_ms = $3 WHERE id = $1`,
-      [runId, rows.length, Date.now() - startedAt]
-    );
+    await catatRun(client, 'SUCCESS', rows.length, Date.now() - startedAt, null);
     await client.query('COMMIT');
     log(`Done in ${Date.now() - startedAt} ms — ${rows.length} health row(s) upserted.`);
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* connection may be gone */ }
     try {
-      await client.query(
-        `UPDATE batch_job_runs SET finished_at = CURRENT_TIMESTAMP, status = 'FAILED', duration_ms = $2, error_text = $3 WHERE id = $1`,
-        [runId, Date.now() - startedAt, String(err && err.message ? err.message : err)]
-      );
+      await catatRun(client, 'FAILED', 0, Date.now() - startedAt,
+                     String(err && err.message ? err.message : err));
     } catch { /* best effort */ }
     throw err;
   } finally {

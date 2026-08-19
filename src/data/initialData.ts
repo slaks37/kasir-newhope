@@ -1,4 +1,5 @@
 import { Category, Product, Table, Customer, StoreSettings, Order, Shift, User, PromoCode, StaffMember, StockItem, AttendanceRecord, StoreBranch, ProductBundle } from '../types';
+import { TIER_BAWAAN } from '../lib/loyalty';
 
 export const INITIAL_CATEGORIES: Category[] = [
   { id: 'cat-makanan', name: 'Makanan', icon: 'Utensils', color: 'bg-amber-500' },
@@ -569,8 +570,12 @@ export const INITIAL_SETTINGS: StoreSettings = {
   receiptFooter: 'Semoga Harimu Menyenangkan!',
   storeMode: 'FNB',
   autoPrintReceipt: false,
+  // Menyala secara bawaan: toko yang tidak memakainya cukup mematikannya di
+  // Pengaturan, dan yang memakainya tidak perlu menyalakan apa pun dulu.
+  enableLoyalty: true,
   loyaltyEarnRate: 10000,
   loyaltyRedeemRate: 100,
+  loyaltyTiers: [...TIER_BAWAAN],
   branches: INITIAL_BRANCHES,
   activeBranchId: 'branch-senayan',
   geofenceEnforcement: 'FLEXIBLE',

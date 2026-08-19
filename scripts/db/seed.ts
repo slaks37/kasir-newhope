@@ -335,10 +335,10 @@ async function main() {
         if (rnd() < 0.25) {
           await db.query(
             `INSERT INTO merchant_activity_log
-               (merchant_id, tenant_id, business_sector, business_id, app_module,
+               (merchant_id, business_sector, business_id, app_module,
                 event_type, severity, actor_user_id, actor_name, actor_role,
                 transaction_id, amount_idr, summary, detail, occurred_at)
-             VALUES ($1, $1, $2, $3, $4, 'SALE', 'INFO', $5, $6, $7, $8, $9, $10, $11::jsonb,
+             VALUES ($1, $2, $3, $4, 'SALE', 'INFO', $5, $6, $7, $8, $9, $10, $11::jsonb,
                      (SELECT created_at FROM transactions WHERE id = $8))`,
             [
               tenantId, m.sector, businessId, appModule, staff.id, staff.name, staff.role,
@@ -369,10 +369,10 @@ async function main() {
       const staff = pickOne(staffIds);
       await db.query(
         `INSERT INTO merchant_activity_log
-           (merchant_id, tenant_id, business_sector, business_id, app_module,
+           (merchant_id, business_sector, business_id, app_module,
             event_type, severity, actor_user_id, actor_name, actor_role,
             summary, detail, occurred_at)
-         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
                  CURRENT_TIMESTAMP - ($12::int || ' hours')::interval)`,
         [
           tenantId, m.sector, businessId, mod, type, sev,

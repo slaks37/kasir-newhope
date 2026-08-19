@@ -1177,7 +1177,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Rumusnya dipakai bersama dengan CheckoutModal supaya angka di layar dan
     // angka yang tercatat di struk tidak pernah bisa berbeda.
-    const { loyaltyDiscount, pointsUsed, taxTotal, serviceChargeTotal, grandTotal } = hitungTotal({
+    const {
+      loyaltyDiscount,
+      tierDiscount,
+      pointsUsed,
+      taxTotal,
+      serviceChargeTotal,
+      grandTotal,
+    } = hitungTotal({
       subtotal,
       pointsToRedeem,
       availablePoints: selectedCustomer?.points ?? 0,
@@ -1186,6 +1193,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       serviceRate: settings.serviceRate,
       enableTax: settings.enableTax,
       enableService: settings.enableService,
+      enableLoyalty: settings.enableLoyalty,
+      customerTier: selectedCustomer?.tier,
+      loyaltyTiers: settings.loyaltyTiers,
     });
 
     let changeAmount = 0;
@@ -1219,9 +1229,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
       subtotal,
-      discountTotal: cart.reduce((sum, i) => sum + i.discountAmount, 0) + loyaltyDiscount,
+      // Potongan tier ikut masuk total diskon — ia uang yang benar-benar tidak
+      // jadi dibayar, jadi laporan margin harus melihatnya.
+      discountTotal:
+        cart.reduce((sum, i) => sum + i.discountAmount, 0) + loyaltyDiscount + tierDiscount,
       pointsRedeemed: pointsUsed || undefined,
       loyaltyDiscount: loyaltyDiscount || undefined,
+      tierDiscount: tierDiscount || undefined,
       taxTotal,
       serviceChargeTotal,
       total: grandTotal,
@@ -1336,8 +1350,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // dua kali: untuk state dan untuk payload sinkronisasi di langkah 6. Kalau
     // payload memakai `newOrder.customer`, yang terkirim adalah keadaan SEBELUM
     // transaksi ini — dan database akan selamanya tertinggal satu kunjungan.
+    //
+    // Saat program loyalitas dimatikan merchant, kunjungan tetap dicatat tapi
+    // poin tidak bertambah dan tier DIBEKUKAN. Riwayat belanjanya tetap utuh,
+    // jadi menyalakan kembali programnya nanti langsung menempatkan member di
+    // tier yang semestinya — tanpa ada yang naik tier diam-diam selama program
+    // sedang mati.
     const updatedCustomer = selectedCustomer
-      ? applyPurchase(selectedCustomer, grandTotal, settings.loyaltyEarnRate, pointsUsed)
+      ? applyPurchase(
+          selectedCustomer,
+          grandTotal,
+          settings.enableLoyalty === false ? 0 : settings.loyaltyEarnRate,
+          pointsUsed,
+          { tiers: settings.loyaltyTiers, aktif: settings.enableLoyalty !== false }
+        )
       : null;
 
     if (updatedCustomer) {
