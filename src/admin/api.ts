@@ -5,20 +5,26 @@
  * otentikasi role internal, dan audit jejak akses.
  */
 
-const IDENTITY_KEY = 'nhpos_internal_identity';
+import type { AdminPlan } from '../lib/plans/entitlements';
+
+export interface PlanChangeRow {
+  id: string;
+  plan_id: string;
+  changed_by: string;
+  change_kind: 'CREATE' | 'UPDATE' | 'ACTIVATE' | 'DEACTIVATE';
+  before_json: AdminPlan | null;
+  after_json: AdminPlan;
+  changed_at: string;
+}
+
+const TOKEN_KEY = 'nhpos_internal_token';
 
 export type InternalRole = 'ROLE_SUPERADMIN' | 'ROLE_INTERNAL_GROWTH' | 'ROLE_INTERNAL_SUPPORT';
-
-export interface Identity {
-  email: string;
-  full_name: string;
-  role: InternalRole;
-}
 
 export interface Session {
   user: { email: string; fullName: string; role: InternalRole };
   capabilities: string[];
-  environment: string;
+  environment?: string;
 }
 
 export const ROLE_LABEL: Record<InternalRole, string> = {
@@ -27,43 +33,34 @@ export const ROLE_LABEL: Record<InternalRole, string> = {
   ROLE_INTERNAL_SUPPORT: 'Support (Operasional Merchant)',
 };
 
-const DEFAULT_SUPERADMIN: Identity = {
-  email: 'stefenlaksana.sl@gmail.com',
-  full_name: 'Stefen Laksana (Superadmin)',
-  role: 'ROLE_SUPERADMIN',
-};
+/**
+ * Sebagian halaman panel masih menampilkan DATA CONTOH, bukan isi database.
+ *
+ * Dibiarkan terlihat dari kode, dan diberi tanda di layar, karena angka yang
+ * kelihatan meyakinkan tapi tidak nyata adalah cara tercepat mengambil
+ * keputusan yang salah. Halaman Paket & Harga TIDAK termasuk — ia menulis ke
+ * database sungguhan.
+ */
+export const HALAMAN_DATA_CONTOH = ['overview', 'merchants', 'subscriptions', 'transactions', 'products', 'activity', 'audit', 'users'];
 
-const IDENTITIES_LIST: Identity[] = [
-  DEFAULT_SUPERADMIN,
-  {
-    email: 'ops@newhopepos.id',
-    full_name: 'Platform Operations Root',
-    role: 'ROLE_SUPERADMIN',
-  },
-  {
-    email: 'growth@newhopepos.id',
-    full_name: 'Growth & Business Intelligence',
-    role: 'ROLE_INTERNAL_GROWTH',
-  },
-  {
-    email: 'support@newhopepos.id',
-    full_name: 'Customer Support Lead',
-    role: 'ROLE_INTERNAL_SUPPORT',
-  },
-];
+/* -------------------------------------------------------------------------- */
+/* SESI                                                                        */
+/* -------------------------------------------------------------------------- */
 
-export function getIdentity(): string | null {
-  return sessionStorage.getItem(IDENTITY_KEY) || localStorage.getItem(IDENTITY_KEY);
+/**
+ * Token sesi disimpan di sessionStorage, bukan localStorage.
+ *
+ * sessionStorage habis saat tab ditutup. Untuk konsol yang bisa mengubah harga,
+ * sesi yang bertahan berhari-hari di perangkat bersama adalah risiko yang tidak
+ * sebanding dengan kenyamanan tidak perlu login ulang.
+ */
+export function getToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function setIdentity(email: string | null): void {
-  if (email) {
-    sessionStorage.setItem(IDENTITY_KEY, email);
-    localStorage.setItem(IDENTITY_KEY, email);
-  } else {
-    sessionStorage.removeItem(IDENTITY_KEY);
-    localStorage.removeItem(IDENTITY_KEY);
-  }
+export function setToken(token: string | null): void {
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  else sessionStorage.removeItem(TOKEN_KEY);
 }
 
 export class ApiError extends Error {
@@ -1148,62 +1145,115 @@ export const PRODUCT_RECIPES_DATA = [
 /* API METHODS                                                                */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* TRANSPOR                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Satu pintu untuk semua panggilan ke backend admin.
+ *
+ * Token dilampirkan di sini, sekali, bukan di setiap pemanggil — dan 401
+ * membuang token yang sudah tidak berlaku supaya panel jatuh ke layar login
+ * alih-alih menampilkan halaman kosong tanpa penjelasan.
+ */
+async function minta<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers as Record<string, string> | undefined),
+    },
+  });
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    // Endpoint yang belum ter-deploy jatuh ke rewrite SPA dan mengembalikan
+    // HTML. Dijelaskan apa adanya, bukan dibiarkan muncul sebagai
+    // "Unexpected token <".
+    throw new ApiError(res.status, 'BAD_RESPONSE', 'Server tidak mengembalikan JSON. Endpoint admin mungkin belum ter-deploy.');
+  }
+
+  if (!res.ok || data?.ok === false) {
+    if (res.status === 401) setToken(null);
+    throw new ApiError(
+      res.status,
+      data?.error || 'REQUEST_FAILED',
+      data?.detail || (Array.isArray(data?.issues) ? data.issues.join(' ') : null) || pesanGalat(res.status, data?.error)
+    );
+  }
+  return data as T;
+}
+
+function pesanGalat(status: number, kode?: string): string {
+  if (kode === 'SESSION_SECRET_MISSING') {
+    return 'Server belum dikonfigurasi: ADMIN_SESSION_SECRET kosong. Hubungi yang mengelola deployment.';
+  }
+  if (kode === 'INVALID_CREDENTIALS') return 'Email atau password administrator salah.';
+  if (kode === 'TOO_MANY_ATTEMPTS') return 'Terlalu banyak percobaan gagal. Coba lagi beberapa menit lagi.';
+  if (kode === 'CAPABILITY_DENIED') return 'Role Anda tidak berwenang melakukan tindakan ini.';
+  if (status === 401) return 'Sesi berakhir. Silakan masuk kembali.';
+  if (status === 503) return 'Layanan sedang tidak tersedia. Coba lagi sebentar lagi.';
+  return 'Permintaan gagal diproses.';
+}
+
+/* -------------------------------------------------------------------------- */
+/* API METHODS                                                                */
+/* -------------------------------------------------------------------------- */
+
 export const api = {
-  login: async (email: string, pass: string): Promise<Session> => {
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (cleanEmail === 'stefenlaksana.sl@gmail.com' && pass === 'Stefen2012') {
-      setIdentity('stefenlaksana.sl@gmail.com');
-      return api.me();
-    }
-
-    if (cleanEmail === 'ops@newhopepos.id' && pass === 'Stefen2012') {
-      setIdentity('ops@newhopepos.id');
-      return api.me();
-    }
-
-    const matched = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === cleanEmail);
-    if (matched && (pass === 'Stefen2012' || pass === 'AdminPass2026!')) {
-      setIdentity(matched.email);
-      return api.me();
-    }
-
-    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau password administrator salah.');
+  /**
+   * Password TIDAK PERNAH diperiksa di sini.
+   *
+   * Versi sebelumnya membandingkannya dengan string di dalam berkas ini, jadi
+   * password ada di setiap salinan bundle yang pernah ter-deploy dan bisa
+   * dibaca siapa pun dari sumber halaman. Sekarang yang dikirim adalah
+   * kredensialnya, dan yang kembali adalah token bertanda tangan server.
+   */
+  login: async (email: string, password: string): Promise<Session> => {
+    const data = await minta<{ token: string } & Session>('/api/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+    });
+    setToken(data.token);
+    return { user: data.user, capabilities: data.capabilities, environment: data.environment };
   },
 
-  identities: async (): Promise<{ identities: Identity[] }> => {
-    return { identities: IDENTITIES_LIST };
-  },
+  logout: () => setToken(null),
 
+  /**
+   * Capability datang dari server, tidak pernah disusun panel sendiri.
+   *
+   * Versi sebelumnya mengembalikan daftar lengkap untuk siapa pun — termasuk
+   * email yang tidak dikenal, yang bahkan diberi ROLE_SUPERADMIN.
+   */
   me: async (): Promise<Session> => {
-    const currentEmail = getIdentity();
-    if (!currentEmail) {
-      throw new ApiError(401, 'UNAUTHORIZED', 'Sesi login admin belum aktif.');
-    }
-    const found = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === currentEmail.toLowerCase()) || {
-      email: currentEmail,
-      full_name: 'Administrator Platform',
-      role: 'ROLE_SUPERADMIN' as InternalRole,
-    };
-
-    return {
-      user: {
-        email: found.email,
-        fullName: found.full_name,
-        role: found.role,
-      },
-      capabilities: [
-        'VIEW_SECTOR_ANALYTICS',
-        'VIEW_MERCHANT_HEALTH',
-        'VIEW_TRANSACTION_LOG',
-        'VIEW_PRODUCT_SALES',
-        'VIEW_ACTIVITY_LOG',
-        'VIEW_ACCESS_AUDIT',
-        'MANAGE_SYSTEM',
-      ],
-      environment: 'production',
-    };
+    if (!getToken()) throw new ApiError(401, 'UNAUTHORIZED', 'Sesi login admin belum aktif.');
+    return minta<Session>('/api/admin/me');
   },
+
+  /* ---- PAKET, HARGA, DAN ENTITLEMENT — data sungguhan ---- */
+
+  plans: () =>
+    minta<{ plans: AdminPlan[]; subscriberCounts: Record<string, number> }>('/api/admin/plans'),
+
+  savePlan: (plan: AdminPlan) =>
+    minta<{ plan: AdminPlan; kind: 'CREATE' | 'UPDATE' }>(
+      `/api/admin/plans/${encodeURIComponent(plan.id)}`,
+      { method: 'PUT', body: JSON.stringify(plan) }
+    ),
+
+  setPlanActive: (planId: string, isActive: boolean) =>
+    minta<{ plan: AdminPlan }>(`/api/admin/plans/${encodeURIComponent(planId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isActive }),
+    }),
+
+  planHistory: (planId: string) =>
+    minta<{ rows: PlanChangeRow[] }>(`/api/admin/plans/${encodeURIComponent(planId)}`),
 
   overview: async () => {
     const daily = generateDailyHistory();

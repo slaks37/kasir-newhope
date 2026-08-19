@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard
+  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, Tags, FlaskConical
 } from 'lucide-react';
-import { api, getIdentity, setIdentity, ROLE_LABEL, type Identity, type Session } from './api';
+import { api, getToken, setToken, HALAMAN_DATA_CONTOH, ROLE_LABEL, type Session } from './api';
 import { ErrorBox, Loading } from './ui';
 import Overview from './pages/Overview';
 import Merchants from './pages/Merchants';
@@ -12,8 +12,9 @@ import ActivityPage from './pages/Activity';
 import Audit from './pages/Audit';
 import UserManagement from './pages/UserManagement';
 import Subscriptions from './pages/Subscriptions';
+import Plans from './pages/Plans';
 
-type PageId = 'overview' | 'merchants' | 'subscriptions' | 'transactions' | 'products' | 'activity' | 'audit' | 'users';
+type PageId = 'overview' | 'merchants' | 'plans' | 'subscriptions' | 'transactions' | 'products' | 'activity' | 'audit' | 'users';
 
 /**
  * Setiap menu menyatakan capability yang dibutuhkannya. Menu yang tidak dimiliki
@@ -24,6 +25,7 @@ type PageId = 'overview' | 'merchants' | 'subscriptions' | 'transactions' | 'pro
 const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'overview', label: 'Ringkasan Sektor', icon: LayoutDashboard, cap: 'VIEW_SECTOR_ANALYTICS' },
   { id: 'merchants', label: 'Merchant', icon: Store, cap: 'VIEW_MERCHANT_HEALTH' },
+  { id: 'plans', label: 'Paket & Harga', icon: Tags, cap: 'MANAGE_SUBSCRIPTION' },
   { id: 'subscriptions', label: 'Langganan (SaaS)', icon: CreditCard, cap: 'VIEW_MERCHANT_HEALTH' },
   { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'VIEW_ACCESS_AUDIT' },
   { id: 'transactions', label: 'Log Transaksi', icon: Receipt, cap: 'VIEW_TRANSACTION_LOG' },
@@ -152,7 +154,7 @@ export default function AdminApp() {
   const [sector, setSector] = useState('');
 
   const load = useCallback(() => {
-    if (!getIdentity()) {
+    if (!getToken()) {
       setBooting(false);
       return;
     }
@@ -165,7 +167,7 @@ export default function AdminApp() {
         if (allowed.length && !allowed.some((n) => n.id === page)) setPage(allowed[0].id);
       },
       (e) => {
-        setIdentity(null);
+        setToken(null);
         setError({ code: e.code, message: e.message });
         setBooting(false);
       }
@@ -230,7 +232,7 @@ export default function AdminApp() {
             </div>
             <button
               onClick={() => {
-                setIdentity(null);
+                api.logout();
                 setSession(null);
               }}
               title="Keluar"
@@ -260,8 +262,21 @@ export default function AdminApp() {
       </header>
 
       <main className="mx-auto max-w-7xl p-4">
+        {/* Angka yang meyakinkan tapi tidak nyata adalah cara tercepat mengambil
+            keputusan yang salah. Halaman yang belum tersambung ke database
+            mengatakannya sendiri, di tempat yang tidak bisa dilewatkan. */}
+        {HALAMAN_DATA_CONTOH.includes(page) && (
+          <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-xs leading-relaxed">
+              <b>Halaman ini masih menampilkan data contoh</b>, belum isi database. Jangan dipakai
+              mengambil keputusan. Halaman <b>Paket &amp; Harga</b> sudah tersambung ke database sungguhan.
+            </p>
+          </div>
+        )}
         {page === 'overview' && <Overview onOpenSector={openSector} />}
         {page === 'merchants' && <Merchants sector={sector} onSector={setSector} />}
+        {page === 'plans' && <Plans />}
         {page === 'subscriptions' && <Subscriptions />}
         {page === 'users' && <UserManagement />}
         {page === 'transactions' && <Transactions sector={sector} onSector={setSector} />}

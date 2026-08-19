@@ -78,6 +78,7 @@ export const InventoryManager: React.FC = () => {
   const [stockReason, setStockReason] = useState('Restok Pembelian Supplier');
 
   // Form states for Add/Edit Product
+  const [batasPaket, setBatasPaket] = useState<string | null>(null);
   const [formName, setFormName] = useState('');
   const [formSku, setFormSku] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
@@ -208,7 +209,14 @@ export const InventoryManager: React.FC = () => {
       recipeIngredients: editingProduct?.recipeIngredients,
     };
 
-    saveProduct(prod);
+    const hasil = saveProduct(prod);
+    if (!hasil.ok) {
+      // Modal SENGAJA tetap terbuka. Menutupnya membuang formulir yang sudah
+      // diisi penuh dan membuat penolakan terlihat seperti berhasil.
+      setBatasPaket(hasil.alasan);
+      return;
+    }
+    setBatasPaket(null);
     setShowAddModal(false);
   };
 
@@ -1064,6 +1072,12 @@ export const InventoryManager: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveProduct} className="space-y-4 text-xs">
+              {batasPaket && (
+                <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900">
+                  <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p className="font-bold leading-relaxed">{batasPaket}</p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="font-black text-slate-700 block mb-1">Nama Produk *</label>

@@ -23,6 +23,14 @@ import {
 } from '../lib/rbac/environments';
 import type { Db } from './db';
 import * as repo from './repo';
+import * as plansRepo from './plansRepo';
+import {
+  issueToken,
+  sessionSecretTersedia,
+  tokenDariHeader,
+  verifyPassword,
+  verifyToken,
+} from './adminAuth';
 
 interface InternalIdentity {
   id: string;
@@ -109,14 +117,17 @@ async function recordAccess(
 
 export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>): void {
   /**
-   * SECURITY: identitas diambil dari header `x-internal-user`, tanpa password
-   * dan tanpa token. Siapa pun yang bisa mengirim HTTP ke server ini bisa
-   * mengaku sebagai SUPERADMIN.
+   * Identitas datang dari token bertanda tangan di header Authorization, yang
+   * hanya bisa diterbitkan /api/admin/login setelah password cocok.
    *
-   * Itu dapat diterima SEKARANG karena panel hanya dilayani di localhost dan
-   * belum ada data produksi. Sebelum admin.domainanda.com menyala, header ini
-   * WAJIB diganti dengan SSO (kolom internal_users.sso_subject sudah disiapkan
-   * untuk menampung subject claim-nya). Jangan deploy tanpa itu.
+   * Sebelumnya cukup dengan header `x-internal-user: email` — siapa pun yang
+   * bisa mengirim HTTP ke server ini bisa mengaku SUPERADMIN. Itu masih bisa
+   * ditoleransi selama panel hanya membaca; sejak panel bisa MENGUBAH HARGA,
+   * tidak lagi.
+   *
+   * Baris internal_users tetap dibaca ulang pada SETIAP request meski rolenya
+   * sudah ada di dalam token. Token berlaku 8 jam, dan menonaktifkan akun yang
+   * disalahgunakan harus berlaku detik itu juga — bukan delapan jam kemudian.
    */
   function guard(capability: InternalCapability) {
     return async (req: AdminRequest, res: express.Response, next: express.NextFunction) => {
@@ -139,14 +150,17 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
       }
 
-      const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
+      const klaim = verifyToken(tokenDariHeader(req.headers.authorization));
+      if (!klaim) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+
       const { rows } = await db.query(
         `SELECT id, email, full_name, role FROM internal.internal_users
-          WHERE lower(email) = $1 AND is_active`,
-        [email]
+          WHERE id = $1::uuid AND is_active`,
+        [klaim.uid]
       );
 
-      // 404, bukan 401: pemanggil tanpa identitas tidak perlu tahu route ini ada.
+      // 404, bukan 403: akun yang sudah dinonaktifkan tidak perlu tahu route
+      // ini masih ada.
       if (!rows.length) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
 
       const who: InternalIdentity = {
@@ -221,6 +235,111 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
 
   // Tanpa guard: panel memakainya untuk mengetahui siapa dirinya dan menu apa
   // yang boleh ditampilkan. Tidak membocorkan data merchant apa pun.
+  /**
+   * Menukar email + password dengan token sesi.
+   *
+   * SATU PESAN GALAT UNTUK SEMUA KEGAGALAN. Email tidak dikenal, akun tanpa
+   * password, dan password salah dijawab persis sama. Membedakannya mengubah
+   * formulir ini menjadi alat untuk mendaftar email mana saja yang merupakan
+   * admin — dan daftar itu adalah setengah dari pekerjaan penyerang.
+   */
+  app.post('/api/admin/login', async (req: AdminRequest, res) => {
+    const env = resolveEnvironment(
+      hostKlien(req),
+      (req.headers['x-env-override'] as string) || undefined
+    );
+    if (env !== 'PROVIDER_BO' && env !== 'MERCHANT_BO') {
+      return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+    }
+
+    if (!sessionSecretTersedia()) {
+      // Dikatakan apa adanya: ini salah konfigurasi server, bukan salah orang
+      // yang sedang mencoba masuk.
+      return res.status(503).json({
+        ok: false,
+        error: 'SESSION_SECRET_MISSING',
+        detail: 'ADMIN_SESSION_SECRET belum diisi di server. Konsol internal menolak menyala tanpa itu.',
+      });
+    }
+
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const DITOLAK = { ok: false, error: 'INVALID_CREDENTIALS' };
+
+    if (!email || !password) return res.status(401).json(DITOLAK);
+
+    let db: Db;
+    try {
+      db = await getDb();
+    } catch {
+      return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
+    }
+
+    const { rows } = await db.query(
+      `SELECT id, email, full_name, role, password_hash, locked_until
+         FROM internal.internal_users
+        WHERE lower(email) = $1 AND is_active`,
+      [email]
+    );
+    const akun = rows[0];
+
+    if (akun?.locked_until && new Date(akun.locked_until) > new Date()) {
+      return res.status(429).json({
+        ok: false,
+        error: 'TOO_MANY_ATTEMPTS',
+        detail: 'Terlalu banyak percobaan gagal. Coba lagi beberapa menit lagi.',
+      });
+    }
+
+    // Diverifikasi meski akunnya tidak ada, memakai hash palsu berformat benar.
+    // Tanpa itu, email tak dikenal dijawab seketika sementara email yang ada
+    // butuh ~100 ms — selisih yang cukup untuk menebak siapa saja adminnya.
+    const cocok = await verifyPassword(
+      password,
+      akun?.password_hash ?? 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAA'
+    );
+
+    if (!akun || !akun.password_hash || !cocok) {
+      if (akun) {
+        await db.query(`SELECT internal.catat_login_gagal($1)`, [email]);
+        await recordAccess(
+          db,
+          { id: akun.id, email: akun.email, fullName: akun.full_name, role: akun.role },
+          'LOGIN_FAILED',
+          '/api/admin/login',
+          null,
+          null,
+          req.ip || null
+        );
+      } else {
+        // internal_access_log.internal_user_id NOT NULL, jadi percobaan
+        // terhadap email yang tidak terdaftar tidak bisa masuk ke sana.
+        // Dicatat ke log server supaya tetap terlihat, bukan hilang.
+        console.warn(`[admin] login ditolak untuk email tak dikenal: ${email} dari ${req.ip}`);
+      }
+      return res.status(401).json(DITOLAK);
+    }
+
+    await db.query(`SELECT internal.catat_login_berhasil($1)`, [email]);
+    await recordAccess(
+      db,
+      { id: akun.id, email: akun.email, fullName: akun.full_name, role: akun.role },
+      'LOGIN_SUCCESS',
+      '/api/admin/login',
+      null,
+      null,
+      req.ip || null
+    );
+
+    res.json({
+      ok: true,
+      token: issueToken({ sub: akun.email, uid: akun.id, role: akun.role }),
+      user: { email: akun.email, fullName: akun.full_name, role: akun.role },
+      capabilities: internalCapabilities(akun.role),
+      environment: env,
+    });
+  });
+
   app.get('/api/admin/me', async (req: AdminRequest, res) => {
     const env = resolveEnvironment(
       hostKlien(req),
@@ -230,6 +349,9 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
     }
 
+    const klaim = verifyToken(tokenDariHeader(req.headers.authorization));
+    if (!klaim) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+
     let db: Db;
     try {
       db = await getDb();
@@ -237,11 +359,10 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
     }
 
-    const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
     const { rows } = await db.query(
       `SELECT id, email, full_name, role FROM internal.internal_users
-        WHERE lower(email) = $1 AND is_active`,
-      [email]
+        WHERE id = $1::uuid AND is_active`,
+      [klaim.uid]
     );
     if (!rows.length) return res.status(401).json({ ok: false, error: 'UNKNOWN_IDENTITY' });
 
@@ -252,23 +373,11 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         fullName: rows[0].full_name,
         role: rows[0].role,
       },
+      // Selalu dari server. Panel yang menyusun daftarnya sendiri hanya
+      // menyembunyikan menu — ia tidak pernah menjadi batas keamanan.
       capabilities: internalCapabilities(rows[0].role),
       environment: env,
     });
-  });
-
-  // Daftar akun yang tersedia untuk memilih identitas di layar masuk. Hanya
-  // email, nama, dan role — tidak ada rahasia, karena memang belum ada.
-  app.get('/api/admin/identities', async (_req, res) => {
-    try {
-      const db = await getDb();
-      const { rows } = await db.query(
-        `SELECT email, full_name, role FROM internal.internal_users WHERE is_active ORDER BY role`
-      );
-      res.json({ ok: true, identities: rows });
-    } catch {
-      res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-    }
   });
 
   /* ---------------------------------------------------------------------- */
@@ -392,6 +501,72 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
           LIMIT 200`
       );
       res.json({ ok: true, rows });
+    })
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* PAKET, HARGA, DAN ENTITLEMENT                                           */
+  /* ---------------------------------------------------------------------- */
+
+  app.get(
+    '/api/admin/plans',
+    guard('MANAGE_SUBSCRIPTION'),
+    wrap(async (_req, res, db) => {
+      const [plans, pemakai] = await Promise.all([plansRepo.daftarPaket(db), plansRepo.pemakaiPaket(db)]);
+      res.json({ ok: true, plans, subscriberCounts: pemakai });
+    })
+  );
+
+  app.get(
+    '/api/admin/plans/:planId/history',
+    guard('MANAGE_SUBSCRIPTION'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, rows: await plansRepo.riwayatPaket(db, req.params.planId) });
+    })
+  );
+
+  /**
+   * Menyimpan paket. Membuat baru bila kodenya belum ada.
+   *
+   * Aktornya diambil dari token, BUKAN dari body. Membiarkan pemanggil menyebut
+   * dirinya sendiri di kolom `updated_by` membuat riwayat harga bisa
+   * ditandatangani atas nama orang lain — dan riwayat yang bisa dipalsukan
+   * lebih buruk daripada tidak punya riwayat, karena ia tetap dipercaya.
+   */
+  app.put(
+    '/api/admin/plans/:planId',
+    guard('MANAGE_SUBSCRIPTION'),
+    wrap(async (req: AdminRequest, res, db) => {
+      const masukan = plansRepo.bacaMasukanPaket({ ...req.body, id: req.params.planId });
+      try {
+        const { plan, kind } = await plansRepo.simpanPaket(db, masukan, req.internal!.email);
+        await recordAccess(
+          db, req.internal!, `PLAN_${kind}`, `/api/admin/plans/${plan.id}`, null, null, req.ip || null
+        );
+        res.json({ ok: true, plan, kind });
+      } catch (err) {
+        if (err instanceof plansRepo.PlanValidationError) {
+          return res.status(400).json({ ok: false, error: 'PLAN_INVALID', issues: err.issues });
+        }
+        throw err;
+      }
+    })
+  );
+
+  app.post(
+    '/api/admin/plans/:planId/active',
+    guard('MANAGE_SUBSCRIPTION'),
+    wrap(async (req: AdminRequest, res, db) => {
+      const aktif = req.body?.isActive !== false;
+      const plan = await plansRepo.ubahAktifPaket(db, req.params.planId, aktif, req.internal!.email);
+      if (!plan) return res.status(404).json({ ok: false, error: 'PLAN_NOT_FOUND' });
+
+      await recordAccess(
+        db, req.internal!,
+        aktif ? 'PLAN_ACTIVATE' : 'PLAN_DEACTIVATE',
+        `/api/admin/plans/${plan.id}`, null, null, req.ip || null
+      );
+      res.json({ ok: true, plan });
     })
   );
 }

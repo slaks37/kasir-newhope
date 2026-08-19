@@ -111,8 +111,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               p.tier_level           AS "tierLevel",
               p.billing_cycle        AS "billingCycle",
               p.price_idr            AS "priceIdr",
+              p.price_yearly_idr     AS "priceYearlyIdr",
+              p.extra_outlet_price_idr AS "extraOutletPriceIdr",
               p.currency,
-              p.features
+              p.features,
+              p.product_limit          AS "productLimit",
+              p.max_outlets            AS "maxOutlets",
+              p.ai_quota_monthly       AS "aiQuotaMonthly",
+              p.dashboard_access_level AS "dashboardAccessLevel",
+              p.module_access          AS "moduleAccess"
          FROM billing.subscriptions s
          LEFT JOIN billing.plans p ON p.id = s.plan_id
         WHERE s.tenant_id = $1
@@ -137,6 +144,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const row = subRes.rows[0];
     const status = effectiveStatus(row.status, row.currentPeriodEnd);
 
+    // Entitlement ikut dikirim, bukan cuma nama dan harga. Inilah yang dipakai
+    // aplikasi kasir untuk menegakkan batas produk, batas outlet, dan modul apa
+    // yang boleh dibuka — jadi mengubahnya di panel admin langsung berlaku.
     const plan = row.planCode
       ? {
           id: row.planCode,
@@ -144,8 +154,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           tierLevel: row.tierLevel,
           billingCycle: row.billingCycle,
           priceIdr: Number(row.priceIdr),
+          priceYearlyIdr: row.priceYearlyIdr == null ? undefined : Number(row.priceYearlyIdr),
+          extraOutletPriceIdr:
+            row.extraOutletPriceIdr == null ? undefined : Number(row.extraOutletPriceIdr),
           currency: row.currency || 'IDR',
           features: row.features || [],
+          productLimit: Number(row.productLimit),
+          maxOutlets: Number(row.maxOutlets),
+          aiQuotaMonthly: Number(row.aiQuotaMonthly),
+          dashboardAccessLevel: row.dashboardAccessLevel,
+          moduleAccess: row.moduleAccess ?? [],
+          isActive: true,
         }
       : null;
 

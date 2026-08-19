@@ -20,6 +20,7 @@
     "db:verify": "node scripts/db/bootstrap.mjs",
     "db:apply": "node scripts/db/bootstrap.mjs --live",
     "db:seed": "tsx scripts/db/seed.ts",
+    "admin:password": "tsx scripts/db/set-admin-password.mjs",
     "db:reseed": "tsx scripts/db/seed.ts --force",
     "db:reset": "node -e \"require('fs').rmSync('.pgdata',{recursive:true,force:true})\" && tsx scripts/db/seed.ts",
     "services": "node services/dev.mjs",

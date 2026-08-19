@@ -53,6 +53,7 @@ export const SettingsManager: React.FC = () => {
   // Branch Modal State
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [editingBranch, setEditingBranch] = useState<StoreBranch | null>(null);
+  const [batasPaket, setBatasPaket] = useState<string | null>(null);
   const [branchName, setBranchName] = useState('');
   const [branchAddress, setBranchAddress] = useState('');
   const [branchLat, setBranchLat] = useState(-6.2215);
@@ -156,7 +157,12 @@ export const SettingsManager: React.FC = () => {
       isActive: true,
     };
 
-    saveBranch(b);
+    const hasil = saveBranch(b);
+    if (!hasil.ok) {
+      setBatasPaket(hasil.alasan);
+      return;
+    }
+    setBatasPaket(null);
     setShowBranchModal(false);
   };
 
@@ -362,6 +368,11 @@ export const SettingsManager: React.FC = () => {
                 </div>
 
                 <form onSubmit={handleSaveBranchForm} className="space-y-4">
+                  {batasPaket && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold leading-relaxed">
+                      {batasPaket}
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <label className="text-xs text-slate-700 font-extrabold">Nama Cabang Toko *</label>
                     <input

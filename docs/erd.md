@@ -156,13 +156,29 @@ erDiagram
     subscriptions ||--o{ invoices      : "ON DELETE CASCADE"
 
     plans {
-        varchar id PK "tetap kode terbaca: 'basic', 'pro'"
+        varchar id PK "tetap kode terbaca: 'plan-free', 'plan-pro-monthly'"
         varchar name
         int tier_level
         enum billing_cycle "MONTHLY / YEARLY"
         numeric price_idr
-        jsonb features
+        numeric price_yearly_idr
+        numeric extra_outlet_price_idr
+        jsonb features "benefit di kartu harga — teks pemasaran"
+        int product_limit "-1 = tanpa batas"
+        int max_outlets
+        int ai_quota_monthly
+        varchar dashboard_access_level "BASIC / FULL / ADVANCED"
+        text_array module_access "modul yang DIBUKA paket ini"
+        varchar updated_by "admin yang terakhir mengubah"
         boolean is_active
+    }
+    plan_change_log {
+        uuid id PK
+        varchar plan_id "TIDAK ada FK — catatan keuangan bertahan"
+        varchar changed_by
+        varchar change_kind "CREATE / UPDATE / ACTIVATE / DEACTIVATE"
+        jsonb before_json
+        jsonb after_json
     }
     subscriptions {
         varchar id PK
@@ -190,6 +206,18 @@ erDiagram
         jsonb payload
     }
 ```
+
+**Entitlement ada di `plans`, bukan tersebar di kode.** `product_limit`,
+`max_outlets`, `ai_quota_monthly`, `dashboard_access_level`, dan `module_access`
+adalah yang benar-benar menegakkan batas di aplikasi kasir. `features` di
+sebelahnya hanya kalimat pemasaran untuk kartu harga — keduanya sengaja
+dipisah, karena mengubah teks promosi tidak boleh diam-diam mengubah apa yang
+merchant benar-benar dapat.
+
+`plan_change_log` menyimpan nilai sebelum dan sesudah. `internal_access_log`
+menjawab "siapa membuka halaman paket"; enam bulan lagi pertanyaan yang benar
+adalah "kenapa merchant ini ditagih 99rb padahal daftarnya 149rb", dan hanya
+tabel ini yang bisa menjawabnya.
 
 `webhook_logs` sengaja berdiri sendiri. `event_id UNIQUE` adalah yang mencegah
 payment gateway men-*deliver* event yang sama dua kali dan meng-upgrade paket
@@ -436,6 +464,25 @@ di-snapshot ke baris transaksi: itu satu-satunya hal yang memang harus hilang.
 **Analisis RFM sekarang bisa dijalankan.** `contract.customer_rfm` menyajikan
 recency, frequency, dan monetary per member — lewat view kontrak, bukan dengan
 memberi ai-service dan backoffice-service akses ke skema `pos`.
+
+### Sudah (0014 & 0015)
+
+**Paket punya entitlement, bukan cuma harga.** `billing.plans` kini menyimpan
+`product_limit`, `max_outlets`, `ai_quota_monthly`, `dashboard_access_level`,
+dan `module_access` — dengan CHECK constraint untuk masing-masing, termasuk
+`module_access <@ ARRAY[...]` yang menolak nama modul salah ketik. Sebelumnya
+angka-angka itu tidak punya kolom sama sekali, jadi tidak ada yang bisa ditanya
+"paket ini sebenarnya dapat apa" — dan karena itu tidak ada yang menegakkannya.
+
+`contract.plan_catalog` menyajikannya lintas service; `billing.plan_change_log`
+menyimpan nilai sebelum dan sesudah setiap perubahan harga, karena
+`internal_access_log` hanya mencatat siapa membuka apa, bukan berapa jadi berapa.
+
+**Konsol internal punya autentikasi.** `internal_users` mendapat
+`password_hash` (scrypt, tanpa dependensi baru), penguncian sementara setelah
+lima percobaan gagal, dan `last_login_at`. Password `NULL` berarti akun belum
+bisa dipakai login sama sekali — keadaan awal yang benar, karena tidak ada
+password bawaan di mana pun.
 
 ### Sudah (0013)
 

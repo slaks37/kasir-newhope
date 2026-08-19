@@ -65,6 +65,23 @@ import {
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
 import { applyPurchase } from '../lib/loyalty';
+import {
+  ENTITLEMENT_DARURAT,
+  bolehPakaiModul,
+  bolehTambahOutlet,
+  bolehTambahProduk,
+  labelBatas,
+  type PlanEntitlements,
+} from '../lib/plans/entitlements';
+
+/**
+ * Hasil penyimpanan yang BISA DITOLAK oleh batas paket.
+ *
+ * Sebelumnya fungsi-fungsi ini mengembalikan void, jadi tidak punya cara
+ * memberi tahu bahwa batas paket sudah terlampaui — dan itulah sebabnya
+ * "maksimal 30 produk" hanya pernah menjadi kalimat di kartu harga.
+ */
+export type HasilSimpan = { ok: true } | { ok: false; alasan: string };
 
 interface POSContextType {
   /**
@@ -99,7 +116,7 @@ interface POSContextType {
   branches: StoreBranch[];
   activeBranch?: StoreBranch;
   setActiveBranchId: (branchId: string) => void;
-  saveBranch: (branch: StoreBranch) => void;
+  saveBranch: (branch: StoreBranch) => HasilSimpan;
   deleteBranch: (branchId: string) => void;
 
   // Staff & Service Assignment & Attendance (Clock In / Out)
@@ -143,6 +160,9 @@ interface POSContextType {
   saveUser: (user: User) => void;
   deleteUser: (userId: string) => void;
   hasPermission: (feature: PermissionFeature) => boolean;
+  /** Isi paket langganan yang sedang berlaku. Menentukan batas dan modul terbuka. */
+  entitlements: PlanEntitlements;
+  planName: string | null;
   verifyPin: (pin: string, requiredRoles?: UserRole[]) => { success: boolean; user?: User; message?: string };
   
   cart: CartItem[];
@@ -195,7 +215,7 @@ interface POSContextType {
   sendLaundryWaNotification: (order: Order) => string;
   
   // Inventory & Catalog CRUD
-  saveProduct: (product: Product) => void;
+  saveProduct: (product: Product) => HasilSimpan;
   deleteProduct: (productId: string) => void;
   saveCategory: (category: Category) => void;
   adjustStock: (productId: string, quantityChange: number, type: 'IN' | 'OUT' | 'ADJUSTMENT', reason: string) => void;
@@ -396,6 +416,52 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     getSyncStatus(makeBusinessId(currentUser.id, activeSector))
   );
+
+  /* ------------------------------------------------------------------------ */
+  /* ENTITLEMENT PAKET                                                         */
+  /* ------------------------------------------------------------------------ */
+  //
+  // Diambil dari langganan yang berlaku, dan itulah yang menegakkan batas
+  // produk, batas outlet, serta modul apa yang terbuka. Mengubahnya di panel
+  // admin berlaku di sini pada pemuatan berikutnya.
+  //
+  // Selama belum terbaca, yang dipakai ENTITLEMENT_DARURAT: cukup untuk tetap
+  // berjualan, tapi tidak membuka fitur berbayar. Gangguan jaringan di pihak
+  // kami tidak boleh menghentikan penjualan merchant, dan juga tidak boleh
+  // membagikan paket termahal secara cuma-cuma.
+
+  const [entitlements, setEntitlements] = useState<PlanEntitlements>(ENTITLEMENT_DARURAT);
+  const [planName, setPlanName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let aktif = true;
+    const businessId = makeBusinessId(currentUser.id, activeSector);
+
+    fetch(`/api/v1/subscription/status?tenantId=${encodeURIComponent(businessId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!aktif || !d?.plan) return;
+        setEntitlements({
+          productLimit: Number(d.plan.productLimit ?? ENTITLEMENT_DARURAT.productLimit),
+          maxOutlets: Number(d.plan.maxOutlets ?? ENTITLEMENT_DARURAT.maxOutlets),
+          aiQuotaMonthly: Number(d.plan.aiQuotaMonthly ?? 0),
+          dashboardAccessLevel: d.plan.dashboardAccessLevel ?? 'BASIC',
+          moduleAccess: Array.isArray(d.plan.moduleAccess)
+            ? d.plan.moduleAccess
+            : ENTITLEMENT_DARURAT.moduleAccess,
+        });
+        setPlanName(d.plan.name ?? null);
+      })
+      .catch(() => {
+        // Sengaja diam: entitlement darurat sudah terpasang, dan memunculkan
+        // galat jaringan di layar kasir tidak membantu siapa pun yang sedang
+        // melayani antrian.
+      });
+
+    return () => {
+      aktif = false;
+    };
+  }, [currentUser.id, activeSector]);
 
   /**
    * Menjalankan pengiriman lalu menyegarkan status di layar.
@@ -690,7 +756,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSettings((prev) => ({ ...prev, activeBranchId: branchId }));
   };
 
-  const saveBranch = (branchToSave: StoreBranch) => {
+  const saveBranch = (branchToSave: StoreBranch): HasilSimpan => {
+    const cabangSekarang = settings.branches || INITIAL_BRANCHES;
+    const sudahAda = cabangSekarang.some((b) => b.id === branchToSave.id);
+
+    if (!sudahAda && !bolehTambahOutlet(entitlements, cabangSekarang.length)) {
+      return {
+        ok: false,
+        alasan:
+          `Paket ${planName ?? 'Anda'} mencakup ${entitlements.maxOutlets} outlet ` +
+          `dan semuanya sudah terpakai. Tingkatkan paket untuk menambah cabang.`,
+      };
+    }
+
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
       const idx = existing.findIndex((b) => b.id === branchToSave.id);
@@ -704,6 +782,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { ...prev, branches: updated };
     });
     if (soundEnabled) playPOSSound('click');
+    return { ok: true };
   };
 
   const deleteBranch = (branchId: string) => {
@@ -932,9 +1011,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setUsers((prev) => prev.filter((u) => u.id !== userId));
   };
 
+  /**
+   * Akses efektif = izin PERAN dikali entitlement PAKET.
+   *
+   * Keduanya menjawab pertanyaan berbeda dan keduanya harus lolos: peran
+   * menjawab "apakah orang ini boleh", paket menjawab "apakah toko ini
+   * membelinya". Seorang ADMIN di paket Free tetap tidak melihat Laporan —
+   * bukan karena tidak dipercaya, melainkan karena tokonya belum berlangganan.
+   */
   const hasPermission = (feature: PermissionFeature): boolean => {
-    const allowed = ROLE_PERMISSIONS[currentUser.role] || [];
-    return allowed.includes(feature);
+    const izinPeran = ROLE_PERMISSIONS[currentUser.role] || [];
+    return izinPeran.includes(feature) && bolehPakaiModul(entitlements, feature);
   };
 
   const verifyPin = (pinInput: string, requiredRoles?: UserRole[]) => {
@@ -1454,7 +1541,22 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Save / Edit Product
-  const saveProduct = (product: Product) => {
+  const saveProduct = (product: Product): HasilSimpan => {
+    // Menyunting produk yang sudah ada TIDAK pernah ditolak. Kalau batasnya
+    // diturunkan admin sementara merchant sudah melewatinya, mereka tetap harus
+    // bisa memperbaiki harga dan stok barang yang terlanjur ada — yang ditutup
+    // hanya penambahan baru.
+    const sudahAda = products.some((p) => p.id === product.id);
+
+    if (!sudahAda && !bolehTambahProduk(entitlements, products.length)) {
+      return {
+        ok: false,
+        alasan:
+          `Paket ${planName ?? 'Anda'} dibatasi ${labelBatas(entitlements.productLimit)} produk per outlet ` +
+          `dan saat ini sudah ada ${products.length}. Tingkatkan paket untuk menambah produk baru.`,
+      };
+    }
+
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === product.id);
       if (idx > -1) {
@@ -1464,6 +1566,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       return [product, ...prev];
     });
+    return { ok: true };
   };
 
   const deleteProduct = (productId: string) => {
@@ -1740,6 +1843,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveUser,
         deleteUser,
         hasPermission,
+        entitlements,
+        planName,
         verifyPin,
         cart,
         selectedCategory,
