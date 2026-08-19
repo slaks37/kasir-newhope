@@ -7,9 +7,11 @@ let pool: pg.Pool | null = null;
 
 function getPool() {
   if (!pool) {
+    const url = process.env.DATABASE_URL || '';
+    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      connectionString: url,
+      ssl: lokal ? undefined : { rejectUnauthorized: false },
       max: parseInt(process.env.PGPOOL_MAX || '5', 10),
     });
   }
@@ -61,6 +63,80 @@ async function callDeepSeek(system: string, user: string): Promise<string> {
   return data.choices?.[0]?.message?.content || 'Model tidak mengembalikan jawaban.';
 }
 
+interface Dompet {
+  balance: number;
+  monthlyGrant: number;
+  usedThisMonth: number;
+}
+
+/** Awal bulan berikutnya, WIB — sama seperti services/ai/wallet.ts. */
+function periodeBerikutnya(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+}
+
+/**
+ * Dompet kredit merchant, dibuat bila belum ada dan disegarkan bila periodenya
+ * lewat. Salinan perilaku services/ai/wallet.ts, dengan aturan yang sama:
+ * jatah mengikuti paket, naik paket berlaku seketika, turun paket tidak
+ * menarik saldo berjalan.
+ *
+ * Sebelumnya berkas ini tidak punya dompet sama sekali — ia menjawab dengan
+ * `balance: 30` yang ditulis langsung di kode dan TIDAK PERNAH memotong apa
+ * pun. Di produksi Vercel itu berarti kuota AI tidak terbatas untuk semua
+ * merchant, berapa pun paketnya, dan setiap panggilan LLM tetap ditagihkan
+ * kepada kami.
+ */
+async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null> {
+  const kuota = await db.query(
+    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+    [tenantId]
+  );
+  const jatah = Number(kuota.rows[0]?.ai_quota_effective ?? 0);
+
+  try {
+    const dibuat = await db.query(
+      `INSERT INTO ai.merchant_ai_credits
+         (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
+       VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
+       ON CONFLICT (merchant_id) DO NOTHING
+       RETURNING balance, monthly_grant, used_this_month`,
+      [tenantId, jatah, periodeBerikutnya()]
+    );
+    if (dibuat.rows.length) {
+      const r = dibuat.rows[0];
+      return { balance: r.balance, monthlyGrant: r.monthly_grant, usedThisMonth: r.used_this_month };
+    }
+
+    const { rows } = await db.query(
+      `UPDATE ai.merchant_ai_credits
+          SET balance         = CASE
+                                  WHEN period_reset_at <= CURRENT_TIMESTAMP THEN $3
+                                  WHEN $3 > monthly_grant THEN GREATEST(balance, $3)
+                                  ELSE balance
+                                END,
+              used_this_month = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
+                                     THEN 0 ELSE used_this_month END,
+              period_reset_at = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
+                                     THEN $2::timestamptz ELSE period_reset_at END,
+              monthly_grant   = $3,
+              updated_at      = CURRENT_TIMESTAMP
+        WHERE merchant_id = $1
+        RETURNING balance, monthly_grant, used_this_month`,
+      [tenantId, periodeBerikutnya(), jatah]
+    );
+    if (!rows.length) return null;
+    const r = rows[0];
+    return { balance: r.balance, monthlyGrant: r.monthly_grant, usedThisMonth: r.used_this_month };
+  } catch (err: any) {
+    // FK ke tenants: merchant belum pernah tersinkronisasi. Bukan galat —
+    // hanya belum ada apa pun untuk dibebani.
+    if (err?.code === '23503') return null;
+    console.error('[query] gagal menyiapkan dompet kredit:', err?.message);
+    return null;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
@@ -80,19 +156,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // and that is the one answer a broken query must never be able to give.
   let dataSource: 'DATABASE' | 'UNAVAILABLE' = 'UNAVAILABLE';
 
+  // Diisi saat merchant berhasil dikenali. Keduanya dipakai di luar blok
+  // pengambilan metrik, jadi hidup di lingkup handler.
+  let tenantId: string | null = null;
+  let dompet: Dompet | null = null;
+
   /** Helper: build a proper AssistantAnswer-shaped response */
   const answer = (
     markdown: string,
     source: string,
     title: string,
     intent = 'UNKNOWN',
-    costCredits = 0
+    costCredits = 0,
+    extra: Record<string, unknown> = {}
   ) =>
     res.status(200).json({
       ok: true,
       answer: { markdown, source, title, intent, costCredits, chips: [] },
-      credits: { balance: 30, monthlyGrant: 30, usedThisMonth: 0 },
+      // Saldo sungguhan. Sebelumnya di sini ada `{ balance: 30, monthlyGrant: 30 }`
+      // yang ditulis langsung di kode: layar merchant selalu menampilkan 30
+      // kredit tersisa, berapa pun paketnya dan berapa pun yang sudah dipakai.
+      credits: dompet ?? { balance: 0, monthlyGrant: 0, usedThisMonth: 0 },
       dataSource,
+      ...extra,
     });
 
   try {
@@ -121,7 +207,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Not an error: a merchant that has never synced simply has no rows yet.
         console.warn(`[query] merchant belum tersinkronisasi: ${merchantId}`);
       } else {
-        const tenantId = tenant.rows[0].merchant_id;
+        tenantId = tenant.rows[0].merchant_id;
 
         const stats = await db.query(
           `SELECT COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0)::numeric AS total
@@ -170,6 +256,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // shop, and that is how the wrong column name survived unnoticed.
       console.error('[query] gagal membaca metrik toko:', dbErr?.message);
     }
+
+    // Dompet disiapkan SESUDAH merchant dikenali dan SEBELUM jawaban apa pun
+    // dikirim, supaya saldo yang ditampilkan di layar selalu yang terkini —
+    // termasuk pada jawaban gratis, yang juga menampilkan sisa kredit.
+    if (tenantId) dompet = await ambilDompet(db, tenantId);
 
     const fmtRp = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
     const dataCtx =
@@ -236,7 +327,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return answer(markdown, 'RULE_ENGINE', matched.title, matched.intent, 0);
     }
 
-    // --- LLM path (berbayar) ---
+    /* --- Jalur LLM: BERBAYAR ------------------------------------------- */
+    //
+    // Semua di atas gratis dan tanpa batas — dijawab dari data toko sendiri,
+    // tanpa memanggil model. Yang dibatasi kuota hanyalah pertanyaan terbuka
+    // yang benar-benar menimbulkan biaya LLM.
+
+    if (!dompet) {
+      // Merchant belum tersinkronisasi: tidak ada dompet untuk dibebani, dan
+      // memberi panggilan LLM gratis kepada identitas yang tidak terikat
+      // merchant mana pun berarti siapa pun bisa mengarang merchantId baru
+      // untuk mendapat panggilan tanpa batas.
+      return answer(
+        '**Analisa AI belum bisa dipakai.**\n\nData toko Anda belum selesai tersinkronisasi ke server, jadi jatah AI belum bisa dihitung. Pertanyaan seputar omzet, stok, dan pelanggan tetap gratis lewat tombol cepat di atas.',
+        'PAYWALL', 'Menunggu sinkronisasi', 'UNKNOWN', 0
+      );
+    }
+
+    if (dompet.balance <= 0) {
+      const tanpaJatah = dompet.monthlyGrant === 0;
+      return answer(
+        tanpaJatah
+          ? '**Pertanyaan ini butuh analisa AI generatif**, dan paket langganan Anda belum mencakupnya.\n\nPertanyaan seputar omzet, stok, dan pelanggan tetap **gratis tanpa batas** lewat tombol cepat di atas.'
+          : '**Pertanyaan ini butuh analisa AI generatif.**\n\nJatah AI bulan ini sudah habis. Pertanyaan seputar omzet, stok, dan pelanggan tetap **gratis tanpa batas** lewat tombol cepat di atas.',
+        'PAYWALL',
+        tanpaJatah ? 'Paket Anda belum termasuk AI' : 'Jatah AI bulan ini habis',
+        'UNKNOWN',
+        0,
+        {
+          paywall: {
+            title: tanpaJatah ? 'Paket Anda belum termasuk AI' : 'Jatah AI bulan ini habis',
+            message: tanpaJatah
+              ? 'Paket Anda belum mendapat jatah AI bulanan. Tingkatkan paket, atau beli kredit tambahan sekali pakai.'
+              : `Sisa kredit Anda 0 dari ${dompet.monthlyGrant} bulan ini.`,
+            ctaLabel: 'Beli Kredit Tambahan',
+          },
+        }
+      );
+    }
+
+    // Dipotong SEBELUM model dipanggil, lewat fungsi atomik yang sama dengan
+    // ai-service. Memotong sesudahnya berarti dua request bersamaan pada kredit
+    // terakhir sama-sama lolos — dan panggilan keduanya tetap ditagihkan.
+    const terpakai = await db.query(`SELECT consume_ai_credit($1::uuid) AS ok`, [tenantId]);
+    if (terpakai.rows[0]?.ok !== true) {
+      return answer(
+        '**Jatah AI bulan ini sudah habis.**\n\nPertanyaan seputar omzet, stok, dan pelanggan tetap gratis lewat tombol cepat di atas.',
+        'PAYWALL', 'Jatah AI bulan ini habis', 'UNKNOWN', 0
+      );
+    }
+    dompet = { ...dompet, balance: dompet.balance - 1, usedThisMonth: dompet.usedThisMonth + 1 };
+
     const systemPrompt =
       `Anda adalah New Hope Copilot, asisten bisnis untuk pemilik UMKM Indonesia.\n` +
       `Toko: ${storeName} | Sektor: ${businessSector}\n` +
@@ -250,8 +391,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return answer(llmText, 'LLM', 'Analisa AI Generatif', 'UNKNOWN', 1);
     } catch (llmErr: any) {
       console.error('[query] LLM error:', llmErr?.message);
+
+      // Kredit dikembalikan. Merchant tidak boleh membayar untuk panggilan yang
+      // tidak pernah menghasilkan jawaban — itu kegagalan kami, bukan pemakaian.
+      try {
+        await db.query(`SELECT refund_ai_credit($1::uuid)`, [tenantId]);
+        dompet = { ...dompet, balance: dompet.balance + 1, usedThisMonth: Math.max(0, dompet.usedThisMonth - 1) };
+      } catch (refundErr: any) {
+        console.error('[query] gagal mengembalikan kredit:', refundErr?.message);
+      }
+
       return answer(
-        `**Gagal menghubungi layanan AI.** Silakan coba lagi.\n\n${dataCtx}`,
+        `**Gagal menghubungi layanan AI.** Kredit Anda tidak terpotong. Silakan coba lagi.\n\n${dataCtx}`,
         'ERROR',
         'Gagal',
         'UNKNOWN',

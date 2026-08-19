@@ -22,7 +22,35 @@ import type { Db } from '../shared/db';
 import { resolveTenant } from '../shared/identity';
 import type { AiCreditWallet } from '../../src/lib/assistant/types';
 
-const MONTHLY_GRANT = 30;
+/**
+ * Jatah bulanan bagi merchant yang paketnya tidak terbaca.
+ *
+ * NOL, bukan angka ramah. Sebelumnya file ini memakai konstanta 30 untuk semua
+ * orang: paket Free yang dijual dengan janji 3× sebulan mendapat 30, dan paket
+ * Pro yang dijual 90× juga mendapat 30 — merchant yang membayar Rp 299rb
+ * menerima kuota yang persis sama dengan yang tidak membayar sama sekali.
+ *
+ * Jalur deterministik (stok, omzet, pelanggan) tetap gratis tanpa batas, jadi
+ * nol di sini tidak mematikan apa pun yang merchant sudah punya — ia hanya
+ * menutup jalur LLM berbayar sampai langganannya benar-benar terbaca.
+ */
+const JATAH_TANPA_PAKET = 0;
+
+/**
+ * Kuota AI menurut paket yang sedang berlaku.
+ *
+ * Dibaca lewat view kontrak, bukan dengan menempuh subscriptions -> plans
+ * sendiri: `svc_ai` sengaja tidak punya hak baca ke skema `billing`, dan batas
+ * itu lebih berharga daripada satu join yang dihemat.
+ */
+async function kuotaPaket(db: Db, tenantId: string): Promise<number> {
+  const { rows } = await db.query(
+    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+    [tenantId]
+  );
+  const n = Number(rows[0]?.ai_quota_effective);
+  return Number.isFinite(n) && n >= 0 ? n : JATAH_TANPA_PAKET;
+}
 
 /**
  * Identitas merchant -> UUID tenant, lewat penerjemah bersama.
@@ -95,30 +123,53 @@ export async function ambilDompet(db: Db, merchantIdMentah: string, businessId?:
 }
 
 async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet> {
+  const jatah = await kuotaPaket(db, merchantId);
+
   const dibuat = await db.query(
     `INSERT INTO ai.merchant_ai_credits
        (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
      VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
      ON CONFLICT (merchant_id) DO NOTHING
      RETURNING *`,
-    [merchantId, MONTHLY_GRANT, periodeBerikutnya()]
+    [merchantId, jatah, periodeBerikutnya()]
   );
   if (dibuat.rows.length) return keWallet(dibuat.rows[0]);
 
   // Pembaruan periode dilakukan di SQL, bukan di aplikasi: dua replika yang
   // sama-sama mendeteksi periode lewat akan sama-sama menulis, dan yang kalah
   // menghapus pemakaian yang baru saja dicatat yang menang.
+  //
+  // Perubahan paket ikut ditangani di pernyataan yang sama, dalam tiga keadaan:
+  //
+  //   1. Periode habis      -> saldo diisi ulang sebesar jatah paket TERKINI.
+  //   2. Naik paket         -> saldo DINAIKKAN ke jatah baru, berlaku saat itu
+  //                            juga. Merchant yang membayar untuk 90 panggilan
+  //                            tidak boleh menunggu awal bulan depan.
+  //   3. Turun paket        -> saldo berjalan dibiarkan; hanya jatahnya yang
+  //                            turun, dan itu berlaku pada pengisian berikutnya.
+  //                            Saldo bisa berisi kredit hasil pembelian add-on,
+  //                            dan menariknya kembali berarti mengambil sesuatu
+  //                            yang sudah dibayar.
+  //
+  // GREATEST, bukan penambahan selisih. Menambahkan (jatah_baru - jatah_lama)
+  // membuat naik-turun-naik paket menghasilkan kredit baru setiap putaran;
+  // menaikkan SAMPAI jatah baru tidak bisa diulang untuk keuntungan.
   const { rows } = await db.query(
     `UPDATE ai.merchant_ai_credits
-        SET balance         = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN monthly_grant ELSE balance END,
+        SET balance         = CASE
+                                WHEN period_reset_at <= CURRENT_TIMESTAMP THEN $3
+                                WHEN $3 > monthly_grant THEN GREATEST(balance, $3)
+                                ELSE balance
+                              END,
             used_this_month = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
                                    THEN 0 ELSE used_this_month END,
             period_reset_at = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN $2::timestamptz ELSE period_reset_at END
+                                   THEN $2::timestamptz ELSE period_reset_at END,
+            monthly_grant   = $3,
+            updated_at      = CURRENT_TIMESTAMP
       WHERE merchant_id = $1
       RETURNING *`,
-    [merchantId, periodeBerikutnya()]
+    [merchantId, periodeBerikutnya(), jatah]
   );
   return keWallet(rows[0]);
 }
@@ -148,12 +199,16 @@ export async function tambahKredit(
   businessId?: string
 ): Promise<AiCreditWallet> {
   const awal = await ambilDompet(db, merchantIdMentah, businessId);
-  // monthlyGrant 0 hanya terjadi pada dompet "belum sinkron" — tidak ada baris
-  // untuk di-UPDATE, dan menambah kredit ke identitas yang tidak terikat
-  // merchant mana pun tidak berarti apa-apa.
-  if (awal.monthlyGrant === 0) return awal;
-
   const merchantId = await keUuid(db, merchantIdMentah, businessId);
+
+  // Keberadaan BARISNYA yang menentukan, bukan besar jatahnya.
+  //
+  // Dulu di sini ada penjagaan `monthlyGrant === 0` untuk mengenali dompet
+  // "belum sinkron". Itu berhenti benar begitu jatah mengikuti paket: paket
+  // gratis dan langganan kedaluwarsa sama-sama berjatah 0, dan keduanya tetap
+  // berhak membeli kredit tambahan — justru merekalah yang paling mungkin
+  // membelinya. UPDATE yang tidak mengenai baris apa pun sudah cukup menjadi
+  // jawaban untuk identitas yang tidak terikat merchant mana pun.
   const { rows } = await db.query(
     `UPDATE ai.merchant_ai_credits
         SET balance = balance + $2, updated_at = CURRENT_TIMESTAMP

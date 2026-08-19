@@ -199,20 +199,29 @@ startService({
       }
   
       if (wallet.balance <= 0) {
+        // "Kuota habis" dan "paket Anda memang tidak termasuk AI" menuntut
+        // tindakan yang berbeda — yang satu menunggu awal bulan, yang satu
+        // harus naik paket. Menyamakan pesannya membuat merchant menunggu
+        // sesuatu yang tidak akan pernah datang.
+        const tanpaJatah = wallet.monthlyGrant === 0;
+
         return respond(
           {
             source: 'PAYWALL',
             intent: parsed.intent,
-            title: 'Butuh 1 AI Credit',
-            markdown:
-              '**Pertanyaan ini butuh analisa AI generatif.**\n\nJatah AI Credit bulan ini sudah habis. Pertanyaan seputar stok, omset, pelanggan, denah, dan staf tetap **gratis tanpa batas** lewat tombol cepat di atas.',
+            title: tanpaJatah ? 'Paket Anda belum termasuk AI' : 'Butuh 1 AI Credit',
+            markdown: tanpaJatah
+              ? '**Pertanyaan ini butuh analisa AI generatif**, dan paket langganan Anda belum mencakupnya.\n\nPertanyaan seputar stok, omset, pelanggan, denah, dan staf tetap **gratis tanpa batas** lewat tombol cepat di atas.'
+              : '**Pertanyaan ini butuh analisa AI generatif.**\n\nJatah AI Credit bulan ini sudah habis. Pertanyaan seputar stok, omset, pelanggan, denah, dan staf tetap **gratis tanpa batas** lewat tombol cepat di atas.',
             chips: chipSuggestions(),
             costCredits: 0,
           },
           {
             paywall: {
-              title: 'Butuh 1 AI Credit',
-              message: `Analisa bebas (strategi, ide promo, pertanyaan terbuka) memakai 1 AI Credit per pertanyaan. Sisa credit Anda 0 dari ${wallet.monthlyGrant} bulan ini.`,
+              title: tanpaJatah ? 'Paket Anda belum termasuk AI' : 'Butuh 1 AI Credit',
+              message: tanpaJatah
+                ? 'Analisa bebas (strategi, ide promo, pertanyaan terbuka) memakai 1 AI Credit per pertanyaan. Paket Anda belum mendapat jatah bulanan — tingkatkan paket, atau beli kredit tambahan sekali pakai.'
+                : `Analisa bebas (strategi, ide promo, pertanyaan terbuka) memakai 1 AI Credit per pertanyaan. Sisa credit Anda 0 dari ${wallet.monthlyGrant} bulan ini.`,
               ctaLabel: 'Beli Paket Add-on',
               addOnPriceIdr: ADDON_PRICE_IDR,
               addOnCredits: ADDON_CREDITS,
