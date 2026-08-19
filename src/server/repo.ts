@@ -416,6 +416,50 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
 }
 
+/* -------------------------------------------------------------------------- */
+/* BAHAN BAKU & RESEP                                                          */
+/* -------------------------------------------------------------------------- */
+
+export async function rawMaterials(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const { rows } = await db.query(
+    `SELECT * FROM contract.raw_materials
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR merchant_name ILIKE '%' || $2 || '%')
+      ORDER BY menipis DESC, nilai_persediaan DESC
+      LIMIT $3 OFFSET $4`,
+    [c.sector, c.search, c.limit, c.offset]
+  );
+  const total = await db.query(
+    `SELECT COUNT(*)::int AS n FROM contract.raw_materials
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR merchant_name ILIKE '%' || $2 || '%')`,
+    [c.sector, c.search]
+  );
+  return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
+}
+
+export async function productRecipes(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const { rows } = await db.query(
+    `SELECT * FROM contract.product_recipes
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR product_name ILIKE '%' || $2 || '%'
+             OR ingredient_name ILIKE '%' || $2 || '%')
+      ORDER BY product_name, ingredient_name
+      LIMIT $3 OFFSET $4`,
+    [c.sector, c.search, c.limit, c.offset]
+  );
+  const total = await db.query(
+    `SELECT COUNT(*)::int AS n FROM contract.product_recipes
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR product_name ILIKE '%' || $2 || '%'
+             OR ingredient_name ILIKE '%' || $2 || '%')`,
+    [c.sector, c.search]
+  );
+  return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
+}
+
 export async function activityBreakdown(db: Db) {
   const { rows } = await db.query(
     `SELECT business_sector, app_module, event_type, severity,

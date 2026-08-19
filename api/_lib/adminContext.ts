@@ -17,6 +17,8 @@
 import pg from 'pg';
 import {
   hasInternalCapability,
+  requiresAudit,
+  requiresJustification,
   type InternalCapability,
   type InternalRole,
 } from '../../src/lib/rbac/environments';
@@ -168,28 +170,104 @@ export async function wajibAdmin(
   return who;
 }
 
+export interface JejakTambahan {
+  /** Merchant yang dibidik, kalau permintaannya membidik satu merchant. */
+  merchantId?: string | null;
+  /** Alasan yang diketik staf SUPPORT. Inilah isi yang membuat auditnya berguna. */
+  justification?: string | null;
+}
+
 export async function catatAkses(
   who: AdminIdentity,
   action: string,
   resource: string,
-  req?: any
+  req?: any,
+  jejak: JejakTambahan = {}
 ): Promise<void> {
   try {
     await getPool().query(
       `INSERT INTO internal.internal_access_log
-         (id, internal_user_id, internal_role, action, resource, ip_address)
-       VALUES (uuidv7(), $1::uuid, $2::internal_role_enum, $3, $4, $5)`,
+         (id, internal_user_id, internal_role, merchant_id, action, resource,
+          justification, ip_address)
+       VALUES (uuidv7(), $1::uuid, $2::internal_role_enum, $3::uuid, $4, $5, $6, $7)`,
       [
         who.id,
         who.role,
+        // Hanya UUID yang diterima kolomnya; id ngawur dicatat sebagai NULL
+        // daripada menjatuhkan seluruh penulisan audit.
+        jejak.merchantId && UUID_RE.test(jejak.merchantId) ? jejak.merchantId : null,
         action,
         String(resource).slice(0, 200),
+        jejak.justification ? String(jejak.justification).slice(0, 500) : null,
         req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || null,
       ]
     );
   } catch (err: any) {
     // Audit yang gagal tidak menjatuhkan request — tapi juga tidak hilang diam.
     console.error('[audit] gagal mencatat akses internal:', err?.message);
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Satu pembungkus untuk seluruh endpoint BACA panel admin.
+ *
+ * Menyatukan enam hal yang harus terjadi pada setiap permintaan dan yang mudah
+ * terlewat satu-dua kalau ditulis ulang di sepuluh berkas: metode, token,
+ * capability, kewajiban alasan bagi role SUPPORT, jejak audit, dan penanganan
+ * galat yang tidak membocorkan nama tabel ke klien.
+ */
+export async function layaniBaca(
+  req: any,
+  res: any,
+  capability: InternalCapability,
+  jalankan: (db: Db, who: AdminIdentity) => Promise<unknown>
+): Promise<void> {
+  if (!metodeDilayani(req, res, ['GET'])) return;
+
+  const who = await wajibAdmin(req, res, capability);
+  if (!who) return;
+
+  // Merchant yang sedang dibidik, kalau ada. Menentukan dua hal: apakah
+  // alasannya wajib, dan apakah aksesnya dicatat.
+  const merchantId =
+    (typeof req.query?.merchantId === 'string' && req.query.merchantId) || null;
+  const alasan =
+    (req.headers?.['x-justification'] as string) ||
+    (typeof req.query?.justification === 'string' ? req.query.justification : '') ||
+    null;
+
+  if (merchantId && requiresJustification(who.role, capability) && !alasan) {
+    await catatAkses(who, `BLOCKED_${capability}`, req.url || '', req, { merchantId });
+    return res.status(400).json({
+      ok: false,
+      error: 'JUSTIFICATION_REQUIRED',
+      detail: 'Role support wajib menyertakan alasan sebelum membaca data satu merchant.',
+    });
+  }
+
+  // Hanya pembacaan yang membidik SATU merchant yang dicatat. Menuntutnya untuk
+  // tampilan agregat hanya melatih staf mengetik "cek" di setiap kotak, yang
+  // justru merusak nilai auditnya.
+  if (requiresAudit(capability) && merchantId) {
+    await catatAkses(who, capability, req.url || '', req, { merchantId, justification: alasan });
+  }
+
+  try {
+    const hasil = await jalankan(poolSebagaiDb(), who);
+    return res.status(200).json({ ok: true, ...(hasil as object) });
+  } catch (err: any) {
+    // "Tidak ditemukan" adalah jawaban yang sah, bukan kerusakan. Menjawabnya
+    // 500 membuat merchant yang memang tidak ada terlihat seperti server rusak,
+    // dan menenggelamkannya di antara galat yang benar-benar perlu ditangani.
+    if (err?.notFound) {
+      return res.status(404).json({ ok: false, error: err.message || 'NOT_FOUND' });
+    }
+    // Pesan error database tidak pernah dikirim ke klien: isinya nama tabel,
+    // nama kolom, dan kadang potongan data.
+    console.error(`[admin] ${req.url}:`, err?.message);
+    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
   }
 }
 

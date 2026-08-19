@@ -270,7 +270,8 @@ export default function AdminApp() {
             <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
             <p className="text-xs leading-relaxed">
               <b>Halaman ini masih menampilkan data contoh</b>, belum isi database. Jangan dipakai
-              mengambil keputusan. Halaman <b>Paket &amp; Harga</b> sudah tersambung ke database sungguhan.
+              mengambil keputusan — manajemen user internal menuntut endpoint tulis tersendiri
+              yang belum dikerjakan. Halaman lain sudah membaca database.
             </p>
           </div>
         )}

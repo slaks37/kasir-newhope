@@ -34,10 +34,6 @@ import {
   SECTORS,
   SECTOR_LABEL,
   SECTOR_STYLE,
-  ALL_PRODUCTS_DATA,
-  RAW_MATERIALS_DATA,
-  BUNDLE_SETS_DATA,
-  PRODUCT_RECIPES_DATA,
   type Sector,
 } from '../api';
 import {
@@ -81,17 +77,67 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
     [sector, search]
   );
 
-  // Key Analytics Calculations
-  const allProds = ALL_PRODUCTS_DATA;
-  const topRevenueProduct = [...allProds].sort((a, b) => b.gross_revenue - a.gross_revenue)[0];
-  const mostSoldProduct = [...allProds].sort((a, b) => b.units_sold - a.units_sold)[0];
-  const mostExpensiveProduct = [...allProds].sort((a, b) => b.price - a.price)[0];
-  const averageStockRetail = Math.round(
-    allProds.filter((p) => p.stock < 999).reduce((s, p) => s + p.stock, 0) /
-      Math.max(allProds.filter((p) => p.stock < 999).length, 1)
+  // Katalog dipakai untuk kartu ringkasan di atas tab. Dibaca dari database
+  // lewat contract.catalog — sebelumnya dari array yang ditulis di dalam
+  // bundle, jadi angkanya sama untuk semua orang dan tidak pernah berubah.
+  const { data: catalogData } = useAsync(
+    () => api.catalog({ sector, search, limit: 200 }),
+    [sector, search]
   );
-  const totalCatalogCount = allProds.length;
-  const totalValuation = allProds.reduce((s, p) => s + p.stock * (p.cost_price || p.price * 0.5), 0);
+
+  const allProds: any[] = catalogData?.rows ?? [];
+  const rawRows: any[] = rawData?.rows ?? [];
+  const recipeRows: any[] = recipeData?.rows ?? [];
+  const bundleRows: any[] = bundleData?.rows ?? [];
+
+  const num = (v: unknown) => Number(v) || 0;
+
+  // contract.product_recipes memberi satu baris per pasangan produk-bahan.
+  // Pengelompokannya dilakukan di sini, bukan di SQL: bentuk tampilan tidak
+  // boleh dipaksakan ke dalam kontrak yang juga dibaca service lain.
+  const recipeGroups = Object.values(
+    recipeRows.reduce((acc: Record<string, any>, r: any) => {
+      const g = (acc[r.product_id] ??= {
+        id: r.product_id,
+        business_sector: r.business_sector,
+        merchant_name: r.merchant_name,
+        product_name: r.product_name,
+        price: num(r.product_price),
+        ingredients: [] as any[],
+        total_material_cost: 0,
+      });
+      g.ingredients.push({
+        name: r.ingredient_name,
+        qty: `${num(r.quantity_required)} ${r.ingredient_unit ?? ''}`.trim(),
+        cost: num(r.biaya_per_porsi),
+      });
+      g.total_material_cost += num(r.biaya_per_porsi);
+      return acc;
+    }, {})
+  ).map((g: any) => {
+    const gross_profit = g.price - g.total_material_cost;
+    return {
+      ...g,
+      gross_profit,
+      // Margin dari harga NOL akan menghasilkan Infinity dan tampil sebagai
+      // "Infinity%" di layar. Produk gratis memang bermargin nol.
+      margin_pct: g.price > 0 ? Math.round((gross_profit / g.price) * 1000) / 10 : 0,
+    };
+  });
+  const urut = (k: string) => [...allProds].sort((a, b) => num(b[k]) - num(a[k]))[0];
+
+  const topRevenueProduct = urut('gross_revenue');
+  const mostSoldProduct = urut('units_sold');
+  const mostExpensiveProduct = urut('price');
+  const berstok = allProds.filter((p) => num(p.stock) < 999);
+  const averageStockRetail = Math.round(
+    berstok.reduce((s, p) => s + num(p.stock), 0) / Math.max(berstok.length, 1)
+  );
+  const totalCatalogCount = catalogData?.total ?? allProds.length;
+  const totalValuation = allProds.reduce(
+    (s, p) => s + num(p.stock) * (num(p.cost_price) || num(p.price) * 0.5),
+    0
+  );
 
   return (
     <div className="space-y-6">
@@ -143,7 +189,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
             }`}
           >
             <Boxes className="w-4 h-4" />
-            <span>Bahan Baku &amp; Mentah ({RAW_MATERIALS_DATA.length})</span>
+            <span>Bahan Baku &amp; Mentah ({rawData?.total ?? 0})</span>
           </button>
 
           <button
@@ -155,7 +201,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>Bundle Set Promo ({BUNDLE_SETS_DATA.length})</span>
+            <span>Bundle Set Promo ({bundleRows.length})</span>
           </button>
 
           <button
@@ -167,7 +213,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
             }`}
           >
             <UtensilsCrossed className="w-4 h-4" />
-            <span>Resep &amp; Komposisi BOM ({PRODUCT_RECIPES_DATA.length})</span>
+            <span>Resep &amp; Komposisi BOM ({recipeGroups.length})</span>
           </button>
         </div>
       </div>
@@ -510,13 +556,25 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
       )}
 
       {/* 4. TAB BUNDLE SET PROMO KLIEN */}
-      {activeTab === 'BUNDLES' && (
+      {activeTab === 'BUNDLES' && bundleData?.belumTersedia && (
+        <Card title="Bundle Set Promo">
+          <div className="p-8 text-center space-y-2">
+            <p className="text-sm font-black text-slate-900">Belum tersinkronisasi ke server</p>
+            <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+              {bundleData.belumTersedia} Karena itu tidak ada yang bisa ditampilkan di sini —
+              lebih baik kosong daripada menampilkan contoh yang terlihat seperti data merchant.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {activeTab === 'BUNDLES' && !bundleData?.belumTersedia && (
         <Card
           title="Daftar Paket Promo &amp; Bundle Set Klien"
           subtitle="Paket bundling yang dijual oleh merchant untuk mendongkrak rata-rata nilai transaksi (AOV)"
         >
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
-            {BUNDLE_SETS_DATA.map((b) => (
+            {bundleRows.map((b: any) => (
               <div
                 key={b.id}
                 className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 hover:shadow-md transition-all relative overflow-hidden"
@@ -535,7 +593,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5">
                   <p className="text-[11px] font-black text-slate-700 uppercase">Item Penyusun Bundle:</p>
                   <ul className="text-xs space-y-1 text-slate-800 font-medium list-disc list-inside">
-                    {b.included_items.map((item, idx) => (
+                    {b.included_items.map((item: any, idx: number) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
@@ -571,7 +629,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
           subtitle="Rincian bahan mentah dan takaran yang digunakan merchant untuk memproduksi setiap menu atau paket jasa"
         >
           <div className="p-5 space-y-6">
-            {PRODUCT_RECIPES_DATA.map((r) => (
+            {recipeGroups.map((r: any) => (
               <div
                 key={r.id}
                 className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 hover:border-amber-300 transition-all"
@@ -614,7 +672,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
-                        {r.ingredients.map((ing, idx) => (
+                        {r.ingredients.map((ing: any, idx: number) => (
                           <tr key={idx}>
                             <td className="p-3 font-bold text-slate-900">{ing.name}</td>
                             <td className="p-3 text-right font-mono text-slate-700">{ing.qty}</td>

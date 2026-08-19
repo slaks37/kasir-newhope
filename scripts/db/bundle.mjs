@@ -34,6 +34,7 @@ const MIGRATIONS = [
   'migrations/0014_plan_entitlements.sql',
   'migrations/0015_admin_auth.sql',
   'migrations/0016_merchant_entitlements.sql',
+  'migrations/0017_stock_contract_views.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';
