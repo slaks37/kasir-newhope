@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { hitungTotal } from '../../lib/loyalty';
 import { PaymentMethod, Order } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import {
@@ -64,11 +65,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Totals Calculation
+  // Poin yang ditukar. Nol berarti member membawa poinnya pulang.
+  const [pointsToRedeem, setPointsToRedeem] = useState<number>(0);
+
+  // Totals Calculation — memakai fungsi yang sama dengan processPayment, supaya
+  // angka di layar ini dan angka yang tercatat di struk tidak bisa berbeda.
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
-  const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-  const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+  const { loyaltyDiscount, pointsUsed, taxTotal, serviceChargeTotal, grandTotal } = hitungTotal({
+    subtotal,
+    pointsToRedeem,
+    availablePoints: selectedCustomer?.points ?? 0,
+    loyaltyRedeemRate: settings.loyaltyRedeemRate,
+    taxRate: settings.taxRate,
+    serviceRate: settings.serviceRate,
+    enableTax: settings.enableTax,
+    enableService: settings.enableService,
+  });
+
+  // Poin maksimum yang masuk akal ditukar: dibatasi saldo member DAN nilai
+  // belanjanya, supaya tombol "tukar semua" tidak pernah menghasilkan kembalian
+  // dari poin.
+  const poinMaksimal = Math.min(
+    selectedCustomer?.points ?? 0,
+    settings.loyaltyRedeemRate > 0 ? Math.floor(subtotal / settings.loyaltyRedeemRate) : 0
+  );
 
   const cashReceivedNumber = Number(cashReceivedInput) || 0;
   const changeAmount = Math.max(0, cashReceivedNumber - grandTotal);
@@ -119,7 +139,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
         completionIndo,
         undefined,
         dropOffIndo,
-        completionIndo
+        completionIndo,
+        pointsUsed
       );
 
       setIsProcessing(false);
@@ -203,8 +224,77 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
               })}
             </div>
 
+            {/* Penukaran Poin Member */}
+            {selectedCustomer && selectedCustomer.points > 0 && (
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-emerald-900">Tukar Poin Member</span>
+                  <span className="text-[11px] font-bold text-emerald-800 font-mono">
+                    Saldo {selectedCustomer.points} poin
+                  </span>
+                </div>
+
+                {poinMaksimal === 0 ? (
+                  <p className="text-[11px] text-emerald-800/80 leading-relaxed">
+                    Nilai belanja belum cukup untuk menukar 1 poin
+                    ({formatRupiah(settings.loyaltyRedeemRate)} per poin).
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        max={poinMaksimal}
+                        value={pointsToRedeem || ''}
+                        placeholder="0"
+                        onChange={(e) =>
+                          setPointsToRedeem(
+                            Math.max(0, Math.min(poinMaksimal, Math.trunc(Number(e.target.value) || 0)))
+                          )
+                        }
+                        className="flex-1 px-3 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-bold font-mono text-emerald-950 outline-none focus:border-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPointsToRedeem(poinMaksimal)}
+                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-[11px] font-extrabold hover:bg-emerald-700"
+                      >
+                        Tukar Maks
+                      </button>
+                      {pointsToRedeem > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPointsToRedeem(0)}
+                          className="px-3 py-2 rounded-xl border border-emerald-300 text-emerald-800 text-[11px] font-extrabold hover:bg-emerald-100"
+                        >
+                          Batal
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-emerald-800/80">
+                      Maksimal {poinMaksimal} poin untuk transaksi ini &middot; 1 poin ={' '}
+                      {formatRupiah(settings.loyaltyRedeemRate)}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Total Summary Block */}
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+              {loyaltyDiscount > 0 && (
+                <div className="space-y-1 pb-2 border-b border-slate-200 text-xs font-mono">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Subtotal</span>
+                    <span>{formatRupiah(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-700 font-bold">
+                    <span>Potongan {pointsUsed} poin</span>
+                    <span>&minus; {formatRupiah(loyaltyDiscount)}</span>
+                  </div>
+                </div>
+              )}
               <span className="text-xs text-slate-500 block">Total Tagihan:</span>
               <span className="text-2xl font-extrabold text-amber-800 font-mono block">
                 {formatRupiah(grandTotal)}
@@ -212,6 +302,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
               {selectedCustomer && (
                 <div className="text-[11px] text-emerald-700 font-semibold pt-1 border-t border-slate-200">
                   + {Math.floor(grandTotal / settings.loyaltyEarnRate)} Poin Member ({selectedCustomer.name})
+                  {pointsUsed > 0 && (
+                    <span className="text-slate-500 font-medium">
+                      {' '}&middot; sisa poin setelah transaksi:{' '}
+                      {selectedCustomer.points - pointsUsed + Math.floor(grandTotal / settings.loyaltyEarnRate)}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

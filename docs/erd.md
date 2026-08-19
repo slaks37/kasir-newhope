@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**25 tabel dan 14 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
+**27 tabel dan 19 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -491,6 +491,21 @@ password bawaan di mana pun.
 dulu: setiap penulisan di repo mengisi keduanya dari satu parameter yang sama
 (`VALUES ($1, $1, ...)`), jadi batasan ini hanya menuliskan apa yang sudah benar.
 
+### Sudah (0016–0018)
+
+**Kuota AI mengikuti paket.** `contract.merchant_entitlements` menyajikan hak
+yang sedang berlaku per merchant dengan kedaluwarsa dihitung dari
+`current_period_end`; ai-service membacanya dari sana, bukan dari konstanta 30
+yang dulu sama untuk semua orang.
+
+**Bahan baku, resep, dan bundle punya punggung data.** `contract.raw_materials`,
+`contract.product_recipes`, dan `pos.bundles` + `pos.bundle_items` beserta
+`contract.bundles`. Ketiganya menghitung hal yang tidak boleh ditentukan
+masing-masing layar: status menipis, biaya per porsi, dan besar diskon paket.
+
+**Member yang belum pernah belanja ikut tersinkron.** Pelanggan dan bundle
+sekarang dibawa kiriman katalog, bukan menunggu transaksi pertama.
+
 ### Belum
 
 **Salah satu dari `merchant_id`/`tenant_id` tetap harus dibuang.** 0013 baru
@@ -500,13 +515,13 @@ tidak, buang `merchant_id`. Kalau ya, `merchants` harus jadi tabel tersendiri
 **sekarang**, sebelum ada data produksi; `business_id` (`userId_sector`) sudah
 menyiratkan arah itu.
 
-**Poin belum bisa ditukar.** `settings.loyaltyRedeemRate` dirender di layar
-member tapi tidak pernah dipakai menghitung apa pun — poin hanya bertambah.
-Tier pun belum memberi diskon atau akses apa pun, hanya warna badge.
+**Tier loyalitas belum memberi manfaat.** Poin sudah bisa ditukar jadi potongan
+sejak penukaran dipasang di layar bayar, tapi naik ke GOLD atau PLATINUM masih
+hanya mengubah warna badge — belum ada diskon atau akses yang mengikutinya.
 
-**Member yang belum pernah belanja belum tersinkron.** Baris `pos.customers`
-lahir dari transaksi pertama. Pendaftaran member yang belum pernah bertransaksi
-masih berhenti di localStorage sampai ada endpoint sinkronisasi tersendiri.
+**Penjualan per bundle tidak bisa dihitung.** Baris struk tidak mencatat paket
+asalnya, jadi "berapa paket terjual" belum punya jawaban. Menambah
+`bundle_id` di `transaction_items` akan menjawabnya.
 
 **Replikasi belum pernah diuji.** Konfigurasi di `docker-compose.analytics.yml`
 sudah ada, tapi belum pernah dinyalakan.

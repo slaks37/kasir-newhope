@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTenant } from '../../context/TenantContext';
 import { getDeviceId } from '../../utils/fingerprint';
 import { SaaSPlan, SaaSSubscription, SaaSInvoice, SubscriptionStatus } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -24,6 +25,10 @@ import {
 
 export const SubscriptionBillingTab: React.FC = () => {
   const { settings, updateSettings, currentUser } = usePOS();
+  // Server meresolusi merchant lewat business_id (`userId_sector`). Mengirim
+  // id akun saja hanya berhasil selama pemilik punya tepat satu unit usaha —
+  // dan diam-diam menunjuk toko yang salah begitu ia punya dua.
+  const tenant = useTenant();
 
   const [plans, setPlans] = useState<SaaSPlan[]>([]);
   const [subscription, setSubscription] = useState<SaaSSubscription | null>(null);
@@ -48,7 +53,7 @@ export const SubscriptionBillingTab: React.FC = () => {
 
       // Fetch Status
       const deviceId = await getDeviceId();
-      const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${currentUser?.id || 'tenant-default'}`, {
+      const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${encodeURIComponent(tenant.businessId)}`, {
         headers: {
           'x-device-id': deviceId
         }
@@ -85,7 +90,7 @@ export const SubscriptionBillingTab: React.FC = () => {
           'x-device-id': deviceId
         },
         body: JSON.stringify({
-          tenantId: currentUser?.id || 'tenant-default',
+          tenantId: tenant.businessId,
           targetPlanId: plan.id,
         }),
       });
@@ -109,7 +114,7 @@ export const SubscriptionBillingTab: React.FC = () => {
           'x-device-id': deviceId
         },
         body: JSON.stringify({
-          tenantId: currentUser?.id || 'tenant-default',
+          tenantId: tenant.businessId,
           targetPlanId: targetId,
           invoiceId,
         }),
@@ -118,9 +123,14 @@ export const SubscriptionBillingTab: React.FC = () => {
       setIsProcessingPayment(false);
       setShowProrationModal(false);
 
-      if (data.success) {
-        alert(data.message);
+      // Server menjawab `ok`, bukan `success`. Selama ini cabang ini tidak
+      // pernah terpenuhi: pembayaran yang benar-benar berhasil tetap terlihat
+      // seperti tidak terjadi apa-apa, dan merchant menekan tombolnya berulang.
+      if (data.ok) {
+        alert(data.message || 'Paket langganan berhasil diperbarui.');
         fetchSubscriptionData();
+      } else {
+        alert(data.detail || 'Gagal memproses pembayaran. Silakan coba lagi.');
       }
     } catch (err) {
       setIsProcessingPayment(false);

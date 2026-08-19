@@ -201,7 +201,7 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>Bundle Set Promo ({bundleRows.length})</span>
+            <span>Bundle Set Promo ({bundleData?.total ?? 0})</span>
           </button>
 
           <button
@@ -556,50 +556,57 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
       )}
 
       {/* 4. TAB BUNDLE SET PROMO KLIEN */}
-      {activeTab === 'BUNDLES' && bundleData?.belumTersedia && (
-        <Card title="Bundle Set Promo">
-          <div className="p-8 text-center space-y-2">
-            <p className="text-sm font-black text-slate-900">Belum tersinkronisasi ke server</p>
-            <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-              {bundleData.belumTersedia} Karena itu tidak ada yang bisa ditampilkan di sini —
-              lebih baik kosong daripada menampilkan contoh yang terlihat seperti data merchant.
-            </p>
-          </div>
-        </Card>
-      )}
-
-      {activeTab === 'BUNDLES' && !bundleData?.belumTersedia && (
+      {activeTab === 'BUNDLES' && (
         <Card
           title="Daftar Paket Promo &amp; Bundle Set Klien"
           subtitle="Paket bundling yang dijual oleh merchant untuk mendongkrak rata-rata nilai transaksi (AOV)"
         >
           <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+            {bundleRows.length === 0 && (
+              <p className="col-span-full p-6 text-center text-xs text-slate-500">
+                Belum ada paket promo yang tersinkronisasi dari perangkat kasir.
+              </p>
+            )}
             {bundleRows.map((b: any) => (
               <div
                 key={b.id}
                 className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 hover:shadow-md transition-all relative overflow-hidden"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <span className="text-[11px] font-bold text-slate-500 uppercase">{b.merchant_name}</span>
-                    <h3 className="text-base font-black text-slate-950 mt-0.5">{b.bundle_name}</h3>
+                    <h3 className="text-base font-black text-slate-950 mt-0.5">{b.name}</h3>
                   </div>
-                  <span className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shadow-xs">
-                    Hemat {b.discount_pct}%
-                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!b.is_available && (
+                      <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 font-bold text-[10px] border border-slate-200">
+                        Nonaktif
+                      </span>
+                    )}
+                    <span className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shadow-xs">
+                      Hemat {b.diskon_persen}%
+                    </span>
+                  </div>
                 </div>
 
-                {/* Items in bundle */}
+                {/* Isi paket */}
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5">
-                  <p className="text-[11px] font-black text-slate-700 uppercase">Item Penyusun Bundle:</p>
+                  <p className="text-[11px] font-black text-slate-700 uppercase">
+                    Item Penyusun Bundle ({b.jumlah_item}):
+                  </p>
                   <ul className="text-xs space-y-1 text-slate-800 font-medium list-disc list-inside">
-                    {b.included_items.map((item: any, idx: number) => (
-                      <li key={idx}>{item}</li>
+                    {(b.items ?? []).map((item: any, idx: number) => (
+                      <li key={idx}>
+                        {item.quantity}&times; {item.product_name}
+                        <span className="text-slate-500 font-mono"> — {rupiah(item.subtotal_price)}</span>
+                      </li>
                     ))}
                   </ul>
                 </div>
 
-                {/* Pricing & Performance */}
+                {/* Harga. Angka penjualan per paket sengaja TIDAK ditampilkan:
+                    baris struk tidak mencatat paket asalnya, jadi "berapa paket
+                    terjual" tidak bisa dijawab tanpa mengarang. */}
                 <div className="grid grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-100">
                   <div>
                     <span className="text-slate-500 block text-[11px]">Harga Normal Satuan:</span>
@@ -609,10 +616,12 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-slate-500 block text-[11px]">Performa Penjualan:</span>
-                    <span className="font-bold text-slate-900">{angka(b.sold_count)} Paket Terjual</span>
+                    <span className="text-slate-500 block text-[11px]">Selisih untuk Pelanggan:</span>
                     <span className="font-mono font-black text-emerald-700 block mt-0.5">
-                      {rupiah(b.gross_revenue)}
+                      {rupiah(b.hemat_rupiah)}
+                    </span>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                      diperbarui {sejak(b.updated_at)}
                     </span>
                   </div>
                 </div>

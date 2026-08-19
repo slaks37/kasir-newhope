@@ -439,6 +439,25 @@ export async function rawMaterials(db: Db, f: ListFilter = {}) {
   return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
 }
 
+export async function bundles(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const { rows } = await db.query(
+    `SELECT * FROM contract.bundles
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR merchant_name ILIKE '%' || $2 || '%')
+      ORDER BY diskon_persen DESC, name
+      LIMIT $3 OFFSET $4`,
+    [c.sector, c.search, c.limit, c.offset]
+  );
+  const total = await db.query(
+    `SELECT COUNT(*)::int AS n FROM contract.bundles
+      WHERE ($1::text IS NULL OR business_sector = $1)
+        AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR merchant_name ILIKE '%' || $2 || '%')`,
+    [c.sector, c.search]
+  );
+  return { rows, total: total.rows[0].n, limit: c.limit, offset: c.offset };
+}
+
 export async function productRecipes(db: Db, f: ListFilter = {}) {
   const c = cleanFilter(f);
   const { rows } = await db.query(

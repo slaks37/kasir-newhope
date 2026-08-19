@@ -21,9 +21,16 @@ let pool: pg.Pool | null = null;
 
 function getPool() {
   if (!pool) {
+    // SSL wajib untuk database terkelola, dan mustahil untuk yang lokal —
+    // Postgres di localhost menolak dengan "server does not support SSL".
+    // Memaksanya membuat endpoint ini tidak bisa dijalankan atau diuji di mesin
+    // sendiri sama sekali.
+    const url = process.env.DATABASE_URL || '';
+    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
+
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      connectionString: url,
+      ssl: lokal ? undefined : { rejectUnauthorized: false },
       max: 10,
     });
   }

@@ -157,6 +157,10 @@ export type InternalCapability =
   | 'GRANT_AI_CREDITS'
   | 'IMPERSONATE_MERCHANT'
   | 'VIEW_ACCESS_AUDIT'
+  // Membuat, menonaktifkan, dan mengubah peran akun internal. Kemampuan paling
+  // berbahaya di sistem ini: siapa pun yang memilikinya bisa memberi dirinya
+  // sendiri kemampuan lain. Hanya SUPERADMIN.
+  | 'MANAGE_INTERNAL_USERS'
   // Ringkasan lima sektor bisnis. Agregat murni — tidak ada merchant yang bisa
   // dikenali dari angkanya, jadi Growth boleh melihatnya.
   | 'VIEW_SECTOR_ANALYTICS'
@@ -170,6 +174,7 @@ export type InternalCapability =
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   ROLE_SUPERADMIN: [
+    'MANAGE_INTERNAL_USERS',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
     'VIEW_PLATFORM_REVENUE',
@@ -219,6 +224,7 @@ export function hasInternalCapability(role: string, cap: InternalCapability): bo
  * MUST write an `internal_access_log` row.
  */
 export const AUDITED_CAPABILITIES: InternalCapability[] = [
+  'MANAGE_INTERNAL_USERS',
   'VIEW_MERCHANT_DETAIL',
   'IMPERSONATE_MERCHANT',
   'MANAGE_SUBSCRIPTION',

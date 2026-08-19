@@ -24,6 +24,7 @@ import {
 import type { Db } from './db';
 import * as repo from './repo';
 import * as plansRepo from './plansRepo';
+import * as internalUsers from './internalUsersRepo';
 import {
   issueToken,
   sessionSecretTersedia,
@@ -475,6 +476,14 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   );
 
   app.get(
+    '/api/admin/bundles',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, ...(await repo.bundles(db, req.query as repo.ListFilter)) });
+    })
+  );
+
+  app.get(
     '/api/admin/recipes',
     guard('VIEW_PRODUCT_SALES'),
     wrap(async (req, res, db) => {
@@ -517,6 +526,82 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
           LIMIT 200`
       );
       res.json({ ok: true, rows });
+    })
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* AKUN KONSOL INTERNAL                                                    */
+  /* ---------------------------------------------------------------------- */
+
+  app.get(
+    '/api/admin/internal-users',
+    guard('MANAGE_INTERNAL_USERS'),
+    wrap(async (_req, res, db) => {
+      res.json({ ok: true, rows: await internalUsers.daftarUserInternal(db) });
+    })
+  );
+
+  app.post(
+    '/api/admin/internal-users',
+    guard('MANAGE_INTERNAL_USERS'),
+    wrap(async (req: AdminRequest, res, db) => {
+      try {
+        const user = await internalUsers.undangUserInternal(db, req.body ?? {});
+        await recordAccess(
+          db, req.internal!, 'INTERNAL_USER_INVITE',
+          `/api/admin/internal-users/${user.id}`, null, null, req.ip || null
+        );
+        res.status(201).json({ ok: true, user });
+      } catch (err) {
+        if (err instanceof internalUsers.InternalUserError) {
+          return res.status(400).json({ ok: false, error: err.code, detail: err.message });
+        }
+        throw err;
+      }
+    })
+  );
+
+  app.patch(
+    '/api/admin/internal-users/:userId',
+    guard('MANAGE_INTERNAL_USERS'),
+    wrap(async (req: AdminRequest, res, db) => {
+      const id = req.params.userId;
+      const b = req.body ?? {};
+      try {
+        let user;
+        let aksi: string;
+        if (typeof b.role === 'string') {
+          user = await internalUsers.ubahPeran(db, id, b.role, req.internal!.id);
+          aksi = `INTERNAL_USER_ROLE_${b.role}`;
+        } else if (typeof b.isActive === 'boolean') {
+          user = await internalUsers.ubahAktif(db, id, b.isActive, req.internal!.id);
+          aksi = b.isActive ? 'INTERNAL_USER_ACTIVATE' : 'INTERNAL_USER_DEACTIVATE';
+        } else if (b.revokePassword === true) {
+          user = await internalUsers.cabutPassword(db, id, req.internal!.id);
+          aksi = 'INTERNAL_USER_REVOKE_PASSWORD';
+        } else {
+          return res.status(400).json({ ok: false, error: 'NO_CHANGE' });
+        }
+        await recordAccess(
+          db, req.internal!, aksi, `/api/admin/internal-users/${id}`, null, null, req.ip || null
+        );
+        res.json({ ok: true, user });
+      } catch (err) {
+        if (err instanceof internalUsers.InternalUserError) {
+          return res.status(err.code === 'NOT_FOUND' ? 404 : 400).json({
+            ok: false, error: err.code, detail: err.message,
+          });
+        }
+        throw err;
+      }
+    })
+  );
+
+  app.get(
+    '/api/admin/merchant-staff',
+    guard('VIEW_MERCHANT_DETAIL'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, ...(await internalUsers.staffMerchant(db, req.query as any)) });
     })
   );
 

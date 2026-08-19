@@ -24,7 +24,7 @@
  *    antrian terpisah dan tidak akan pernah tertukar.
  */
 
-import type { Order, BusinessSector } from '../../types';
+import type { Order, BusinessSector, Customer, ProductBundle } from '../../types';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
@@ -252,8 +252,7 @@ export function getStatus(businessId: string, inFlight = false): SyncStatus {
  *
  * Karena itu kegagalannya ditelan diam-diam: tidak ada yang bisa hilang.
  */
-export async function pushCatalog(
-  target: SyncTarget,
+export interface CatalogPayload {
   products: Array<{
     id: string;
     name: string;
@@ -266,7 +265,22 @@ export async function pushCatalog(
     description?: string;
     categoryName?: string;
     isAvailable?: boolean;
-  }>
+  }>;
+  /**
+   * Member toko, TERMASUK yang belum pernah bertransaksi.
+   *
+   * Baris pelanggan dulu hanya lahir dari pembelian pertama, jadi member yang
+   * sudah didaftarkan tapi belum belanja tidak pernah sampai ke server — dan
+   * justru merekalah yang paling ingin dihubungi merchant.
+   */
+  customers?: Customer[];
+  /** Paket bundling promo beserta isinya. */
+  bundles?: ProductBundle[];
+}
+
+export async function pushCatalog(
+  target: SyncTarget,
+  payload: CatalogPayload
 ): Promise<boolean> {
   try {
     const res = await fetch('/api/v1/sync/catalog', {
@@ -277,7 +291,9 @@ export async function pushCatalog(
         sector: target.sector,
         storeName: target.storeName,
         ownerRef: target.ownerRef,
-        products,
+        products: payload.products,
+        customers: payload.customers ?? [],
+        bundles: payload.bundles ?? [],
       }),
     });
     return res.ok;

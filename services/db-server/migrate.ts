@@ -37,6 +37,7 @@ const MIGRATIONS = [
   'migrations/0015_admin_auth.sql',
   'migrations/0016_merchant_entitlements.sql',
   'migrations/0017_stock_contract_views.sql',
+  'migrations/0018_bundles.sql',
 ];
 
 async function main() {

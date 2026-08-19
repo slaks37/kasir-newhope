@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTenant } from '../../context/TenantContext';
 import { getDeviceId } from '../../utils/fingerprint';
 import { formatRupiah } from '../../utils/formatters';
 import {
@@ -18,7 +19,8 @@ interface SubscriptionLockScreenProps {
 }
 
 export const SubscriptionLockScreen: React.FC<SubscriptionLockScreenProps> = ({ onRenewSuccess }) => {
-  const { settings, updateSettings, currentUser } = usePOS();
+  const { settings, updateSettings } = usePOS();
+  const tenant = useTenant();
   const [isProcessing, setIsProcessing] = useState(false);
 
   const sub = settings.subscription;
@@ -34,20 +36,22 @@ export const SubscriptionLockScreen: React.FC<SubscriptionLockScreenProps> = ({ 
           'x-device-id': deviceId 
         },
         body: JSON.stringify({
-          tenantId: currentUser?.id || 'tenant-default',
-          targetPlanId: sub?.planId || 'plan-pro-monthly',
+          tenantId: tenant.businessId,
+          targetPlanId: sub?.planId,
         }),
       });
 
       const data = await res.json();
       setIsProcessing(false);
 
-      if (data.success && data.subscription) {
+      // `ok`, bukan `success` — dengan nama lama, perpanjangan yang berhasil
+      // tetap dilaporkan gagal dan layar kunci tidak pernah terbuka.
+      if (data.ok && data.subscription) {
         updateSettings({ ...settings, subscription: data.subscription });
-        alert(data.message);
+        alert(data.message || 'Langganan berhasil diperpanjang.');
         onRenewSuccess();
       } else {
-        alert('Gagal memperbarui status berlangganan.');
+        alert(data.detail || 'Gagal memperbarui status berlangganan.');
       }
     } catch (err) {
       setIsProcessing(false);

@@ -262,6 +262,10 @@ export interface Order {
   servedByStaffName?: string;
   subtotal: number;
   discountTotal: number;
+  /** Poin member yang ditukar pada transaksi ini. Dicetak di struk. */
+  pointsRedeemed?: number;
+  /** Bagian discountTotal yang berasal dari penukaran poin. */
+  loyaltyDiscount?: number;
   taxTotal: number;
   serviceChargeTotal: number;
   total: number;

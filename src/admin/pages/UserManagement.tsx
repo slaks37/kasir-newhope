@@ -1,457 +1,421 @@
-import React, { useState } from 'react';
+/**
+ * User Admin & Client.
+ *
+ * Dua daftar yang sengaja tidak dicampur: akun KONSOL INTERNAL (yang bisa
+ * melihat data lintas merchant) dan STAF MERCHANT (kasir di toko). Keduanya
+ * hidup di tabel berbeda sejak awal, dan itu bukan detail teknis — kalau
+ * SUPERADMIN hanya satu nilai lagi di kolom role staf, satu bug mass-assignment
+ * di form pengaturan merchant menjadi jalan ke seluruh data semua tenant.
+ *
+ * MENETAPKAN PASSWORD ORANG LAIN TIDAK ADA DI SINI, dan itu disengaja. Admin
+ * yang bisa mengetikkan password rekannya tahu password itu; tindakan atas nama
+ * seseorang lalu berhenti membuktikan orang itu yang melakukannya. Yang tersedia
+ * hanya MENCABUT — pemiliknya menetapkan sendiri lewat `npm run admin:password`.
+ */
+
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ShieldCheck,
-  Users,
-  Store,
+  AlertTriangle,
   Building2,
   KeyRound,
-  CheckCircle2,
+  Loader2,
   Lock,
-  UserCog,
-  Briefcase,
+  Plus,
+  RotateCcw,
   Shield,
-  Filter,
-  Eye,
-  Info,
+  ShieldCheck,
+  UserCog,
+  Users,
+  X,
 } from 'lucide-react';
-import { Card, Chip } from '../ui';
-import { SECTOR_LABEL, type Sector } from '../api';
+import {
+  api,
+  waktu,
+  sejak,
+  ROLE_LABEL,
+  SECTOR_LABEL,
+  type InternalUserRow,
+  type InternalRole,
+  type Sector,
+} from '../api';
+import { Card, ErrorBox, Empty, Loading, SearchBox, SectorFilter, Table, Td, Th } from '../ui';
 
-interface AdminUser {
-  id: string;
-  fullName: string;
-  email: string;
-  role: 'ROLE_SUPERADMIN' | 'ROLE_INTERNAL_GROWTH' | 'ROLE_INTERNAL_SUPPORT';
-  scope: string;
-  status: 'ACTIVE' | 'SUSPENDED';
-  createdAt: string;
-}
+const ROLES: InternalRole[] = ['ROLE_SUPERADMIN', 'ROLE_INTERNAL_GROWTH', 'ROLE_INTERNAL_SUPPORT'];
 
-interface ClientUser {
-  id: string;
-  storeName: string;
-  businessSector: Sector;
-  name: string;
-  username: string;
-  role: 'ADMIN' | 'MANAGER' | 'CASHIER';
-  pinStatus: string;
-  status: 'ACTIVE' | 'INACTIVE';
-}
+const ROLE_TONE: Record<InternalRole, string> = {
+  ROLE_SUPERADMIN: 'bg-rose-100 text-rose-900 border-rose-300',
+  ROLE_INTERNAL_GROWTH: 'bg-sky-100 text-sky-900 border-sky-300',
+  ROLE_INTERNAL_SUPPORT: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+};
 
-const ADMIN_USERS_DATA: AdminUser[] = [
-  {
-    id: 'adm-01',
-    fullName: 'Stefen Laksana',
-    email: 'stefenlaksana.sl@gmail.com',
-    role: 'ROLE_SUPERADMIN',
-    scope: 'Seluruh Ekosistem Platform & Database Cloud',
-    status: 'ACTIVE',
-    createdAt: '2026-08-14',
-  },
-  {
-    id: 'adm-02',
-    fullName: 'Platform Operations Root',
-    email: 'ops@newhopepos.id',
-    role: 'ROLE_SUPERADMIN',
-    scope: 'Infrastruktur Server & Gateway API',
-    status: 'ACTIVE',
-    createdAt: '2026-08-01',
-  },
-  {
-    id: 'adm-03',
-    fullName: 'Growth & Business Intelligence',
-    email: 'growth@newhopepos.id',
-    role: 'ROLE_INTERNAL_GROWTH',
-    scope: 'Analisis Metrik Agregat 5 Sektor Usaha',
-    status: 'ACTIVE',
-    createdAt: '2026-08-05',
-  },
-  {
-    id: 'adm-04',
-    fullName: 'Customer Support Lead',
-    email: 'support@newhopepos.id',
-    role: 'ROLE_INTERNAL_SUPPORT',
-    scope: 'Bantuan Merchant & Investigasi Sesi Kasir',
-    status: 'ACTIVE',
-    createdAt: '2026-08-08',
-  },
-];
+const kelasInput =
+  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
-const CLIENT_USERS_DATA: ClientUser[] = [
-  {
-    id: 'usr-c01',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Budi Santoso',
-    username: 'budi.admin',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (1234)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c02',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Siti Aminah',
-    username: 'siti.manager',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (5555)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c03',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Rian Ardiansyah',
-    username: 'rian.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c04',
-    storeName: 'Kopi Kenangan Senopati',
-    businessSector: 'FNB',
-    name: 'Budi Santoso',
-    username: 'budi.kopi',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (1234)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c05',
-    storeName: 'Kopi Kenangan Senopati',
-    businessSector: 'FNB',
-    name: 'Rian Barista',
-    username: 'rian.kopi',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c06',
-    storeName: 'Laundry Bersih Kilat',
-    businessSector: 'LAUNDRY',
-    name: 'Dewi Lestari',
-    username: 'dewi.laundry',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (2222)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c07',
-    storeName: 'Toko Berkah Siti',
-    businessSector: 'RETAIL',
-    name: 'Siti Rahma',
-    username: 'siti.berkah',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (3333)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c08',
-    storeName: 'Toko Berkah Siti',
-    businessSector: 'RETAIL',
-    name: 'Gudang Fajar',
-    username: 'fajar.stock',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c09',
-    storeName: 'Agus Auto Wash',
-    businessSector: 'CARWASH',
-    name: 'Teknisi Rudi',
-    username: 'rudi.wash',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c10',
-    storeName: 'Agus Auto Wash',
-    businessSector: 'CARWASH',
-    name: 'Kasir Nina',
-    username: 'nina.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c11',
-    storeName: 'Rina Beauty Lounge',
-    businessSector: 'BARBERSHOP',
-    name: 'Kapster Yoga',
-    username: 'yoga.barber',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c12',
-    storeName: 'Rina Beauty Lounge',
-    businessSector: 'BARBERSHOP',
-    name: 'Kasir Tari',
-    username: 'tari.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-];
+/* -------------------------------------------------------------------------- */
+/* UNDANG AKUN                                                                 */
+/* -------------------------------------------------------------------------- */
 
-export default function UserManagement() {
-  const [activeTab, setActiveTab] = useState<'ADMIN_USERS' | 'CLIENT_USERS'>('ADMIN_USERS');
-  const [sectorFilter, setSectorFilter] = useState<string>('ALL');
+function ModalUndang({
+  onTutup,
+  onSelesai,
+}: {
+  onTutup: () => void;
+  onSelesai: () => void;
+}) {
+  const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState<InternalRole>('ROLE_INTERNAL_SUPPORT');
+  const [galat, setGalat] = useState<string | null>(null);
+  const [kirim, setKirim] = useState(false);
 
-  const filteredClientUsers =
-    sectorFilter === 'ALL'
-      ? CLIENT_USERS_DATA
-      : CLIENT_USERS_DATA.filter((u) => u.businessSector === sectorFilter);
+  const simpan = async () => {
+    setKirim(true);
+    setGalat(null);
+    try {
+      await api.inviteInternalUser({ email, fullName, role });
+      onSelesai();
+    } catch (e: any) {
+      setGalat(e.message);
+    } finally {
+      setKirim(false);
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Title & Subtitle */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">
-            Pemisahan Data Pengguna (Admin vs Client)
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className="my-10 w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <header className="flex items-center gap-3 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+          <UserCog className="h-5 w-5 text-slate-500" />
+          <h2 className="flex-1 text-base font-bold text-slate-900 dark:text-slate-100">
+            Undang Akun Internal
           </h2>
-          <p className="text-xs text-slate-600 font-medium dark:text-slate-400 mt-0.5">
-            Struktur terisolasi antara User Platform Superadmin (Back-Office) dan User Toko/Merchant (Client POS)
-          </p>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('ADMIN_USERS')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'ADMIN_USERS'
-                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-500/20'
-                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>User Admin Platform ({ADMIN_USERS_DATA.length})</span>
+          <button onClick={onTutup} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="h-4 w-4" />
           </button>
+        </header>
 
-          <button
-            onClick={() => setActiveTab('CLIENT_USERS')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'CLIENT_USERS'
-                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-500/20'
-                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>User Client Merchant ({CLIENT_USERS_DATA.length})</span>
-          </button>
-        </div>
-      </div>
+        <div className="flex flex-col gap-4 p-6">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Email</span>
+            <input className={kelasInput} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@perusahaan.com" />
+          </label>
 
-      {/* Info Card Explaining the Isolation Architecture */}
-      <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 flex flex-col md:flex-row gap-6 items-start justify-between shadow-sm">
-        <div className="space-y-2 max-w-3xl">
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-extrabold border border-emerald-500/30 uppercase tracking-wider">
-              Tenant &amp; Schema Isolation Active
-            </span>
-            <span className="text-xs text-slate-400 font-mono">Database: Supabase PostgreSQL</span>
-          </div>
-          <h3 className="text-base font-black text-white">
-            {activeTab === 'ADMIN_USERS'
-              ? 'Tabel: `internal.internal_users` — Hak Akses Back-Office Platform'
-              : 'Tabel: `pos.users` — Hak Akses Terisolasi Per Merchant / Toko'}
-          </h3>
-          <p className="text-xs text-slate-300 leading-relaxed font-medium">
-            {activeTab === 'ADMIN_USERS'
-              ? 'Pengguna Admin Platform berwenang melihat metrik agregat, audit trail, performa merchant, dan manajemen lisensi. Data kredensial tidak pernah bercampur dengan database kasir merchant.'
-              : 'Pengguna Client Toko terikat pada `tenant_id` masing-masing. Seorang kasir di Kopi Senja tidak dapat mengakses atau melihat data transaksi Toko Berkah atau merchant lainnya.'}
-          </p>
-        </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Nama Lengkap</span>
+            <input className={kelasInput} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Nama yang muncul di jejak audit" />
+          </label>
 
-        <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 text-xs space-y-2 shrink-0 w-full md:w-64">
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Admin Platform:</span>
-            <span className="font-mono text-amber-400 font-bold">{ADMIN_USERS_DATA.length} Akun</span>
-          </div>
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Merchant Staf:</span>
-            <span className="font-mono text-emerald-400 font-bold">{CLIENT_USERS_DATA.length} Staf</span>
-          </div>
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Superadmin:</span>
-            <span className="font-mono text-white font-bold">Stefen Laksana</span>
-          </div>
-        </div>
-      </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Role</span>
+            <select className={kelasInput} value={role} onChange={(e) => setRole(e.target.value as InternalRole)}>
+              {ROLES.map((r) => (
+                <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+              ))}
+            </select>
+          </label>
 
-      {/* VIEW 1: USER ADMIN PLATFORM (internal.internal_users) */}
-      {activeTab === 'ADMIN_USERS' && (
-        <Card>
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-amber-100 text-amber-900 rounded-xl border border-amber-200">
-                <ShieldCheck className="w-5 h-5 text-amber-700" />
-              </div>
-              <div>
-                <h4 className="font-black text-sm text-slate-900">Daftar Administrator Platform (Internal)</h4>
-                <p className="text-xs text-slate-500 font-medium">Pengguna dengan hak akses khusus ke konsol Back-Office &amp; Monitoring</p>
-              </div>
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-xs leading-relaxed">
+              Akun dibuat <b>tanpa password</b> dan belum bisa dipakai masuk. Pemiliknya menetapkan
+              sendiri lewat <code className="font-mono">npm run admin:password -- {email || 'email'}</code>.
+              Password yang pernah melewati chat bukan lagi rahasia.
+            </p>
+          </div>
+
+          {galat && (
+            <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-xs text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{galat}</span>
             </div>
-            <span className="px-3 py-1 bg-amber-50 text-amber-900 text-xs font-bold rounded-xl border border-amber-300 font-mono">
-              internal.internal_users
-            </span>
-          </div>
+          )}
+        </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-100/90 text-[11px] text-slate-700 font-black uppercase tracking-wider border-b border-slate-200">
+        <footer className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4 dark:border-slate-800">
+          <button onClick={onTutup} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            Batal
+          </button>
+          <button
+            onClick={simpan}
+            disabled={kirim || !email || !fullName}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
+          >
+            {kirim ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Undang
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* HALAMAN                                                                     */
+/* -------------------------------------------------------------------------- */
+
+type Tab = 'ADMIN_USERS' | 'CLIENT_USERS';
+
+export default function UserManagement() {
+  const [tab, setTab] = useState<Tab>('ADMIN_USERS');
+  const [rows, setRows] = useState<InternalUserRow[]>([]);
+  const [memuat, setMemuat] = useState(true);
+  const [galat, setGalat] = useState<{ code?: string; message: string } | null>(null);
+  const [undang, setUndang] = useState(false);
+  const [sibuk, setSibuk] = useState<string | null>(null);
+
+  const [sector, setSector] = useState('');
+  const [search, setSearch] = useState('');
+  const [staff, setStaff] = useState<any>(null);
+  const [staffMemuat, setStaffMemuat] = useState(false);
+
+  const muat = useCallback(() => {
+    setMemuat(true);
+    api
+      .internalUsers()
+      .then((d) => {
+        setRows(d.rows);
+        setGalat(null);
+      })
+      .catch((e) => setGalat({ code: e.code, message: e.message }))
+      .finally(() => setMemuat(false));
+  }, []);
+
+  useEffect(muat, [muat]);
+
+  useEffect(() => {
+    if (tab !== 'CLIENT_USERS') return;
+    setStaffMemuat(true);
+    api
+      .merchantStaff({ sector, search, limit: 100 })
+      .then(setStaff)
+      .catch((e) => setGalat({ code: e.code, message: e.message }))
+      .finally(() => setStaffMemuat(false));
+  }, [tab, sector, search]);
+
+  const ubah = async (
+    id: string,
+    change: { role?: string; isActive?: boolean; revokePassword?: boolean }
+  ) => {
+    setSibuk(id);
+    setGalat(null);
+    try {
+      const { user } = await api.updateInternalUser(id, change);
+      setRows((xs) => xs.map((x) => (x.id === user.id ? user : x)));
+    } catch (e: any) {
+      // Penolakan seperti "ini satu-satunya superadmin" adalah informasi, bukan
+      // kerusakan — ditampilkan apa adanya supaya admin tahu harus apa.
+      setGalat({ code: e.code, message: e.message });
+    } finally {
+      setSibuk(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1">
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">User Admin &amp; Client</h1>
+          <p className="text-xs text-slate-500">
+            Akun konsol internal dan staf kasir merchant. Keduanya sengaja terpisah.
+          </p>
+        </div>
+        <button onClick={muat} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+          <RotateCcw className="h-3.5 w-3.5" /> Muat ulang
+        </button>
+        {tab === 'ADMIN_USERS' && (
+          <button onClick={() => setUndang(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white dark:bg-slate-100 dark:text-slate-900">
+            <Plus className="h-3.5 w-3.5" /> Undang Akun
+          </button>
+        )}
+      </div>
+
+      <div className="flex gap-1">
+        {([
+          ['ADMIN_USERS', 'Akun Konsol Internal', ShieldCheck],
+          ['CLIENT_USERS', 'Staf Kasir Merchant', Building2],
+        ] as const).map(([id, label, Icon]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+              tab === id
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {galat && <ErrorBox error={galat} />}
+
+      {tab === 'ADMIN_USERS' &&
+        (memuat ? (
+          <Loading label="Memuat akun internal..." />
+        ) : (
+          <Card
+            title="Akun Konsol Internal"
+            subtitle="Bisa melihat data lintas merchant. Setiap tindakannya tercatat di Jejak Akses."
+          >
+            <Table>
+              <thead>
                 <tr>
-                  <th className="p-4">Nama Lengkap &amp; Email</th>
-                  <th className="p-4">Role Platform</th>
-                  <th className="p-4">Lingkup Wewenang (Scope)</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4">Terdaftar</th>
+                  <Th>Akun</Th>
+                  <Th>Role</Th>
+                  <Th>Status</Th>
+                  <Th>Login Terakhir</Th>
+                  <Th>Tindakan</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {ADMIN_USERS_DATA.map((adm) => (
-                  <tr key={adm.id} className="hover:bg-amber-50/30 transition-colors">
-                    <td className="p-4">
-                      <div className="font-black text-slate-950 text-sm">{adm.fullName}</div>
-                      <div className="font-mono text-xs text-slate-600 font-semibold mt-0.5">{adm.email}</div>
-                    </td>
-                    <td className="p-4">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold border ${
-                          adm.role === 'ROLE_SUPERADMIN'
-                            ? 'bg-amber-100 text-amber-950 border-amber-300'
-                            : adm.role === 'ROLE_INTERNAL_GROWTH'
-                            ? 'bg-blue-100 text-blue-950 border-blue-300'
-                            : 'bg-emerald-100 text-emerald-950 border-emerald-300'
-                        }`}
+              <tbody>
+                {rows.map((u) => (
+                  <tr key={u.id}>
+                    <Td>
+                      <span className="block font-semibold text-slate-900 dark:text-slate-100">{u.fullName}</span>
+                      <span className="block font-mono text-[11px] text-slate-500">{u.email}</span>
+                    </Td>
+                    <Td>
+                      <select
+                        value={u.role}
+                        disabled={sibuk === u.id}
+                        onChange={(e) => ubah(u.id, { role: e.target.value })}
+                        className={`rounded-lg border px-2 py-1 text-[11px] font-bold ${ROLE_TONE[u.role]} disabled:opacity-50`}
                       >
-                        <Shield className="w-3.5 h-3.5" />
-                        <span>{adm.role}</span>
-                      </span>
-                    </td>
-                    <td className="p-4 text-slate-700 font-semibold">
-                      {adm.scope}
-                    </td>
-                    <td className="p-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>{adm.status}</span>
-                      </span>
-                    </td>
-                    <td className="p-4 font-mono font-bold text-slate-600">
-                      {adm.createdAt}
-                    </td>
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+                        ))}
+                      </select>
+                    </Td>
+                    <Td>
+                      <div className="flex flex-col gap-1">
+                        <span
+                          className={`w-fit rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                            u.isActive
+                              ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                              : 'border-slate-300 bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {u.isActive ? 'AKTIF' : 'NONAKTIF'}
+                        </span>
+                        {!u.hasPassword && (
+                          <span className="w-fit rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                            BELUM BISA LOGIN
+                          </span>
+                        )}
+                        {u.lockedUntil && new Date(u.lockedUntil) > new Date() && (
+                          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-900">
+                            <Lock className="h-2.5 w-2.5" /> TERKUNCI
+                          </span>
+                        )}
+                      </div>
+                    </Td>
+                    <Td className="text-[11px] text-slate-600 dark:text-slate-400">
+                      {u.lastLoginAt ? sejak(u.lastLoginAt) : 'belum pernah'}
+                      {u.failedLoginCount > 0 && (
+                        <span className="block text-rose-600">{u.failedLoginCount}× gagal</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => ubah(u.id, { isActive: !u.isActive })}
+                          disabled={sibuk === u.id}
+                          className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          {u.isActive ? 'Nonaktifkan' : 'Aktifkan'}
+                        </button>
+                        {u.hasPassword && (
+                          <button
+                            onClick={() => ubah(u.id, { revokePassword: true })}
+                            disabled={sibuk === u.id}
+                            title="Mencabut password. Pemiliknya menetapkan yang baru lewat npm run admin:password."
+                            className="rounded-lg border border-amber-300 px-2.5 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-40"
+                          >
+                            Cabut Password
+                          </button>
+                        )}
+                      </div>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
+            {rows.length === 0 && <Empty label="Belum ada akun internal." />}
+
+            <div className="flex items-start gap-2.5 border-t border-slate-200 px-5 py-3 text-slate-600 dark:border-slate-800 dark:text-slate-400">
+              <Shield className="mt-0.5 h-4 w-4 shrink-0" />
+              <p className="text-[11px] leading-relaxed">
+                Akun tidak bisa dihapus, hanya dinonaktifkan — jejak audit menunjuk barisnya, dan
+                jejak yang kehilangan pelakunya berhenti menjadi jejak audit. Superadmin terakhir
+                yang masih bisa login tidak bisa diturunkan atau dinonaktifkan.
+              </p>
+            </div>
+          </Card>
+        ))}
+
+      {tab === 'CLIENT_USERS' && (
+        <>
+          <div className="flex flex-wrap gap-3">
+            <SectorFilter value={sector} onChange={setSector} />
+            <SearchBox value={search} onChange={setSearch} placeholder="Cari nama staf atau toko..." />
           </div>
-        </Card>
+
+          {staffMemuat ? (
+            <Loading label="Memuat staf merchant..." />
+          ) : (
+            <Card
+              title={`Staf Kasir Merchant (${staff?.total ?? 0})`}
+              subtitle="Hanya baca. PIN tidak pernah ikut dikirim ke konsol internal."
+            >
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Staf</Th>
+                    <Th>Toko</Th>
+                    <Th>Sektor</Th>
+                    <Th>Peran</Th>
+                    <Th>PIN</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(staff?.rows ?? []).map((u: any) => (
+                    <tr key={u.id}>
+                      <Td>
+                        <span className="block font-semibold text-slate-900 dark:text-slate-100">{u.name}</span>
+                        <span className="block font-mono text-[11px] text-slate-500">{u.username}</span>
+                      </Td>
+                      <Td className="text-slate-700 dark:text-slate-300">{u.merchant_name}</Td>
+                      <Td className="text-[11px] text-slate-600 dark:text-slate-400">
+                        {SECTOR_LABEL[u.business_sector as Sector] ?? u.business_sector}
+                      </Td>
+                      <Td>
+                        <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          {u.role}
+                        </span>
+                      </Td>
+                      <Td className="text-[11px] text-slate-600 dark:text-slate-400">
+                        {u.pin_terpasang ? 'Terpasang' : 'Belum diatur'}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+              {(staff?.rows ?? []).length === 0 && <Empty label="Belum ada staf merchant yang tersinkronisasi." />}
+            </Card>
+          )}
+        </>
       )}
 
-      {/* VIEW 2: USER CLIENT MERCHANT (pos.users) */}
-      {activeTab === 'CLIENT_USERS' && (
-        <Card>
-          <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4 bg-slate-50/50">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-blue-100 text-blue-900 rounded-xl border border-blue-200">
-                <Store className="w-5 h-5 text-blue-700" />
-              </div>
-              <div>
-                <h4 className="font-black text-sm text-slate-900">Daftar Pengguna Client Merchant (pos.users)</h4>
-                <p className="text-xs text-slate-500 font-medium">Owner, Supervisor/Manager, dan Kasir per Tenant Toko</p>
-              </div>
-            </div>
-
-            {/* Sector Filter */}
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-slate-500" />
-              <select
-                value={sectorFilter}
-                onChange={(e) => setSectorFilter(e.target.value)}
-                className="bg-white border border-slate-300 text-xs font-bold text-slate-800 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              >
-                <option value="ALL">Semua Sektor Usaha ({CLIENT_USERS_DATA.length})</option>
-                <option value="FNB">Kafe &amp; Resto (F&amp;B)</option>
-                <option value="LAUNDRY">Laundry</option>
-                <option value="RETAIL">Ritel &amp; Minimarket</option>
-                <option value="CARWASH">Cuci Kendaraan</option>
-                <option value="BARBERSHOP">Barbershop</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-100/90 text-[11px] text-slate-700 font-black uppercase tracking-wider border-b border-slate-200">
-                <tr>
-                  <th className="p-4">Nama Staf &amp; Username</th>
-                  <th className="p-4">Toko / Merchant</th>
-                  <th className="p-4">Sektor Bisnis</th>
-                  <th className="p-4">Role Toko</th>
-                  <th className="p-4">Status PIN Kasir</th>
-                  <th className="p-4">Status Akun</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {filteredClientUsers.map((cli) => (
-                  <tr key={cli.id} className="hover:bg-amber-50/30 transition-colors">
-                    <td className="p-4">
-                      <div className="font-black text-slate-950 text-sm">{cli.name}</div>
-                      <div className="font-mono text-xs text-slate-600 font-semibold mt-0.5">@{cli.username}</div>
-                    </td>
-                    <td className="p-4 font-bold text-slate-900">
-                      <div className="flex items-center gap-1.5">
-                        <Building2 className="w-3.5 h-3.5 text-amber-600" />
-                        <span>{cli.storeName}</span>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <span className="px-2.5 py-1 rounded-lg text-xs font-extrabold bg-slate-100 text-slate-800 border border-slate-200">
-                        {SECTOR_LABEL[cli.businessSector]}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black border ${
-                          cli.role === 'ADMIN'
-                            ? 'bg-purple-100 text-purple-950 border-purple-300'
-                            : cli.role === 'MANAGER'
-                            ? 'bg-blue-100 text-blue-950 border-blue-300'
-                            : 'bg-emerald-100 text-emerald-950 border-emerald-300'
-                        }`}
-                      >
-                        {cli.role === 'ADMIN' && <UserCog className="w-3.5 h-3.5" />}
-                        {cli.role === 'MANAGER' && <Briefcase className="w-3.5 h-3.5" />}
-                        {cli.role === 'CASHIER' && <Store className="w-3.5 h-3.5" />}
-                        <span>{cli.role}</span>
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span className="inline-flex items-center gap-1.5 text-slate-700 font-mono text-xs font-bold">
-                        <KeyRound className="w-3.5 h-3.5 text-amber-600" />
-                        <span>{cli.pinStatus}</span>
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>{cli.status}</span>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+      {undang && (
+        <ModalUndang
+          onTutup={() => setUndang(false)}
+          onSelesai={() => {
+            setUndang(false);
+            muat();
+          }}
+        />
       )}
     </div>
   );

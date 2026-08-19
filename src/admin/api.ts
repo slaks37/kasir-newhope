@@ -7,6 +7,21 @@
 
 import type { AdminPlan } from '../lib/plans/entitlements';
 
+export interface InternalUserRow {
+  id: string;
+  email: string;
+  fullName: string;
+  role: InternalRole;
+  isActive: boolean;
+  /** false berarti akun belum bisa dipakai login sama sekali. */
+  hasPassword: boolean;
+  passwordSetAt: string | null;
+  lastLoginAt: string | null;
+  failedLoginCount: number;
+  lockedUntil: string | null;
+  createdAt: string;
+}
+
 export interface PlanChangeRow {
   id: string;
   plan_id: string;
@@ -32,18 +47,6 @@ export const ROLE_LABEL: Record<InternalRole, string> = {
   ROLE_INTERNAL_GROWTH: 'Growth (Agregat & Analitik)',
   ROLE_INTERNAL_SUPPORT: 'Support (Operasional Merchant)',
 };
-
-/**
- * Halaman yang masih menampilkan DATA CONTOH, bukan isi database.
- *
- * Tinggal satu: manajemen user internal, yang menuntut endpoint tulis
- * tersendiri dan belum dikerjakan. Sisanya sudah membaca database.
- *
- * Daftarnya dibiarkan terlihat dari kode, dan diberi tanda di layar, karena
- * angka yang kelihatan meyakinkan tapi tidak nyata adalah cara tercepat
- * mengambil keputusan yang salah.
- */
-export const HALAMAN_DATA_CONTOH = ['users'];
 
 /* -------------------------------------------------------------------------- */
 /* SESI                                                                        */
@@ -319,25 +322,34 @@ export const api = {
   rawMaterials: (p?: Filter) => minta<any>(`/api/admin/raw-materials${qs(p)}`),
   recipes: (p?: Filter) => minta<any>(`/api/admin/recipes${qs(p)}`),
 
-  /**
-   * Bundle promo BELUM ada di database.
-   *
-   * Aplikasi kasir menyimpannya di localStorage dan jalur sinkronisasi belum
-   * membawanya, jadi tidak ada yang bisa dibaca dari sini. Dijawab kosong
-   * dengan alasan yang bisa ditampilkan, bukan dengan contoh yang terlihat
-   * seperti data merchant sungguhan.
-   */
-  bundles: async (_p?: Filter) => ({
-    rows: [] as any[],
-    total: 0,
-    belumTersedia: 'Bundle promo masih tersimpan di perangkat kasir dan belum ikut tersinkronisasi ke server.',
-  }),
+  bundles: (p?: Filter) => minta<any>(`/api/admin/bundles${qs(p)}`),
 
   /* ---- AKTIVITAS & AUDIT ---- */
 
   activity: (p?: Filter) => minta<any>(`/api/admin/activity${qs(p)}`),
   activityBreakdown: () => minta<any>('/api/admin/activity/breakdown'),
   audit: (p?: Filter) => minta<any>(`/api/admin/access-audit${qs(p)}`),
+
+  /* ---- AKUN KONSOL INTERNAL ---- */
+
+  internalUsers: () => minta<{ rows: InternalUserRow[] }>('/api/admin/internal-users'),
+
+  inviteInternalUser: (body: { email: string; fullName: string; role: string }) =>
+    minta<{ user: InternalUserRow }>('/api/admin/internal-users', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateInternalUser: (
+    userId: string,
+    change: { role?: string; isActive?: boolean; revokePassword?: boolean }
+  ) =>
+    minta<{ user: InternalUserRow }>(`/api/admin/internal-users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(change),
+    }),
+
+  merchantStaff: (p?: Filter) => minta<any>(`/api/admin/merchant-staff${qs(p)}`),
 
   /* ---- PAKET, HARGA, DAN ENTITLEMENT ---- */
 

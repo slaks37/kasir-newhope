@@ -463,6 +463,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const storeName = str(b.storeName, 100) ?? 'Tanpa Nama';
     const ownerRef = str(b.ownerRef, 64);
     const products: any[] = Array.isArray(b.products) ? b.products : [];
+    const pelanggan: any[] = Array.isArray(b.customers) ? b.customers : [];
+    const bundel: any[] = Array.isArray(b.bundles) ? b.bundles : [];
 
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
@@ -531,6 +533,109 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           upserted++;
         }
 
+        /* -- MEMBER ---------------------------------------------------------
+         *
+         * Dikirim bersama katalog, bukan hanya saat bertransaksi. Sebelumnya
+         * baris pelanggan lahir dari pembelian pertama, jadi member yang sudah
+         * didaftarkan tapi belum pernah belanja tidak pernah sampai ke server —
+         * dan justru merekalah yang paling ingin dihubungi merchant.
+         */
+        let membersUpserted = 0;
+        for (const cst of pelanggan) {
+          const ref = str(cst?.id, 96);
+          const nama = str(cst?.name, 100);
+          if (!ref || !nama) continue;
+
+          const tier = String(cst?.tier ?? '').toUpperCase();
+          await c.query(
+            `INSERT INTO pos.customers
+               (id, tenant_id, external_ref, name, phone, email, points, total_spent,
+                visit_count, tier, last_visit_at, business_sector, business_id)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11, $12)
+             ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET
+               name          = EXCLUDED.name,
+               phone         = COALESCE(EXCLUDED.phone, pos.customers.phone),
+               email         = COALESCE(EXCLUDED.email, pos.customers.email),
+               points        = EXCLUDED.points,
+               total_spent   = EXCLUDED.total_spent,
+               visit_count   = EXCLUDED.visit_count,
+               tier          = EXCLUDED.tier,
+               last_visit_at = GREATEST(EXCLUDED.last_visit_at, pos.customers.last_visit_at),
+               updated_at    = CURRENT_TIMESTAMP`,
+            [
+              tenantId, ref, nama,
+              str(cst?.phone, 32), str(cst?.email, 160),
+              Math.max(0, Math.trunc(num(cst?.points))),
+              Math.max(0, num(cst?.totalSpent)),
+              Math.max(0, Math.trunc(num(cst?.visitCount))),
+              TIERS.has(tier) ? tier : 'BRONZE',
+              cst?.lastVisit ?? null,
+              sector, businessId,
+            ]
+          );
+          membersUpserted++;
+        }
+
+        /* -- BUNDLE PROMO ---------------------------------------------------
+         *
+         * Isi paket ditulis ulang seluruhnya setiap kiriman, bukan di-diff.
+         * Alasannya sama dengan katalog: melacak perubahan menuntut jurnal yang
+         * belum ada, dan jurnal yang meleset sekali menghasilkan paket yang
+         * berbeda selamanya tanpa ada yang menyadari.
+         */
+        let bundlesUpserted = 0;
+        for (const bd of bundel) {
+          const ref = str(bd?.id, 96);
+          const nama = str(bd?.name, 100);
+          if (!ref || !nama) continue;
+
+          const ins = await c.query(
+            `INSERT INTO pos.bundles
+               (id, tenant_id, external_ref, name, sku, description, regular_price,
+                bundle_price, is_available, business_sector, business_id)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET
+               name          = EXCLUDED.name,
+               sku           = EXCLUDED.sku,
+               description   = EXCLUDED.description,
+               regular_price = EXCLUDED.regular_price,
+               bundle_price  = EXCLUDED.bundle_price,
+               is_available  = EXCLUDED.is_available,
+               updated_at    = CURRENT_TIMESTAMP
+             RETURNING id`,
+            [
+              tenantId, ref, nama,
+              str(bd?.sku, 50), str(bd?.description, 300),
+              num(bd?.regularPrice), num(bd?.bundlePrice),
+              bd?.isAvailable !== false, sector, businessId,
+            ]
+          );
+          const bundleId: string = ins.rows[0].id;
+
+          await c.query(`DELETE FROM pos.bundle_items WHERE bundle_id = $1`, [bundleId]);
+          for (const it of Array.isArray(bd?.items) ? bd.items : []) {
+            const namaItem = str(it?.productName, 100);
+            if (!namaItem) continue;
+            const qty = Math.max(1, Math.trunc(num(it?.quantity, 1)));
+            await c.query(
+              `INSERT INTO pos.bundle_items
+                 (id, bundle_id, tenant_id, product_id, product_name, quantity,
+                  unit_price, subtotal_price)
+               VALUES (uuidv7(), $1, $2,
+                       (SELECT id FROM pos.products
+                         WHERE tenant_id = $2 AND external_ref = $3 LIMIT 1),
+                       $4, $5, $6, $7)`,
+              [
+                bundleId, tenantId, str(it?.productId, 96), namaItem, qty,
+                num(it?.unitPrice), num(it?.subtotalPrice, num(it?.unitPrice) * qty),
+              ]
+            );
+          }
+          bundlesUpserted++;
+        }
+
         // Produk yang tidak ada lagi di perangkat: disembunyikan, bukan dibuang.
         let retired = 0;
         if (seen.length > 0) {
@@ -547,7 +652,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           retired = r.rows.length;
         }
 
-        return { tenantId, upserted, retired };
+        return { tenantId, upserted, retired, membersUpserted, bundlesUpserted };
       });
 
       res.json({ ok: true, ...out });

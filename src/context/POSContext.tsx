@@ -65,6 +65,7 @@ import {
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
 import { applyPurchase } from '../lib/loyalty';
+import { hitungTotal } from '../lib/loyalty';
 import {
   ENTITLEMENT_DARURAT,
   bolehPakaiModul,
@@ -201,7 +202,9 @@ interface POSContextType {
     completionEstimate?: string,
     channel?: string,
     dropOffDate?: string,
-    completionDate?: string
+    completionDate?: string,
+    /** Poin member yang ditukar jadi potongan. Dibatasi saldo dan nilai belanja. */
+    pointsToRedeem?: number
   ) => Order | null;
   voidOrder: (orderId: string, reason?: string) => void;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
@@ -690,7 +693,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * akan mengirim ratusan katalog identik.
    */
   useEffect(() => {
-    if (products.length === 0) return;
+    if (products.length === 0 && customers.length === 0 && bundles.length === 0) return;
 
     const timer = window.setTimeout(() => {
       void pushCatalog(
@@ -700,24 +703,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           storeName: settings.storeName,
           ownerRef: currentUser.id,
         },
-        products.map((p) => ({
-          id: p.id,
-          name: p.name,
-          sku: p.sku,
-          price: p.price,
-          costPrice: p.costPrice,
-          stock: p.stock,
-          minStockAlert: p.minStockAlert,
-          unit: p.unit,
-          description: p.description,
-          categoryName: categories.find((c) => c.id === p.categoryId)?.name,
-          isAvailable: p.isAvailable,
-        }))
+        {
+          products: products.map((p) => ({
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            price: p.price,
+            costPrice: p.costPrice,
+            stock: p.stock,
+            minStockAlert: p.minStockAlert,
+            unit: p.unit,
+            description: p.description,
+            categoryName: categories.find((c) => c.id === p.categoryId)?.name,
+            isAvailable: p.isAvailable,
+          })),
+          // Ikut dikirim di kiriman yang sama. Member yang baru didaftarkan dan
+          // paket promo yang baru disusun tidak lagi menunggu transaksi
+          // pertama untuk sampai ke server.
+          customers,
+          bundles,
+        }
       );
     }, 8_000);
 
     return () => window.clearTimeout(timer);
-  }, [products, categories, currentUser.id, activeSector, settings.storeName]);
+  }, [products, categories, customers, bundles, currentUser.id, activeSector, settings.storeName]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -1158,14 +1168,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     completionEstimate?: string,
     channel?: string,
     dropOffDate?: string,
-    completionDate?: string
+    completionDate?: string,
+    pointsToRedeem = 0
   ): Order | null => {
     if (cart.length === 0) return null;
 
     const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-    const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
-    const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-    const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+
+    // Rumusnya dipakai bersama dengan CheckoutModal supaya angka di layar dan
+    // angka yang tercatat di struk tidak pernah bisa berbeda.
+    const { loyaltyDiscount, pointsUsed, taxTotal, serviceChargeTotal, grandTotal } = hitungTotal({
+      subtotal,
+      pointsToRedeem,
+      availablePoints: selectedCustomer?.points ?? 0,
+      loyaltyRedeemRate: settings.loyaltyRedeemRate,
+      taxRate: settings.taxRate,
+      serviceRate: settings.serviceRate,
+      enableTax: settings.enableTax,
+      enableService: settings.enableService,
+    });
 
     let changeAmount = 0;
     if (paymentMethod === 'CASH' && cashReceived) {
@@ -1198,7 +1219,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
       subtotal,
-      discountTotal: cart.reduce((sum, i) => sum + i.discountAmount, 0),
+      discountTotal: cart.reduce((sum, i) => sum + i.discountAmount, 0) + loyaltyDiscount,
+      pointsRedeemed: pointsUsed || undefined,
+      loyaltyDiscount: loyaltyDiscount || undefined,
       taxTotal,
       serviceChargeTotal,
       total: grandTotal,
@@ -1314,7 +1337,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // payload memakai `newOrder.customer`, yang terkirim adalah keadaan SEBELUM
     // transaksi ini — dan database akan selamanya tertinggal satu kunjungan.
     const updatedCustomer = selectedCustomer
-      ? applyPurchase(selectedCustomer, grandTotal, settings.loyaltyEarnRate)
+      ? applyPurchase(selectedCustomer, grandTotal, settings.loyaltyEarnRate, pointsUsed)
       : null;
 
     if (updatedCustomer) {

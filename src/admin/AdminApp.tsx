@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, Tags, FlaskConical
+  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, Tags
 } from 'lucide-react';
-import { api, getToken, setToken, HALAMAN_DATA_CONTOH, ROLE_LABEL, type Session } from './api';
+import { api, getToken, setToken, ROLE_LABEL, type Session } from './api';
 import { ErrorBox, Loading } from './ui';
 import Overview from './pages/Overview';
 import Merchants from './pages/Merchants';
@@ -27,7 +27,7 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'merchants', label: 'Merchant', icon: Store, cap: 'VIEW_MERCHANT_HEALTH' },
   { id: 'plans', label: 'Paket & Harga', icon: Tags, cap: 'MANAGE_SUBSCRIPTION' },
   { id: 'subscriptions', label: 'Langganan (SaaS)', icon: CreditCard, cap: 'VIEW_MERCHANT_HEALTH' },
-  { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'VIEW_ACCESS_AUDIT' },
+  { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'MANAGE_INTERNAL_USERS' },
   { id: 'transactions', label: 'Log Transaksi', icon: Receipt, cap: 'VIEW_TRANSACTION_LOG' },
   { id: 'products', label: 'Produk Terjual', icon: Package, cap: 'VIEW_PRODUCT_SALES' },
   { id: 'activity', label: 'Jejak Aktivitas', icon: Activity, cap: 'VIEW_ACTIVITY_LOG' },
@@ -262,19 +262,6 @@ export default function AdminApp() {
       </header>
 
       <main className="mx-auto max-w-7xl p-4">
-        {/* Angka yang meyakinkan tapi tidak nyata adalah cara tercepat mengambil
-            keputusan yang salah. Halaman yang belum tersambung ke database
-            mengatakannya sendiri, di tempat yang tidak bisa dilewatkan. */}
-        {HALAMAN_DATA_CONTOH.includes(page) && (
-          <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-            <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
-            <p className="text-xs leading-relaxed">
-              <b>Halaman ini masih menampilkan data contoh</b>, belum isi database. Jangan dipakai
-              mengambil keputusan — manajemen user internal menuntut endpoint tulis tersendiri
-              yang belum dikerjakan. Halaman lain sudah membaca database.
-            </p>
-          </div>
-        )}
         {page === 'overview' && <Overview onOpenSector={openSector} />}
         {page === 'merchants' && <Merchants sector={sector} onSector={setSector} />}
         {page === 'plans' && <Plans />}
