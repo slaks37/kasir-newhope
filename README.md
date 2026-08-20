@@ -62,9 +62,28 @@ AI Copilot dan admin panel melaporkan omzet yang identik karena keduanya **wajib
 | `npm run db:migrate` | Terapkan migrasi saja |
 | `npm run db:reseed` | Isi ulang data contoh |
 | `npm run db:reset` | Hapus database lokal lalu isi ulang dari nol |
-| `npm run lint` | Type-check + pemeriksa higiene sumber |
+| `npm test` | 68 pemeriksaan: loyalitas, batas paket, kedaluwarsa, tanda tangan webhook |
+| `npm run lint` | Higiene sumber + type-check + seluruh tes |
 | `npm run smoke` | Regresi 47 intent AI Copilot |
 | `npm run build` | Bangun SPA dan kelima service |
+
+### Tentang `npm test`
+
+Tes yang murni — aturan poin dan tier, batas paket, perhitungan kedaluwarsa,
+verifikasi tanda tangan webhook — selalu berjalan, termasuk di mesin yang belum
+pernah menyiapkan Postgres.
+
+Tes yang menegakkan batas **di server** (jalur sinkron transaksi, jalur sinkron
+cabang, aktivasi webhook) butuh database yang sudah dimigrasi dan akan
+**melewatkan diri** bila `DATABASE_URL` tidak diset — bukan gagal. Suite yang
+merah karena lingkungan, bukan karena kode, adalah suite yang lama-lama
+diabaikan orang.
+
+Untuk menjalankan semuanya:
+
+```bash
+DATABASE_URL="postgresql://..." npm test
+```
 
 ---
 

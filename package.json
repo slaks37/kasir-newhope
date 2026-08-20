@@ -9,7 +9,7 @@
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "npm run hygiene && tsc --noEmit",
+    "lint": "npm run hygiene && tsc --noEmit && vitest run",
     "hygiene": "node scripts/dev/check-source-hygiene.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
@@ -29,7 +29,9 @@
     "start:pos": "node dist/services/pos/index.js",
     "start:ai": "node dist/services/ai/index.js",
     "start:billing": "node dist/services/billing/index.js",
-    "start:backoffice": "node dist/services/backoffice/index.js"
+    "start:backoffice": "node dist/services/backoffice/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",
@@ -63,6 +65,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "vitest": "4.1.11"
   }
 }

@@ -57,7 +57,23 @@ export const SERVICE_URL = {
 export async function startService(opts: ServiceOptions): Promise<void> {
   const app = express();
   const log = buatLogger(opts.name);
-  app.use(express.json({ limit: '10mb' }));
+  /*
+   * Badan MENTAH disimpan sebelum di-parse.
+   *
+   * Verifikasi tanda tangan webhook menghitung HMAC atas byte yang benar-benar
+   * dikirim gateway. Mem-parse JSON lalu menyusunnya ulang mengubah urutan
+   * kunci dan spasi, sehingga tanda tangan yang BENAR pun tidak akan pernah
+   * cocok — dan gejalanya menyesatkan: terlihat seperti gateway mengirim tanda
+   * tangan salah, padahal kitalah yang mengubah pesannya.
+   */
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req, _res, buf) => {
+        (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+      },
+    })
+  );
 
   /*
    * Correlation ID mengalir dari gateway.

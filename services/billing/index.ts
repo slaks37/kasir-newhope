@@ -20,6 +20,7 @@ import '../shared/env';
 import type express from 'express';
 import { startService, PORTS } from '../shared/service';
 import { newDocumentNumber } from '../../src/lib/ids';
+import { verifikasiWebhook, ambilHeaderTandaTangan } from '../../src/server/webhookAuth';
 import {
   statusEfektif,
   langgananAktif,
@@ -240,6 +241,34 @@ startService({
      * langganan dua kali.
      */
     app.post('/api/v1/webhooks/payment-gateway', async (req, res) => {
+      /*
+       * TANDA TANGAN DIPERIKSA SEBELUM APA PUN.
+       *
+       * Endpoint ini satu-satunya yang boleh mengaktifkan langganan berbayar di
+       * produksi — simulate-payment ditutup justru supaya jalurnya tinggal
+       * satu. Tanpa pemeriksaan ini, siapa pun yang tahu URL-nya bisa mengirim
+       * `payment.succeeded` dan mendapat paket termahal 30 hari tanpa uang
+       * berpindah; menutup satu pintu sambil membiarkan yang lain terbuka tidak
+       * mengunci apa pun.
+       *
+       * Diperiksa SEBELUM webhook dicatat, supaya percobaan palsu tidak
+       * memenuhi tabel log dan tidak "menghabiskan" eventId yang mungkin kelak
+       * dipakai gateway sungguhan.
+       */
+      const hasil = verifikasiWebhook(
+        (req as express.Request & { rawBody?: string }).rawBody ?? '',
+        ambilHeaderTandaTangan(req.headers as Record<string, unknown>),
+        process.env.PAYMENT_WEBHOOK_SECRET
+      );
+
+      if (!hasil.sah) {
+        // Alasannya dicatat untuk kita, TIDAK dikirim ke pemanggil. Memberi
+        // tahu penyerang bahwa tanda tangannya "hampir benar" atau bahwa
+        // stempelnya kedaluwarsa adalah petunjuk gratis.
+        svc.log.warn('webhook ditolak', { alasan: hasil.alasan });
+        return res.status(401).json({ ok: false, error: 'SIGNATURE_INVALID' });
+      }
+
       const body = req.body ?? {};
       const eventId = String(body.eventId || body.id || '');
       const eventType = String(body.eventType || body.type || 'UNKNOWN');
