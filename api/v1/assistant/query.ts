@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { resolveTenantId } from '../../_lib/tenant.js';
+import { jagaModul } from '../../_lib/entitlementGuard.js';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -13,7 +14,7 @@ function getPool() {
     pool = new pg.Pool({
       connectionString: url,
       ssl: lokal ? undefined : { rejectUnauthorized: false },
-      max: parseInt(process.env.PGPOOL_MAX || '5', 10),
+      max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
   return pool;
@@ -250,7 +251,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Dompet disiapkan SESUDAH merchant dikenali dan SEBELUM jawaban apa pun
     // dikirim, supaya saldo yang ditampilkan di layar selalu yang terkini —
     // termasuk pada jawaban gratis, yang juga menampilkan sisa kredit.
-    if (tenantId) dompet = await ambilDompet(db, tenantId);
+    /*
+     * MODUL AI HARUS DIBUKA PAKET, bukan sekadar kuotanya cukup.
+     *
+     * Kuota dan akses modul adalah dua hal berbeda, dan hanya kuota yang selama
+     * ini diperiksa di sini. Sisi klien menyembunyikan tombolnya bila modulnya
+     * tidak dibeli — dan penyembunyian di klien bisa dilewati siapa pun yang
+     * menyunting bundel JavaScript, sementara setiap panggilan LLM yang lolos
+     * tetap ditagihkan kepada kami.
+     */
+    if (tenantId) {
+      const jaga = await jagaModul(db, tenantId, 'ai');
+      if (!jaga.boleh) {
+        return answer(
+          'AI Copilot tidak termasuk paket Anda saat ini. Tingkatkan paket untuk memakainya.',
+          'PAYWALL',
+          'Fitur belum aktif',
+          'MODUL_TIDAK_TERMASUK_PAKET',
+          0
+        );
+      }
+      dompet = await ambilDompet(db, tenantId);
+    }
 
     const fmtRp = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
     const dataCtx =

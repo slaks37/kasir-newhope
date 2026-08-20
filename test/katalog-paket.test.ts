@@ -41,7 +41,12 @@ d('katalog paket di billing.plans', () => {
   };
 
   it('keempat tingkatan ada, dengan nama yang dipakai di kartu harga', async () => {
-    const nama = (await ambil()).sort((a, b) => a.tierLevel - b.tierLevel).map((p) => p.name);
+    // Hanya paket AKTIF — itu yang muncul di kartu harga. Paket nonaktif tetap
+    // berlaku bagi yang sudah berlangganan tapi tidak dijual lagi.
+    const nama = (await ambil())
+      .filter((p) => p.isActive)
+      .sort((a, b) => a.tierLevel - b.tierLevel)
+      .map((p) => p.name);
     expect(nama).toEqual(['Free', 'Free Trial', 'Plus', 'Pro']);
   });
 

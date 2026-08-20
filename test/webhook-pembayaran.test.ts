@@ -61,10 +61,14 @@ d('webhook pembayaran', () => {
     expect(JSON.stringify(r._body)).not.toContain('HEADER_KOSONG');
   });
 
-  it('percobaan palsu TIDAK mengaktifkan langganan dan tidak mengotori log', async () => {
+  it('percobaan palsu TIDAK menaikkan paket dan tidak mengotori log', async () => {
+    // Sejak 0024 merchant baru sudah punya langganan PERCOBAAN, jadi yang harus
+    // dibuktikan bukan "tidak ada langganan" melainkan "tidak naik ke paket
+    // berbayar".
     const sub = await db().query(
-      'SELECT COUNT(*)::int n FROM billing.subscriptions WHERE tenant_id = $1', [tid]);
-    expect(sub.rows[0].n).toBe(0);
+      'SELECT plan_id, status FROM billing.subscriptions WHERE tenant_id = $1', [tid]);
+    expect(sub.rows[0]?.plan_id).not.toBe('plan-pro-monthly');
+    expect(sub.rows[0]?.status).not.toBe('ACTIVE');
 
     const log = await db().query(
       `SELECT COUNT(*)::int n FROM billing.webhook_logs WHERE event_id LIKE 'uji-tolak-%'`);

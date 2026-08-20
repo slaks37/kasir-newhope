@@ -43,6 +43,7 @@ const MIGRATIONS = [
   'migrations/0021_doku_pembayaran.sql',
   'migrations/0022_empat_tier.sql',
   'migrations/0023_entitlement_kedaluwarsa.sql',
+  'migrations/0024_trial_otomatis.sql',
 ];
 
 async function main() {

@@ -219,7 +219,6 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
             <>
               {activeTab === 'home' && (
                 <HomePage
-                  onStartDemo={() => setActiveTab('pos')}
                   onOpenLogin={() => {}}
                 />
               )}
@@ -402,9 +401,17 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 
 export function App() {
   const { user, loading } = useAuth();
-  const [guestMode, setGuestMode] = useState<boolean>(() => {
-    return localStorage.getItem('newhope_pos_guest_mode') === 'true';
-  });
+  /*
+   * MODE TAMU DIHAPUS.
+   *
+   * Dulu siapa pun bisa menekan "Coba Demo Kasir" dan memakai aplikasi kasir
+   * tanpa akun sama sekali. Tanpa akun berarti tanpa tenant, tanpa langganan,
+   * dan karena itu tanpa satu pun batas paket yang bisa ditegakkan — jalan
+   * memutar mengelilingi seluruh paywall, terbuka lebar di halaman depan.
+   *
+   * Penggantinya Free Trial 14 hari: tetap gratis dan tanpa kartu kredit, tapi
+   * lewat pendaftaran, jadi ada merchant yang bisa dihitung batasnya.
+   */
   const [authView, setAuthView] = useState<'home' | 'login' | 'register'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'login' || hash === 'register') return hash;
@@ -424,14 +431,10 @@ export function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const handleStartDemo = () => {
-    localStorage.setItem('newhope_pos_guest_mode', 'true');
-    setGuestMode(true);
-  };
-
   const handleBackToHome = () => {
+    // Sisa mode tamu dari versi lama ikut dibersihkan, supaya perangkat yang
+    // pernah memakainya tidak tertinggal dalam keadaan setengah-setengah.
     localStorage.removeItem('newhope_pos_guest_mode');
-    setGuestMode(false);
     setAuthView('home');
   };
 
@@ -448,12 +451,11 @@ export function App() {
   }
 
   // Jika belum login dan belum masuk mode demo kasir:
-  if (!user && !guestMode) {
+  if (!user) {
     if (authView === 'login' || authView === 'register') {
       return (
         <LoginPage
           onBackToLanding={() => { window.location.hash = ''; }}
-          onStartDemo={handleStartDemo}
           initialMode={authView}
         />
       );
@@ -463,8 +465,7 @@ export function App() {
         <div className="min-h-screen bg-slate-50 flex flex-col">
           <HomePage
             isStandaloneLanding={true}
-            onStartDemo={handleStartDemo}
-            onOpenLogin={() => { window.location.hash = 'login'; }}
+              onOpenLogin={() => { window.location.hash = 'login'; }}
             onOpenRegister={() => { window.location.hash = 'register'; }}
           />
         </div>

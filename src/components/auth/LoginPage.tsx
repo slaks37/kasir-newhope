@@ -34,13 +34,11 @@ import { BusinessSector } from '../../data/businessPresets';
 
 interface LoginPageProps {
   onBackToLanding?: () => void;
-  onStartDemo?: () => void;
   initialMode?: 'login' | 'register';
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
-  onStartDemo,
   initialMode = 'login',
 }) => {
   const { signInWithEmail, signUpWithEmail, configured } = useAuth();
@@ -188,28 +186,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {/* Card */}
         <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5">
-          {/* Quick Demo Access Bar */}
-          {onStartDemo && (
-            <button
-              type="button"
-              onClick={onStartDemo}
-              className="w-full flex items-center justify-between p-3 bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 hover:from-amber-500/25 hover:to-orange-500/25 border border-amber-500/40 text-amber-300 rounded-2xl transition-all active:scale-98 group"
-            >
-              <div className="flex items-center gap-2.5 text-left">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
-                  <Zap className="w-4 h-4 fill-amber-400" />
-                </div>
-                <div>
-                  <span className="text-xs font-black text-amber-300 block">Coba Demo Kasir Instan</span>
-                  <span className="text-[10px] text-slate-400">Masuk tanpa login untuk eksplorasi fitur</span>
-                </div>
-              </div>
-              <span className="text-xs font-bold bg-amber-500 text-slate-950 px-2.5 py-1 rounded-lg">
-                Coba ➔
-              </span>
-            </button>
-          )}
-
           {/* Tab Mode Switcher: Login / Register */}
           <div className="grid grid-cols-2 gap-1 bg-slate-950/80 p-1 rounded-2xl border border-slate-800">
             <button

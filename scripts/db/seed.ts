@@ -182,13 +182,20 @@ async function main() {
   const force = process.argv.includes('--force');
   const db = await getDb((m) => console.log(m));
 
-  if (await alreadySeeded(db)) {
-    if (!force) {
-      console.log('\nDatabase sudah berisi data. Pakai --force untuk mengisi ulang.');
-      return;
-    }
+  // --force MENGHAPUS TANPA SYARAT.
+  //
+  // Dulu penghapusan digantung pada alreadySeeded(), yang memeriksa apakah ada
+  // transaksi. Seed yang gagal di tengah jalan meninggalkan merchant tanpa
+  // transaksi — keadaan yang lolos pemeriksaan itu — sehingga --force melewati
+  // penghapusan lalu langsung menabrak external_ref yang sudah ada. "Force"
+  // yang menolak bekerja justru pada keadaan berantakan tidak menolong siapa
+  // pun; di situlah ia paling dibutuhkan.
+  if (force) {
     console.log('\n--force: menghapus data lama…');
     await wipe(db);
+  } else if (await alreadySeeded(db)) {
+    console.log('\nDatabase sudah berisi data. Pakai --force untuk mengisi ulang.');
+    return;
   }
 
   const now = Date.now();
@@ -299,10 +306,18 @@ async function main() {
     const { rows: planRows } = await db.query(`SELECT id FROM plans ORDER BY tier_level DESC LIMIT 1`);
     if (planRows.length) {
       await db.query(
+        // MENIMPA, bukan menyisipkan. Sejak 0024 setiap merchant baru langsung
+        // mendapat langganan percobaan dari trigger, jadi barisnya sudah ada
+        // sebelum baris ini dijalankan.
         `INSERT INTO subscriptions (id, tenant_id, plan_id, status,
                                     current_period_start, current_period_end)
          VALUES (uuidv7(), $1, $2, $3,
-                 CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')`,
+                 CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           plan_id              = EXCLUDED.plan_id,
+           status               = EXCLUDED.status,
+           current_period_start = EXCLUDED.current_period_start,
+           current_period_end   = EXCLUDED.current_period_end`,
         [tenantId, planRows[0].id, m.name.includes('Vakum') ? 'PAST_DUE' : 'ACTIVE']
       );
     }

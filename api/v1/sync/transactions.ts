@@ -17,7 +17,7 @@ function getPool() {
     pool = new pg.Pool({
       connectionString: url,
       ssl: lokal ? undefined : { rejectUnauthorized: false },
-      max: 10,
+      max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
   return pool;
@@ -211,48 +211,91 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       customerIds.set(c.ref, custRes.rows[0].id);
     }
 
+    /*
+     * PENULISAN MASSAL, bukan satu kueri per baris.
+     *
+     * Bentuk sebelumnya mengirim sekitar 2 + jumlah-item kueri UNTUK SETIAP
+     * transaksi: cek duplikat, ambil uuid, insert transaksi, lalu satu insert
+     * per baris struk. Satu batch penuh (200 transaksi x 3 item) menjadi
+     * ~1010 perjalanan bolak-balik ke database DALAM SATU PERMINTAAN.
+     *
+     * Di localhost itu 283 ms dan terasa cepat. Di Postgres terkelola dengan
+     * RTT 2–5 ms, angka yang sama menjadi 2–5 DETIK — mepet batas 10 detik
+     * fungsi serverless. Dan karena seluruhnya satu transaksi, timeout berarti
+     * rollback penuh: merchant mengirim ulang selamanya tanpa pernah berhasil,
+     * sementara omzetnya tidak pernah tercatat.
+     *
+     * Sekarang: satu kueri untuk memeriksa SEMUA duplikat, satu untuk semua
+     * transaksi, satu untuk semua baris item. Tiga perjalanan, bukan seribu.
+     */
     let accepted = 0;
     let duplicates = 0;
 
-    for (const t of txns) {
-      if (!t.clientTxnId) continue;
+    const berid = txns.filter((t: any) => t.clientTxnId);
 
-      // Check if already exists
-      const existing = await client.query(
-        `SELECT id FROM pos.transactions WHERE client_txn_id = $1 AND tenant_id = $2`,
-        [t.clientTxnId, tenantId]
+    // 1. Duplikat diperiksa sekali untuk seluruh batch.
+    const sudahAda = new Set<string>();
+    if (berid.length) {
+      const { rows } = await client.query(
+        `SELECT client_txn_id FROM pos.transactions
+          WHERE tenant_id = $1 AND client_txn_id = ANY($2::text[])`,
+        [tenantId, berid.map((t: any) => String(t.clientTxnId))]
       );
+      for (const r of rows) sudahAda.add(r.client_txn_id);
+    }
 
-      if (existing.rows.length > 0) {
+    // Kiriman yang sama bisa memuat clientTxnId kembar di dalam dirinya
+    // sendiri. Tanpa penjagaan ini, INSERT massal menabrak unique constraint
+    // dan MENGGAGALKAN SELURUH BATCH — termasuk transaksi yang tidak
+    // bersalah.
+    const dalamBatch = new Set<string>();
+    const baru: any[] = [];
+    for (const t of berid) {
+      const kunci = String(t.clientTxnId);
+      if (sudahAda.has(kunci) || dalamBatch.has(kunci)) {
         duplicates++;
         continue;
       }
+      dalamBatch.add(kunci);
+      baru.push(t);
+    }
 
-      const txnId = await client.query('SELECT uuidv7() as id');
-      const realTxnId = txnId.rows[0].id;
+    if (baru.length) {
+      // 2. Produk diresolusi lebih dulu supaya loop insert tidak menyentuh
+      //    database sama sekali. resolveProduct sudah menyimpan hasilnya, jadi
+      //    produk yang sama pada puluhan struk hanya dicari satu kali.
+      const idProduk = new Map<any, string | null>();
+      for (const t of baru) {
+        if (!Array.isArray(t.items)) continue;
+        for (const item of t.items) idProduk.set(item, await resolveProduct(item));
+      }
 
-      // cashier_name / cashier_role are NOT columns here — the cashier's name
-      // is reached through cashier_user_id, and contract.transaction_log joins
-      // it in. Naming them made every insert fail, which rolled back the whole
-      // batch: this endpoint had never written a single transaction.
-      // business_sector and business_id are NOT NULL since 0006.
-      await client.query(
-        `INSERT INTO pos.transactions (
-          id, client_txn_id, tenant_id, cashier_user_id, customer_id,
-          invoice_number, subtotal, discount_amount, tax_amount, service_charge_amount,
-          total_amount, payment_method, payment_status, order_type, app_module,
-          business_sector, business_id, created_at
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-          COALESCE($18::timestamptz, CURRENT_TIMESTAMP)
-        )`,
-        [
-          realTxnId,
+      // 3. Satu INSERT untuk semua transaksi.
+      const kolomTxn = 18;
+      const nilaiTxn: any[] = [];
+      const barisTxn: string[] = [];
+      // Seluruh id dibangkitkan dalam SATU kueri. Memanggil uuidv7() sekali per
+      // transaksi mengembalikan N perjalanan yang baru saja dihilangkan.
+      const { rows: idRows } = await client.query(
+        'SELECT uuidv7() AS id FROM generate_series(1, $1)',
+        [baru.length]
+      );
+      const idTxn: string[] = idRows.map((r: any) => r.id);
+
+      baru.forEach((t: any, i: number) => {
+        const p = i * kolomTxn;
+        barisTxn.push(
+          `($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}, $${p + 6}, $${p + 7}, ` +
+          `$${p + 8}, $${p + 9}, $${p + 10}, $${p + 11}, $${p + 12}, $${p + 13}, $${p + 14}, ` +
+          `$${p + 15}, $${p + 16}, $${p + 17}, COALESCE($${p + 18}::timestamptz, CURRENT_TIMESTAMP))`
+        );
+        nilaiTxn.push(
+          idTxn[i],
           t.clientTxnId,
           tenantId,
           defaultUserId,
           t.customer?.ref ? customerIds.get(t.customer.ref) ?? null : null,
-          t.invoiceNumber || `INV-${Date.now()}`,
+          t.invoiceNumber || `INV-${Date.now()}-${i}`,
           Number(t.subtotal) || 0,
           Number(t.discountAmount) || 0,
           Number(t.taxAmount) || 0,
@@ -264,43 +307,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           t.appModule || 'POS',
           sector,
           businessId,
-          t.createdAt || null,
-        ]
+          t.createdAt || null
+        );
+      });
+
+      // cashier_name / cashier_role BUKAN kolom di sini — nama kasir dijangkau
+      // lewat cashier_user_id, dan contract.transaction_log yang menggabungkannya.
+      await client.query(
+        `INSERT INTO pos.transactions (
+           id, client_txn_id, tenant_id, cashier_user_id, customer_id,
+           invoice_number, subtotal, discount_amount, tax_amount, service_charge_amount,
+           total_amount, payment_method, payment_status, order_type, app_module,
+           business_sector, business_id, created_at
+         ) VALUES ${barisTxn.join(', ')}`,
+        nilaiTxn
       );
 
-      if (Array.isArray(t.items)) {
-        for (const item of t.items) {
-          // product_id carries a foreign key, so it must point at a real
-          // catalog row. legacy_uuid() only mints a synthetic id that no
-          // product has, which failed the constraint and rolled back the batch.
-          const productId = await resolveProduct(item);
-          const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1));
+      // 4. Satu INSERT untuk semua baris struk.
+      const kolomItem = 11;
+      const nilaiItem: any[] = [];
+      const barisItem: string[] = [];
 
-          await client.query(
-            `INSERT INTO pos.transaction_items (
-              id, transaction_id, tenant_id, product_id, product_name, product_description,
-              category_name, unit_price, unit_cost, quantity, total_price, business_sector
-            ) VALUES (
-              uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-            )`,
-            [
-              realTxnId,
-              tenantId,
-              productId,
-              item.productName,
-              item.productDescription || '',
-              item.categoryName || 'General',
-              Number(item.unitPrice) || 0,
-              Number(item.unitCost) || 0,
-              quantity,
-              Number(item.totalPrice) || (Number(item.unitPrice) || 0) * quantity,
-              sector,
-            ]
+      baru.forEach((t: any, i: number) => {
+        if (!Array.isArray(t.items)) return;
+        for (const item of t.items) {
+          const p = nilaiItem.length;
+          barisItem.push(
+            `(uuidv7(), $${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}, $${p + 6}, ` +
+            `$${p + 7}, $${p + 8}, $${p + 9}, $${p + 10}, $${p + 11})`
+          );
+          const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1));
+          nilaiItem.push(
+            idTxn[i],
+            tenantId,
+            idProduk.get(item) ?? null,
+            item.productName,
+            item.productDescription || '',
+            item.categoryName || 'General',
+            Number(item.unitPrice) || 0,
+            Number(item.unitCost) || 0,
+            quantity,
+            Number(item.totalPrice) || (Number(item.unitPrice) || 0) * quantity,
+            sector
           );
         }
+      });
+
+      if (barisItem.length) {
+        await client.query(
+          `INSERT INTO pos.transaction_items (
+             id, transaction_id, tenant_id, product_id, product_name, product_description,
+             category_name, unit_price, unit_cost, quantity, total_price, business_sector
+           ) VALUES ${barisItem.join(', ')}`,
+          nilaiItem
+        );
       }
 
-      accepted++;
+      accepted = baru.length;
     }
 
     // Log sync receipt. idempotency_key is the primary key — there is no

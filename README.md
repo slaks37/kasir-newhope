@@ -89,6 +89,13 @@ DATABASE_URL="postgresql://..." npm test
 
 ## Menyambung ke PostgreSQL sungguhan (Supabase, RDS, Neon)
 
+> **Pakai connection pooler, bukan koneksi langsung.** Folder `api/` berisi 31
+> fungsi serverless, dan tiap *instance* yang hidup memegang kolam koneksinya
+> sendiri. Puluhan instance bersamaan menghabiskan `max_connections` Postgres
+> (bawaannya 100), dan begitu habis setiap permintaan gagal — termasuk kasir
+> yang sedang melayani antrean. Di Supabase artinya port **6543**, bukan 5432.
+
+
 Isi `DATABASE_URL` di `.env`, lalu:
 
 ```bash

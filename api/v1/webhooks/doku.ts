@@ -37,7 +37,7 @@ function getPool() {
     pool = new pg.Pool({
       connectionString: url,
       ssl: lokal ? undefined : { rejectUnauthorized: false },
-      max: 5,
+      max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
   return pool;

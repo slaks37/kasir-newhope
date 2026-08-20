@@ -47,14 +47,30 @@ d('batas produk di jalur sinkron', () => {
   const jumlahProdukKatalog = async () =>
     (await db().query('SELECT COUNT(*)::int n FROM pos.products WHERE tenant_id = $1', [tid])).rows[0].n;
 
-  it('menahan katalog di batas darurat saat merchant belum berlangganan', async () => {
+  it('merchant baru memakai batas TRIAL — sejak 0024 tidak ada yang lahir tanpa langganan', async () => {
     const hasil = await kirim(40, 'a');
     expect(hasil.ok).toBe(true);
-    expect(hasil.productLimit).toBe(30);
-    expect(hasil.catalogSkipped).toBe(10);
-
     tid = hasil.tenantId;
-    expect(await jumlahProdukKatalog()).toBe(30);
+
+    const { rows } = await db().query(
+      `SELECT e.product_limit, e.status FROM contract.merchant_entitlements e
+        WHERE e.merchant_id = $1`, [tid]);
+    expect(rows[0].status).toBe('TRIAL');
+    expect(hasil.productLimit).toBe(Number(rows[0].product_limit));
+    expect(await jumlahProdukKatalog()).toBe(40); // 40 < batas trial, semuanya masuk
+  });
+
+  it('turun ke Free menahan katalog di batas Free', async () => {
+    await pasangPaket(tid, 'plan-free');
+    const batasFree = Number((await db().query(
+      `SELECT product_limit FROM billing.plans WHERE id = 'plan-free'`)).rows[0].product_limit);
+
+    // 40 produk sudah ada, batas Free lebih kecil — produk BARU ditahan.
+    const hasil = await kirim(60, 'a2');
+    expect(hasil.productLimit).toBe(batasFree);
+    expect(hasil.catalogSkipped).toBeGreaterThan(0);
+    // Yang lama TIDAK dihapus.
+    expect(await jumlahProdukKatalog()).toBe(40);
   });
 
   it('TIDAK menghilangkan omzet — barisnya tetap masuk tanpa produk katalog', async () => {
@@ -62,9 +78,9 @@ d('batas produk di jalur sinkron', () => {
       `SELECT COUNT(*)::int total, COUNT(product_id)::int berkatalog,
               COALESCE(SUM(total_price),0)::numeric omzet
          FROM pos.transaction_items WHERE tenant_id = $1`, [tid]);
-    expect(rows[0].total).toBe(40);        // seluruh baris struk ada
-    expect(rows[0].berkatalog).toBe(30);   // 10 tanpa produk katalog
-    expect(Number(rows[0].omzet)).toBe(400_000);
+    expect(rows[0].total).toBe(100);        // 40 + 60 baris struk, semuanya ada
+    expect(rows[0].berkatalog).toBe(80);    // 20 tanpa produk katalog
+    expect(Number(rows[0].omzet)).toBe(1_000_000);
   });
 
   it('membuka sisanya setelah naik paket', async () => {
@@ -173,12 +189,22 @@ d('batas outlet di jalur sinkron', () => {
     expect(alamat.rows[0].address).toBe('Alamat diperbaiki');
   });
 
-  it('merchant tanpa langganan dibatasi 1 outlet, bukan tanpa batas', async () => {
-    const BID2 = 'usr-nolangganan_FNB';
-    await merchantUji(BID2, 'Tanpa Langganan');
+  it('merchant baru memakai batas TRIAL, bukan tanpa batas', async () => {
+    const BID2 = 'usr-baru-outlet_FNB';
+    const tid2 = await merchantUji(BID2, 'Merchant Baru');
+
+    const batasTrial = Number((await db().query(
+      `SELECT max_outlets FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+      [tid2])).rows[0].max_outlets);
+
     const res = resTiruan();
-    await sinkronCabang({ method: 'POST', body: { businessId: BID2, branches: [cabang(1), cabang(2)] } }, res);
-    expect(res._body.maxOutlets).toBe(1);
-    expect(res._body.saved).toBe(1);
+    await sinkronCabang({
+      method: 'POST',
+      body: { businessId: BID2, branches: Array.from({ length: batasTrial + 2 }, (_, i) => cabang(i + 1)) },
+    }, res);
+
+    expect(res._body.maxOutlets).toBe(batasTrial);
+    expect(res._body.saved).toBe(batasTrial);
+    expect(res._body.rejected).toHaveLength(2);
   });
 });
