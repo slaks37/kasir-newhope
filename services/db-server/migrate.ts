@@ -40,6 +40,7 @@ const MIGRATIONS = [
   'migrations/0018_bundles.sql',
   'migrations/0019_drop_tenant_id_duplikat.sql',
   'migrations/0020_branches.sql',
+  'migrations/0021_doku_pembayaran.sql',
 ];
 
 async function main() {

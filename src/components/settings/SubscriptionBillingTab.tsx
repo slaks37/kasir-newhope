@@ -102,39 +102,51 @@ export const SubscriptionBillingTab: React.FC = () => {
     }
   };
 
-  const handleSimulatePayment = async (planId?: string, invoiceId?: string) => {
+  /**
+   * Membuka halaman pembayaran DOKU (QRIS).
+   *
+   * TIDAK ADA YANG DIAKTIFKAN DI SINI, dan tidak boleh. Yang mengaktifkan
+   * langganan hanya notifikasi DOKU yang tanda tangannya sah. Fungsi ini hanya
+   * menerbitkan tagihan dan membuka tautannya; kalau ia ikut mengaktifkan,
+   * menutup tab sebelum membayar sudah cukup untuk mendapat paket gratis.
+   *
+   * Versi sebelumnya memanggil simulate-payment — jalur yang sengaja ditutup di
+   * produksi justru karena mengaktifkan tanpa uang berpindah.
+   */
+  const handleBayar = async (planId?: string) => {
     setIsProcessingPayment(true);
     try {
-      const deviceId = await getDeviceId();
-      const targetId = planId || selectedPlanForUpgrade?.id || subscription?.planId || 'plan-pro-monthly';
-      const res = await fetch('/api/v1/subscription/simulate-payment', {
+      const targetId = planId || selectedPlanForUpgrade?.id || subscription?.planId;
+      if (!targetId) {
+        setIsProcessingPayment(false);
+        alert('Pilih paket terlebih dahulu.');
+        return;
+      }
+
+      const res = await fetch('/api/v1/subscription/pay', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-device-id': deviceId
-        },
-        body: JSON.stringify({
-          tenantId: tenant.businessId,
-          targetPlanId: targetId,
-          invoiceId,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: tenant.businessId, planId: targetId }),
       });
       const data = await res.json();
       setIsProcessingPayment(false);
       setShowProrationModal(false);
 
-      // Server menjawab `ok`, bukan `success`. Selama ini cabang ini tidak
-      // pernah terpenuhi: pembayaran yang benar-benar berhasil tetap terlihat
-      // seperti tidak terjadi apa-apa, dan merchant menekan tombolnya berulang.
-      if (data.ok) {
-        alert(data.message || 'Paket langganan berhasil diperbarui.');
-        fetchSubscriptionData();
-      } else {
-        alert(data.detail || 'Gagal memproses pembayaran. Silakan coba lagi.');
+      if (!data.ok || !data.paymentUrl) {
+        alert(data.detail || 'Gagal membuka halaman pembayaran. Silakan coba lagi.');
+        return;
       }
+
+      // Tab baru, bukan mengganti halaman ini. Kasir yang sedang melayani
+      // antrean tidak boleh kehilangan layarnya karena membuka tagihan.
+      window.open(data.paymentUrl, '_blank', 'noopener,noreferrer');
+
+      // Langganan BELUM aktif saat ini. Menyegarkan sekarang sengaja: layar
+      // akan menampilkan tagihan yang menunggu dibayar, bukan paket baru.
+      fetchSubscriptionData();
     } catch (err) {
       setIsProcessingPayment(false);
-      alert('Terjadi kesalahan saat memproses pembayaran.');
+      alert('Terjadi kesalahan saat menghubungi penyedia pembayaran.');
     }
   };
 
@@ -235,10 +247,10 @@ export const SubscriptionBillingTab: React.FC = () => {
               </span>
             </div>
             <button
-              onClick={() => handleSimulatePayment(currentPlan.id)}
+              onClick={() => handleBayar(currentPlan.id)}
               className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0"
             >
-              Bayar Perpanjangan
+              Bayar via QRIS
             </button>
           </div>
         )}
@@ -252,7 +264,7 @@ export const SubscriptionBillingTab: React.FC = () => {
               </span>
             </div>
             <button
-              onClick={() => handleSimulatePayment(currentPlan.id)}
+              onClick={() => handleBayar(currentPlan.id)}
               className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0"
             >
               Aktifkan Kembali Sekarang
@@ -265,21 +277,21 @@ export const SubscriptionBillingTab: React.FC = () => {
           <div className="flex items-center space-x-4 text-slate-300">
             <span className="flex items-center space-x-1 font-medium">
               <Building2 className="w-3.5 h-3.5 text-amber-400" />
-              <span>Maksimal {currentPlan?.maxOutlets || 5} Outlet / Cabang</span>
+              <span>Maksimal {currentPlan?.maxOutlets ?? '—'} Outlet / Cabang</span>
             </span>
             <span className="flex items-center space-x-1 font-medium">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Tier Level {currentPlan?.tierLevel || 2}</span>
+              <span>Tier Level {currentPlan?.tierLevel ?? '—'}</span>
             </span>
           </div>
 
           <button
-            onClick={() => handleSimulatePayment(currentPlan.id)}
+            onClick={() => handleBayar(currentPlan.id)}
             disabled={isProcessingPayment}
             className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-md flex items-center space-x-2 transition-all"
           >
             <Zap className="w-4 h-4" />
-            <span>{isProcessingPayment ? 'Memproses...' : 'Perpanjang Paket Sekarang'}</span>
+            <span>{isProcessingPayment ? 'Membuka QRIS...' : 'Perpanjang — Bayar via QRIS'}</span>
           </button>
         </div>
       </div>
@@ -522,12 +534,12 @@ export const SubscriptionBillingTab: React.FC = () => {
                 Batal
               </button>
               <button
-                onClick={() => handleSimulatePayment(selectedPlanForUpgrade.id)}
+                onClick={() => handleBayar(selectedPlanForUpgrade.id)}
                 disabled={isProcessingPayment}
                 className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs flex items-center space-x-1.5"
               >
                 <Zap className="w-4 h-4" />
-                <span>Bayar Upgrade Prorasi</span>
+                <span>{isProcessingPayment ? 'Membuka QRIS...' : 'Bayar via QRIS'}</span>
               </button>
             </div>
           </div>
