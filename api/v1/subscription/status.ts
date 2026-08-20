@@ -94,13 +94,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               p.extra_outlet_price_idr AS "extraOutletPriceIdr",
               p.currency,
               p.features,
-              p.product_limit          AS "productLimit",
-              p.max_outlets            AS "maxOutlets",
-              p.ai_quota_monthly       AS "aiQuotaMonthly",
-              p.dashboard_access_level AS "dashboardAccessLevel",
-              p.module_access          AS "moduleAccess"
+              -- ENTITLEMENT DIBACA DARI contract.merchant_entitlements, bukan
+              -- langsung dari billing.plans.
+              --
+              -- View itu yang menurunkan batas ke tingkat Free begitu langganan
+              -- mati. Membaca paketnya langsung mengirim batas Pro kepada
+              -- merchant yang sudah 30 hari tidak membayar — diuji, dan memang
+              -- itu yang terjadi sebelum perbaikan ini.
+              e.product_limit          AS "productLimit",
+              e.max_outlets            AS "maxOutlets",
+              e.ai_quota_effective     AS "aiQuotaMonthly",
+              e.dashboard_access_level AS "dashboardAccessLevel",
+              e.module_access          AS "moduleAccess",
+              -- Nilai paketnya dibawa terpisah untuk mengajak memperpanjang:
+              -- "paket Anda 5 outlet, aktifkan kembali untuk memakainya".
+              e.product_limit_plan          AS "productLimitPlan",
+              e.max_outlets_plan            AS "maxOutletsPlan",
+              e.ai_quota_plan               AS "aiQuotaMonthlyPlan",
+              e.dashboard_access_level_plan AS "dashboardAccessLevelPlan"
          FROM billing.subscriptions s
          LEFT JOIN billing.plans p ON p.id = s.plan_id
+         LEFT JOIN contract.merchant_entitlements e ON e.merchant_id = s.tenant_id
         WHERE s.tenant_id = $1
         ORDER BY s.created_at DESC
         LIMIT 1`,
@@ -147,6 +161,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       : null;
 
+    // Apa yang tertulis di paket, terlepas dari apakah sedang berlaku. Dipakai
+    // layar langganan untuk menunjukkan apa yang hilang dan apa yang kembali
+    // setelah dibayar.
+    const planEntitlements = row.planCode
+      ? {
+          productLimit: Number(row.productLimitPlan),
+          maxOutlets: Number(row.maxOutletsPlan),
+          aiQuotaMonthly: Number(row.aiQuotaMonthlyPlan),
+          dashboardAccessLevel: row.dashboardAccessLevelPlan,
+        }
+      : null;
+
     const invoices = await db.query(
       `SELECT i.id, i.subscription_id AS "subscriptionId", i.tenant_id AS "tenantId",
               i.amount, i.currency, i.payment_status AS "paymentStatus",
@@ -182,6 +208,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         plan,
       },
       plan,
+      planEntitlements,
       invoices: invoices.rows,
       daysLeft,
       isActive: langgananAktif(status),

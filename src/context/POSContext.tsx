@@ -75,6 +75,7 @@ import {
   labelBatas,
   type PlanEntitlements,
 } from '../lib/plans/entitlements';
+import type { StatusLangganan } from '../lib/plans/expiry';
 
 /**
  * Hasil penyimpanan yang BISA DITOLAK oleh batas paket.
@@ -166,6 +167,11 @@ interface POSContextType {
   hasPermission: (feature: PermissionFeature) => boolean;
   /** Isi paket langganan yang sedang berlaku. Menentukan batas dan modul terbuka. */
   entitlements: PlanEntitlements;
+  /**
+   * Status langganan yang BERLAKU (sudah memperhitungkan kedaluwarsa dan masa
+   * tenggang). null berarti belum terbaca atau merchant belum berlangganan.
+   */
+  statusLangganan: StatusLangganan | null;
   planName: string | null;
   verifyPin: (pin: string, requiredRoles?: UserRole[]) => { success: boolean; user?: User; message?: string };
   
@@ -439,6 +445,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [entitlements, setEntitlements] = useState<PlanEntitlements>(ENTITLEMENT_DARURAT);
   const [planName, setPlanName] = useState<string | null>(null);
 
+  /*
+   * STATUS LANGGANAN, dan kenapa ia perlu ada di sini.
+   *
+   * SubscriptionLockScreen dulu mengandalkan `settings.subscription`, yang
+   * TIDAK PERNAH diisi siapa pun kecuali layar kunci itu sendiri — sehingga
+   * syarat munculnya tidak akan pernah terpenuhi. Layar itu tidak pernah
+   * muncul sekali pun, dan tidak ada yang menyadarinya karena tidak ada galat.
+   *
+   * Sekarang statusnya diambil dari sumber yang sama dengan entitlement, jadi
+   * keduanya tidak bisa berbeda.
+   */
+  const [statusLangganan, setStatusLangganan] = useState<StatusLangganan | null>(null);
+
   useEffect(() => {
     let aktif = true;
     const businessId = makeBusinessId(currentUser.id, activeSector);
@@ -457,6 +476,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             : ENTITLEMENT_DARURAT.moduleAccess,
         });
         setPlanName(d.plan.name ?? null);
+        setStatusLangganan((d.subscription?.status ?? null) as StatusLangganan | null);
       })
       .catch(() => {
         // Sengaja diam: entitlement darurat sudah terpasang, dan memunculkan
@@ -1953,6 +1973,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteUser,
         hasPermission,
         entitlements,
+        statusLangganan,
         planName,
         verifyPin,
         cart,

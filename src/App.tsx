@@ -21,7 +21,7 @@ import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
 import { SwitchUserModal } from './components/auth/SwitchUserModal';
 import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
-import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
+import { SpandukLangganan } from './components/billing/SpandukLangganan';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
 import { formatRupiah } from './utils/formatters';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag } from 'lucide-react';
@@ -162,6 +162,10 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
         onOpenClockIn={() => setShowClockInModal(true)}
       />
+
+      {/* Ajakan perpanjang. Di bawah header supaya selalu terlihat tanpa
+          menutupi apa pun — kasir tetap bisa melayani antrean. */}
+      <SpandukLangganan onBuka={() => setActiveTab('settings')} />
 
       {/* Main Container */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -367,10 +371,6 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 
       {showRecentTransactionsModal && (
         <RecentTransactionsModal onClose={() => setShowRecentTransactionsModal(false)} />
-      )}
-
-      {settings.subscription?.status === 'EXPIRED' && (
-        <SubscriptionLockScreen onRenewSuccess={() => {}} />
       )}
 
       {showShiftModal && (
