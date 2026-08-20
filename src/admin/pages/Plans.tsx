@@ -231,7 +231,7 @@ function EditorPaket({
               <input
                 className={kelasInput}
                 value={draf.name}
-                placeholder="Tier Plus"
+                placeholder="Plus"
                 onChange={(e) => ubah('name', e.target.value)}
               />
             </Kolom>

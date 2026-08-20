@@ -126,31 +126,45 @@ d('batas outlet di jalur sinkron', () => {
     expect(h.remainingQuota).toBe(0);
   });
 
-  it('membuka bertahap mengikuti paket', async () => {
-    await pasangPaket(tid, 'plan-plus-monthly');
-    expect((await kirim([cabang(1), cabang(2), cabang(3)])).activeOutlets).toBe(2);
+  /** Batas dibaca dari katalog, bukan dipatok di tes — katalognya bisa berubah. */
+  const batasOutlet = async (planId: string) =>
+    Number((await db().query(
+      'SELECT max_outlets FROM billing.plans WHERE id = $1', [planId])).rows[0].max_outlets);
 
+  it('membuka bertahap mengikuti paket', async () => {
+    const batasPlus = await batasOutlet('plan-plus-monthly');
+    await pasangPaket(tid, 'plan-plus-monthly');
+    const semua = Array.from({ length: batasPlus + 3 }, (_, i) => cabang(i + 1));
+    expect((await kirim(semua)).activeOutlets).toBe(batasPlus);
+
+    const batasPro = await batasOutlet('plan-pro-monthly');
     await pasangPaket(tid, 'plan-pro-monthly');
-    expect((await kirim([cabang(1), cabang(2), cabang(3), cabang(4), cabang(5)])).activeOutlets).toBe(4);
+    expect((await kirim(semua)).activeOutlets).toBe(Math.min(batasPro, semua.length));
   });
 
   it('menonaktifkan cabang MEMBEBASKAN kuotanya', async () => {
-    const setelahTutup = await kirim([cabang(4, false)]);
-    expect(setelahTutup.activeOutlets).toBe(3);
+    const batasPro = await batasOutlet('plan-pro-monthly');
+    // Penuhi dulu sampai batas, apa pun angkanya.
+    await kirim(Array.from({ length: batasPro }, (_, i) => cabang(i + 1)));
+
+    const setelahTutup = await kirim([cabang(batasPro, false)]);
+    expect(setelahTutup.activeOutlets).toBe(batasPro - 1);
     expect(setelahTutup.remainingQuota).toBe(1);
 
-    const berikutnya = await kirim([cabang(5)]);
+    const berikutnya = await kirim([cabang(batasPro + 1)]);
     expect(berikutnya.rejected).toHaveLength(0);
-    expect(berikutnya.activeOutlets).toBe(4);
+    expect(berikutnya.activeOutlets).toBe(batasPro);
   });
 
   it('turun paket tidak menghapus cabang lama dan tetap boleh menyuntingnya', async () => {
     await pasangPaket(tid, 'plan-free');
-    expect((await kirim([cabang(6)])).rejected).toHaveLength(1);
+    expect((await kirim([cabang(99)])).rejected).toHaveLength(1);
 
+    const batasPro = Number((await db().query(
+      'SELECT max_outlets FROM billing.plans WHERE id = $1', ['plan-pro-monthly'])).rows[0].max_outlets);
     const { rows } = await db().query(
       'SELECT COUNT(*)::int n FROM pos.branches WHERE tenant_id = $1 AND is_active', [tid]);
-    expect(rows[0].n).toBe(4);
+    expect(rows[0].n).toBe(batasPro);
 
     const sunting = await kirim([{ ...cabang(1), address: 'Alamat diperbaiki' }]);
     expect(sunting.rejected).toHaveLength(0);

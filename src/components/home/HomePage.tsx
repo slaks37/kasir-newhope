@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
@@ -43,6 +43,31 @@ interface HomePageProps {
   isStandaloneLanding?: boolean;
 }
 
+interface KatalogPaket {
+  id: string;
+  name: string;
+  tierLevel: number;
+  priceIdr: number;
+  priceYearlyIdr?: number;
+  extraOutletPriceIdr?: number;
+  features: string[];
+  productLimit: number;
+  maxOutlets: number;
+  aiQuotaMonthly: number;
+  trialDays?: number;
+}
+
+/** "Tanpa batas" untuk -1, angka apa adanya selain itu. */
+const labelBatas = (n: number) => (n === -1 ? 'Tanpa batas' : String(n));
+
+/** Rp 99rb / Rp 299rb — bentuk yang dipakai kartu harga. */
+const ringkasRupiah = (n: number) => {
+  if (n === 0) return 'Rp 0';
+  if (n >= 1_000_000) return `Rp ${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}jt`;
+  if (n >= 1_000) return `Rp ${Math.round(n / 1_000)}rb`;
+  return `Rp ${n}`;
+};
+
 export const HomePage: React.FC<HomePageProps> = ({
   onStartDemo,
   onOpenLogin,
@@ -69,6 +94,32 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   // Registration Modal State
   const [registerSuccessMsg, setRegisterSuccessMsg] = useState<string | null>(null);
+
+  /*
+   * KARTU HARGA DIBACA DARI KATALOG, tidak ditulis ulang di sini.
+   *
+   * Sebelumnya keempat kartu memuat angkanya sendiri — "45 Hari", "Limit 100
+   * Produk", "Up to 4 Outlet" — dan begitu katalog di panel admin berubah,
+   * halaman ini tetap menjanjikan angka lama kepada calon pelanggan. Janji yang
+   * tidak ditepati bukan sekadar tampilan yang usang; itu yang dibaca orang
+   * sebelum memutuskan berlangganan.
+   */
+  const [paket, setPaket] = useState<KatalogPaket[]>([]);
+
+  useEffect(() => {
+    let aktif = true;
+    fetch('/api/v1/subscription/plans')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (aktif && d?.ok && Array.isArray(d.plans)) setPaket(d.plans);
+      })
+      .catch(() => {
+        // Diam. Bagian harga akan kosong, dan halaman kosong lebih jujur
+        // daripada harga karangan yang bisa dipakai orang untuk mengambil
+        // keputusan.
+      });
+    return () => { aktif = false; };
+  }, []);
 
   // Metrics calculation
   const todayStr = new Date().toISOString().split('T')[0];
@@ -513,72 +564,107 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 relative z-10">
-          {/* Free Trial */}
-          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
-            <h3 className="font-extrabold text-lg text-white">Free Trial</h3>
-            <p className="text-xs text-amber-400 font-bold mb-4">45 Hari Coba Gratis</p>
-            <div className="text-2xl font-black text-white mb-6">Rp 0</div>
-            
-            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>1 Outlet</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Limit 100 Produk</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Full Access POS & Dash</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 10x Interaksi Total</span></li>
-            </ul>
-            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
-          </div>
-
-          {/* Free Tier */}
-          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
-            <h3 className="font-extrabold text-lg text-white">Free Tier</h3>
-            <p className="text-xs text-slate-400 mb-4">Gratis Selamanya</p>
-            <div className="text-2xl font-black text-white mb-6">Rp 0<span className="text-xs font-normal text-slate-500"> / bln</span></div>
-            
-            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>1 Outlet</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Limit 30 Produk</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Basic POS + Daily Sales</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 3x / bulan</span></li>
-            </ul>
-            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
-          </div>
-
-          {/* Tier Plus */}
-          <div className="bg-gradient-to-b from-amber-500/10 to-slate-800/80 rounded-2xl border border-amber-500/50 p-5 flex flex-col relative overflow-hidden">
-            <div className="absolute top-0 right-0 bg-amber-500 text-slate-950 text-[10px] font-black px-3 py-1 rounded-bl-lg">POPULER</div>
-            <h3 className="font-extrabold text-lg text-amber-400">Tier Plus</h3>
-            <p className="text-xs text-slate-400 mb-4">UMKM & Kedai Menengah</p>
-            <div className="mb-6">
-              <div className="text-2xl font-black text-white">Rp 99rb<span className="text-xs font-normal text-slate-500"> / bln</span></div>
-              <div className="text-[10px] text-slate-400 mt-1">Atau Rp 79rb/bln (Tahunan)</div>
+          {paket.length === 0 ? (
+            <div className="col-span-full text-center text-xs text-slate-400 py-8">
+              Memuat daftar paket…
             </div>
-            
-            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Up to 2 Outlet (+59rb/cabang/bln)</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Limit 100 Produk / outlet</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>Full POS + Inventory + Analytics</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" /><span>AI Analyst: 30x / bulan</span></li>
-            </ul>
-            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition-colors shadow-lg shadow-amber-500/20 cursor-pointer">Mulai Tier Plus</button>
-          </div>
+          ) : (
+            paket.map((pk) => {
+              // Paket berbayar termurah yang ditandai POPULER. Dipilih dari
+              // katalog, bukan dipatok pada satu id — mengganti nama atau
+              // menambah paket tidak boleh membuat penandanya hilang.
+              const termurahBerbayar = paket
+                .filter((x) => x.priceIdr > 0)
+                .sort((a, b) => a.priceIdr - b.priceIdr)[0];
+              const populer = termurahBerbayar?.id === pk.id;
+              const percobaan = (pk.trialDays ?? 0) > 0;
 
-          {/* Tier Pro */}
-          <div className="bg-slate-800/80 rounded-2xl border border-slate-700 p-5 flex flex-col">
-            <h3 className="font-extrabold text-lg text-white">Tier Pro</h3>
-            <p className="text-xs text-slate-400 mb-4">Restoran & Multi Cabang</p>
-            <div className="mb-6">
-              <div className="text-2xl font-black text-white">Rp 299rb<span className="text-xs font-normal text-slate-500"> / bln</span></div>
-              <div className="text-[10px] text-slate-400 mt-1">Atau Rp 239rb/bln (Tahunan)</div>
-            </div>
-            
-            <ul className="space-y-3 flex-1 mb-6 text-xs text-slate-300 font-medium">
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Up to 4 Outlet (+49rb/cabang/bln)</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Unlimited Produk</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>Full POS + Adv. Stock + Analisa</span></li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /><span>AI Analyst: 90x / bulan</span></li>
-            </ul>
-            <button onClick={() => onOpenRegister?.()} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer">Daftar Sekarang</button>
-          </div>
+              return (
+                <div
+                  key={pk.id}
+                  className={`rounded-2xl p-5 flex flex-col relative overflow-hidden ${
+                    populer
+                      ? 'bg-gradient-to-b from-amber-500/10 to-slate-800/80 border border-amber-500/50'
+                      : 'bg-slate-800/80 border border-slate-700'
+                  }`}
+                >
+                  {populer && (
+                    <div className="absolute top-0 right-0 bg-amber-500 text-slate-950 text-[10px] font-black px-3 py-1 rounded-bl-lg">
+                      POPULER
+                    </div>
+                  )}
+
+                  <h3 className={`font-extrabold text-lg ${populer ? 'text-amber-400' : 'text-white'}`}>
+                    {pk.name}
+                  </h3>
+                  <p className={`text-xs mb-4 ${percobaan ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
+                    {percobaan
+                      ? `${pk.trialDays} Hari Coba Gratis`
+                      : pk.priceIdr === 0
+                        ? 'Gratis Selamanya'
+                        : `Sampai ${pk.maxOutlets} outlet`}
+                  </p>
+
+                  <div className="mb-6">
+                    <div className="text-2xl font-black text-white">
+                      {ringkasRupiah(pk.priceIdr)}
+                      {pk.priceIdr > 0 && (
+                        <span className="text-xs font-normal text-slate-500"> / bln</span>
+                      )}
+                    </div>
+                    {pk.priceYearlyIdr != null && pk.priceYearlyIdr > 0 && (
+                      <div className="text-[10px] text-slate-400 mt-1">
+                        Atau {ringkasRupiah(pk.priceYearlyIdr)}/bln (Tahunan)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Batas yang mengikat, disusun dari entitlement yang
+                      benar-benar ditegakkan server — bukan dari teks pemasaran. */}
+                  <ul className="space-y-2.5 mb-4 text-xs text-slate-300 font-medium">
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${populer ? 'text-amber-400' : 'text-emerald-400'}`} />
+                      <span>
+                        {pk.maxOutlets} Outlet
+                        {pk.extraOutletPriceIdr
+                          ? ` (+${ringkasRupiah(pk.extraOutletPriceIdr)}/cabang/bln)`
+                          : ''}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${populer ? 'text-amber-400' : 'text-emerald-400'}`} />
+                      <span>{labelBatas(pk.productLimit)} Produk</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${populer ? 'text-amber-400' : 'text-emerald-400'}`} />
+                      <span>AI Analyst: {pk.aiQuotaMonthly}x / bulan</span>
+                    </li>
+                  </ul>
+
+                  {/* Sisanya teks bebas yang diatur admin di panel harga. */}
+                  <ul className="space-y-2.5 flex-1 mb-6 text-xs text-slate-400 font-medium">
+                    {pk.features.slice(0, 3).map((f) => (
+                      <li key={f} className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-slate-500 shrink-0" />
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <button
+                    onClick={() => onOpenRegister?.()}
+                    className={`w-full py-2.5 font-bold rounded-xl text-xs transition-colors cursor-pointer ${
+                      populer
+                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-lg shadow-amber-500/20'
+                        : 'bg-slate-700 hover:bg-slate-600 text-white'
+                    }`}
+                  >
+                    {percobaan ? 'Coba Gratis' : pk.priceIdr === 0 ? 'Daftar Sekarang' : `Mulai ${pk.name}`}
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

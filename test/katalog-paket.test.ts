@@ -21,7 +21,8 @@ d('katalog paket di billing.plans', () => {
     const { rows } = await db().query(
       `SELECT id, name, tier_level, billing_cycle, price_idr, price_yearly_idr,
               extra_outlet_price_idr, currency, features, product_limit, max_outlets,
-              ai_quota_monthly, dashboard_access_level, module_access, is_active, sort_order
+              ai_quota_monthly, dashboard_access_level, module_access, is_active, sort_order,
+              trial_days
          FROM billing.plans ORDER BY tier_level`
     );
     return rows.map((r: any) => ({
@@ -35,8 +36,42 @@ d('katalog paket di billing.plans', () => {
       dashboardAccessLevel: r.dashboard_access_level,
       moduleAccess: r.module_access ?? [], isActive: r.is_active,
       sortOrder: Number(r.sort_order),
-    }));
+      trialDays: Number(r.trial_days ?? 0),
+    })) as Array<AdminPlan & { trialDays: number }>;
   };
+
+  it('keempat tingkatan ada, dengan nama yang dipakai di kartu harga', async () => {
+    const nama = (await ambil()).sort((a, b) => a.tierLevel - b.tierLevel).map((p) => p.name);
+    expect(nama).toEqual(['Free', 'Free Trial', 'Plus', 'Pro']);
+  });
+
+  it('batas outlet sesuai yang dijanjikan: Plus 2, Pro 5', async () => {
+    const oleh = Object.fromEntries((await ambil()).map((p) => [p.id, p]));
+    expect(oleh['plan-plus-monthly'].maxOutlets).toBe(2);
+    expect(oleh['plan-pro-monthly'].maxOutlets).toBe(5);
+  });
+
+  it('paket percobaan gratis dan punya durasi — yang berbayar tidak punya', async () => {
+    const semua = await ambil();
+    const percobaan = semua.filter((p) => p.trialDays > 0);
+    expect(percobaan.length).toBeGreaterThan(0);
+    for (const p of percobaan) {
+      expect(p.priceIdr).toBe(0);
+      expect(p.trialDays).toBeGreaterThan(0);
+    }
+    for (const p of semua.filter((x) => x.priceIdr > 0)) {
+      expect(p.trialDays).toBe(0);
+    }
+  });
+
+  it('percobaan memberi LEBIH dari Free — kalau tidak, tidak ada yang dicoba', async () => {
+    const oleh = Object.fromEntries((await ambil()).map((p) => [p.id, p]));
+    const gratis = oleh['plan-free'];
+    const coba = oleh['plan-free-trial'];
+    expect(coba.productLimit).toBeGreaterThan(gratis.productLimit);
+    expect(coba.maxOutlets).toBeGreaterThanOrEqual(gratis.maxOutlets);
+    expect(coba.aiQuotaMonthly).toBeGreaterThan(gratis.aiQuotaMonthly);
+  });
 
   it('tidak kosong — katalog kosong berarti tidak ada yang bisa dijual', async () => {
     expect((await ambil()).length).toBeGreaterThan(0);

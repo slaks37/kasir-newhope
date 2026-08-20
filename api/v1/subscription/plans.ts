@@ -46,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { rows } = await getPool().query(
       `SELECT id, name, tier_level, billing_cycle, price_idr, price_yearly_idr,
               extra_outlet_price_idr, currency, features, product_limit, max_outlets,
-              ai_quota_monthly, dashboard_access_level, module_access, sort_order
+              ai_quota_monthly, dashboard_access_level, module_access, sort_order, trial_days
          FROM contract.plan_catalog
         WHERE is_active
         ORDER BY sort_order, tier_level`
@@ -70,6 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         aiQuotaMonthly: Number(r.ai_quota_monthly),
         dashboardAccessLevel: r.dashboard_access_level,
         moduleAccess: r.module_access ?? [],
+        trialDays: Number(r.trial_days ?? 0),
         isActive: true,
       })),
     });

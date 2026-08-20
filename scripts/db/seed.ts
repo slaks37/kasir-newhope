@@ -218,8 +218,16 @@ async function main() {
     // keadaan yang perlu bisa dibedakan staf support: merchant yang mentok
     // batas outletnya, yang masih longgar, dan yang baru punya satu.
     //
-    // Paket seed adalah Tier Pro (4 outlet), jadi 4 cabang berarti mentok.
-    const jumlahCabang = m.owner === 'usr-budi' && m.sector === 'FNB' ? 4 : m.days >= 60 ? 2 : 1;
+    // Batasnya DIBACA dari paket tertinggi, tidak dipatok di sini. Angka yang
+    // diketik ulang akan berbohong pada perubahan katalog berikutnya — dan
+    // pernah berbohong: komentar ini dulu menyebut "4 outlet" ketika Pro sudah
+    // menjadi 5.
+    const { rows: batasRows } = await db.query(
+      `SELECT max_outlets FROM plans ORDER BY tier_level DESC LIMIT 1`
+    );
+    const batasOutlet = Number(batasRows[0]?.max_outlets ?? 1);
+    const jumlahCabang =
+      m.owner === 'usr-budi' && m.sector === 'FNB' ? batasOutlet : m.days >= 60 ? 2 : 1;
     let cabangUtama: string | null = null;
     for (let i = 0; i < jumlahCabang; i++) {
       const { rows } = await db.query(

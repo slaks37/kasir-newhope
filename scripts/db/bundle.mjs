@@ -39,6 +39,7 @@ const MIGRATIONS = [
   'migrations/0019_drop_tenant_id_duplikat.sql',
   'migrations/0020_branches.sql',
   'migrations/0021_doku_pembayaran.sql',
+  'migrations/0022_empat_tier.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';
