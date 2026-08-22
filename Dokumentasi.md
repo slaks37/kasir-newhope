@@ -106,7 +106,7 @@ flowchart TB
     D1[("D1 · pos<br/><i>19 tabel</i>")]
     D2[("D2 · billing<br/><i>5 tabel</i>")]
     D3[("D3 · ai<br/><i>7 tabel</i>")]
-    D4[("D4 · internal<br/><i>4 tabel</i>")]
+    D4[("D4 · internal<br/><i>5 tabel</i>")]
 
     E1 -->|"struk, produk, cabang"| P1
     P1 -->|"diterima / ditolak + sisa kuota"| E1
@@ -381,10 +381,12 @@ flowchart TB
     P53["P5.3 · Sajikan data"]
     P54["P5.4 · Ubah katalog paket"]
     P55["P5.5 · Catat akses"]
+    P56["P5.6 · Terbitkan artikel blog"]
 
     D4a[("D4 · internal.internal_users")]
     D4b[("D4 · internal.internal_access_log")]
     D4c[("D4 · internal.merchant_health_logs<br/>feature_usage_events")]
+    D4d[("D4 · internal.blog_posts")]
     D2a[("D2 · billing.plans")]
     D2b[("D2 · billing.plan_change_log")]
     D1[("D1 · pos.*")]
@@ -402,6 +404,9 @@ flowchart TB
     P54 --> D2a
     P54 --> D2b
     P54 --> P55
+    P52 --> P56
+    P56 --> D4d
+    P56 --> P55
     P55 --> D4b
     P53 --> E3
 ```
@@ -427,9 +432,9 @@ membuktikannya.
 | `D1` pos | P1, P2, P3, P4, P5 | P1.1–P1.5, P2.1, P3.2, P4.1, P4.5, P5.3 | 19 |
 | `D2` billing | P1, P2, P3, P5 | P1.3, P2.1–P2.4, P3.0, P3.4, P5.3, P5.4 | 5 |
 | `D3` ai | P3, P4 | P3.3–P3.6, P4.2–P4.4 | 7 |
-| `D4` internal | P4, P5 | P4.5, P5.1–P5.5 | 4 |
+| `D4` internal | P4, P5 | P4.5, P5.1–P5.6 | 5 |
 
-**Total 35 tabel.** `contract` (30 view) sengaja tidak ada di tabel ini —
+**Total 36 tabel.** `contract` (30 view) sengaja tidak ada di tabel ini —
 alasannya di bagian [`contract` BUKAN data store](#contract-bukan-data-store).
 
 Tidak ada store yang muncul di Level 2 tapi hilang di Level 1, dan tidak ada
@@ -451,7 +456,8 @@ menulis kolom yang sama dengan aturan berbeda.
 | `billing.subscriptions`<br/>`billing.invoices` | Billing | **hanya `P2`** — penerbitan faktur & webhook pembayaran | baca lewat `contract` |
 | `billing.webhook_logs` | Billing | `P2.2` | — |
 | `ai.*` | AI | `P3` (kredit & log), `P4` (kartu insight) | baca lewat `contract` |
-| `internal.*` | Backoffice | `P5` | — |
+| `internal.blog_posts` | Backoffice | `P5.6` — CMS blog | publik baca `contract.blog_published` |
+| `internal.*` lainnya | Backoffice | `P5` | — |
 | `contract.*` | — | **tidak ada.** Hanya view. | semua service, baca |
 
 **Pembagian di dalam `billing` itu disengaja, dan inilah bagian yang paling
@@ -465,9 +471,15 @@ yang jebol menjadi cara memberi paket termahal kepada siapa pun tanpa uang
 berpindah — dan tidak akan muncul di rekonsiliasi mana pun, karena tidak ada
 faktur yang dilanggarnya.
 
-Yang menegakkannya saat ini konvensi, bukan hak akses database: `svc_backoffice`
-belum dibatasi per tabel di dalam `billing`. Sampai itu ada, aturan ini dijaga
-oleh peninjauan kode dan oleh tabel ini.
+**Yang menegakkannya DATABASE, bukan peninjauan kode** (0032). `svc_backoffice`
+memegang `SELECT` untuk seluruh `billing`, tapi `INSERT`/`UPDATE` hanya pada
+`plans` dan `plan_change_log`. Dibuktikan: panel yang mencoba menyalakan
+langganan mendapat `permission denied for table subscriptions`.
+
+Default privileges skema ikut dicabut, jadi tabel `billing` yang ditambahkan
+migrasi BERIKUTNYA tidak diam-diam bisa ditulis panel. Aturan yang hanya
+ditulis di dokumen adalah aturan yang akan dilanggar oleh orang yang tidak
+membaca dokumen itu.
 
 `src/server/plansRepo.ts` adalah satu-satunya berkas panel yang menulis
 `billing`, dan hanya ke dua tabel katalog itu. `billing.subscriptions` di
@@ -480,43 +492,57 @@ sebuah paket sebelum harganya diubah.
 
 Capability mana membuka apa, dan mana yang tercatat.
 
-| Capability | Membuka | Diaudit | Alasan wajib (SUPPORT) |
-|---|---|---|---|
-| `VIEW_MERCHANT_HEALTH` | Skor churn, agregat | — | — |
-| `VIEW_CHURN_COHORT` | Kohor retensi | — | — |
-| `VIEW_PLATFORM_REVENUE` | MRR seluruh platform | — | — |
-| `VIEW_FEATURE_ADOPTION` | Adopsi fitur | — | — |
-| `VIEW_SECTOR_ANALYTICS` | Ringkasan lima sektor | — | — |
-| `VIEW_MERCHANT_DETAIL` | Pembukuan satu merchant | ya | ya |
-| `VIEW_TRANSACTION_LOG` | Struk satu merchant | ya | ya |
-| `VIEW_PRODUCT_SALES` | Penjualan per produk | ya | ya |
-| `VIEW_ACTIVITY_LOG` | Kejadian di aplikasi kasir | ya | ya |
-| `VIEW_ACCESS_AUDIT` | Log akses internal | — | — |
-| `IMPERSONATE_MERCHANT` | Menyamar sebagai merchant | ya | ya |
-| `MANAGE_SUBSCRIPTION` | Ubah katalog paket & harga | ya | ya |
-| `GRANT_AI_CREDITS` | Menambah kredit AI | ya | ya |
-| `MANAGE_INTERNAL_USERS` | Buat & ubah peran akun internal | ya | ya |
-| `MANAGE_PUBLIC_CONTENT` | Terbitkan artikel blog | **belum bisa** | — |
+| Capability | Kepekaan | Membuka | Diaudit | Alasan wajib |
+|---|---|---|---|---|
+| `VIEW_MERCHANT_HEALTH` | AGGREGATE | Skor churn, agregat | — | — |
+| `VIEW_CHURN_COHORT` | AGGREGATE | Kohor retensi | — | — |
+| `VIEW_PLATFORM_REVENUE` | AGGREGATE | MRR seluruh platform | — | — |
+| `VIEW_FEATURE_ADOPTION` | AGGREGATE | Adopsi fitur | — | — |
+| `VIEW_SECTOR_ANALYTICS` | AGGREGATE | Ringkasan lima sektor | — | — |
+| `VIEW_ACCESS_AUDIT` | AGGREGATE | Log akses internal | — | — |
+| `VIEW_MERCHANT_PROFILE` | IDENTIFIED | Profil, cabang, staf toko | ya | SUPPORT |
+| `VIEW_ACTIVITY_LOG` | IDENTIFIED | Kejadian di aplikasi kasir | ya | SUPPORT |
+| `VIEW_MERCHANT_FINANCIAL` | FINANCIAL | Omzet & margin satu merchant | ya | SUPPORT |
+| `VIEW_MERCHANT_BILLING` | FINANCIAL | Langganan & tagihannya | ya | SUPPORT |
+| `VIEW_MERCHANT_AI_USAGE` | FINANCIAL | Kredit & pemakaian AI | ya | SUPPORT |
+| `VIEW_TRANSACTION_LOG` | FINANCIAL | Struk satu merchant | ya | SUPPORT |
+| `VIEW_PRODUCT_SALES` | FINANCIAL | Penjualan per produk | ya | SUPPORT |
+| `VIEW_CUSTOMER_DATA` | PERSONAL | Data pribadi pelanggan merchant | ya | **semua** |
+| `MANAGE_SUBSCRIPTION` | DANGEROUS | Ubah katalog paket & harga | ya | **semua** |
+| `GRANT_AI_CREDITS` | DANGEROUS | Menambah kredit AI | ya | **semua** |
+| `IMPERSONATE_MERCHANT` | DANGEROUS | Menyamar sebagai merchant | ya | **semua** |
+| `MANAGE_INTERNAL_USERS` | DANGEROUS | Buat & ubah peran akun internal | ya | **semua** |
+| `MANAGE_PUBLIC_CONTENT` | DANGEROUS | Terbitkan artikel blog | ya | **semua** |
 
-**Empat yang pertama sengaja tidak diaudit.** Semuanya agregat murni — tidak
-ada merchant yang bisa dikenali dari angkanya. Menuntut jejak dan alasan untuk
-membuka dasbor ringkasan hanya melatih staf mengetik "cek" di setiap kotak,
-dan kebiasaan itu merusak nilai jejak yang benar-benar penting.
+**Kepekaan melekat pada DATANYA, bukan pada jabatan pembukanya.** Kewajiban
+alasan dulu ditentukan semata oleh peran — `role === SUPPORT && requiresAudit`.
+Artinya superadmin membuka data pribadi pelanggan tanpa menyebut alasan apa
+pun, sementara support harus beralasan untuk melihat daftar cabang. Peran
+menjawab "boleh atau tidak"; ia tidak menjawab "seberapa berbahaya kalau ini
+dibuka tanpa sebab".
 
-**Pembacaan yang membidik satu merchant selalu dicatat**, beserta alasannya
-bila yang membuka role SUPPORT. Aturan pencatatannya:
-`requiresAudit(capability) && merchantId` — jadi `VIEW_TRANSACTION_LOG` yang
-dipakai untuk tampilan agregat tidak dicatat, sementara yang membidik
-`?merchantId=…` dicatat.
+Sekarang: PERSONAL dan DANGEROUS menuntut alasan dari **siapa pun, termasuk
+superadmin**. FINANCIAL dan IDENTIFIED hanya dari SUPPORT — superadmin memang
+mengurus pembukuan platform, dan menuntutnya beralasan setiap kali hanya
+melatih mengetik "cek". AGGREGATE tidak pernah.
 
-**Mutasi dicatat di endpointnya masing-masing**, bukan lewat pembungkus:
-`INTERNAL_USER_INVITE`, `INTERNAL_USER_ROLE_*`, `PLAN_ACTIVATE`,
-`PLAN_DEACTIVATE`, `PLAN_*`. Konsekuensinya harus disadari: **endpoint tulis
-baru yang lupa memanggil `catatAkses` tidak akan mengeluh** — ia hanya diam
-tidak tercatat. Belum ada pembungkus tulis yang setara `layaniBaca`.
+**Empat capability agregat sengaja tidak diaudit.** Semuanya angka yang tidak
+bisa dikenali merchantnya. Menuntut jejak untuk membuka dasbor ringkasan
+melatih staf mengabaikan seluruh mekanismenya, dan kebiasaan itu merusak nilai
+jejak yang benar-benar penting.
 
-**`MANAGE_PUBLIC_CONTENT` belum bisa diaudit** karena blog belum punya sisi
-server sama sekali — lihat [Yang belum](#yang-belum).
+**Daftar yang diaudit DIHASILKAN, bukan ditulis tangan.** Dulu array manual —
+dan array manual menua ke arah yang salah: capability baru tidak masuk kecuali
+ada yang ingat, makin banyak yang tidak tercatat, dan tidak ada yang memberi
+tahu. Sekarang `requiresAudit(cap) === (sensitivity(cap) !== 'AGGREGATE')`, dan
+TypeScript menolak `SENSITIVITY` yang tidak memuat seluruh capability.
+
+**Mutasi lewat `layaniTulis`**, yang menuntut alasan, menjalankan handlernya,
+lalu mencatat hasil sesungguhnya — termasuk `FAILED_*` saat gagal. Sebelumnya
+tiap endpoint memanggil `catatAkses` sendiri: benar hari itu, tapi endpoint
+berikutnya yang lupa **tidak akan mengeluh**. `npm run hygiene` sekarang
+menolak berkas di `api/admin/` yang melayani metode tulis tanpa memakai
+pembungkusnya.
 
 ---
 
@@ -545,26 +571,6 @@ Ditulis di sini supaya tidak terlihat seperti sudah selesai.
 - **Jabat tangan DOKU belum diuji ke server sungguhan.** Tanda tangannya sudah
   diuji terhadap vektor uji, tapi `api-sandbox.doku.com` diblokir dari
   lingkungan pengembangan ini. Harus dijalankan dari mesin sendiri.
-- **Blog belum punya sisi server sama sekali.** `src/lib/blogStorage.ts`
-  menyimpan artikel di `localStorage` peramban. Tidak ada tabel, tidak ada
-  endpoint, tidak ada penegakan `MANAGE_PUBLIC_CONTENT` selain menyembunyikan
-  menunya — kelas penjagaan yang bisa dilewati siapa pun yang menyunting bundel
-  JavaScript. Yang lebih mengejutkan bagi produknya: artikel yang ditulis admin
-  **tidak sampai ke pengunjung mana pun**. Halaman blog publik memuat konstanta
-  bawaan, bukan yang ditulis di panel, dan membersihkan data peramban
-  menghilangkan seluruh tulisan.
-
-- **Belum ada pembungkus untuk jalur TULIS panel internal.** Pembacaan lewat
-  `layaniBaca`, yang menyatukan metode, token, capability, kewajiban alasan,
-  dan jejak audit. Penulisan memanggil `wajibAdmin` lalu `catatAkses` sendiri —
-  benar hari ini, tapi endpoint tulis berikutnya yang lupa memanggilnya tidak
-  akan mengeluh.
-
-- **Hak akses per tabel di dalam `billing` belum dipasang.** Pembagian di
-  [matriks kepemilikan](#matriks-kepemilikan-data) — panel boleh menulis
-  katalog tapi tidak boleh menyentuh langganan — saat ini dijaga konvensi dan
-  peninjauan kode, bukan oleh `GRANT` yang menolak.
-
 - **`LAYOUT_UTILISATION` memakai pendekatan.** Meja, bay, dan kursi belum
   menjadi entitas, jadi yang dihitung adalah pesanan yang dilayani di tempat
   (`order_type = DINE_IN`) — bukan perputaran meja yang sesungguhnya. Payload

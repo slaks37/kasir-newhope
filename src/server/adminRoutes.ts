@@ -412,9 +412,14 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
 
   app.get(
     '/api/admin/merchants/:merchantId',
-    guard('VIEW_MERCHANT_DETAIL'),
+    // Profil dulu. Blok keuangannya ditambahkan repo hanya bila pemanggilnya
+    // juga memegang VIEW_MERCHANT_FINANCIAL.
+    guard('VIEW_MERCHANT_PROFILE'),
     wrap(async (req, res, db) => {
-      const detail = await repo.merchantDetail(db, req.params.merchantId);
+      const bolehKeuangan = (req as any).internal
+        ? internalCapabilities((req as any).internal.role).includes('VIEW_MERCHANT_FINANCIAL')
+        : false;
+      const detail = await repo.merchantDetail(db, req.params.merchantId, { bolehKeuangan });
       if (!detail) return res.status(404).json({ ok: false, error: 'MERCHANT_NOT_FOUND' });
       res.json({ ok: true, ...detail });
     })
@@ -477,7 +482,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
 
   app.get(
     '/api/admin/branches',
-    guard('VIEW_MERCHANT_DETAIL'),
+    // Daftar cabang: alamat dan status, tidak ada angka uang.
+    guard('VIEW_MERCHANT_PROFILE'),
     wrap(async (req, res, db) => {
       res.json({ ok: true, ...(await repo.branches(db, req.query as repo.ListFilter)) });
     })
@@ -607,7 +613,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
 
   app.get(
     '/api/admin/merchant-staff',
-    guard('VIEW_MERCHANT_DETAIL'),
+    // Daftar staf toko: nama dan peran, tidak ada angka uang.
+    guard('VIEW_MERCHANT_PROFILE'),
     wrap(async (req, res, db) => {
       res.json({ ok: true, ...(await internalUsers.staffMerchant(db, req.query as any)) });
     })

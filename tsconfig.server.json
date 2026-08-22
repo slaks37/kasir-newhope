@@ -1,0 +1,20 @@
+{
+  /*
+   * KODE SERVER YANG SELAMA INI TIDAK PERNAH DICEK.
+   *
+   * tsconfig.json hanya menyertakan "src". Artinya `api/` — setiap fungsi
+   * serverless yang benar-benar berjalan di produksi Vercel — dan `services/`
+   * lolos dari `tsc --noEmit` sepenuhnya.
+   *
+   * Ketahuan saat memecah VIEW_MERCHANT_DETAIL: tiga berkas di src/ langsung
+   * ditolak compiler, sementara tiga berkas di api/ yang memakai nama
+   * capability yang sudah tidak ada lolos tanpa sepatah kata pun. Tanpa
+   * penelusuran manual, ia berangkat ke produksi dan baru gagal saat dipanggil.
+   *
+   * `test/` dan `scripts/` sengaja TIDAK di sini: assertion tes yang menembus
+   * nilai mungkin-null adalah gaya yang wajar, dan menuntutnya lolos strict
+   * hanya menambah `!` di ratusan tempat tanpa menangkap kesalahan nyata.
+   */
+  "extends": "./tsconfig.json",
+  "include": ["api", "services", "src"]
+}

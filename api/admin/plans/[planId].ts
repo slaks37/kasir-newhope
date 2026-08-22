@@ -20,47 +20,40 @@ import {
   simpanPaket,
   ubahAktifPaket,
 } from '../../../src/server/plansRepo';
-import { catatAkses, metodeDilayani, poolSebagaiDb, wajibAdmin } from '../../_lib/adminContext';
+import { layaniBaca, layaniTulis } from '../../_lib/adminContext';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!metodeDilayani(req, res, ['GET', 'PUT', 'PATCH'])) return;
-
-  const who = await wajibAdmin(req, res, 'MANAGE_SUBSCRIPTION');
-  if (!who) return;
-
   const planId = String(req.query?.planId ?? '').trim().toLowerCase();
-  if (!planId) return res.status(400).json({ ok: false, error: 'PLAN_ID_REQUIRED' });
 
-  const db = poolSebagaiDb();
-
-  try {
-    if (req.method === 'GET') {
-      return res.status(200).json({ ok: true, rows: await riwayatPaket(db, planId) });
-    }
-
-    if (req.method === 'PATCH') {
-      const aktif = req.body?.isActive !== false;
-      const plan = await ubahAktifPaket(db, planId, aktif, who.email);
-      if (!plan) return res.status(404).json({ ok: false, error: 'PLAN_NOT_FOUND' });
-
-      await catatAkses(who, aktif ? 'PLAN_ACTIVATE' : 'PLAN_DEACTIVATE', `/api/admin/plans/${planId}`, req);
-      return res.status(200).json({ ok: true, plan });
-    }
-
-    // PUT — aktornya diambil dari token, BUKAN dari body. Membiarkan pemanggil
-    // menyebut namanya sendiri di `updated_by` membuat riwayat harga bisa
-    // ditandatangani atas nama orang lain, dan riwayat yang bisa dipalsukan
-    // lebih buruk daripada tidak ada riwayat — ia tetap dipercaya.
-    const masukan = bacaMasukanPaket({ ...req.body, id: planId });
-    const { plan, kind } = await simpanPaket(db, masukan, who.email);
-
-    await catatAkses(who, `PLAN_${kind}`, `/api/admin/plans/${planId}`, req);
-    return res.status(200).json({ ok: true, plan, kind });
-  } catch (err: any) {
-    if (err instanceof PlanValidationError) {
-      return res.status(400).json({ ok: false, error: 'PLAN_INVALID', issues: err.issues });
-    }
-    console.error('[admin] gagal menyimpan paket:', err?.message);
-    return res.status(500).json({ ok: false, error: 'PLAN_SAVE_FAILED' });
+  if (req.method === 'GET') {
+    return layaniBaca(req, res, 'MANAGE_SUBSCRIPTION', (db) =>
+      riwayatPaket(db, planId).then((rows) => ({ rows }))
+    );
   }
+
+  return layaniTulis(req, res, 'MANAGE_SUBSCRIPTION', ['PUT', 'PATCH'], async (db, who) => {
+    if (!planId) throw Object.assign(new Error('planId wajib diisi.'), { kode: 'PLAN_ID_REQUIRED' });
+
+    try {
+      if (req.method === 'PATCH') {
+        const aktif = req.body?.isActive !== false;
+        const plan = await ubahAktifPaket(db, planId, aktif, who.email);
+        if (!plan) throw Object.assign(new Error('Paket tidak ditemukan.'), { kode: 'PLAN_NOT_FOUND' });
+        return { aksi: aktif ? 'PLAN_ACTIVATE' : 'PLAN_DEACTIVATE', hasil: { plan } };
+      }
+
+      // PUT — aktornya diambil dari token, BUKAN dari body. Membiarkan
+      // pemanggil menyebut namanya sendiri di `updated_by` membuat riwayat
+      // harga bisa ditandatangani atas nama orang lain, dan riwayat yang bisa
+      // dipalsukan lebih buruk daripada tidak ada riwayat — ia tetap dipercaya.
+      const masukan = bacaMasukanPaket({ ...req.body, id: planId });
+      const { plan, kind } = await simpanPaket(db, masukan, who.email);
+      return { aksi: `PLAN_${kind}`, hasil: { plan, kind } };
+    } catch (err: any) {
+      if (err instanceof PlanValidationError) {
+        throw Object.assign(err, { kode: 'PLAN_INVALID' });
+      }
+      throw err;
+    }
+  });
 }

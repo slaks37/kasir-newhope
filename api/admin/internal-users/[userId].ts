@@ -11,49 +11,38 @@ import {
   ubahAktif,
   ubahPeran,
 } from '../../../src/server/internalUsersRepo';
-import { catatAkses, metodeDilayani, poolSebagaiDb, wajibAdmin } from '../../_lib/adminContext';
+import { layaniTulis } from '../../_lib/adminContext';
 
 export default async function handler(req: any, res: any) {
-  if (!metodeDilayani(req, res, ['PATCH'])) return;
+  return layaniTulis(req, res, 'MANAGE_INTERNAL_USERS', ['PATCH'], async (db, who) => {
+    const userId = String(req.query?.userId ?? '').trim();
+    if (!userId) throw Object.assign(new Error('userId wajib diisi.'), { kode: 'USER_ID_REQUIRED' });
 
-  const who = await wajibAdmin(req, res, 'MANAGE_INTERNAL_USERS');
-  if (!who) return;
-
-  const userId = String(req.query?.userId ?? '').trim();
-  if (!userId) return res.status(400).json({ ok: false, error: 'USER_ID_REQUIRED' });
-
-  const db = poolSebagaiDb();
-  const b = req.body ?? {};
-
-  try {
-    let user;
-    let aksi: string;
-
-    if (typeof b.role === 'string') {
-      user = await ubahPeran(db, userId, b.role, who.id);
-      aksi = `INTERNAL_USER_ROLE_${b.role}`;
-    } else if (typeof b.isActive === 'boolean') {
-      user = await ubahAktif(db, userId, b.isActive, who.id);
-      aksi = b.isActive ? 'INTERNAL_USER_ACTIVATE' : 'INTERNAL_USER_DEACTIVATE';
-    } else if (b.revokePassword === true) {
-      user = await cabutPassword(db, userId, who.id);
-      aksi = 'INTERNAL_USER_REVOKE_PASSWORD';
-    } else {
-      return res.status(400).json({
-        ok: false,
-        error: 'NO_CHANGE',
-        detail: 'Sebutkan salah satu: role, isActive, atau revokePassword.',
-      });
+    const b = req.body ?? {};
+    try {
+      if (typeof b.role === 'string') {
+        const user = await ubahPeran(db, userId, b.role, who.id);
+        return { aksi: `INTERNAL_USER_ROLE_${b.role}`, hasil: { user } };
+      }
+      if (typeof b.isActive === 'boolean') {
+        const user = await ubahAktif(db, userId, b.isActive, who.id);
+        return {
+          aksi: b.isActive ? 'INTERNAL_USER_ACTIVATE' : 'INTERNAL_USER_DEACTIVATE',
+          hasil: { user },
+        };
+      }
+      if (b.revokePassword === true) {
+        const user = await cabutPassword(db, userId, who.id);
+        return { aksi: 'INTERNAL_USER_REVOKE_PASSWORD', hasil: { user } };
+      }
+    } catch (err: any) {
+      if (err instanceof InternalUserError) throw Object.assign(err, { kode: err.code });
+      throw err;
     }
 
-    await catatAkses(who, aksi, `/api/admin/internal-users/${userId}`, req);
-    return res.status(200).json({ ok: true, user });
-  } catch (err: any) {
-    if (err instanceof InternalUserError) {
-      const status = err.code === 'NOT_FOUND' ? 404 : 400;
-      return res.status(status).json({ ok: false, error: err.code, detail: err.message });
-    }
-    console.error('[admin] internal-users patch:', err?.message);
-    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
-  }
+    throw Object.assign(
+      new Error('Sebutkan salah satu: role, isActive, atau revokePassword.'),
+      { kode: 'NO_CHANGE' }
+    );
+  });
 }

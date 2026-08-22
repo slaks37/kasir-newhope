@@ -6430,6 +6430,190 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0030_mrr_dip
   ON CONFLICT (filename) DO NOTHING;
 
 
+-- --------------------------------------------------------------------------
+-- BAGIAN 32: migrations/0031_blog_publik.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0031_blog_publik.sql
+--
+-- BLOG PINDAH DARI localStorage KE DATABASE.
+--
+-- Panel CMS blog menyimpan artikelnya di localStorage peramban. Tiga akibatnya,
+-- dan yang ketiga paling mengejutkan:
+--
+--   1. MANAGE_PUBLIC_CONTENT tidak bisa ditegakkan. Tidak ada permintaan ke
+--      server, jadi tidak ada tempat memeriksanya selain menyembunyikan menu —
+--      penjagaan yang dilewati siapa pun yang menyunting bundel JavaScript.
+--   2. Tidak ada yang bisa diaudit. Siapa menerbitkan apa, kapan, tidak
+--      terekam di mana pun.
+--   3. ARTIKELNYA TIDAK PERNAH SAMPAI KE PENGUNJUNG. Halaman blog publik
+--      memuat konstanta bawaan, bukan yang ditulis admin. Menulis artikel di
+--      panel terasa berhasil dan tidak menerbitkan apa pun; membersihkan data
+--      peramban menghilangkan seluruh tulisan.
+--
+-- Blog adalah permukaan PUBLIK — yang dibaca calon pelanggan sebelum
+-- memutuskan berlangganan — jadi ia tinggal di `internal`, milik backoffice,
+-- bukan di `pos` yang per-merchant. Tidak ada business_id: artikel bukan milik
+-- merchant mana pun.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0031_blog_publik.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS internal.blog_posts (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    slug                VARCHAR(160) NOT NULL UNIQUE,
+    title               VARCHAR(240) NOT NULL,
+    excerpt             TEXT NOT NULL DEFAULT '',
+    content             TEXT NOT NULL DEFAULT '',
+    category            VARCHAR(60) NOT NULL,
+    cover_image         TEXT,
+    author              JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reading_time_minutes INT NOT NULL DEFAULT 1,
+    tags                TEXT[] NOT NULL DEFAULT '{}',
+    media_embeds        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    seo                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_published        BOOLEAN NOT NULL DEFAULT FALSE,
+    is_featured         BOOLEAN NOT NULL DEFAULT FALSE,
+    view_count          INT NOT NULL DEFAULT 0,
+    likes_count         INT NOT NULL DEFAULT 0,
+    -- SIAPA yang terakhir menyentuhnya. Bukan pengganti internal_access_log —
+    -- itu tetap jejak lengkapnya — melainkan supaya daftar artikel bisa
+    -- menunjukkan penanggung jawabnya tanpa menggabungkan tabel audit.
+    published_by        UUID REFERENCES internal.internal_users(id) ON DELETE SET NULL,
+    published_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_blog_posts_terbit
+    ON internal.blog_posts (is_published, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_kategori
+    ON internal.blog_posts (category) WHERE is_published;
+
+COMMENT ON TABLE internal.blog_posts IS
+    'Artikel blog publik. Di skema internal karena pemiliknya backoffice dan isinya bukan milik merchant mana pun.';
+
+-- Pengunjung hanya boleh melihat yang TERBIT. View ini yang dibaca halaman
+-- publik, jadi draf tidak bisa bocor lewat endpoint yang lupa menyaring.
+DROP VIEW IF EXISTS contract.blog_published CASCADE;
+CREATE VIEW contract.blog_published AS
+SELECT id, slug, title, excerpt, content, category, cover_image, author,
+       reading_time_minutes, tags, media_embeds, seo, is_featured,
+       view_count, likes_count, published_at, updated_at
+  FROM internal.blog_posts
+ WHERE is_published;
+
+COMMENT ON VIEW contract.blog_published IS
+    'Artikel yang BENAR-BENAR terbit. Halaman publik membaca dari sini supaya draf tidak bisa bocor lewat endpoint yang lupa menyaring is_published.';
+
+DO $$
+DECLARE
+    svc TEXT;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON internal.blog_posts TO svc_backoffice;
+    END IF;
+    -- Service lain hanya boleh melihat yang terbit, dan hanya lewat view.
+    FOREACH svc IN ARRAY ARRAY['svc_pos','svc_ai','svc_billing'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = svc) THEN
+            EXECUTE format('GRANT SELECT ON contract.blog_published TO %I', svc);
+        END IF;
+    END LOOP;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0031_blog_publik.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 33: migrations/0032_kepemilikan_ditegakkan.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0032_kepemilikan_ditegakkan.sql
+--
+-- MATRIKS KEPEMILIKAN BERHENTI MENJADI KONVENSI.
+--
+-- Dokumentasi.md menuliskan pembagian di dalam `billing`:
+--
+--     panel internal  ->  MENULIS billing.plans, billing.plan_change_log
+--                         (katalog: keputusan produk)
+--     hanya P2        ->  MENULIS billing.subscriptions, billing.invoices
+--                         (keadaan uang: hanya dari pembayaran bertanda tangan)
+--
+-- Sampai migrasi ini, yang menegakkannya hanya peninjauan kode. svc_backoffice
+-- memegang GRANT tingkat SKEMA — artinya secara teknis ia bisa menyalakan
+-- langganan siapa pun. Kalau satu akun internal jebol, itu menjadi cara memberi
+-- paket termahal tanpa uang berpindah, dan tidak akan muncul di rekonsiliasi
+-- mana pun karena tidak ada faktur yang dilanggarnya.
+--
+-- Aturan yang hanya ditulis di dokumen adalah aturan yang akan dilanggar oleh
+-- orang yang tidak membaca dokumen itu.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0032_kepemilikan_ditegakkan.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        RAISE NOTICE 'svc_backoffice belum ada — hak akses dilewati.';
+        RETURN;
+    END IF;
+
+    -- Dicabut lebih dulu, lalu diberikan yang tepat. REVOKE dulu penting:
+    -- GRANT tingkat skema dari 0009 tidak hilang hanya karena ada GRANT
+    -- tingkat tabel yang lebih sempit di sebelahnya.
+    REVOKE ALL ON ALL TABLES IN SCHEMA billing FROM svc_backoffice;
+
+    -- BACA seluruh billing. Panel memang menampilkan langganan dan tagihan.
+    GRANT SELECT ON ALL TABLES IN SCHEMA billing TO svc_backoffice;
+
+    -- TULIS hanya katalog.
+    GRANT INSERT, UPDATE ON billing.plans           TO svc_backoffice;
+    GRANT INSERT          ON billing.plan_change_log TO svc_backoffice;
+
+    -- subscriptions, invoices, webhook_logs: TIDAK. Sengaja tidak disebut.
+END $$;
+
+-- Service billing memiliki skemanya, jadi ia menulis seluruhnya.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_billing') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA billing TO svc_billing;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA billing
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO svc_billing;
+    END IF;
+END $$;
+
+-- Tabel billing yang DIBUAT KEMUDIAN tidak boleh diam-diam bisa ditulis panel.
+-- Tanpa baris ini, migrasi berikutnya yang menambah tabel di billing akan
+-- memberi svc_backoffice hak tulis lewat default privileges lama.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        ALTER DEFAULT PRIVILEGES IN SCHEMA billing
+            REVOKE INSERT, UPDATE, DELETE ON TABLES FROM svc_backoffice;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA billing
+            GRANT SELECT ON TABLES TO svc_backoffice;
+    END IF;
+END $$;
+
+COMMENT ON TABLE billing.subscriptions IS
+    'Keadaan langganan. HANYA ditulis jalur pembayaran (penerbitan faktur + webhook bertanda tangan). Panel internal punya SELECT saja — ditegakkan GRANT di 0032, bukan konvensi.';
+COMMENT ON TABLE billing.invoices IS
+    'Tagihan. HANYA ditulis jalur pembayaran. Panel internal punya SELECT saja.';
+COMMENT ON TABLE billing.plans IS
+    'Katalog paket. Ditulis PANEL INTERNAL — menetapkan harga dan batas adalah keputusan produk.';
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0032_kepemilikan_ditegakkan.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
 -- ==========================================================================
 -- SELESAI. Verifikasi dengan:
 --

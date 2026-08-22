@@ -7,29 +7,27 @@ import {
   daftarUserInternal,
   undangUserInternal,
 } from '../../../src/server/internalUsersRepo';
-import { catatAkses, metodeDilayani, poolSebagaiDb, wajibAdmin } from '../../_lib/adminContext';
+import { layaniBaca, layaniTulis } from '../../_lib/adminContext';
 
 export default async function handler(req: any, res: any) {
-  if (!metodeDilayani(req, res, ['GET', 'POST'])) return;
-
-  const who = await wajibAdmin(req, res, 'MANAGE_INTERNAL_USERS');
-  if (!who) return;
-
-  const db = poolSebagaiDb();
-
-  try {
-    if (req.method === 'GET') {
-      return res.status(200).json({ ok: true, rows: await daftarUserInternal(db) });
-    }
-
-    const user = await undangUserInternal(db, req.body ?? {});
-    await catatAkses(who, 'INTERNAL_USER_INVITE', `/api/admin/internal-users/${user.id}`, req);
-    return res.status(201).json({ ok: true, user });
-  } catch (err: any) {
-    if (err instanceof InternalUserError) {
-      return res.status(400).json({ ok: false, error: err.code, detail: err.message });
-    }
-    console.error('[admin] internal-users:', err?.message);
-    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+  // Membaca daftar dan MEMBUAT akun adalah dua hal berbeda, jadi dua
+  // pembungkus berbeda. Yang kedua menuntut alasan tertulis dan mencatat
+  // hasilnya — termasuk saat gagal.
+  if (req.method === 'GET') {
+    return layaniBaca(req, res, 'MANAGE_INTERNAL_USERS', (db) =>
+      daftarUserInternal(db).then((rows) => ({ rows }))
+    );
   }
+
+  return layaniTulis(req, res, 'MANAGE_INTERNAL_USERS', ['POST'], async (db) => {
+    try {
+      const user = await undangUserInternal(db, req.body ?? {});
+      return { aksi: 'INTERNAL_USER_INVITE', hasil: { user }, status: 201 };
+    } catch (err: any) {
+      if (err instanceof InternalUserError) {
+        throw Object.assign(err, { kode: err.code });
+      }
+      throw err;
+    }
+  });
 }

@@ -9,7 +9,7 @@
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "npm run hygiene && tsc --noEmit && vitest run",
+    "lint": "npm run hygiene && npm run typecheck && vitest run",
     "hygiene": "node scripts/dev/check-source-hygiene.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
@@ -31,7 +31,8 @@
     "start:billing": "node dist/services/billing/index.js",
     "start:backoffice": "node dist/services/backoffice/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

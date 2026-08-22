@@ -257,116 +257,110 @@ Di New Hope POS:
   },
 ];
 
-/**
- * Mengambil seluruh postingan blog dari LocalStorage atau default seeding
- */
-export function getAllBlogPosts(): BlogPost[] {
+/* ==========================================================================
+ * DARI localStorage KE SERVER.
+ *
+ * Seluruh fungsi di bawah ini dulu membaca dan menulis localStorage. Tiga
+ * akibatnya, dan yang ketiga paling mengejutkan:
+ *
+ *   1. MANAGE_PUBLIC_CONTENT tidak punya tempat untuk ditegakkan — tidak ada
+ *      permintaan ke server, jadi satu-satunya penjagaan adalah menyembunyikan
+ *      menu, yang dilewati siapa pun yang menyunting bundel JavaScript.
+ *   2. Tidak ada yang bisa diaudit. Siapa menerbitkan apa, kapan — tidak
+ *      terekam di mana pun.
+ *   3. ARTIKELNYA TIDAK PERNAH SAMPAI KE PENGUNJUNG. Tiap peramban punya
+ *      salinannya sendiri; yang ditulis admin di laptopnya tidak pernah dilihat
+ *      orang lain, dan membersihkan data peramban menghilangkannya.
+ *
+ * INITIAL_BLOG_POSTS di atas dipertahankan sebagai isi awal — dipakai migrasi
+ * penyemaian dan sebagai contoh bentuk data, bukan lagi sebagai sumber baca.
+ * ========================================================================== */
+
+async function ambil<T>(url: string, opsi?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...opsi,
+    headers: { 'Content-Type': 'application/json', ...(opsi?.headers ?? {}) },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.detail || data?.error || `Permintaan gagal (${res.status})`);
+  }
+  return data as T;
+}
+
+/** Artikel yang TERBIT — yang dilihat pengunjung. */
+export async function getPublishedBlogPosts(category?: string): Promise<BlogPost[]> {
+  const q = category && category !== 'Semua Kategori'
+    ? `?category=${encodeURIComponent(category)}`
+    : '';
+  const d = await ambil<{ posts: BlogPost[] }>(`/api/v1/blog${q}`);
+  return d.posts;
+}
+
+/** Satu artikel menurut slug. Penghitung bacanya dinaikkan server. */
+export async function getBlogPostBySlug(slug: string): Promise<BlogPost | null> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_BLOG_POSTS));
-      return INITIAL_BLOG_POSTS;
-    }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_BLOG_POSTS;
-  } catch (err) {
-    console.error('Gagal membaca blog posts dari storage:', err);
-    return INITIAL_BLOG_POSTS;
+    const d = await ambil<{ post: BlogPost }>(`/api/v1/blog?slug=${encodeURIComponent(slug)}`);
+    return d.post;
+  } catch {
+    return null;
   }
 }
 
-/**
- * Mengambil daftar artikel yang statusnya PUBLISHED
- */
-export function getPublishedBlogPosts(): BlogPost[] {
-  const posts = getAllBlogPosts();
-  return posts.filter((p) => p.isPublished);
+/** SELURUH artikel termasuk draf — hanya untuk panel, dan digerbangi capability. */
+export async function getAllBlogPosts(): Promise<BlogPost[]> {
+  const d = await ambil<{ rows: BlogPost[] }>('/api/admin/blog', {
+    headers: tokenAdmin(),
+  });
+  return d.rows;
 }
 
 /**
- * Mengambil artikel berdasarkan slug SEO
+ * Header autentikasi panel.
+ *
+ * Alasan tertulis WAJIB untuk setiap mutasi blog — menerbitkan ke halaman
+ * depan berkepekaan DANGEROUS, jadi server menolak permintaan tanpa
+ * x-justification. Panel mengirimkannya dari kolom yang diisi penulis.
  */
-export function getBlogPostBySlug(slug: string): BlogPost | undefined {
-  const posts = getAllBlogPosts();
-  return posts.find((p) => p.slug === slug);
+function tokenAdmin(alasan?: string): Record<string, string> {
+  const h: Record<string, string> = {};
+  try {
+    const t = localStorage.getItem('newhope_admin_token');
+    if (t) h.Authorization = `Bearer ${t}`;
+  } catch { /* peramban tanpa storage */ }
+  if (alasan) h['x-justification'] = alasan;
+  return h;
 }
 
-/**
- * Menyimpan artikel baru
- */
-export function createBlogPost(post: Omit<BlogPost, 'id' | 'createdAt' | 'updatedAt' | 'viewCount' | 'likesCount'>): BlogPost {
-  const posts = getAllBlogPosts();
-  const newPost: BlogPost = {
-    ...post,
-    id: newId('blog'),
-    viewCount: 1,
-    likesCount: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  const updated = [newPost, ...posts];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  window.dispatchEvent(new Event('newhope_blog_updated'));
-  return newPost;
+export async function createBlogPost(
+  post: Partial<BlogPost>,
+  alasan: string
+): Promise<BlogPost> {
+  const d = await ambil<{ post: BlogPost }>('/api/admin/blog', {
+    method: 'POST',
+    headers: tokenAdmin(alasan),
+    body: JSON.stringify(post),
+  });
+  return d.post;
 }
 
-/**
- * Memperbarui artikel yang ada
- */
-export function updateBlogPost(id: string, updates: Partial<BlogPost>): BlogPost | null {
-  const posts = getAllBlogPosts();
-  const index = posts.findIndex((p) => p.id === id);
-  if (index === -1) return null;
-
-  const updatedPost: BlogPost = {
-    ...posts[index],
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
-
-  posts[index] = updatedPost;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(posts));
-  window.dispatchEvent(new Event('newhope_blog_updated'));
-  return updatedPost;
+export async function updateBlogPost(
+  id: string,
+  updates: Partial<BlogPost>,
+  alasan: string
+): Promise<BlogPost> {
+  const d = await ambil<{ post: BlogPost }>(`/api/admin/blog/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: tokenAdmin(alasan),
+    body: JSON.stringify(updates),
+  });
+  return d.post;
 }
 
-/**
- * Menghapus artikel blog
- */
-export function deleteBlogPost(id: string): boolean {
-  const posts = getAllBlogPosts();
-  const filtered = posts.filter((p) => p.id !== id);
-  if (filtered.length === posts.length) return false;
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-  window.dispatchEvent(new Event('newhope_blog_updated'));
+export async function deleteBlogPost(id: string, alasan: string): Promise<boolean> {
+  await ambil(`/api/admin/blog/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: tokenAdmin(alasan),
+  });
   return true;
-}
-
-/**
- * Tambah view count
- */
-export function incrementBlogView(id: string) {
-  const posts = getAllBlogPosts();
-  const p = posts.find((item) => item.id === id);
-  if (p) {
-    p.viewCount = (p.viewCount || 0) + 1;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(posts));
-  }
-}
-
-/**
- * Tambah likes count
- */
-export function incrementBlogLikes(id: string): number {
-  const posts = getAllBlogPosts();
-  const p = posts.find((item) => item.id === id);
-  if (p) {
-    p.likesCount = (p.likesCount || 0) + 1;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(posts));
-    window.dispatchEvent(new Event('newhope_blog_updated'));
-    return p.likesCount;
-  }
-  return 0;
 }

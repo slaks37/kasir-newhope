@@ -11,20 +11,11 @@ type VercelRequest = any;
 type VercelResponse = any;
 
 import { daftarPaket, pemakaiPaket } from '../../../src/server/plansRepo';
-import { metodeDilayani, poolSebagaiDb, wajibAdmin } from '../../_lib/adminContext';
+import { layaniBaca } from '../../_lib/adminContext';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!metodeDilayani(req, res, ['GET'])) return;
-
-  const who = await wajibAdmin(req, res, 'MANAGE_SUBSCRIPTION');
-  if (!who) return;
-
-  try {
-    const db = poolSebagaiDb();
+  return layaniBaca(req, res, 'MANAGE_SUBSCRIPTION', async (db) => {
     const [plans, subscriberCounts] = await Promise.all([daftarPaket(db), pemakaiPaket(db)]);
-    return res.status(200).json({ ok: true, plans, subscriberCounts });
-  } catch (err: any) {
-    console.error('[admin] gagal memuat paket:', err?.message);
-    return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-  }
+    return { plans, subscriberCounts };
+  });
 }

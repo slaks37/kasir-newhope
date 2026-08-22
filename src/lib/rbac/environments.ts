@@ -148,65 +148,141 @@ export function landingEnvironment(role: PlatformRole): AppEnvironment | null {
 /* -------------------------------------------------------------------------- */
 
 export type InternalCapability =
+  /* --- Agregat: tidak ada merchant yang bisa dikenali dari angkanya -------- */
   | 'VIEW_MERCHANT_HEALTH'
   | 'VIEW_CHURN_COHORT'
   | 'VIEW_PLATFORM_REVENUE'
   | 'VIEW_FEATURE_ADOPTION'
-  | 'VIEW_MERCHANT_DETAIL'
+  | 'VIEW_SECTOR_ANALYTICS'
+  | 'VIEW_ACCESS_AUDIT'
+
+  /* --- Satu merchant yang teridentifikasi ---------------------------------
+   *
+   * DIPECAH DARI SATU `VIEW_MERCHANT_DETAIL`.
+   *
+   * Capability tunggal itu dulu membuka sekaligus: profil toko, omzet dan
+   * marginnya, langganan dan tagihannya, serta pemakaian AI-nya. Keempatnya
+   * punya tingkat kepekaan berbeda, dan menggabungkannya berarti staf yang
+   * hanya perlu memeriksa nama cabang ikut membaca pembukuannya.
+   *
+   * Prinsipnya: yang butuh melihat profil tidak otomatis butuh melihat uang.
+   */
+  | 'VIEW_MERCHANT_PROFILE'
+  | 'VIEW_MERCHANT_FINANCIAL'
+  | 'VIEW_MERCHANT_BILLING'
+  | 'VIEW_MERCHANT_AI_USAGE'
+  | 'VIEW_TRANSACTION_LOG'
+  | 'VIEW_PRODUCT_SALES'
+  | 'VIEW_ACTIVITY_LOG'
+
+  /* --- Data pribadi pelanggan merchant ------------------------------------
+   *
+   * Bukan data merchant, melainkan data ORANG yang berbelanja padanya. Nama,
+   * nomor telepon, riwayat kunjungan. Merchant memegangnya sebagai pengendali
+   * data; kami hanya pemroses. Membukanya tanpa alasan tertulis adalah persis
+   * yang tidak boleh terjadi.
+   */
+  | 'VIEW_CUSTOMER_DATA'
+
+  /* --- Mengubah keadaan, atau bertindak sebagai orang lain ---------------- */
   | 'MANAGE_SUBSCRIPTION'
   | 'GRANT_AI_CREDITS'
   | 'IMPERSONATE_MERCHANT'
-  | 'VIEW_ACCESS_AUDIT'
   // Membuat, menonaktifkan, dan mengubah peran akun internal. Kemampuan paling
   // berbahaya di sistem ini: siapa pun yang memilikinya bisa memberi dirinya
   // sendiri kemampuan lain. Hanya SUPERADMIN.
   | 'MANAGE_INTERNAL_USERS'
-  // Ringkasan lima sektor bisnis. Agregat murni — tidak ada merchant yang bisa
-  // dikenali dari angkanya, jadi Growth boleh melihatnya.
-  | 'VIEW_SECTOR_ANALYTICS'
-  // Tiga di bawah ini membaca pembukuan merchant yang teridentifikasi: struk
-  // per struk, produk apa yang laku, siapa memberi diskon berapa. Sama
-  // sensitifnya dengan VIEW_MERCHANT_DETAIL dan diperlakukan sama — diaudit,
-  // dan Growth tidak mendapatkannya.
-  | 'VIEW_TRANSACTION_LOG'
-  | 'VIEW_PRODUCT_SALES'
-  | 'VIEW_ACTIVITY_LOG'
-  /*
-   * Menulis dan menerbitkan artikel di situs publik. Bukan kemampuan analitik:
-   * yang memilikinya bisa mengubah apa yang dibaca calon pelanggan di halaman
-   * depan. Panel blog sempat digerbangi VIEW_SECTOR_ANALYTICS, yang berarti
-   * seluruh tim Growth memegang tombol terbit.
-   *
-   * BELUM DITEGAKKAN DI SERVER. Panel blog menyimpan artikelnya di
-   * localStorage peramban — tidak ada tabel, tidak ada endpoint, jadi tidak ada
-   * tempat memeriksa capability ini selain menyembunyikan menunya. Sampai blog
-   * punya sisi server, ini penanda niat, bukan penjagaan; sengaja TIDAK
-   * dimasukkan ke AUDITED_CAPABILITIES supaya tidak terlihat seolah tercatat
-   * padahal tidak ada yang bisa mencatatnya.
-   */
+  // Menulis dan menerbitkan artikel di situs publik. Bukan kemampuan analitik:
+  // yang memilikinya mengubah apa yang dibaca calon pelanggan di halaman depan.
   | 'MANAGE_PUBLIC_CONTENT';
+
+/* -------------------------------------------------------------------------- */
+/* Kepekaan sumber daya                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * SEBERAPA PEKA yang dibuka sebuah capability — bukan siapa yang membukanya.
+ *
+ * MASALAH YANG DIPERBAIKI. Kewajiban menyertakan alasan dulu ditentukan
+ * SEMATA oleh peran:
+ *
+ *     requiresJustification = role === 'ROLE_INTERNAL_SUPPORT' && requiresAudit(cap)
+ *
+ * Artinya superadmin membuka data pribadi pelanggan tanpa perlu menyebut
+ * alasan apa pun, sementara support harus beralasan untuk melihat daftar
+ * cabang. Peran menjawab "boleh atau tidak"; ia tidak menjawab "seberapa
+ * berbahaya kalau ini dibuka tanpa sebab". Yang kedua melekat pada DATANYA,
+ * dan tidak berubah karena siapa yang membukanya.
+ */
+export type Sensitivity =
+  /** Tidak ada merchant yang bisa dikenali. Tidak dicatat, tidak perlu alasan. */
+  | 'AGGREGATE'
+  /** Satu merchant, bukan uang dan bukan data pribadi. */
+  | 'IDENTIFIED'
+  /** Pembukuan satu merchant: omzet, margin, tagihan, struk. */
+  | 'FINANCIAL'
+  /** Data pribadi pelanggan merchant. */
+  | 'PERSONAL'
+  /** Mengubah siapa boleh apa, atau bertindak atas nama orang lain. */
+  | 'DANGEROUS';
+
+const SENSITIVITY: Record<InternalCapability, Sensitivity> = {
+  VIEW_MERCHANT_HEALTH:   'AGGREGATE',
+  VIEW_CHURN_COHORT:      'AGGREGATE',
+  VIEW_PLATFORM_REVENUE:  'AGGREGATE',
+  VIEW_FEATURE_ADOPTION:  'AGGREGATE',
+  VIEW_SECTOR_ANALYTICS:  'AGGREGATE',
+  // Log akses dibaca untuk MENGAWASI, dan pengawasan yang sendirinya perlu
+  // izin khusus cenderung tidak dilakukan. Isinya pun bukan data merchant.
+  VIEW_ACCESS_AUDIT:      'AGGREGATE',
+
+  VIEW_MERCHANT_PROFILE:  'IDENTIFIED',
+  VIEW_ACTIVITY_LOG:      'IDENTIFIED',
+
+  VIEW_MERCHANT_FINANCIAL:'FINANCIAL',
+  VIEW_MERCHANT_BILLING:  'FINANCIAL',
+  VIEW_MERCHANT_AI_USAGE: 'FINANCIAL',
+  VIEW_TRANSACTION_LOG:   'FINANCIAL',
+  VIEW_PRODUCT_SALES:     'FINANCIAL',
+
+  VIEW_CUSTOMER_DATA:     'PERSONAL',
+
+  MANAGE_SUBSCRIPTION:    'DANGEROUS',
+  GRANT_AI_CREDITS:       'DANGEROUS',
+  IMPERSONATE_MERCHANT:   'DANGEROUS',
+  MANAGE_INTERNAL_USERS:  'DANGEROUS',
+  MANAGE_PUBLIC_CONTENT:  'DANGEROUS',
+};
+
+export function sensitivity(cap: InternalCapability): Sensitivity {
+  return SENSITIVITY[cap] ?? 'DANGEROUS';   // tidak dikenal = perlakukan terburuk
+}
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   ROLE_SUPERADMIN: [
-    'MANAGE_INTERNAL_USERS',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
     'VIEW_PLATFORM_REVENUE',
     'VIEW_FEATURE_ADOPTION',
-    'VIEW_MERCHANT_DETAIL',
-    'MANAGE_SUBSCRIPTION',
-    'GRANT_AI_CREDITS',
-    'IMPERSONATE_MERCHANT',
-    'VIEW_ACCESS_AUDIT',
     'VIEW_SECTOR_ANALYTICS',
+    'VIEW_ACCESS_AUDIT',
+    'VIEW_MERCHANT_PROFILE',
+    'VIEW_MERCHANT_FINANCIAL',
+    'VIEW_MERCHANT_BILLING',
+    'VIEW_MERCHANT_AI_USAGE',
     'VIEW_TRANSACTION_LOG',
     'VIEW_PRODUCT_SALES',
     'VIEW_ACTIVITY_LOG',
+    'VIEW_CUSTOMER_DATA',
+    'MANAGE_SUBSCRIPTION',
+    'GRANT_AI_CREDITS',
+    'IMPERSONATE_MERCHANT',
+    'MANAGE_INTERNAL_USERS',
     'MANAGE_PUBLIC_CONTENT',
   ],
-  // Growth works on cohorts and aggregates. Deliberately NOT given
-  // VIEW_MERCHANT_DETAIL: analysing retention does not require reading one
-  // named merchant's books.
+  // Growth bekerja pada kohor dan agregat. SENGAJA tidak diberi capability
+  // apa pun yang membidik satu merchant: menganalisis retensi tidak menuntut
+  // membaca pembukuan satu toko yang bernama.
   ROLE_INTERNAL_GROWTH: [
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
@@ -214,11 +290,16 @@ const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
     'VIEW_FEATURE_ADOPTION',
     'VIEW_SECTOR_ANALYTICS',
   ],
-  // Support troubleshoots one merchant at a time and may not see money
-  // platform-wide or change a subscription.
+  // Support menangani satu merchant pada satu waktu. Mendapat profil dan
+  // pembukuan yang diperlukan untuk menjawab keluhan, TAPI tidak data pribadi
+  // pelanggan merchant, tidak boleh mengubah langganan, dan tidak melihat uang
+  // seluruh platform.
   ROLE_INTERNAL_SUPPORT: [
     'VIEW_MERCHANT_HEALTH',
-    'VIEW_MERCHANT_DETAIL',
+    'VIEW_MERCHANT_PROFILE',
+    'VIEW_MERCHANT_FINANCIAL',
+    'VIEW_MERCHANT_BILLING',
+    'VIEW_MERCHANT_AI_USAGE',
     'VIEW_TRANSACTION_LOG',
     'VIEW_PRODUCT_SALES',
     'VIEW_ACTIVITY_LOG',
@@ -238,27 +319,46 @@ export function hasInternalCapability(role: string, cap: InternalCapability): bo
  * Capabilities that read one identified merchant's private data and therefore
  * MUST write an `internal_access_log` row.
  */
-export const AUDITED_CAPABILITIES: InternalCapability[] = [
-  'MANAGE_INTERNAL_USERS',
-  'VIEW_MERCHANT_DETAIL',
-  'IMPERSONATE_MERCHANT',
-  'MANAGE_SUBSCRIPTION',
-  'GRANT_AI_CREDITS',
-  'VIEW_TRANSACTION_LOG',
-  'VIEW_PRODUCT_SALES',
-  'VIEW_ACTIVITY_LOG',
-  // MANAGE_PUBLIC_CONTENT sengaja TIDAK di sini. Blog belum punya sisi server,
-  // jadi tidak ada permintaan yang bisa dicatat. Mencantumkannya hanya membuat
-  // daftar ini berbohong tentang apa yang benar-benar terekam.
-];
-
+/**
+ * Diaudit bila BUKAN agregat.
+ *
+ * Dulu daftar yang ditulis tangan. Daftar tangan punya satu sifat buruk yang
+ * tidak menimbulkan galat: capability baru tidak masuk ke sana kecuali ada
+ * yang ingat. Ia menua ke arah yang salah — makin banyak yang tidak tercatat,
+ * dan tidak ada yang memberi tahu.
+ *
+ * Sekarang diturunkan dari kepekaannya. Capability baru harus punya entri di
+ * SENSITIVITY (TypeScript menolak Record yang tidak lengkap), dan apa pun yang
+ * bukan AGGREGATE otomatis tercatat.
+ */
 export function requiresAudit(cap: InternalCapability): boolean {
-  return AUDITED_CAPABILITIES.includes(cap);
+  return sensitivity(cap) !== 'AGGREGATE';
 }
 
-/** Support must say why before reading a named merchant's data. */
+/** Daftar yang dihasilkan, bukan yang ditulis tangan. Dipakai dokumentasi dan tes. */
+export const AUDITED_CAPABILITIES: InternalCapability[] =
+  (Object.keys(SENSITIVITY) as InternalCapability[]).filter(requiresAudit);
+
+/**
+ * Kapan alasan tertulis wajib disertakan.
+ *
+ * Ditentukan KEPEKAAN DATANYA lebih dulu, baru perannya:
+ *
+ *   PERSONAL   selalu — termasuk superadmin. Data pribadi pelanggan merchant
+ *              bukan milik kami, dan "saya bosnya" bukan alasan membukanya.
+ *   DANGEROUS  selalu. Menyalakan langganan, memberi kredit, menyamar sebagai
+ *              merchant, mengubah peran orang — semuanya harus punya sebab
+ *              yang tertulis sebelum, bukan penjelasan yang dicari sesudah.
+ *   FINANCIAL  hanya SUPPORT. Superadmin memang mengurus pembukuan platform;
+ *              menuntutnya beralasan setiap kali hanya melatih mengetik "cek".
+ *   IDENTIFIED hanya SUPPORT.
+ *   AGGREGATE  tidak pernah.
+ */
 export function requiresJustification(role: InternalRole, cap: InternalCapability): boolean {
-  return role === 'ROLE_INTERNAL_SUPPORT' && requiresAudit(cap);
+  const s = sensitivity(cap);
+  if (s === 'AGGREGATE') return false;
+  if (s === 'PERSONAL' || s === 'DANGEROUS') return true;
+  return role === 'ROLE_INTERNAL_SUPPORT';
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**35 tabel dan 30 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
+**36 tabel dan 31 view kontrak, dalam 6 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -579,6 +579,47 @@ yang **seharusnya** muncul — dan mana yang belum ditulis.
 
 ---
 
+## 9. Domain KONTEN PUBLIK (0031)
+
+```mermaid
+erDiagram
+    internal_users ||--o{ blog_posts : "menerbitkan"
+
+    blog_posts {
+        uuid   id PK
+        string slug UK "dipakai URL, jadi harus unik"
+        string title
+        text   content
+        string category
+        jsonb  author
+        jsonb  media_embeds "YouTube, TikTok, Instagram, Twitter"
+        jsonb  seo "meta title, description, keywords"
+        bool   is_published "draf tidak terlihat pengunjung"
+        bool   is_featured
+        int    view_count
+        uuid   published_by FK "SET NULL — jejak tetap ada"
+        timestamptz published_at "diisi SEKALI, saat pertama terbit"
+    }
+```
+
+Di skema `internal` karena pemiliknya backoffice dan isinya bukan milik
+merchant mana pun — tidak ada `business_id`.
+
+**Sebelum 0031, artikel disimpan di `localStorage` peramban.** Tiga akibatnya,
+dan yang ketiga paling mengejutkan: `MANAGE_PUBLIC_CONTENT` tidak punya tempat
+untuk ditegakkan, tidak ada yang bisa diaudit, dan **artikel yang ditulis admin
+tidak pernah sampai ke pengunjung mana pun** — halaman publik memuat konstanta
+bawaan, dan membersihkan data peramban menghilangkan seluruh tulisan.
+
+`published_at` diisi sekali. Menimpanya di tiap penyuntingan membuat artikel
+lama melompat ke puncak daftar hanya karena ada yang memperbaiki satu huruf.
+
+`contract.blog_published` menyaring `is_published`, jadi draf tidak bisa bocor
+lewat endpoint yang lupa menuliskan syaratnya — penyaringan di view berlaku
+untuk semua pembacanya sekaligus.
+
+---
+
 ## Seluruh view kontrak
 
 Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
@@ -615,6 +656,7 @@ Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
 | `ai_credit_drift` | Selisih saldo kredit + cadangan menggantung |
 | `insight_freshness` | Umur kartu insight per kategori |
 | `algorithm_coverage` | Insight apa yang seharusnya ada untuk sektor ini |
+| `blog_published` | Artikel blog yang BENAR-BENAR terbit — draf disaring di sini |
 
 ---
 

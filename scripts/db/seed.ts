@@ -14,6 +14,7 @@
  */
 
 import 'dotenv/config';
+import { INITIAL_BLOG_POSTS } from '../../src/lib/blogStorage';
 import pg from 'pg';
 
 /**
@@ -209,6 +210,44 @@ async function wipe(db: Db) {
              invoices, subscriptions, users, businesses, merchants
     RESTART IDENTITY CASCADE
   `);
+}
+
+/**
+ * Artikel blog awal.
+ *
+ * Sampai blog punya tabel, INITIAL_BLOG_POSTS adalah yang dilihat pengunjung —
+ * dan yang ditulis admin tidak pernah sampai ke mana-mana. Sekarang isinya
+ * dipindahkan ke database sekali, dan panel yang menjadi sumbernya.
+ *
+ * Hanya bila tabelnya KOSONG. Menimpanya di tiap seed akan menghapus artikel
+ * yang benar-benar ditulis orang.
+ */
+async function seedBlog(db: Db) {
+  const { rows } = await db.query('SELECT COUNT(*)::int n FROM internal.blog_posts');
+  if ((rows[0]?.n ?? 0) > 0) {
+    console.log(`  blog: ${rows[0].n} artikel sudah ada, dilewati`);
+    return;
+  }
+
+  for (const p of INITIAL_BLOG_POSTS) {
+    await db.query(
+      `INSERT INTO internal.blog_posts
+         (id, slug, title, excerpt, content, category, cover_image, author,
+          reading_time_minutes, tags, media_embeds, seo, is_published, is_featured,
+          view_count, likes_count, published_at)
+       VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb,
+               $11::jsonb, $12, $13, $14, $15,
+               CASE WHEN $12 THEN CURRENT_TIMESTAMP ELSE NULL END)
+       ON CONFLICT (slug) DO NOTHING`,
+      [
+        p.slug, p.title, p.excerpt, p.content, p.category, p.coverImage,
+        JSON.stringify(p.author), p.readingTimeMinutes, p.tags,
+        JSON.stringify(p.mediaEmbeds), JSON.stringify(p.seo),
+        p.isPublished, p.isFeatured ?? false, p.viewCount ?? 0, p.likesCount ?? 0,
+      ]
+    );
+  }
+  console.log(`  blog: ${INITIAL_BLOG_POSTS.length} artikel awal dimasukkan`);
 }
 
 async function main() {
@@ -503,6 +542,8 @@ async function main() {
     `SELECT business_sector, COUNT(*)::int AS txn, SUM(total_amount) AS omzet
        FROM transactions GROUP BY business_sector ORDER BY omzet DESC`
   );
+  await seedBlog(db);
+
   console.log('\nPer sektor:');
   for (const r of rows) {
     console.log(

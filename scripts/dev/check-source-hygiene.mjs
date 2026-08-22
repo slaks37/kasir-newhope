@@ -16,6 +16,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { extname, join, relative, sep } from 'node:path';
 import process from 'node:process';
 
@@ -313,6 +314,63 @@ function checkChurnWeightParity() {
   }
 }
 checkChurnWeightParity();
+
+/* -------------------------------------------------------------------------- */
+/* Mutasi panel admin harus lewat layaniTulis.                                */
+/*                                                                            */
+/* Pembacaan punya layaniBaca; penulisan dulu memanggil wajibAdmin lalu       */
+/* catatAkses sendiri di tiap berkas. Yang benar hari ini tidak menjamin      */
+/* endpoint berikutnya: yang lupa memanggil catatAkses TIDAK akan mengeluh,   */
+/* ia hanya diam tidak tercatat. Mutasi yang tidak tercatat lebih buruk       */
+/* daripada mutasi yang gagal — yang gagal langsung terlihat.                 */
+/* -------------------------------------------------------------------------- */
+function checkAdminWriteWrapper() {
+  // Dua endpoint identitas yang memang memakai primitifnya: `me` hanya
+  // membaca sesi pemanggilnya sendiri, `login` belum punya identitas untuk
+  // dijaga capability.
+  const DIKECUALIKAN = new Set(['api/admin/me.ts', 'api/admin/login.ts']);
+
+  let berkas;
+  try {
+    berkas = execSync('find api/admin -name "*.ts"', { cwd: ROOT, encoding: 'utf8' })
+      .split('\n').map((x) => x.trim()).filter(Boolean);
+  } catch {
+    return;   // direktori tidak ada di lingkungan ini
+  }
+
+  let diperiksa = 0;
+  for (const rel of berkas) {
+    if (DIKECUALIKAN.has(rel)) continue;
+    let src;
+    try {
+      src = readFileSync(join(ROOT, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    diperiksa++;
+
+    const menulis = /\b(POST|PUT|PATCH|DELETE)\b/.test(src);
+    if (!menulis) continue;
+
+    if (!/layaniTulis\s*\(/.test(src)) {
+      problems.push(
+        `${rel} melayani metode tulis tapi tidak memakai layaniTulis() — ` +
+        `mutasinya tidak dijamin tercatat di internal_access_log`
+      );
+    }
+    if (/\bwajibAdmin\s*\(/.test(src)) {
+      problems.push(
+        `${rel} memanggil wajibAdmin() langsung. Pakai layaniBaca()/layaniTulis(), ` +
+        `yang menyatukan capability, kewajiban alasan, dan jejak audit`
+      );
+    }
+  }
+
+  if (diperiksa > 0) {
+    console.log(`Admin write wrapper: OK (${diperiksa} endpoint diperiksa)`);
+  }
+}
+checkAdminWriteWrapper();
 
 if (problems.length === 0) {
   console.log('Source hygiene: OK');

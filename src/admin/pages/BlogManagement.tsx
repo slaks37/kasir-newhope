@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BlogPost, BlogCategory, MediaEmbedType, BlogMediaEmbed } from '../../types/blog';
 import {
   getAllBlogPosts,
@@ -75,14 +75,27 @@ export const BlogManagement: React.FC = () => {
   const [metaDescription, setMetaDescription] = useState('');
   const [metaKeywordsInput, setMetaKeywordsInput] = useState('');
 
-  const reloadPosts = () => {
-    const list = getAllBlogPosts();
-    setPosts(list);
-  };
+  /*
+   * Artikel disimpan di SERVER sekarang, bukan localStorage peramban.
+   *
+   * Yang berubah bukan hanya tempatnya. Sebelumnya menulis artikel selalu
+   * "berhasil" tanpa menerbitkan apa pun ke pengunjung mana pun, dan tidak ada
+   * capability yang bisa ditegakkan. Sekarang tiap mutasi menuntut alasan
+   * tertulis dan tercatat di internal_access_log — jadi galatnya harus
+   * ditampilkan, bukan ditelan.
+   */
+  const [galat, setGalat] = useState<string | null>(null);
+  const [menyimpan, setMenyimpan] = useState(false);
+
+  const reloadPosts = useCallback(() => {
+    getAllBlogPosts()
+      .then((list) => { setPosts(list); setGalat(null); })
+      .catch((e) => setGalat(e?.message || 'Daftar artikel gagal dimuat.'));
+  }, []);
 
   useEffect(() => {
     reloadPosts();
-  }, []);
+  }, [reloadPosts]);
 
   // Helper auto slug generator
   const handleTitleChange = (newTitle: string) => {
@@ -158,7 +171,7 @@ export const BlogManagement: React.FC = () => {
     setMediaEmbeds(mediaEmbeds.filter((m) => m.id !== id));
   };
 
-  const handleSavePost = (e: React.FormEvent) => {
+  const handleSavePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !slug.trim()) {
       alert('Judul artikel dan Slug URL wajib diisi.');
@@ -201,20 +214,44 @@ export const BlogManagement: React.FC = () => {
       isFeatured,
     };
 
-    if (editingPostId) {
-      updateBlogPost(editingPostId, postPayload);
-    } else {
-      createBlogPost(postPayload);
-    }
+    // Alasan tertulis WAJIB: menerbitkan ke halaman depan berkepekaan
+    // DANGEROUS, dan server menolak permintaan tanpa x-justification.
+    const alasan = window.prompt(
+      isPublished
+        ? 'Alasan menerbitkan artikel ini? (tercatat di jejak audit)'
+        : 'Alasan menyimpan perubahan ini? (tercatat di jejak audit)'
+    );
+    if (!alasan?.trim()) return;
 
-    setShowModal(false);
-    reloadPosts();
+    setMenyimpan(true);
+    try {
+      if (editingPostId) {
+        await updateBlogPost(editingPostId, postPayload, alasan.trim());
+      } else {
+        await createBlogPost(postPayload, alasan.trim());
+      }
+      setShowModal(false);
+      setGalat(null);
+      reloadPosts();
+    } catch (e: any) {
+      // Ditampilkan, tidak ditelan. Penyimpanan yang gagal diam-diam adalah
+      // cara kehilangan tulisan tanpa ada yang tahu.
+      setGalat(e?.message || 'Artikel gagal disimpan.');
+    } finally {
+      setMenyimpan(false);
+    }
   };
 
-  const handleDeletePost = (p: BlogPost) => {
-    if (window.confirm(`Apakah Anda yakin ingin menghapus artikel "${p.title}"?`)) {
-      deleteBlogPost(p.id);
+  const handleDeletePost = async (p: BlogPost) => {
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus artikel "${p.title}"?`)) return;
+    const alasan = window.prompt('Alasan menghapus artikel ini? (tercatat di jejak audit)');
+    if (!alasan?.trim()) return;
+    try {
+      await deleteBlogPost(p.id, alasan.trim());
+      setGalat(null);
       reloadPosts();
+    } catch (e: any) {
+      setGalat(e?.message || 'Artikel gagal dihapus.');
     }
   };
 
@@ -229,6 +266,26 @@ export const BlogManagement: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/*
+        * Galat DITAMPILKAN, bukan ditelan.
+        *
+        * Server menolak mutasi tanpa alasan tertulis, menolak slug yang sudah
+        * dipakai, dan menolak pemanggil tanpa MANAGE_PUBLIC_CONTENT. Ketiganya
+        * harus terbaca penulis — penyimpanan yang gagal diam-diam adalah cara
+        * kehilangan tulisan tanpa ada yang tahu.
+        */}
+      {galat && (
+        <div className="bg-rose-950/60 border border-rose-800 text-rose-200 px-5 py-4 rounded-2xl text-xs font-semibold flex items-start justify-between gap-4">
+          <span>{galat}</span>
+          <button
+            onClick={() => setGalat(null)}
+            className="text-rose-400 hover:text-rose-200 font-black shrink-0 cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
       {/* Top Banner Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-6 rounded-3xl text-white shadow-xl">
         <div className="flex items-center space-x-3.5">
@@ -687,7 +744,7 @@ export const BlogManagement: React.FC = () => {
                 <button
                   type="submit"
                   className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center space-x-2 cursor-pointer"
-                >
+                 disabled={menyimpan}>
                   <Save className="w-4 h-4" />
                   <span>{editingPostId ? 'Simpan Perubahan' : 'Terbitkan Artikel Sekarang'}</span>
                 </button>

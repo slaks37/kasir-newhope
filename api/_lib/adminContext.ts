@@ -272,6 +272,78 @@ export async function layaniBaca(
 }
 
 /** Menjawab preflight dan menolak metode yang tidak dilayani. */
+/**
+ * Satu pembungkus untuk seluruh endpoint TULIS panel admin.
+ *
+ * KENAPA INI PERLU. Pembacaan sudah punya `layaniBaca`, yang menyatukan enam
+ * hal yang harus terjadi. Penulisan tidak punya padanannya: tiap endpoint
+ * memanggil `wajibAdmin` lalu `catatAkses` sendiri. Hari ini semuanya benar —
+ * tapi endpoint tulis BERIKUTNYA yang lupa memanggil `catatAkses` tidak akan
+ * mengeluh. Ia hanya diam tidak tercatat, dan tidak ada tes yang bisa
+ * menangkapnya karena tidak ada satu tempat pun yang bisa diperiksa.
+ *
+ * Mutasi yang tidak tercatat lebih buruk daripada mutasi yang gagal: yang gagal
+ * langsung terlihat, yang tidak tercatat baru terlihat ketika seseorang
+ * bertanya siapa yang mengubah dan jawabannya tidak ada.
+ *
+ * Auditnya ditulis SETELAH mutasinya berhasil, dengan aksi yang ditentukan
+ * handler — supaya yang tercatat "apa yang benar-benar terjadi", bukan "apa
+ * yang diminta". Mutasi yang gagal tetap tercatat, sebagai `FAILED_*`.
+ */
+export async function layaniTulis(
+  req: any,
+  res: any,
+  capability: InternalCapability,
+  metode: string[],
+  jalankan: (
+    db: Db,
+    who: AdminIdentity
+  ) => Promise<{ aksi: string; merchantId?: string | null; hasil?: unknown; status?: number }>
+): Promise<void> {
+  if (!metodeDilayani(req, res, metode)) return;
+
+  const who = await wajibAdmin(req, res, capability);
+  if (!who) return;
+
+  const alasan =
+    (req.headers?.['x-justification'] as string) ||
+    (typeof req.body?.justification === 'string' ? req.body.justification : '') ||
+    null;
+
+  // Kewajiban alasan ditentukan KEPEKAAN capability-nya, bukan hanya perannya —
+  // lihat requiresJustification(). Semua mutasi berkepekaan DANGEROUS, jadi
+  // semuanya menuntut alasan dari siapa pun, termasuk superadmin.
+  if (requiresJustification(who.role, capability) && !alasan) {
+    await catatAkses(who, `BLOCKED_${capability}`, req.url || '', req);
+    return res.status(400).json({
+      ok: false,
+      error: 'JUSTIFICATION_REQUIRED',
+      detail: 'Perubahan ini menuntut alasan tertulis. Kirim lewat header x-justification.',
+    });
+  }
+
+  try {
+    const { aksi, merchantId, hasil, status } = await jalankan(poolSebagaiDb(), who);
+    await catatAkses(who, aksi, req.url || '', req, { merchantId, justification: alasan });
+    return res.status(status ?? 200).json({ ok: true, ...(hasil as object) });
+  } catch (err: any) {
+    // Percobaan yang gagal tetap tercatat. "Siapa yang MENCOBA menyalakan
+    // langganan tanpa pembayaran" adalah pertanyaan audit yang sah, dan
+    // jawabannya paling berguna justru ketika percobaannya gagal.
+    await catatAkses(who, `FAILED_${capability}`, req.url || '', req, { justification: alasan });
+
+    if (err?.kode || err?.code) {
+      return res.status(400).json({
+        ok: false,
+        error: err.kode || err.code,
+        detail: err.message,
+      });
+    }
+    console.error('[admin] gagal memproses mutasi:', err?.message);
+    return res.status(500).json({ ok: false, error: 'MUTATION_FAILED' });
+  }
+}
+
 export function metodeDilayani(req: any, res: any, daftar: string[]): boolean {
   if (req.method === 'OPTIONS') {
     res.status(200).end();

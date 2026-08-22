@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BlogPost, BlogCategory } from '../../types/blog';
 import {
   getAllBlogPosts,
   getPublishedBlogPosts,
   getBlogPostBySlug,
-  incrementBlogView,
-  incrementBlogLikes,
 } from '../../lib/blogStorage';
 import { MediaEmbedRenderer } from './MediaEmbedRenderer';
 import { BlogSEOHead } from './BlogSEOHead';
@@ -53,30 +51,41 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
 
-  const reloadPosts = () => {
-    const pub = getPublishedBlogPosts();
-    setPosts(pub);
-  };
+  /*
+   * Artikel datang dari SERVER sekarang, bukan localStorage.
+   *
+   * Sebelumnya tiap peramban punya salinannya sendiri: artikel yang ditulis
+   * admin di laptopnya tidak pernah dilihat pengunjung mana pun, dan halaman
+   * ini memuat konstanta bawaan. Karena itu pemuatannya kini asinkron, dan
+   * kegagalannya harus terlihat — daftar kosong yang diam tidak bisa dibedakan
+   * dari "belum ada artikel".
+   */
+  const [gagalMuat, setGagalMuat] = useState<string | null>(null);
+
+  const reloadPosts = useCallback(() => {
+    getPublishedBlogPosts()
+      .then((pub) => { setPosts(pub); setGagalMuat(null); })
+      .catch((e) => setGagalMuat(e?.message || 'Artikel gagal dimuat.'));
+  }, []);
 
   useEffect(() => {
     reloadPosts();
-
-    // Listen for cross-tab or CMS storage updates
     window.addEventListener('newhope_blog_updated', reloadPosts);
     return () => window.removeEventListener('newhope_blog_updated', reloadPosts);
-  }, []);
+  }, [reloadPosts]);
 
-  // Handle initial slug navigation if provided via URL (#blog/slug)
+  // Slug dari URL (#blog/slug). Penghitung bacanya dinaikkan SERVER saat
+  // artikelnya diambil, jadi tidak ada panggilan terpisah dari sini.
   useEffect(() => {
+    let batal = false;
     if (initialSlug) {
-      const p = getBlogPostBySlug(initialSlug);
-      if (p) {
-        setSelectedPost(p);
-        incrementBlogView(p.id);
-      }
+      getBlogPostBySlug(initialSlug).then((p) => {
+        if (!batal) setSelectedPost(p);
+      });
     } else {
       setSelectedPost(null);
     }
+    return () => { batal = true; };
   }, [initialSlug]);
 
   const categories: BlogCategory[] = [
@@ -106,7 +115,9 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
   const handleSelectPost = (p: BlogPost) => {
     setSelectedPost(p);
-    incrementBlogView(p.id);
+    // Penghitung baca dinaikkan SERVER saat artikelnya diambil per slug, bukan
+    // dari sini. Menghitungnya di klien berarti setiap peramban punya angkanya
+    // sendiri — dan angka yang tidak dibagi tidak menghitung apa pun.
     window.location.hash = `blog/${p.slug}`;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -116,15 +127,19 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
     window.location.hash = 'blog';
   };
 
+  /*
+   * Suka masih tersimpan DI PERANGKAT saja.
+   *
+   * Menaikkannya di server menuntut endpoint publik yang bisa menulis, dan
+   * endpoint seperti itu tanpa pembatasan laju adalah tombol yang bisa ditekan
+   * satu juta kali oleh siapa pun. Sampai pembatasnya ada, angkanya jujur
+   * disebut sebagai penanda lokal: yang menekan melihat tanda sukanya, dan
+   * tidak ada angka palsu yang dilaporkan ke orang lain.
+   */
   const handleLikePost = (p: BlogPost, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!likedPosts[p.id]) {
-      incrementBlogLikes(p.id);
       setLikedPosts((prev) => ({ ...prev, [p.id]: true }));
-      reloadPosts();
-      if (selectedPost && selectedPost.id === p.id) {
-        setSelectedPost({ ...selectedPost, likesCount: selectedPost.likesCount + 1 });
-      }
     }
   };
 

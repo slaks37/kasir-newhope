@@ -50,6 +50,8 @@ const MIGRATIONS = [
   'migrations/0028_langganan_per_merchant.sql',
   'migrations/0029_kredit_yatim.sql',
   'migrations/0030_mrr_dipisah.sql',
+  'migrations/0031_blog_publik.sql',
+  'migrations/0032_kepemilikan_ditegakkan.sql',
 ];
 
 async function main() {

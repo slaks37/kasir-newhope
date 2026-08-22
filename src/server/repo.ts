@@ -195,8 +195,27 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
   return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
 }
 
-export async function merchantDetail(db: Db, merchantId: string) {
+/**
+ * Profil satu merchant — dan pembukuannya HANYA bila pemanggilnya berhak.
+ *
+ * Dulu satu capability (`VIEW_MERCHANT_DETAIL`) membuka keempat blok
+ * sekaligus: profil, omzet per sektor, skor churn, dan produk terlaris beserta
+ * laba kotornya. Staf yang hanya perlu memeriksa nama cabang ikut membaca
+ * pembukuan tokonya.
+ *
+ * Sekarang dua tingkat. Profil dan skor churn di bawah VIEW_MERCHANT_PROFILE;
+ * omzet dan laba menuntut VIEW_MERCHANT_FINANCIAL. Yang tidak berhak menerima
+ * `null` untuk blok itu — bukan array kosong, yang akan terbaca sebagai "toko
+ * ini tidak berjualan".
+ */
+export async function merchantDetail(
+  db: Db,
+  merchantId: string,
+  opsi: { bolehKeuangan?: boolean } = {}
+) {
   if (!UUID_RE.test(merchantId)) return null;
+
+  const bolehKeuangan = opsi.bolehKeuangan !== false;
 
   const [profile, bySector, health, topProducts] = await Promise.all([
     db.query(`SELECT * FROM contract.merchant_directory WHERE business_id = $1`, [merchantId]),
@@ -228,9 +247,13 @@ export async function merchantDetail(db: Db, merchantId: string) {
   if (!profile.rows.length) return null;
   return {
     profile: profile.rows[0],
-    sectors: bySector.rows,
     health: health.rows[0] ?? null,
-    topProducts: topProducts.rows,
+    // `null`, bukan `[]`. Array kosong terbaca sebagai "toko ini tidak
+    // berjualan sama sekali" — jawaban yang salah, dan yang bisa membuat orang
+    // menyimpulkan merchantnya mati padahal ia hanya tidak berhak melihat.
+    sectors: bolehKeuangan ? bySector.rows : null,
+    topProducts: bolehKeuangan ? topProducts.rows : null,
+    financialVisible: bolehKeuangan,
   };
 }
 
