@@ -1,12 +1,22 @@
 # 📖 Dokumentasi Arsitektur Resmi — New Hope POS
 
-Dokumentasi komprehensif arsitektur sistem, model data domain hirarkis (Model B), aliran data (end-to-end data flow), dan tata kelola keamanan New Hope POS.
+Dokumentasi arsitektur sistem, hirarki multi-tenant (Model B), otentikasi & step-up otorisasi, tata kelola keamanan berlapis (*Defense-in-Depth*), dan aturan emas integritas data (*Golden Rule*).
 
 ---
 
-## 1. Prinsip Arsitektur Utama: Clean Multi-Schema Isolation
+## 🌟 Aturan Emas Arsitektur New Hope POS (*The Golden Rule*)
 
-Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas PostgreSQL (Supabase) dengan batas domain yang ditegakkan secara struktural oleh hak akses database.
+> ### *"A service may consume another domain's data, but it never becomes the owner of that domain's entity."*
+>
+> 1. **AI membaca data Transaksi** ➔ AI **TIDAK** memiliki entitas Transaksi.
+> 2. **Backoffice membaca data Langganan** ➔ Backoffice **TIDAK** memiliki entitas Langganan.
+> 3. **Billing mengetahui entitas Tenant** ➔ Billing **TIDAK** memiliki entitas Tenant.
+> 4. **POS menggunakan akun Kasir/Staf** ➔ POS **TIDAK** memiliki entitas Pengguna/User.
+> 5. **Backoffice adalah Konsumer/Orkestrator UI** ➔ Backoffice **TIDAK** memiliki skema database tersendiri.
+
+---
+
+## 1. Prinsip Arsitektur: Clean Multi-Schema & Multi-Tier Isolation
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -23,20 +33,19 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                  GLOBAL IDENTITY & AUTHENTICATION                      │
-│   • Supabase Auth / Session Token Resolution                           │
-│   • Global User Plane: internal.users (1 Manusia = 1 User)             │
-│   • Multi-Tenant RBAC: internal.memberships (Peran & PIN Kios Toko)    │
-│   • Resolve Scope: Tenant ID ➔ Merchant ID ➔ Outlet ID                 │
+│           AUTHENTICATION, CONTEXT & STEP-UP AUTHORIZATION              │
+│   1. AUTHENTICATION     : Supabase Session Token & Actor Identity      │
+│   2. CONTEXT RESOLUTION : User ➔ Tenant ➔ Merchant ➔ Outlet ➔ Role     │
+│   3. STEP-UP AUTH (PIN) : Manager PIN for High-Risk (VOID/Refund)      │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                         BUSINESS SERVICE LAYER                         │
 │   ┌──────────────┐  ┌──────────────┐  ┌─────────────┐  ┌─────────────┐ │
-│   │ pos-service  │  │billing-serv. │  │ ai-service  │  │ backoffice  │ │
-│   │ (Sync/Catalog│  │(Subscription │  │ (Credits &  │  │(Audit & Org │ │
-│   │  & Inventory)│  │ & Invoices)  │  │  Insights)  │  │  Monitoring)│ │
+│   │ pos-service  │  │billing-serv. │  │ ai-service  │  │ Backoffice  │ │
+│   │(Catalog,Order│  │(Subscription │  │ (Credits &  │  │(Consumer &  │ │
+│   │Txn & Invent.)│  │ & Invoices)  │  │  Insights)  │  │Orchestrator)│ │
 │   └──────┬───────┘  └──────┬───────┘  └──────┬──────┘  └──────┬──────┘ │
 └──────────┼─────────────────┼─────────────────┼────────────────┼────────┘
            │                 │                 │                │
@@ -44,16 +53,33 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        POSTGRESQL DATABASE TIER                        │
 │                                                                        │
-│  [internal] (Platform Plane)  [pos] (Operations)  [billing]  [ai]      │
-│  • tenants (Holding / Corp)   • products          • plans    • credits │
-│  • merchants (Brand / Unit)   • ingredients       • subs     • insight │
-│  • outlets (Physical Branch)  • recipes           • invoices • query   │
-│  • users (Global Identity)    • transactions      • webhooks           │
-│  • memberships (Tenant RBAC)  • trans_items                            │
-│  • audit_logs (Cross-Cutting) • inventory_logs                         │
-│  • business_targets                                                    │
-│  • feature_usage (Telemetry)                                           │
-│  • health_logs                                                         │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐              │
+│  │ [internal]              │  │ [pos]                   │              │
+│  │ (Platform Plane)        │  │ (Store Operations)      │              │
+│  ├─────────────────────────┤  ├─────────────────────────┤              │
+│  │ • tenants (Holding/Corp)│  │ • products              │              │
+│  │ • merchants (Brand/Unit)│  │ • ingredients           │              │
+│  │ • outlets (Store Branch)│  │ • product_recipes (BOM) │              │
+│  │ • users (Global ID 1:1) │  │ • transactions          │              │
+│  │ • memberships (RBAC/PIN)│  │ • transaction_items     │              │
+│  │ • audit_logs (Platform) │  │ • inventory_logs        │              │
+│  │ • business_targets      │  │ • sync_receipts         │              │
+│  │ • feature_usage (Telem.)│  └────────────┬────────────┘              │
+│  │ • access_log (Operator) │               │                           │
+│  │ • health_logs           │               │                           │
+│  └────────────┬────────────┘               │                           │
+│               │                            │                           │
+│               ├────────────────────────────┤                           │
+│               ▼                            ▼                           │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐              │
+│  │ [billing]               │  │ [ai]                    │              │
+│  │ (SaaS Monetization)     │  │ (Intelligence)          │              │
+│  ├─────────────────────────┤  ├─────────────────────────┤              │
+│  │ • plans                 │  │ • merchant_ai_credits   │              │
+│  │ • subscriptions         │  │ • daily_merchant_insight│              │
+│  │ • invoices              │  │ • query_logs            │              │
+│  │ • webhook_logs          │  └─────────────────────────┘              │
+│  └─────────────────────────┘                                           │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [contract] (Single Source of Truth Cross-Domain Read Surface)         │
@@ -70,9 +96,9 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 
 ---
 
-## 2. Canonical Domain Model: Model B (Multi-Tier Enterprise Hierarchy)
+## 2. Model B: Enterprise Multi-Tier Hierarchy (Tenant ➔ Merchant ➔ Outlet)
 
-Platform New Hope POS mengadopsi **Model B (Tenant ≠ Merchant ≠ Outlet)** untuk mendukung pertumbuhan bisnis merchant dari single-store hingga enterprise holding company dengan banyak brand dan cabang.
+Struktur data New Hope POS dirancang untuk mendukung ekspansi bisnis dari 1 toko hingga holding multi-brand dan multi-cabang:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -90,7 +116,7 @@ Platform New Hope POS mengadopsi **Model B (Tenant ≠ Merchant ≠ Outlet)** un
 │         Brand / Business Unit / Lini Bisnis per Sektor Usaha           │
 │         Contoh: "Kopi Senja (F&B)"  &  "Laundry Bersih (Laundry)"      │
 │         • Memiliki Katalog Produk & Resep BOM                          │
-│         • Memiliki Target Omzet Bulanan                                │
+│         • Memiliki Target Omzet Bulanan (internal.business_targets)    │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ 1 : N
                                     ▼
@@ -112,72 +138,96 @@ Platform New Hope POS mengadopsi **Model B (Tenant ≠ Merchant ≠ Outlet)** un
   - User B dapat menjadi **Manager** di Merchant "Kopi Senja" (mengakses cabang Senayan & Sudirman).
   - User C dapat menjadi **Cashier** di Outlet "Cabang Senayan" dengan PIN Kios `1234`.
 
-### Diagram Relasi Entitas (ERD Model B)
+---
 
-```mermaid
-erDiagram
-    TENANTS ||--o{ MERCHANTS : "memiliki brand/unit usaha"
-    MERCHANTS ||--o{ OUTLETS : "memiliki cabang fisik"
-    TENANTS ||--o{ MEMBERSHIPS : "hak akses akun"
-    USERS ||--o{ MEMBERSHIPS : "identitas akun staf"
-    TENANTS ||--|| SUBSCRIPTIONS : "memiliki paket SaaS"
-    TENANTS ||--|| MERCHANT_AI_CREDITS : "memiliki kuota AI"
+## 3. Otentikasi vs Step-Up Otorisasi (Manager PIN)
 
-    MERCHANTS ||--o{ PRODUCTS : "memiliki katalog produk"
-    MERCHANTS ||--o{ INGREDIENTS : "memiliki bahan baku"
-    PRODUCTS ||--o{ PRODUCT_RECIPES : "diformulasikan dari"
-    INGREDIENTS ||--o{ PRODUCT_RECIPES : "komposisi resep"
+```
+Skenario Kasir Melakukan Tindakan Berisiko Tinggi (mis. VOID Transaksi / Diskon Khusus):
 
-    OUTLETS ||--o{ TRANSACTIONS : "lokasi penjualan"
-    TRANSACTIONS ||--o{ TRANSACTION_ITEMS : "memuat baris item"
-    OUTLETS ||--o{ INVENTORY_LOGS : "mutasi stok fisik"
-    TRANSACTIONS ||--o{ INVENTORY_LOGS : "pemicu pengurangan stok"
+Kasir Login (Supabase Session)
+        │
+        ▼
+Kasir Memilih "Batalkan Transaksi (VOID)"
+        │
+        ▼
+Service Permission Check (Peran: CASHIER tidak memiliki hak VOID langsung)
+        │
+        ▼
+Require Manager Step-Up Authorization
+        │
+        ▼
+Manager Memasukkan PIN Toko (Short-Lived Authorization Grant: 60 Detik)
+        │
+        ▼
+Eksekusi VOID ➔ Catat ke internal.audit_logs dengan Actor Kasir + ApprovedBy Manager
 ```
 
 ---
 
-## 3. Batas Domain Skema (Multi-Schema Isolation)
+## 4. Keamanan Berlapis (*Defense-in-Depth Chain*)
 
-| Skema | Service Pemilik | Hak Akses Tulis (Write) | Hak Akses Baca (Read) | Deskripsi |
-|---|---|---|---|---|
-| `internal` | `backoffice-service` | `svc_internal`, `svc_pos` (sync) | `svc_internal`, Semua Service | **Platform Organization & Identity**: Organisasi Holding (`tenants`), Brand (`merchants`), Cabang (`outlets`), Pengguna (`users`), Hak Akses (`memberships`), dan audit log operator. |
-| `pos` | `pos-service` | `svc_pos` | `svc_pos` | **Store Operations**: Inti operasional kasir (katalog produk, resep BOM, transaksi penjualan, dan mutasi stok fisik). Mereferensikan `tenant_id`, `merchant_id`, dan `outlet_id`. |
-| `billing` | `billing-service` | `svc_billing` | `svc_billing` | **SaaS Monetization**: Paket langganan SaaS, status tagihan, faktur, dan log webhook. Mereferensikan `tenant_id`. |
-| `ai` | `ai-service` | `svc_ai` | `svc_ai` | **AI Intelligence**: Dompet kuota kredit AI, agregasi insight bisnis harian, log kueri LLM. Mereferensikan `tenant_id` dan `merchant_id`. |
-| `contract` | *Shared Contract* | Tidak ada (Hanya View) | Semua Service (`svc_*`, `bi_readonly`) | **Satu-satunya antarmuka baca lintas-layanan**. Menjamin angka omzet, staf, dan stok selalu konsisten. |
-| `public` | *Platform Public* | `schema_migrations` | `anon`, `authenticated` | Hanya memuat view tersanitasi yang merujuk ke `contract.*` (tanpa kolom sensitif seperti hash PIN). |
+Batas domain tidak hanya bergantung pada izin database, melainkan ditegakkan pada setiap lapisan:
+
+```
+1. USER                    : Permintaan masuk dari browser kasir / admin
+    ↓
+2. AUTHENTICATION          : Verifikasi JWT / Sesi Supabase Auth yang valid
+    ↓
+3. CONTEXT RESOLUTION      : Penentuan Tenant ID, Merchant ID, dan Outlet ID aktif
+    ↓
+4. SERVICE AUTHORIZATION   : Pengecekan RBAC aplikasi (Apakah peran diizinkan?)
+    ↓
+5. STEP-UP AUTHORIZATION   : PIN Manager untuk aksi berisiko tinggi (VOID, Refund)
+    ↓
+6. DB ROLE ISOLATION       : svc_pos, svc_billing, svc_ai, svc_internal
+    ↓
+7. SCHEMA PERMISSION       : Hanya skema milik domain yang dapat ditulis
+    ↓
+8. TENANT ISOLATION (RLS)  : Enforce WHERE tenant_id = current_tenant di PostgreSQL
+```
 
 ---
 
-## 4. Aliran Data Transaksi & Mutasi Stok (End-to-End Flow)
+## 5. Perbedaan Eksplisit: `internal.access_log` vs `ai.query_logs`
+
+| Kategori | Tabel | Isi Data | Tujuan |
+|---|---|---|---|
+| **Operator Access Log** | `internal.access_log` | **WHO accessed WHAT**<br>(`internal_user_id`, `merchant_id`, `resource`, `action`, `timestamp`) | Audit kepatuhan operator backoffice/support saat mengakses data privat merchant. |
+| **AI LLM Query Log** | `ai.query_logs` | **WHAT AI request happened**<br>(`merchant_id`, `intent`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms`, `credit_consumed`) | Audit teknis performa model AI, konsumsi kuota kredit, dan diagnostik latensi. |
+| **Platform Audit Log** | `internal.audit_logs` | **BUSINESS EVENT AUDIT**<br>(`domain`, `event_type`, `severity`, `amount_idr`, `summary`, `detail`) | Jejak audit bisnis (VOID transaksi, ganti harga, ubah paket langganan). |
+| **Product Telemetry** | `internal.feature_usage_events` | **FEATURE ADOPTION METRICS**<br>(`feature_name`, `ui_component`, `event_count`) | Analisis produk dan adopsi fitur (tidak dipakai untuk penagihan invoice). |
+
+---
+
+## 6. Aliran Data Transaksi Kasir (End-to-End Flow)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Cashier as Kasir (Terminal POS Outlet)
+    actor Cashier as Kasir (Terminal Outlet)
     participant Local as LocalStorage / Queue
     participant GW as API Gateway
     participant POS as pos-service
     participant DB as PostgreSQL (pos, internal, contract)
-    actor Admin as Admin Backoffice / AI
+    actor Admin as Backoffice (Konsumer)
 
-    Note over Cashier, Local: Operasional Kasir (Offline-First di Cabang)
+    Note over Cashier, Local: Operasional Kasir (Offline-First di Outlet)
     Cashier->>Local: Buat Pesanan & Bayar (Cash / QRIS)
     Local->>Local: Simpan ke antrean sinkronisasi lokal
 
     Note over Local, POS: Siklus Sinkronisasi Terproteksi (Idempotent)
     Local->>GW: POST /api/v1/sync/transactions (batch + IdempotencyKey)
-    GW->>POS: Validasi Header & Format Body (tenantId, merchantId, outletId)
+    GW->>POS: Validasi Token & Scope (tenantId, merchantId, outletId)
     
     rect rgb(240, 248, 255)
         Note over POS, DB: Transaksi Database Terisolasi (db.tx)
         POS->>DB: Cek pos.sync_receipts (Idempotency Guard)
-        POS->>DB: Upsert internal.tenants, internal.merchants, internal.outlets
         POS->>DB: INSERT INTO pos.transactions (tenant_id, merchant_id, outlet_id)
         POS->>DB: INSERT INTO pos.transaction_items
         POS->>DB: INSERT INTO pos.inventory_logs (Deduction BOM per Outlet)
         POS->>DB: UPDATE pos.ingredients (Kuantitas Stok Outlet)
-        POS->>DB: Catat pos.merchant_activity_log
+        POS->>DB: INSERT INTO internal.audit_logs (SYNC_BATCH)
         POS->>DB: Catat pos.sync_receipts
     end
 
@@ -187,51 +237,5 @@ sequenceDiagram
 
     Note over DB, Admin: Konsumsi Realtime Tanpa Dual-Write
     Admin->>DB: SELECT * FROM contract.merchant_revenue / transaction_log / outlet_directory
-    DB-->>Admin: Laporan omzet per Holding, per Brand, dan per Cabang secara realtime
+    DB-->>Admin: Laporan omzet per Holding, Brand, dan Cabang secara konsisten
 ```
-
----
-
-## 5. Aliran Otorisasi & Eksekusi AI Financial Copilot
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Owner as Pemilik Usaha (Tenant/Merchant)
-    participant FE as Frontend Client
-    participant AI as ai-service
-    participant DB as PostgreSQL (ai, internal, contract)
-    participant LLM as Google Gemini / Model Provider
-
-    Owner->>FE: Ajukan Pertanyaan Finansial / Performa Lintas Cabang
-    FE->>AI: POST /api/v1/ai/query (tenantId, merchantId, prompt)
-    
-    rect rgb(255, 245, 245)
-        Note over AI, DB: Verifikasi Saldo Kredit Atomik Tenant
-        AI->>DB: SELECT consume_ai_credit(tenantId)
-        DB-->>AI: TRUE (Kredit Tersedia & Terpotong)
-    end
-
-    AI->>DB: SELECT * FROM contract.merchant_revenue, stock_status, outlet_directory
-    DB-->>AI: Agregat Finansial, Status Stok Cabang, dan Performa Penjualan
-    
-    AI->>LLM: Eksekusi Prompt dengan Konteks Multi-Cabang Akurat
-    LLM-->>AI: Respon Analisis & Rekomendasi Bisnis
-    
-    AI->>DB: Catat ai.ai_query_logs
-    AI-->>FE: Tampilkan Jawaban Analisis Finansial ke Pemilik Usaha
-```
-
----
-
-## 6. Perlindungan Keamanan & Sanitasi Skema
-
-1. **Anti-Leakage Kredensial**:
-   - Kolom `pin` di `internal.memberships` tidak pernah diekspos ke skema `contract` atau skema `public`.
-   - View `contract.merchant_staff` hanya mengekspos profil publik staf beserta relasi Tenant, Merchant, dan Outlet.
-2. **PostgreSQL RLS (Row Level Security)**:
-   - RLS diterapkan pada semua tabel domain (`pos.*`, `billing.*`, `ai.*`, `internal.*`) sebagai lapisan pertahanan database (*defense-in-depth*).
-   - Layanan aplikasi beroperasi dengan peran tersendiri (`svc_pos`, `svc_billing`, `svc_ai`, `svc_internal`).
-3. **No Dual-Write Guarantee**:
-   - Seluruh transaksi hanya ditulis satu kali ke `pos.transactions`.
-   - Laporan konsolidasi holding, analitik brand, dan audit cabang membaca data yang sama melalui view di skema `contract`.
