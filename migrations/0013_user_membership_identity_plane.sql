@@ -59,7 +59,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'internal' AND table_name = 'internal_users') THEN
         INSERT INTO internal.users (id, email, full_name, is_platform_user, platform_role, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id),
+            u.id,
             u.email,
             u.full_name,
             TRUE,
@@ -78,7 +78,7 @@ BEGIN
         -- Insert user record untuk setiap staf toko (jika belum ada)
         INSERT INTO internal.users (id, email, full_name, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id),
+            u.id,
             COALESCE(NULLIF(u.username, ''), 'user_' || substr(u.id::text, 1, 8)) || '@merchant.internal',
             COALESCE(NULLIF(u.name, ''), 'Staf Kasir'),
             TRUE,
@@ -90,8 +90,8 @@ BEGIN
         -- Insert membership
         INSERT INTO internal.memberships (id, user_id, tenant_id, role, pin, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id || '_mem_' || u.tenant_id),
-            legacy_uuid(u.id),
+            legacy_uuid(u.id::text || '_mem_' || u.tenant_id::text),
+            u.id,
             u.tenant_id,
             COALESCE(u.role, 'CASHIER'),
             COALESCE(u.pin, '1234'),
@@ -145,7 +145,7 @@ BEGIN
     -- Hak baca contract.merchant_staff untuk seluruh service & BI
     FOREACH svc IN ARRAY services LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_' || svc) THEN
-            GRANT SELECT ON contract.merchant_staff TO %I, 'svc_' || svc;
+            EXECUTE format('GRANT SELECT ON contract.merchant_staff TO %I', 'svc_' || svc);
         END IF;
     END LOOP;
 
@@ -161,6 +161,8 @@ CREATE OR REPLACE VIEW public.v_merchant_staff AS
   SELECT * FROM contract.merchant_staff;
 
 DO $$
+DECLARE
+    svc TEXT;
 BEGIN
     FOREACH svc IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = svc) THEN

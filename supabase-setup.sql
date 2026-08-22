@@ -3033,7 +3033,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'internal' AND table_name = 'internal_users') THEN
         INSERT INTO internal.users (id, email, full_name, is_platform_user, platform_role, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id),
+            u.id,
             u.email,
             u.full_name,
             TRUE,
@@ -3052,7 +3052,7 @@ BEGIN
         -- Insert user record untuk setiap staf toko (jika belum ada)
         INSERT INTO internal.users (id, email, full_name, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id),
+            u.id,
             COALESCE(NULLIF(u.username, ''), 'user_' || substr(u.id::text, 1, 8)) || '@merchant.internal',
             COALESCE(NULLIF(u.name, ''), 'Staf Kasir'),
             TRUE,
@@ -3064,8 +3064,8 @@ BEGIN
         -- Insert membership
         INSERT INTO internal.memberships (id, user_id, tenant_id, role, pin, is_active, created_at)
         SELECT 
-            legacy_uuid(u.id || '_mem_' || u.tenant_id),
-            legacy_uuid(u.id),
+            legacy_uuid(u.id::text || '_mem_' || u.tenant_id::text),
+            u.id,
             u.tenant_id,
             COALESCE(u.role, 'CASHIER'),
             COALESCE(u.pin, '1234'),
@@ -3119,7 +3119,7 @@ BEGIN
     -- Hak baca contract.merchant_staff untuk seluruh service & BI
     FOREACH svc IN ARRAY services LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_' || svc) THEN
-            GRANT SELECT ON contract.merchant_staff TO %I, 'svc_' || svc;
+            EXECUTE format('GRANT SELECT ON contract.merchant_staff TO %I', 'svc_' || svc);
         END IF;
     END LOOP;
 
@@ -3135,6 +3135,8 @@ CREATE OR REPLACE VIEW public.v_merchant_staff AS
   SELECT * FROM contract.merchant_staff;
 
 DO $$
+DECLARE
+    svc TEXT;
 BEGIN
     FOREACH svc IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = svc) THEN
@@ -3464,6 +3466,10 @@ CREATE TABLE IF NOT EXISTS internal.tenants (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS company_name VARCHAR(200);
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS tax_id VARCHAR(50);
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS owner_user_id UUID;
+
 COMMENT ON TABLE internal.tenants IS
     'Tingkat 1: Akun Holding / Perusahaan / Pelanggan Utama Billing SaaS.';
 
@@ -3635,13 +3641,13 @@ SELECT
     m.is_active,
     m.created_at                                      AS joined_at,
     COUNT(DISTINCT o.id)                              AS outlet_count,
-    COUNT(r.transaction_id)                           AS transaction_count,
+    COUNT(r.id)                                       AS transaction_count,
     COALESCE(SUM(r.total_amount), 0)                  AS gross_revenue,
     MAX(r.created_at)                                 AS last_transaction_at
   FROM internal.merchants m
   JOIN internal.tenants t            ON t.id = m.tenant_id
   LEFT JOIN internal.outlets o       ON o.merchant_id = m.id
-  LEFT JOIN contract.merchant_revenue r ON r.merchant_id = m.id
+  LEFT JOIN pos.transactions r ON r.merchant_id = m.id
  GROUP BY m.id, m.tenant_id, t.name, m.name, m.business_sector,
           m.external_ref, m.is_active, m.created_at;
 
@@ -3863,7 +3869,7 @@ COMMENT ON TABLE internal.business_targets IS
 -- 2b. Migrasi data lama dari ai.merchant_targets ke internal.business_targets
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'merchant_targets') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'merchant_targets' AND table_type = 'BASE TABLE') THEN
         INSERT INTO internal.business_targets (id, merchant_id, tenant_id, target_type, target_value, currency, updated_at)
         SELECT 
             legacy_uuid(merchant_id::text || '_monthly_target'),
@@ -3878,6 +3884,8 @@ BEGIN
         ON CONFLICT (merchant_id, target_type) DO UPDATE SET
             target_value = EXCLUDED.target_value,
             updated_at   = EXCLUDED.updated_at;
+
+        DROP TABLE ai.merchant_targets CASCADE;
     END IF;
 END $$;
 
@@ -4057,6 +4065,11 @@ COMMENT ON TABLE pos.inventory_balances IS
 
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'merchant_id') THEN
+        ALTER TABLE pos.inventory_logs ADD COLUMN merchant_id UUID REFERENCES internal.merchants(id) ON DELETE CASCADE;
+        UPDATE pos.inventory_logs SET merchant_id = tenant_id WHERE merchant_id IS NULL;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'outlet_id') THEN
         ALTER TABLE pos.inventory_logs ADD COLUMN outlet_id UUID REFERENCES internal.outlets(id) ON DELETE SET NULL;
     END IF;
@@ -4071,6 +4084,10 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'item_type') THEN
         ALTER TABLE pos.inventory_logs ADD COLUMN item_type VARCHAR(20) NOT NULL DEFAULT 'INGREDIENT';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'item_id') THEN
+        ALTER TABLE pos.inventory_logs ADD COLUMN item_id UUID;
     END IF;
 END $$;
 
@@ -4349,7 +4366,7 @@ WITH RECURSIVE bom_tree AS (
         ri.input_item_type,
         ri.input_item_id,
         ri.quantity                                          AS step_quantity,
-        ri.quantity                                          AS total_effective_quantity,
+        ri.quantity::NUMERIC                                 AS total_effective_quantity,
         ri.unit,
         ri.wastage_percentage,
         1                                                    AS bom_level,
@@ -4612,6 +4629,7 @@ SELECT
     o.name                                               AS outlet_name,
     ti.product_id,
     COALESCE(ti.product_name_snapshot, ti.product_name)  AS product_name,
+    ti.category_name,
     ti.variant_id,
     ti.variant_name_snapshot                             AS variant_name,
     ti.sku_snapshot                                      AS sku,
@@ -4721,7 +4739,7 @@ CREATE TABLE IF NOT EXISTS pos.payments (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
     tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
     merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
-    outlet_id          UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    outlet_id          UUID REFERENCES internal.outlets(id) ON DELETE SET NULL,
     transaction_id     UUID NOT NULL REFERENCES pos.transactions(id) ON DELETE CASCADE,
     payment_method     VARCHAR(32) NOT NULL DEFAULT 'CASH', -- CASH, QRIS_DYNAMIC, QRIS_STATIC, DEBIT_CARD, CREDIT_CARD, TRANSFER, E_WALLET
     payment_status     VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING, PAID, FAILED, EXPIRED, REFUNDED, PARTIALLY_REFUNDED
@@ -4786,6 +4804,7 @@ END $$;
 DROP VIEW IF EXISTS contract.merchant_revenue CASCADE;
 CREATE VIEW contract.merchant_revenue AS
 SELECT
+    x.id                                              AS transaction_id,
     x.id,
     x.tenant_id,
     x.merchant_id,
@@ -4934,6 +4953,2618 @@ CREATE OR REPLACE VIEW public.v_payments_log AS
   SELECT * FROM contract.payments_log;
 
 INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0020_separate_orders_and_payments.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 22: migrations/0021_operational_and_settings.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0021_operational_and_settings.sql
+--
+-- OPERATIONAL ENHANCEMENTS:
+-- 1. Enhanced Transaction Dates (business_date, completed_at, dll)
+-- 2. Shift Management (cash_registers, shifts)
+-- 3. Attendance (terpisah dari shift)
+-- 4. Settings Refactoring (internal.merchant_settings, pos.branch_settings, dll)
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. EXTEND pos.transactions DATES -------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'transactions' AND column_name = 'business_date') THEN
+        ALTER TABLE pos.transactions ADD COLUMN business_date DATE;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'transactions' AND column_name = 'completed_at') THEN
+        ALTER TABLE pos.transactions ADD COLUMN completed_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'transactions' AND column_name = 'cancelled_at') THEN
+        ALTER TABLE pos.transactions ADD COLUMN cancelled_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'transactions' AND column_name = 'voided_at') THEN
+        ALTER TABLE pos.transactions ADD COLUMN voided_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'transactions' AND column_name = 'shift_id') THEN
+        ALTER TABLE pos.transactions ADD COLUMN shift_id UUID;
+    END IF;
+
+    -- Backfill default dates for existing data
+    UPDATE pos.transactions SET 
+        business_date = created_at::date,
+        completed_at = created_at
+    WHERE business_date IS NULL;
+END $$;
+
+
+-- 2. CASH REGISTERS & SHIFTS -------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.cash_registers (
+    id                 UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    name               VARCHAR(100) NOT NULL,
+    status             VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_cash_registers_outlet ON pos.cash_registers(outlet_id);
+
+CREATE TABLE IF NOT EXISTS pos.shifts (
+    id                 UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    register_id        UUID NOT NULL REFERENCES pos.cash_registers(id) ON DELETE RESTRICT,
+    opened_by_user_id  UUID REFERENCES internal.users(id) ON DELETE SET NULL,
+    closed_by_user_id  UUID REFERENCES internal.users(id) ON DELETE SET NULL,
+    business_date      DATE NOT NULL,
+    opening_cash       NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    closing_cash       NUMERIC(12, 2),
+    expected_cash      NUMERIC(12, 2),
+    cash_difference    NUMERIC(12, 2),
+    status             VARCHAR(32) NOT NULL DEFAULT 'OPEN', -- OPEN, CLOSED
+    opened_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at          TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_shifts_register ON pos.shifts(register_id);
+CREATE INDEX IF NOT EXISTS idx_shifts_business_date ON pos.shifts(business_date);
+
+-- Add foreign key to transactions now that shifts exists
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_transactions_shift') THEN
+        ALTER TABLE pos.transactions ADD CONSTRAINT fk_transactions_shift FOREIGN KEY (shift_id) REFERENCES pos.shifts(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+
+-- 3. ATTENDANCE --------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS internal.attendances (
+    id                 UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    user_id            UUID NOT NULL REFERENCES internal.users(id) ON DELETE CASCADE,
+    business_date      DATE NOT NULL,
+    clock_in_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    clock_out_at       TIMESTAMPTZ,
+    clock_in_notes     TEXT,
+    clock_out_notes    TEXT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_attendances_user ON internal.attendances(user_id);
+CREATE INDEX IF NOT EXISTS idx_attendances_date ON internal.attendances(business_date);
+
+
+-- 4. SETTINGS REFACTORING ----------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS internal.merchant_settings (
+    merchant_id        UUID PRIMARY KEY REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    timezone           VARCHAR(64) NOT NULL DEFAULT 'Asia/Jakarta',
+    currency           VARCHAR(10) NOT NULL DEFAULT 'IDR',
+    language           VARCHAR(10) NOT NULL DEFAULT 'id',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pos.branch_settings (
+    outlet_id          UUID PRIMARY KEY REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    operating_hours    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    default_order_type VARCHAR(32) NOT NULL DEFAULT 'DINE_IN',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pos.pos_settings (
+    outlet_id          UUID PRIMARY KEY REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    auto_print_receipt BOOLEAN NOT NULL DEFAULT TRUE,
+    require_pin_void   BOOLEAN NOT NULL DEFAULT TRUE,
+    require_pin_refund BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pos.tax_settings (
+    merchant_id        UUID PRIMARY KEY REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    tax_percentage     NUMERIC(5, 2) NOT NULL DEFAULT 11.00,
+    tax_inclusive      BOOLEAN NOT NULL DEFAULT FALSE,
+    service_charge_pct NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pos.receipt_settings (
+    merchant_id        UUID PRIMARY KEY REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    logo_url           VARCHAR(255),
+    header_text        TEXT,
+    footer_text        TEXT,
+    social_media       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- 5. UPDATE VIEWS WITH NEW DATES ---------------------------------------------
+
+DROP VIEW IF EXISTS contract.transaction_log CASCADE;
+CREATE VIEW contract.transaction_log AS
+SELECT
+    x.id,
+    x.tenant_id,
+    x.merchant_id,
+    m.name                                            AS merchant_name,
+    x.outlet_id,
+    o.name                                            AS outlet_name,
+    x.invoice_number,
+    x.business_sector,
+    x.business_id,
+    x.app_module,
+    x.order_type,
+    x.order_status,
+    COALESCE(p.payment_method, x.payment_method)      AS payment_method,
+    COALESCE(p.payment_status, x.payment_status)      AS payment_status,
+    x.subtotal,
+    x.discount_amount,
+    x.tax_amount,
+    x.service_charge_amount,
+    x.total_amount,
+    x.business_date,
+    x.completed_at,
+    x.cancelled_at,
+    x.voided_at,
+    x.shift_id,
+    x.created_at,
+    COALESCE(u.name, 'Kasir')                         AS cashier_name,
+    COALESCE(ti.item_count, 0)                        AS item_count
+  FROM pos.transactions x
+  JOIN internal.merchants m ON m.id = x.merchant_id
+  LEFT JOIN internal.outlets o ON o.id = x.outlet_id
+  LEFT JOIN pos.users u ON u.id = x.cashier_user_id
+  LEFT JOIN LATERAL (
+      SELECT payment_method, payment_status 
+        FROM pos.payments 
+       WHERE transaction_id = x.id 
+       ORDER BY created_at DESC 
+       LIMIT 1
+  ) p ON TRUE
+  LEFT JOIN (
+      SELECT transaction_id, COUNT(*)::int AS item_count
+        FROM pos.transaction_items
+       GROUP BY transaction_id
+  ) ti ON ti.transaction_id = x.id;
+
+CREATE OR REPLACE VIEW public.v_transaction_log AS
+  SELECT * FROM contract.transaction_log;
+
+
+-- 6. HAK AKSES PERAN ---------------------------------------------------------
+DO $$
+DECLARE
+    svc TEXT;
+    services TEXT[] := ARRAY['pos','billing','ai','internal'];
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT ALL ON pos.cash_registers     TO svc_pos;
+        GRANT ALL ON pos.shifts             TO svc_pos;
+        GRANT ALL ON pos.branch_settings    TO svc_pos;
+        GRANT ALL ON pos.pos_settings       TO svc_pos;
+        GRANT ALL ON pos.tax_settings       TO svc_pos;
+        GRANT ALL ON pos.receipt_settings   TO svc_pos;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_internal') THEN
+        GRANT ALL ON internal.attendances       TO svc_internal;
+        GRANT ALL ON internal.merchant_settings TO svc_internal;
+    END IF;
+
+    -- Cross-domain grants
+    FOREACH svc IN ARRAY services LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_' || svc) THEN
+            EXECUTE format('GRANT SELECT ON contract.transaction_log TO %I', 'svc_' || svc);
+        END IF;
+    END LOOP;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0021_operational_and_settings.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 23: migrations/0022_billing_and_tax_refactor.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0022_billing_and_tax_refactor.sql
+--
+-- Penyempurnaan Skema Sesuai Audit Arsitektur:
+--
+-- 1. pos.transaction_adjustments
+--    Memisahkan tax_amount, discount_amount, service_charge menjadi record
+--    spesifik per transaksi (DISCOUNT, TAX, SERVICE_CHARGE, ROUNDING)
+--    agar semantiknya lebih kaya dan scalable.
+--
+-- 2. billing.subscriptions (Lifecycle & Source of Truth)
+--    Mengubah tipe enum subscriptions.status menjadi VARCHAR(32) agar 
+--    mendukung lifecycle nyata SaaS:
+--    TRIALING, ACTIVE, PAST_DUE, GRACE_PERIOD, CANCELLED, EXPIRED, SUSPENDED.
+--    Memastikan sistem bertumpu pada tabel ini, bukan denormalisasi di merchants.
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. TRANSACTION ADJUSTMENTS (TAX, DISCOUNT, FEE, ROUNDING) -------------------
+
+CREATE TABLE IF NOT EXISTS pos.transaction_adjustments (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    transaction_id UUID NOT NULL REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    adjustment_type VARCHAR(32) NOT NULL, -- DISCOUNT, TAX, SERVICE_CHARGE, ROUNDING
+    amount NUMERIC(12, 2) NOT NULL,
+    reason VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_txn_adjustments_txn
+    ON pos.transaction_adjustments(transaction_id);
+
+COMMENT ON TABLE pos.transaction_adjustments IS
+    'Mencatat komponen tambahan pada struk/invoice seperti Pajak (PB1/PPN), Service Charge, Diskon, dan Pembulatan (Rounding). Semantik terpisah dari total transaksi mentah.';
+
+
+-- 2. SAAS SUBSCRIPTION LIFECYCLE ----------------------------------------------
+
+DO $$
+BEGIN
+    -- Menghapus constraint/tipe enum dan beralih ke VARCHAR untuk fleksibilitas lifecycle.
+    -- (Tidak bisa langsung alter type kalau ada dependency, jadi konversi ke varchar)
+    -- Drop dependent views first
+    EXECUTE 'DROP VIEW IF EXISTS contract.tenant_directory CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS contract.subscription_status CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS public.v_billing_subscriptions CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS public.v_subscription_status CASCADE';
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'billing' 
+          AND table_name = 'subscriptions' 
+          AND data_type = 'USER-DEFINED'
+    ) THEN
+        ALTER TABLE billing.subscriptions 
+            ALTER COLUMN status TYPE VARCHAR(32) USING status::text;
+    END IF;
+    
+    -- Pastikan default constraint diperbarui
+    ALTER TABLE billing.subscriptions 
+        ALTER COLUMN status SET DEFAULT 'TRIALING';
+        
+END $$;
+
+COMMENT ON COLUMN billing.subscriptions.status IS
+    'Source of Truth status SaaS. Lifecycle: TRIALING, ACTIVE, PAST_DUE, GRACE_PERIOD, CANCELLED, EXPIRED, SUSPENDED.';
+
+-- 3. PERBAIKAN KONTRAK YANG BERGANTUNG PADA SUBSCRIPTION STATUS ---------------
+
+-- Memastikan contract.subscription_status mendukung tipe varchar
+DROP VIEW IF EXISTS contract.subscription_status CASCADE;
+CREATE VIEW contract.subscription_status AS
+SELECT s.tenant_id                    AS merchant_id,
+       s.status::text                 AS status,
+       s.current_period_end,
+       p.id                           AS plan_code,
+       p.name                         AS plan_name,
+       p.price_idr                    AS contract_mrr_idr,
+       CASE WHEN s.status::text IN ('ACTIVE', 'TRIALING', 'PAST_DUE') THEN p.price_idr ELSE 0 END AS recognised_mrr_idr
+  FROM billing.subscriptions s
+  JOIN billing.plans p ON p.id = s.plan_id;
+
+COMMENT ON VIEW contract.subscription_status IS
+    'Membuka status langganan untuk backoffice. PAST_DUE tetap dihitung sebagai MRR yang bisa dipulihkan.';
+
+-- Memperbarui contract.merchant_health_latest (snapshot kesehatan harian)
+DROP VIEW IF EXISTS contract.merchant_health_latest CASCADE;
+CREATE VIEW contract.merchant_health_latest AS
+SELECT DISTINCT ON (h.merchant_id)
+       h.merchant_id, h.tenant_id, h.log_date, h.daily_revenue,
+       h.days_since_last_txn, h.active_days_last_7, h.revenue_trend_pct,
+       h.distinct_features_used, h.support_tickets_count,
+       h.subscription_status, h.mrr_idr, h.contract_mrr_idr,
+       h.churn_risk_score, h.churn_risk_reasons
+  FROM internal.merchant_health_logs h
+ ORDER BY h.merchant_id, h.log_date DESC;
+
+COMMENT ON COLUMN contract.merchant_health_latest.subscription_status IS
+    'HANYA SNAPSHOT DENORMALISASI. Jangan jadikan Source of Truth untuk akses fitur. Baca contract.subscription_status atau API billing untuk status asli.';
+
+-- Memperbarui contract.tenant_directory
+DROP VIEW IF EXISTS contract.tenant_directory CASCADE;
+CREATE VIEW contract.tenant_directory AS
+SELECT
+    t.id                                              AS tenant_id,
+    t.name                                            AS tenant_name,
+    t.company_name,
+    t.is_active,
+    t.created_at                                      AS joined_at,
+    COUNT(DISTINCT m.id)                              AS merchant_count,
+    COUNT(DISTINCT o.id)                              AS outlet_count,
+    s.status::text                                    AS subscription_status,
+    p.name                                            AS plan_name,
+    COALESCE(p.price_idr, 0)                          AS contract_mrr_idr
+  FROM internal.tenants t
+  LEFT JOIN internal.merchants m     ON m.tenant_id = t.id
+  LEFT JOIN internal.outlets o       ON o.tenant_id = t.id
+  LEFT JOIN billing.subscriptions s  ON s.tenant_id = t.id
+  LEFT JOIN billing.plans p          ON p.id = s.plan_id
+ GROUP BY t.id, t.name, t.company_name, t.is_active, t.created_at,
+          s.status, p.name, p.price_idr;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0022_billing_and_tax_refactor.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 24: migrations/0023_merchant_audit_and_inventory.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0023_merchant_audit_and_inventory.sql
+--
+-- Penyempurnaan Skema Sesuai Audit Arsitektur:
+--
+-- 1. pos.merchant_audit_logs
+--    Memisahkan audit aktivitas kasir/manajer dari platform_audit_logs.
+--
+-- 2. pos.inventory_items & pos.inventory_transactions (Immutable Ledger)
+--    Menyatukan produk dan bahan baku ke dalam satu Directory ID untuk gudang,
+--    lalu merombak mutasi stok agar murni sebagai immutable ledger 
+--    (SALE, PURCHASE, ADJUSTMENT, TRANSFER_IN, TRANSFER_OUT, WASTE, PRODUCTION, RETURN).
+--
+-- 3. Penghapusan kolom `stock` mentah dari katalog (products & ingredients).
+--    Semua kalkulasi berpusat pada `inventory_balances` & `inventory_transactions`.
+--
+-- 4. Entitas Customer & Loyalty (pos.customers, pos.loyalty_accounts, pos.loyalty_transactions).
+--    Kepemilikan jelas di tingkat tenant/merchant. Poin loyalitas menggunakan ledger.
+--
+-- 5. Bundel Komponen Transaksi (pos.transaction_item_components).
+--    Pencatatan rincian paket "Combo" di transaksi untuk pemotongan stok akurat.
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. MERCHANT AUDIT LOGS ------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.merchant_audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    actor_id UUID REFERENCES pos.users(id) ON DELETE SET NULL,
+    actor_name VARCHAR(120),
+    actor_role VARCHAR(64),
+    action_type VARCHAR(64) NOT NULL,
+    resource_type VARCHAR(64) NOT NULL,
+    resource_id VARCHAR(128),
+    delta_snapshot JSONB,
+    details TEXT,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_audit_logs_merchant ON pos.merchant_audit_logs(merchant_id, occurred_at DESC);
+
+COMMENT ON TABLE pos.merchant_audit_logs IS
+    'Audit trail operasional merchant (Cashier void order, Manager change price, dsb).';
+
+COMMENT ON TABLE internal.audit_logs IS
+    'Platform Audit Logs: Jejak aktivitas sistem dan platform lintas-domain.';
+
+
+-- 2. UNIFIED INVENTORY DIRECTORY & IMMUTABLE TRANSACTIONS ---------------------
+
+CREATE TABLE IF NOT EXISTS pos.inventory_items (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    product_id UUID REFERENCES pos.products(id) ON DELETE CASCADE,
+    ingredient_id UUID REFERENCES pos.ingredients(id) ON DELETE CASCADE,
+    item_name VARCHAR(120) NOT NULL,
+    sku VARCHAR(64),
+    base_unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_inventory_item_xor CHECK (
+        (product_id IS NOT NULL AND ingredient_id IS NULL) OR
+        (product_id IS NULL AND ingredient_id IS NOT NULL)
+    ),
+    CONSTRAINT uq_inv_item_product UNIQUE(product_id),
+    CONSTRAINT uq_inv_item_ingredient UNIQUE(ingredient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_inv_items_merchant ON pos.inventory_items(merchant_id);
+
+COMMENT ON TABLE pos.inventory_items IS
+    'Jembatan persatuan (Directory) katalog produk dan bahan baku untuk modul gudang/inventori.';
+
+-- Mengubah pos.inventory_logs menjadi pos.inventory_transactions (Immutable Ledger)
+-- Kita rename tabel lama jika ada, lalu modifikasi. Tapi lebih aman buat tabel baru jika strukturnya jauh beda.
+-- Namun, untuk kemudahan, kita buat pos.inventory_transactions sebagai entitas baru yang ideal.
+
+CREATE TABLE IF NOT EXISTS pos.inventory_transactions (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    location_id UUID NOT NULL REFERENCES pos.inventory_locations(id) ON DELETE CASCADE,
+    inventory_item_id UUID NOT NULL REFERENCES pos.inventory_items(id) ON DELETE CASCADE,
+    quantity_delta NUMERIC(12, 4) NOT NULL, -- (+/-)
+    reference_type VARCHAR(64) NOT NULL, -- SALE, PURCHASE, ADJUSTMENT, TRANSFER_IN, TRANSFER_OUT, WASTE, PRODUCTION, RETURN
+    reference_id VARCHAR(128),
+    reason TEXT,
+    performed_by UUID REFERENCES pos.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_inv_tx_location ON pos.inventory_transactions(location_id, inventory_item_id);
+
+COMMENT ON TABLE pos.inventory_transactions IS
+    'Buku besar (Ledger) pergerakan mutasi stok fisik. Immutable. Kuantitas direpresentasikan sebagai delta.';
+
+
+-- 3. MENGHAPUS KOLOM STOK MENTAH DARI KATALOG ---------------------------------
+
+DO $$
+BEGIN
+    -- Drop dependent views first
+    EXECUTE 'DROP VIEW IF EXISTS public.v_pos_products CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS contract.catalog CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS contract.stock_status CASCADE';
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'products' AND column_name = 'stock') THEN
+        ALTER TABLE pos.products DROP COLUMN stock CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'products' AND column_name = 'min_stock_alert') THEN
+        ALTER TABLE pos.products DROP COLUMN min_stock_alert CASCADE;
+    END IF;
+    
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'ingredients' AND column_name = 'current_stock') THEN
+        ALTER TABLE pos.ingredients DROP COLUMN current_stock CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'ingredients' AND column_name = 'min_stock_alert') THEN
+        ALTER TABLE pos.ingredients DROP COLUMN min_stock_alert CASCADE;
+    END IF;
+END $$;
+
+
+-- 4. KEPEMILIKAN CUSTOMER & LOYALTY -------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.customers (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    phone VARCHAR(32),
+    email VARCHAR(120),
+    tier VARCHAR(32) NOT NULL DEFAULT 'BRONZE',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_customers_merchant ON pos.customers(merchant_id);
+
+CREATE TABLE IF NOT EXISTS pos.loyalty_accounts (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES pos.customers(id) ON DELETE CASCADE,
+    current_balance NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_loyalty_customer UNIQUE(customer_id)
+);
+
+CREATE TABLE IF NOT EXISTS pos.loyalty_transactions (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    loyalty_account_id UUID NOT NULL REFERENCES pos.loyalty_accounts(id) ON DELETE CASCADE,
+    points_delta NUMERIC(12, 2) NOT NULL, -- (+/-)
+    reference_type VARCHAR(64) NOT NULL, -- EARN_PURCHASE, REDEEM_ORDER, ADJUSTMENT, EXPIRATION
+    reference_id VARCHAR(128),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- 5. BUNDLE COMPONENT BREAKDOWN (ORDER) ---------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.transaction_item_components (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    transaction_item_id UUID NOT NULL REFERENCES pos.transaction_items(id) ON DELETE CASCADE,
+    component_item_id UUID NOT NULL REFERENCES pos.inventory_items(id) ON DELETE CASCADE,
+    quantity NUMERIC(10, 4) NOT NULL DEFAULT 1.0,
+    unit_cost_snapshot NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tx_item_components ON pos.transaction_item_components(transaction_item_id);
+
+COMMENT ON TABLE pos.transaction_item_components IS
+    'Pemecahan rincian produk bundle dalam pesanan kasir agar mutasi stok bisa dipotong per komponen.';
+
+
+-- 6. PERBAIKAN VIEW -----------------------------------------------------------
+
+-- Perbaiki contract.stock_status (Tanpa bergantung pada p.is_available yang mungkin dihapus, atau menyesuaikan join)
+DROP VIEW IF EXISTS contract.stock_status CASCADE;
+CREATE VIEW contract.stock_status AS
+SELECT
+    b.tenant_id,
+    b.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    b.outlet_id,
+    o.name                                             AS outlet_name,
+    b.location_id,
+    l.name                                             AS location_name,
+    b.item_type,
+    b.item_id,
+    COALESCE(p.name, i.name)                           AS item_name,
+    COALESCE(p.sku, i.sku)                             AS sku,
+    COALESCE(p.category_name, 'Bahan Baku')            AS category_name,
+    COALESCE(i.unit, p.unit, 'pcs')                    AS unit,
+    b.current_stock,
+    b.min_stock_alert,
+    b.current_stock <= b.min_stock_alert               AS is_low_stock,
+    COALESCE(p.is_available, TRUE)                     AS is_available,
+    b.updated_at
+  FROM pos.inventory_balances b
+  JOIN internal.tenants t            ON t.id = b.tenant_id
+  JOIN internal.merchants m          ON m.id = b.merchant_id
+  JOIN internal.outlets o            ON o.id = b.outlet_id
+  LEFT JOIN pos.inventory_locations l ON l.id = b.location_id
+  LEFT JOIN pos.products p           ON p.id = b.item_id AND b.item_type = 'PRODUCT'
+  LEFT JOIN pos.ingredients i        ON i.id = b.item_id AND b.item_type = 'INGREDIENT';
+
+-- contract.inventory_movements akan disesuaikan dengan pos.inventory_transactions (Immutable Ledger)
+DROP VIEW IF EXISTS contract.inventory_movements CASCADE;
+CREATE VIEW contract.inventory_movements AS
+SELECT
+    tx.id                                              AS movement_id,
+    tx.tenant_id,
+    tx.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    tx.outlet_id,
+    o.name                                             AS outlet_name,
+    tx.location_id,
+    loc.name                                           AS location_name,
+    tx.reference_type                                  AS movement_type,
+    ii.product_id IS NOT NULL                          AS is_product,
+    ii.item_name,
+    ii.sku,
+    ii.base_unit                                       AS unit,
+    tx.reference_id                                    AS transaction_id,
+    tx.quantity_delta,
+    tx.reason,
+    tx.created_at
+  FROM pos.inventory_transactions tx
+  JOIN pos.inventory_items ii              ON ii.id = tx.inventory_item_id
+  LEFT JOIN internal.merchants m           ON m.id = tx.merchant_id
+  LEFT JOIN internal.outlets o             ON o.id = tx.outlet_id
+  LEFT JOIN pos.inventory_locations loc    ON loc.id = tx.location_id;
+
+CREATE OR REPLACE VIEW public.v_stock_status AS
+  SELECT * FROM contract.stock_status;
+
+CREATE OR REPLACE VIEW public.v_inventory_movements AS
+  SELECT * FROM contract.inventory_movements;
+
+-- Memperbarui contract.catalog agar menghitung stok dari inventory_balances (agregat semua cabang)
+DROP VIEW IF EXISTS contract.catalog CASCADE;
+CREATE VIEW contract.catalog AS
+SELECT
+    p.business_sector,
+    p.tenant_id                                    AS merchant_id,
+    t.name                                         AS merchant_name,
+    p.id                                           AS product_id,
+    p.name                                         AS product_name,
+    p.sku, p.category_name, p.description, p.price, p.cost_price,
+    CASE WHEN p.price > 0
+         THEN ROUND(((p.price - p.cost_price) / p.price) * 100, 1)
+         ELSE 0 END                                AS margin_pct,
+    COALESCE(inv.total_stock, 0)                   AS stock,
+    COALESCE(inv.total_min_alert, 0)               AS min_stock_alert,
+    COALESCE(inv.total_stock, 0) <= COALESCE(inv.total_min_alert, 0) AS is_low_stock,
+    p.is_available, p.catalog_synced_at,
+    COALESCE(s.units_sold, 0)                      AS units_sold,
+    COALESCE(s.revenue, 0)                         AS revenue,
+    s.last_sold_at
+  FROM pos.products p
+  JOIN internal.tenants t ON t.id = p.tenant_id
+  LEFT JOIN (
+        SELECT item_id,
+               SUM(current_stock) AS total_stock,
+               SUM(min_stock_alert) AS total_min_alert
+          FROM pos.inventory_balances
+         WHERE item_type = 'PRODUCT'
+         GROUP BY item_id
+       ) inv ON inv.item_id = p.id
+  LEFT JOIN (
+        SELECT i.product_id,
+               SUM(i.quantity)    AS units_sold,
+               SUM(i.total_price) AS revenue,
+               MAX(r.created_at)  AS last_sold_at
+          FROM pos.transaction_items i
+          JOIN contract.merchant_revenue r ON r.id = i.transaction_id
+         GROUP BY i.product_id
+       ) s ON s.product_id = p.id;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0023_merchant_audit_and_inventory.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 25: migrations/0024_fix_inventory_consistency.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0024_fix_inventory_consistency.sql
+--
+-- Perbaikan Bug Arsitektural dari 0023:
+-- 1. Migrasi Data & Trigger Sinkronisasi untuk pos.inventory_items
+-- 2. Refactor pos.inventory_balances agar menunjuk ke inventory_item_id
+-- 3. Migrasi historis pos.inventory_logs ke pos.inventory_transactions
+-- 4. Trigger Immutable Ledger untuk otomatis update saldo stok
+-- 5. Perbaikan View contract.stock_status
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. MIGRASI DATA & TRIGGER SINKRONISASI --------------------------------------
+
+-- 1a. Migrasi data lama dari produk
+INSERT INTO pos.inventory_items (tenant_id, merchant_id, product_id, item_name, sku, base_unit)
+SELECT tenant_id, tenant_id AS merchant_id, id, name, sku, 'pcs'
+  FROM pos.products
+ ON CONFLICT (product_id) DO NOTHING;
+
+-- 1b. Migrasi data lama dari bahan baku
+INSERT INTO pos.inventory_items (tenant_id, merchant_id, ingredient_id, item_name, sku, base_unit)
+SELECT tenant_id, tenant_id AS merchant_id, id, name, sku, unit
+  FROM pos.ingredients
+ ON CONFLICT (ingredient_id) DO NOTHING;
+
+-- 1c. Fungsi Trigger Sinkronisasi Katalog -> Inventory Items
+CREATE OR REPLACE FUNCTION pos.fn_sync_product_to_inventory_item()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO pos.inventory_items (tenant_id, merchant_id, product_id, item_name, sku, base_unit)
+        VALUES (NEW.tenant_id, NEW.tenant_id, NEW.id, NEW.name, NEW.sku, 'pcs');
+    ELSIF TG_OP = 'UPDATE' THEN
+        UPDATE pos.inventory_items
+           SET item_name = NEW.name,
+               sku = NEW.sku
+         WHERE product_id = NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION pos.fn_sync_ingredient_to_inventory_item()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO pos.inventory_items (tenant_id, merchant_id, ingredient_id, item_name, sku, base_unit)
+        VALUES (NEW.tenant_id, NEW.tenant_id, NEW.id, NEW.name, NEW.sku, NEW.unit);
+    ELSIF TG_OP = 'UPDATE' THEN
+        UPDATE pos.inventory_items
+           SET item_name = NEW.name,
+               sku = NEW.sku,
+               base_unit = NEW.unit
+         WHERE ingredient_id = NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Hapus trigger lama jika ada
+DROP TRIGGER IF EXISTS trg_sync_product_inventory_item ON pos.products;
+DROP TRIGGER IF EXISTS trg_sync_ingredient_inventory_item ON pos.ingredients;
+
+CREATE TRIGGER trg_sync_product_inventory_item
+AFTER INSERT OR UPDATE OF name, sku ON pos.products
+FOR EACH ROW EXECUTE FUNCTION pos.fn_sync_product_to_inventory_item();
+
+CREATE TRIGGER trg_sync_ingredient_inventory_item
+AFTER INSERT OR UPDATE OF name, sku, unit ON pos.ingredients
+FOR EACH ROW EXECUTE FUNCTION pos.fn_sync_ingredient_to_inventory_item();
+
+
+-- 2. REFACTOR INVENTORY BALANCES ----------------------------------------------
+
+-- 2a. Tambahkan kolom inventory_item_id
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_balances' AND column_name = 'inventory_item_id') THEN
+        ALTER TABLE pos.inventory_balances ADD COLUMN inventory_item_id UUID REFERENCES pos.inventory_items(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+-- 2b. Migrasi relasi
+UPDATE pos.inventory_balances b
+   SET inventory_item_id = i.id
+  FROM pos.inventory_items i
+ WHERE b.inventory_item_id IS NULL
+   AND (
+       (b.item_type = 'PRODUCT' AND b.item_id = i.product_id) OR
+       (b.item_type = 'INGREDIENT' AND b.item_id = i.ingredient_id)
+   );
+
+-- 2c. Validasi & Drop kolom polimorfik usang (pastikan tidak NULL)
+DO $$
+BEGIN
+    -- Hapus entri yatim piatu
+    DELETE FROM pos.inventory_balances WHERE inventory_item_id IS NULL;
+    
+    ALTER TABLE pos.inventory_balances ALTER COLUMN inventory_item_id SET NOT NULL;
+    
+    -- Ubah constraint unik
+    ALTER TABLE pos.inventory_balances DROP CONSTRAINT IF EXISTS uq_inv_balance;
+    ALTER TABLE pos.inventory_balances ADD CONSTRAINT uq_inv_balance UNIQUE (outlet_id, location_id, inventory_item_id);
+
+    -- Hapus view yang bergantung
+    EXECUTE 'DROP VIEW IF EXISTS contract.stock_status CASCADE';
+    EXECUTE 'DROP VIEW IF EXISTS public.v_stock_status CASCADE';
+
+    -- Hapus kolom usang
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_balances' AND column_name = 'item_type') THEN
+        ALTER TABLE pos.inventory_balances DROP COLUMN item_type CASCADE;
+        ALTER TABLE pos.inventory_balances DROP COLUMN item_id CASCADE;
+    END IF;
+END $$;
+
+
+-- 3. MIGRASI HISTORIS & HAPUS INVENTORY LOGS ----------------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'pos' AND table_name = 'inventory_logs') THEN
+        -- Insert data lama (jika ada) ke inventory_transactions
+        INSERT INTO pos.inventory_transactions (tenant_id, merchant_id, outlet_id, location_id, inventory_item_id, quantity_delta, reference_type, reference_id, reason, performed_by, created_at)
+        SELECT 
+            l.tenant_id, 
+            COALESCE(l.merchant_id, l.tenant_id), 
+            l.outlet_id, 
+            l.location_id, 
+            i.id,
+            l.quantity_changed,
+            COALESCE(l.movement_type, 'ADJUSTMENT'),
+            l.transaction_id::varchar,
+            l.reason,
+            NULL,
+            l.created_at
+          FROM pos.inventory_logs l
+          JOIN pos.inventory_items i ON (
+              (l.item_type = 'PRODUCT' AND l.item_id = i.product_id) OR
+              (l.item_type = 'INGREDIENT' AND l.item_id = i.ingredient_id)
+          );
+
+        -- Hapus view lama yang mungkin bergantung
+        EXECUTE 'DROP VIEW IF EXISTS contract.inventory_movements CASCADE';
+        EXECUTE 'DROP VIEW IF EXISTS public.v_inventory_movements CASCADE';
+
+        -- Drop table
+        DROP TABLE pos.inventory_logs CASCADE;
+    END IF;
+END $$;
+
+
+-- 4. TRIGGER IMMUTABLE LEDGER UNTUK TRANSACTIONS -> BALANCES ------------------
+
+CREATE OR REPLACE FUNCTION pos.fn_apply_inventory_transaction()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Upsert ke inventory_balances
+    INSERT INTO pos.inventory_balances (
+        tenant_id, merchant_id, outlet_id, location_id, inventory_item_id, current_stock, updated_at
+    ) VALUES (
+        NEW.tenant_id, NEW.merchant_id, NEW.outlet_id, NEW.location_id, NEW.inventory_item_id, NEW.quantity_delta, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (outlet_id, location_id, inventory_item_id)
+    DO UPDATE SET 
+        current_stock = pos.inventory_balances.current_stock + EXCLUDED.current_stock,
+        updated_at = CURRENT_TIMESTAMP;
+        
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_apply_inventory_transaction ON pos.inventory_transactions;
+
+CREATE TRIGGER trg_apply_inventory_transaction
+AFTER INSERT ON pos.inventory_transactions
+FOR EACH ROW EXECUTE FUNCTION pos.fn_apply_inventory_transaction();
+
+
+-- 5. PERBAIKAN VIEW -----------------------------------------------------------
+
+CREATE VIEW contract.stock_status AS
+SELECT
+    b.tenant_id,
+    b.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    b.outlet_id,
+    o.name                                             AS outlet_name,
+    b.location_id,
+    l.name                                             AS location_name,
+    b.inventory_item_id,
+    i.item_name,
+    i.sku,
+    i.base_unit                                        AS unit,
+    i.product_id IS NOT NULL                           AS is_product,
+    b.current_stock,
+    b.min_stock_alert,
+    b.current_stock <= b.min_stock_alert               AS is_low_stock,
+    b.updated_at
+  FROM pos.inventory_balances b
+  JOIN internal.tenants t            ON t.id = b.tenant_id
+  JOIN internal.merchants m          ON m.id = b.merchant_id
+  JOIN internal.outlets o            ON o.id = b.outlet_id
+  JOIN pos.inventory_items i         ON i.id = b.inventory_item_id
+  LEFT JOIN pos.inventory_locations l ON l.id = b.location_id;
+
+CREATE OR REPLACE VIEW public.v_stock_status AS
+  SELECT * FROM contract.stock_status;
+
+CREATE VIEW contract.inventory_movements AS
+SELECT
+    tx.id                                              AS movement_id,
+    tx.tenant_id,
+    tx.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    tx.outlet_id,
+    o.name                                             AS outlet_name,
+    tx.location_id,
+    loc.name                                           AS location_name,
+    tx.reference_type                                  AS movement_type,
+    ii.product_id IS NOT NULL                          AS is_product,
+    ii.item_name,
+    ii.sku,
+    ii.base_unit                                       AS unit,
+    tx.reference_id                                    AS transaction_id,
+    tx.quantity_delta,
+    tx.reason,
+    tx.created_at
+  FROM pos.inventory_transactions tx
+  JOIN pos.inventory_items ii              ON ii.id = tx.inventory_item_id
+  LEFT JOIN internal.merchants m           ON m.id = tx.merchant_id
+  LEFT JOIN internal.outlets o             ON o.id = tx.outlet_id
+  LEFT JOIN pos.inventory_locations loc    ON loc.id = tx.location_id;
+
+CREATE OR REPLACE VIEW public.v_inventory_movements AS
+  SELECT * FROM contract.inventory_movements;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0024_fix_inventory_consistency.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 26: migrations/0025_restore_contract_catalog.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0025_restore_contract_catalog.sql
+--
+-- Perbaikan hilangnya contract.catalog akibat DROP COLUMN CASCADE di 0024.
+-- View ini disusun ulang agar murni berorientasi pada `pos.inventory_items`.
+-- =============================================================================
+
+DROP VIEW IF EXISTS contract.catalog CASCADE;
+CREATE VIEW contract.catalog AS
+SELECT
+    p.business_sector,
+    p.tenant_id                                    AS merchant_id,
+    t.name                                         AS merchant_name,
+    p.id                                           AS product_id,
+    p.name                                         AS product_name,
+    p.sku, p.category_name, p.description, p.price, p.cost_price,
+    CASE WHEN p.price > 0
+         THEN ROUND(((p.price - p.cost_price) / p.price) * 100, 1)
+         ELSE 0 END                                AS margin_pct,
+    COALESCE(inv.total_stock, 0)                   AS stock,
+    COALESCE(inv.total_min_alert, 0)               AS min_stock_alert,
+    COALESCE(inv.total_stock, 0) <= COALESCE(inv.total_min_alert, 0) AS is_low_stock,
+    p.is_available, p.catalog_synced_at,
+    COALESCE(s.units_sold, 0)                      AS units_sold,
+    COALESCE(s.revenue, 0)                         AS revenue,
+    s.last_sold_at
+  FROM pos.products p
+  JOIN internal.tenants t ON t.id = p.tenant_id
+  LEFT JOIN (
+        -- Dapatkan inventory_item_id dari tabel directory
+        SELECT 
+               i.product_id,
+               SUM(b.current_stock) AS total_stock,
+               SUM(b.min_stock_alert) AS total_min_alert
+          FROM pos.inventory_balances b
+          JOIN pos.inventory_items i ON i.id = b.inventory_item_id
+         WHERE i.product_id IS NOT NULL
+         GROUP BY i.product_id
+       ) inv ON inv.product_id = p.id
+  LEFT JOIN (
+        SELECT i.product_id,
+               SUM(i.quantity)    AS units_sold,
+               SUM(i.total_price) AS revenue,
+               MAX(r.created_at)  AS last_sold_at
+          FROM pos.transaction_items i
+          JOIN contract.merchant_revenue r ON r.id = i.transaction_id
+         GROUP BY i.product_id
+       ) s ON s.product_id = p.id;
+
+CREATE OR REPLACE VIEW public.v_pos_products AS
+  SELECT * FROM contract.catalog;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0025_restore_contract_catalog.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 27: migrations/0026_explicit_membership_scopes_and_hierarchy_constraints.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0026_explicit_membership_scopes_and_hierarchy_constraints.sql
+--
+-- Penegasan Hirarki Multi-Tenant & Scoped Authorization Model:
+-- 1. Penegakan Integritas Hirarki Fisik Database (Composite Unique Constraints)
+-- 2. Refactor internal.memberships ke Model Lingkup Akses Eksplisit:
+--    - TENANT Scope   : tenant_id (NOT NULL), merchant_id (NULL), outlet_id (NULL)
+--    - MERCHANT Scope : tenant_id (NOT NULL), merchant_id (NOT NULL), outlet_id (NULL)
+--    - OUTLET Scope   : tenant_id (NOT NULL), merchant_id (NOT NULL), outlet_id (NOT NULL)
+-- 3. Check Constraint & Composite Foreign Keys Anti-Cross-Contamination
+-- 4. Pembaruan View contract.merchant_staff
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. SINKRONISASI DATA OUTLETS & MERCHANTS ------------------------------------
+
+-- Pastikan semua outlet memiliki tenant_id yang sinkron dengan merchant pemiliknya
+UPDATE internal.outlets o
+   SET tenant_id = m.tenant_id
+  FROM internal.merchants m
+ WHERE o.merchant_id = m.id
+   AND o.tenant_id != m.tenant_id;
+
+-- 2. COMPOSITE UNIQUE CONSTRAINTS PADA MASTER HIRARKI -------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_merchants_id_tenant') THEN
+        ALTER TABLE internal.merchants ADD CONSTRAINT uq_merchants_id_tenant UNIQUE (id, tenant_id);
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_outlets_id_merchant_tenant') THEN
+        ALTER TABLE internal.outlets ADD CONSTRAINT uq_outlets_id_merchant_tenant UNIQUE (id, merchant_id, tenant_id);
+    END IF;
+END $$;
+
+
+-- 3. REFACTOR INTERNAL.MEMBERSHIPS (SCOPED AUTHORIZATION) ---------------------
+
+DO $$
+BEGIN
+    -- 3a. Tambahkan kolom scope_type
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'internal' AND table_name = 'memberships' AND column_name = 'scope_type') THEN
+        ALTER TABLE internal.memberships ADD COLUMN scope_type VARCHAR(20) NOT NULL DEFAULT 'MERCHANT';
+    END IF;
+
+    -- 3b. Hapus constraint lama jika ada
+    ALTER TABLE internal.memberships DROP CONSTRAINT IF EXISTS uq_tenant_user_membership;
+    ALTER TABLE internal.memberships DROP CONSTRAINT IF EXISTS chk_membership_scope_consistency;
+    ALTER TABLE internal.memberships DROP CONSTRAINT IF EXISTS fk_membership_merchant_tenant;
+    ALTER TABLE internal.memberships DROP CONSTRAINT IF EXISTS fk_membership_outlet_merchant_tenant;
+END $$;
+
+-- 3c. Klasifikasikan scope_type untuk data eksisting
+-- Jika role adalah kasir/barista/washer/kapster dan merchant memiliki outlet, pasang ke outlet utama
+UPDATE internal.memberships m
+   SET outlet_id = o.id,
+       scope_type = 'OUTLET'
+  FROM internal.outlets o
+ WHERE m.role IN ('CASHIER', 'BARISTA', 'CHEF', 'WASHER', 'KAPSTER', 'STAFF')
+   AND m.merchant_id = o.merchant_id
+   AND m.outlet_id IS NULL;
+
+-- Sisanya yang memiliki outlet_id diset ke OUTLET
+UPDATE internal.memberships
+   SET scope_type = 'OUTLET'
+ WHERE outlet_id IS NOT NULL;
+
+-- Yang tidak punya outlet_id tapi punya merchant_id diset ke MERCHANT
+UPDATE internal.memberships
+   SET scope_type = 'MERCHANT'
+ WHERE outlet_id IS NULL AND merchant_id IS NOT NULL;
+
+-- Bersihkan data: jika scope_type = 'MERCHANT', pastikan outlet_id = NULL
+UPDATE internal.memberships
+   SET outlet_id = NULL
+ WHERE scope_type = 'MERCHANT';
+
+-- Bersihkan data: jika scope_type = 'TENANT', pastikan merchant_id = NULL dan outlet_id = NULL
+UPDATE internal.memberships
+   SET merchant_id = NULL, outlet_id = NULL
+ WHERE scope_type = 'TENANT';
+
+
+-- 4. PENEGAKAN CONSTRAINT KETAT DI INTERNAL.MEMBERSHIPS -----------------------
+
+-- 4a. Check Constraint Integritas Scope
+ALTER TABLE internal.memberships ADD CONSTRAINT chk_membership_scope_consistency CHECK (
+    (scope_type = 'TENANT'   AND tenant_id IS NOT NULL AND merchant_id IS NULL AND outlet_id IS NULL) OR
+    (scope_type = 'MERCHANT' AND tenant_id IS NOT NULL AND merchant_id IS NOT NULL AND outlet_id IS NULL) OR
+    (scope_type = 'OUTLET'   AND tenant_id IS NOT NULL AND merchant_id IS NOT NULL AND outlet_id IS NOT NULL)
+);
+
+-- 4b. Composite Foreign Keys (Menjamin Hirarki Relasi Fisik 100% Konsisten)
+ALTER TABLE internal.memberships 
+    ADD CONSTRAINT fk_membership_merchant_tenant 
+    FOREIGN KEY (merchant_id, tenant_id) 
+    REFERENCES internal.merchants (id, tenant_id) 
+    ON DELETE CASCADE;
+
+ALTER TABLE internal.memberships 
+    ADD CONSTRAINT fk_membership_outlet_merchant_tenant 
+    FOREIGN KEY (outlet_id, merchant_id, tenant_id) 
+    REFERENCES internal.outlets (id, merchant_id, tenant_id) 
+    ON DELETE CASCADE;
+
+-- 4c. Unique Index untuk Mencegah Duplikasi Grant
+CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_grant_idx 
+    ON internal.memberships (
+        user_id, 
+        scope_type, 
+        tenant_id, 
+        COALESCE(merchant_id, '00000000-0000-0000-0000-000000000000'::uuid), 
+        COALESCE(outlet_id, '00000000-0000-0000-0000-000000000000'::uuid), 
+        role
+    );
+
+
+-- 5. PEMBARUAN VIEW CONTRACT.MERCHANT_STAFF -----------------------------------
+
+DROP VIEW IF EXISTS contract.merchant_staff CASCADE;
+CREATE VIEW contract.merchant_staff AS
+SELECT
+    m.id                                               AS membership_id,
+    m.scope_type,
+    m.tenant_id,
+    t.name                                             AS tenant_name,
+    m.merchant_id,
+    b.name                                             AS merchant_name,
+    b.business_sector,
+    m.outlet_id,
+    o.name                                             AS outlet_name,
+    u.id                                               AS user_id,
+    u.full_name                                        AS staff_name,
+    u.email                                            AS staff_email,
+    u.phone                                            AS staff_phone,
+    m.role,
+    m.is_active,
+    m.created_at                                       AS joined_at
+  FROM internal.memberships m
+  JOIN internal.users u              ON u.id = m.user_id
+  JOIN internal.tenants t            ON t.id = m.tenant_id
+  LEFT JOIN internal.merchants b     ON b.id = m.merchant_id
+  LEFT JOIN internal.outlets o       ON o.id = m.outlet_id;
+
+CREATE OR REPLACE VIEW public.v_pos_staff AS
+  SELECT * FROM contract.merchant_staff;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0026_explicit_membership_scopes_and_hierarchy_constraints.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 28: migrations/0027_clean_decoupled_inventory_domain.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0027_clean_decoupled_inventory_domain.sql
+--
+-- Pemisahan Bersih Domain: "Yang Dijual" (Commercial) != "Yang Disimpan" (Logistical)
+-- 1. pos.inventory_items menjadi Master Entitas Fisik Mandiri (Tanpa FK Polimorfik):
+--    - Menghapus product_id dan ingredient_id dari pos.inventory_items
+--    - Menambahkan item_type (RAW_MATERIAL, SEMI_FINISHED, PACKAGING, CONSUMABLE, RETAIL_FINISHED)
+--    - Menambahkan cost_per_unit, is_stockable
+-- 2. pos.products menjadi Commercial Sellable Offering:
+--    - Menambahkan offering_type (PHYSICAL, MANUFACTURED, SERVICE, BUNDLE)
+--    - Menambahkan inventory_item_id (Jembatan 1:1 untuk barang ritel langsung)
+-- 3. Hapus trigger polimorfik lama
+-- 4. Pembaruan View contract.catalog & contract.stock_status
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. PERLUASAN KOLOM MASTER LOGISTIK (pos.inventory_items) --------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'item_type') THEN
+        ALTER TABLE pos.inventory_items ADD COLUMN item_type VARCHAR(32) NOT NULL DEFAULT 'RAW_MATERIAL';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'cost_per_unit') THEN
+        ALTER TABLE pos.inventory_items ADD COLUMN cost_per_unit NUMERIC(12, 4) NOT NULL DEFAULT 0.0000;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'is_stockable') THEN
+        ALTER TABLE pos.inventory_items ADD COLUMN is_stockable BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'updated_at') THEN
+        ALTER TABLE pos.inventory_items ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+    END IF;
+END $$;
+
+
+-- 2. PERLUASAN KOLOM MASTER KOMERSIAL (pos.products) --------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'products' AND column_name = 'offering_type') THEN
+        ALTER TABLE pos.products ADD COLUMN offering_type VARCHAR(32) NOT NULL DEFAULT 'MANUFACTURED';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'products' AND column_name = 'inventory_item_id') THEN
+        ALTER TABLE pos.products ADD COLUMN inventory_item_id UUID REFERENCES pos.inventory_items(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+
+-- 3. MIGRASI & SINKRONISASI RELASI KE JALUR BARU ------------------------------
+
+-- 3a. Hubungkan produk ritel langsung ke inventory_item_id
+UPDATE pos.products p
+   SET inventory_item_id = i.id
+  FROM pos.inventory_items i
+ WHERE i.product_id = p.id
+   AND p.inventory_item_id IS NULL;
+
+-- 3b. Klasifikasikan offering_type pada pos.products
+UPDATE pos.products
+   SET offering_type = 'SERVICE'
+ WHERE business_sector IN ('CARWASH', 'BARBERSHOP', 'LAUNDRY');
+
+UPDATE pos.products
+   SET offering_type = 'PHYSICAL'
+ WHERE business_sector = 'RETAIL';
+
+UPDATE pos.products
+   SET offering_type = 'MANUFACTURED'
+ WHERE business_sector = 'FNB';
+
+-- 3c. Klasifikasikan item_type pada pos.inventory_items
+UPDATE pos.inventory_items i
+   SET item_type = 'RETAIL_FINISHED',
+       cost_per_unit = COALESCE(p.cost_price, 0.00)
+  FROM pos.products p
+ WHERE i.product_id = p.id
+   AND p.offering_type = 'PHYSICAL';
+
+UPDATE pos.inventory_items i
+   SET item_type = 'CONSUMABLE',
+       cost_per_unit = COALESCE(p.cost_price, 0.00)
+  FROM pos.products p
+ WHERE i.product_id = p.id
+   AND p.offering_type = 'SERVICE';
+
+UPDATE pos.inventory_items i
+   SET item_type = 'RAW_MATERIAL',
+       cost_per_unit = COALESCE(ing.cost_per_unit, 0.00)
+  FROM pos.ingredients ing
+ WHERE i.ingredient_id = ing.id;
+
+
+-- 4. HAPUS RELASI POLIMORFIK USANG DARI pos.inventory_items -------------------
+
+-- Hapus trigger sinkronisasi lama
+DROP TRIGGER IF EXISTS trg_sync_product_inventory_item ON pos.products;
+DROP TRIGGER IF EXISTS trg_sync_ingredient_inventory_item ON pos.ingredients;
+DROP FUNCTION IF EXISTS pos.fn_sync_product_to_inventory_item();
+DROP FUNCTION IF EXISTS pos.fn_sync_ingredient_to_inventory_item();
+
+-- Drop view sebelum menghapus kolom polimorfik
+DROP VIEW IF EXISTS contract.catalog CASCADE;
+DROP VIEW IF EXISTS public.v_pos_products CASCADE;
+DROP VIEW IF EXISTS contract.stock_status CASCADE;
+DROP VIEW IF EXISTS public.v_stock_status CASCADE;
+
+-- Hapus kolom polymorphic FK
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'product_id') THEN
+        ALTER TABLE pos.inventory_items DROP COLUMN product_id CASCADE;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_items' AND column_name = 'ingredient_id') THEN
+        ALTER TABLE pos.inventory_items DROP COLUMN ingredient_id CASCADE;
+    END IF;
+END $$;
+
+
+-- 5. REKONSTRUKSI VIEW KONTRAK YANG BERSIH & DECOUPLED ------------------------
+
+-- 5a. contract.catalog (Katalog Komersial Penjualan)
+CREATE VIEW contract.catalog AS
+SELECT
+    p.business_sector,
+    p.tenant_id                                    AS merchant_id,
+    t.name                                         AS merchant_name,
+    p.id                                           AS product_id,
+    p.name                                         AS product_name,
+    p.sku,
+    p.category_name,
+    p.description,
+    p.offering_type,
+    p.price,
+    p.cost_price,
+    CASE WHEN p.price > 0
+         THEN ROUND(((p.price - p.cost_price) / p.price) * 100, 1)
+         ELSE 0 END                                AS margin_pct,
+    COALESCE(inv.total_stock, 0)                   AS stock,
+    COALESCE(inv.total_min_alert, 0)               AS min_stock_alert,
+    COALESCE(inv.total_stock, 0) <= COALESCE(inv.total_min_alert, 0) AS is_low_stock,
+    p.is_available,
+    p.catalog_synced_at,
+    COALESCE(s.units_sold, 0)                      AS units_sold,
+    COALESCE(s.revenue, 0)                         AS revenue,
+    s.last_sold_at
+  FROM pos.products p
+  JOIN internal.tenants t ON t.id = p.tenant_id
+  LEFT JOIN (
+        -- Perhitungan stok fisik jika produk menunjuk langsung ke inventory item
+        SELECT 
+               b.inventory_item_id,
+               SUM(b.current_stock)   AS total_stock,
+               SUM(b.min_stock_alert) AS total_min_alert
+          FROM pos.inventory_balances b
+         GROUP BY b.inventory_item_id
+       ) inv ON inv.inventory_item_id = p.inventory_item_id
+  LEFT JOIN (
+        SELECT i.product_id,
+               SUM(i.quantity)    AS units_sold,
+               SUM(i.total_price) AS revenue,
+               MAX(r.created_at)  AS last_sold_at
+          FROM pos.transaction_items i
+          JOIN contract.merchant_revenue r ON r.id = i.transaction_id
+         GROUP BY i.product_id
+       ) s ON s.product_id = p.id;
+
+CREATE OR REPLACE VIEW public.v_pos_products AS
+  SELECT * FROM contract.catalog;
+
+
+-- 5b. contract.stock_status (Status Fisik Inventarisasi Gudang)
+CREATE VIEW contract.stock_status AS
+SELECT
+    b.tenant_id,
+    b.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    b.outlet_id,
+    o.name                                             AS outlet_name,
+    b.location_id,
+    l.name                                             AS location_name,
+    b.inventory_item_id,
+    i.item_name,
+    i.sku,
+    i.base_unit                                        AS unit,
+    i.item_type,
+    i.cost_per_unit,
+    i.is_stockable,
+    b.current_stock,
+    b.min_stock_alert,
+    b.current_stock <= b.min_stock_alert               AS is_low_stock,
+    b.updated_at
+  FROM pos.inventory_balances b
+  JOIN internal.tenants t             ON t.id = b.tenant_id
+  JOIN internal.merchants m           ON m.id = b.merchant_id
+  JOIN internal.outlets o             ON o.id = b.outlet_id
+  JOIN pos.inventory_items i          ON i.id = b.inventory_item_id
+  LEFT JOIN pos.inventory_locations l ON l.id = b.location_id;
+
+CREATE OR REPLACE VIEW public.v_stock_status AS
+  SELECT * FROM contract.stock_status;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0027_clean_decoupled_inventory_domain.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 29: migrations/0028_true_recursive_bom.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0028_true_recursive_bom.sql
+--
+-- Implementasi TRUE RECURSIVE BILL OF MATERIALS (BOM) & TYPE-SAFE INVENTORY LINK:
+-- 1. pos.recipes:
+--    - output_product_id (FK pos.products) untuk Produk Komersial Jadi
+--    - output_inventory_item_id (FK pos.inventory_items) untuk Olahan Semi-Finished
+--    - CHECK constraint eksklusif (Tepat 1 output target)
+-- 2. pos.recipe_items:
+--    - inventory_item_id (FK pos.inventory_items NOT NULL)
+-- 3. pos.modifier_recipes:
+--    - inventory_item_id (FK pos.inventory_items NOT NULL)
+-- 4. contract.bom_explosion (Recursive CTE Multi-Level BOM Solver)
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. REFACTOR TABEL HEADER RESEP (pos.recipes) --------------------------------
+
+DO $$
+BEGIN
+    -- Unique constraint SKU per merchant
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_merchant_inventory_sku') THEN
+        -- Hapus duplikat jika ada sebelum pasang constraint
+        DELETE FROM pos.inventory_items a USING pos.inventory_items b
+         WHERE a.id > b.id AND a.merchant_id = b.merchant_id AND a.sku = b.sku;
+
+        ALTER TABLE pos.inventory_items ADD CONSTRAINT uq_merchant_inventory_sku UNIQUE (merchant_id, sku);
+    END IF;
+
+    -- Tambahkan FK output terpisah
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipes' AND column_name = 'output_product_id') THEN
+        ALTER TABLE pos.recipes ADD COLUMN output_product_id UUID REFERENCES pos.products(id) ON DELETE CASCADE;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipes' AND column_name = 'output_inventory_item_id') THEN
+        ALTER TABLE pos.recipes ADD COLUMN output_inventory_item_id UUID REFERENCES pos.inventory_items(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+-- Migrasi data lama output_item_id ke kolom FK baru
+UPDATE pos.recipes
+   SET output_product_id = output_item_id
+ WHERE output_item_type = 'PRODUCT'
+   AND output_product_id IS NULL;
+
+UPDATE pos.recipes
+   SET output_inventory_item_id = output_item_id
+ WHERE output_item_type = 'INGREDIENT'
+   AND output_inventory_item_id IS NULL;
+
+-- Bersihkan kolom & constraint polimorfik lama
+ALTER TABLE pos.recipes DROP CONSTRAINT IF EXISTS uq_recipe_output;
+ALTER TABLE pos.recipes DROP CONSTRAINT IF EXISTS chk_recipe_output_target;
+
+-- Pasang CHECK constraint bahwa resep harus menghasilkan salah satu (Product atau Inventory Item)
+ALTER TABLE pos.recipes ADD CONSTRAINT chk_recipe_output_target CHECK (
+    (output_product_id IS NOT NULL AND output_inventory_item_id IS NULL) OR
+    (output_product_id IS NULL AND output_inventory_item_id IS NOT NULL)
+);
+
+-- Unique constraint per merchant & output (Standard UNIQUE in Postgres allows multiple NULLs)
+ALTER TABLE pos.recipes DROP CONSTRAINT IF EXISTS uq_recipe_merchant_output_product;
+ALTER TABLE pos.recipes DROP CONSTRAINT IF EXISTS uq_recipe_merchant_output_inv;
+
+ALTER TABLE pos.recipes ADD CONSTRAINT uq_recipe_merchant_output_product UNIQUE (merchant_id, output_product_id);
+ALTER TABLE pos.recipes ADD CONSTRAINT uq_recipe_merchant_output_inv UNIQUE (merchant_id, output_inventory_item_id);
+
+-- Hapus kolom legacy dari pos.recipes
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipes' AND column_name = 'output_item_id') THEN
+        ALTER TABLE pos.recipes DROP COLUMN output_item_id CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipes' AND column_name = 'output_item_type') THEN
+        ALTER TABLE pos.recipes DROP COLUMN output_item_type CASCADE;
+    END IF;
+END $$;
+
+
+-- 2. REFACTOR KOMPONEN RESEP (pos.recipe_items) --------------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipe_items' AND column_name = 'inventory_item_id') THEN
+        ALTER TABLE pos.recipe_items ADD COLUMN inventory_item_id UUID REFERENCES pos.inventory_items(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+-- Migrasi input_item_id ke inventory_item_id
+UPDATE pos.recipe_items ri
+   SET inventory_item_id = ri.input_item_id
+ WHERE ri.inventory_item_id IS NULL
+   AND EXISTS (SELECT 1 FROM pos.inventory_items i WHERE i.id = ri.input_item_id);
+
+-- Bersihkan data yatim (jika ada) lalu kunci constraint
+DELETE FROM pos.recipe_items WHERE inventory_item_id IS NULL;
+
+ALTER TABLE pos.recipe_items DROP CONSTRAINT IF EXISTS uq_recipe_item;
+ALTER TABLE pos.recipe_items DROP CONSTRAINT IF EXISTS uq_recipe_inventory_item;
+
+ALTER TABLE pos.recipe_items ADD CONSTRAINT uq_recipe_inventory_item UNIQUE (recipe_id, inventory_item_id);
+
+-- Hapus kolom legacy dari pos.recipe_items
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipe_items' AND column_name = 'input_item_id') THEN
+        ALTER TABLE pos.recipe_items DROP COLUMN input_item_id CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'recipe_items' AND column_name = 'input_item_type') THEN
+        ALTER TABLE pos.recipe_items DROP COLUMN input_item_type CASCADE;
+    END IF;
+END $$;
+
+
+-- 3. REFACTOR MODIFIER RECIPES (pos.modifier_recipes) -------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'pos' AND table_name = 'modifier_recipes') THEN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'modifier_recipes' AND column_name = 'inventory_item_id') THEN
+            ALTER TABLE pos.modifier_recipes ADD COLUMN inventory_item_id UUID REFERENCES pos.inventory_items(id) ON DELETE CASCADE;
+        END IF;
+
+        -- Update relasi jika ada kolom ingredient_id lama
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'modifier_recipes' AND column_name = 'ingredient_id') THEN
+            UPDATE pos.modifier_recipes mr
+               SET inventory_item_id = mr.ingredient_id
+             WHERE mr.inventory_item_id IS NULL
+               AND EXISTS (SELECT 1 FROM pos.inventory_items i WHERE i.id = mr.ingredient_id);
+        END IF;
+    END IF;
+END $$;
+
+
+-- 4. KONTRAK RECURSIVE BOM EXPLOSION (contract.bom_explosion) -----------------
+
+DROP VIEW IF EXISTS contract.bom_explosion CASCADE;
+CREATE VIEW contract.bom_explosion AS
+WITH RECURSIVE bom_tree AS (
+    -- ANCHOR: Level 1 - Input langsung untuk Produk Komersial Jadi (Finished Good)
+    SELECT
+        r.tenant_id,
+        r.merchant_id,
+        r.output_product_id                                  AS root_product_id,
+        p.name                                               AS root_product_name,
+        r.id                                                 AS recipe_id,
+        r.recipe_name,
+        ri.id                                                AS recipe_item_id,
+        ri.inventory_item_id,
+        i.item_name                                          AS component_item_name,
+        i.sku                                                AS component_sku,
+        i.item_type                                          AS component_item_type,
+        ri.quantity                                          AS step_quantity,
+        ri.quantity::NUMERIC                                 AS total_effective_quantity,
+        ri.unit,
+        ri.wastage_percentage,
+        1                                                    AS bom_level,
+        ARRAY[r.output_product_id::text]                     AS path
+    FROM pos.recipes r
+    JOIN pos.products p        ON p.id = r.output_product_id
+    JOIN pos.recipe_items ri   ON ri.recipe_id = r.id
+    JOIN pos.inventory_items i ON i.id = ri.inventory_item_id
+    WHERE r.is_active = TRUE
+      AND r.output_product_id IS NOT NULL
+
+    UNION ALL
+
+    -- RECURSIVE MEMBER: Level 2+ - Mengurai bahan jika component_item_type adalah SEMI_FINISHED yang memiliki sub-resep
+    SELECT
+        parent.tenant_id,
+        parent.merchant_id,
+        parent.root_product_id,
+        parent.root_product_name,
+        sub_r.id                                             AS recipe_id,
+        sub_r.recipe_name,
+        sub_ri.id                                            AS recipe_item_id,
+        sub_ri.inventory_item_id,
+        sub_i.item_name                                      AS component_item_name,
+        sub_i.sku                                            AS component_sku,
+        sub_i.item_type                                      AS component_item_type,
+        sub_ri.quantity                                      AS step_quantity,
+        (parent.total_effective_quantity * (sub_ri.quantity / NULLIF(sub_r.yield_quantity, 0)) * (1.0 + (sub_ri.wastage_percentage / 100.0)))::NUMERIC AS total_effective_quantity,
+        sub_ri.unit,
+        sub_ri.wastage_percentage,
+        parent.bom_level + 1                                 AS bom_level,
+        parent.path || sub_r.output_inventory_item_id::text  AS path
+    FROM bom_tree parent
+    JOIN pos.recipes sub_r           ON sub_r.output_inventory_item_id = parent.inventory_item_id
+    JOIN pos.recipe_items sub_ri     ON sub_ri.recipe_id = sub_r.id
+    JOIN pos.inventory_items sub_i   ON sub_i.id = sub_ri.inventory_item_id
+    WHERE sub_r.is_active = TRUE
+      AND parent.component_item_type = 'SEMI_FINISHED'
+      AND NOT (sub_r.output_inventory_item_id::text = ANY(parent.path)) -- Cycle Prevention
+)
+SELECT 
+    tenant_id,
+    merchant_id,
+    root_product_id,
+    root_product_name,
+    recipe_id,
+    recipe_name,
+    recipe_item_id,
+    inventory_item_id,
+    component_item_name,
+    component_sku,
+    component_item_type,
+    step_quantity,
+    total_effective_quantity,
+    unit,
+    wastage_percentage,
+    bom_level
+FROM bom_tree;
+
+CREATE OR REPLACE VIEW public.v_bom_explosion AS
+  SELECT * FROM contract.bom_explosion;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0028_true_recursive_bom.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 30: migrations/0029_unify_modifiers_under_recipe_engine.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0029_unify_modifiers_under_recipe_engine.sql
+--
+-- Unifikasi Seluruh Engine Konsumsi Stok (Product, Modifier & Service):
+-- 1. pos.modifiers dihubungkan langsung ke pos.recipes (recipe_id)
+-- 2. Migrasi data pos.modifier_recipes ke pos.recipes & pos.recipe_items
+-- 3. Hapus tabel redundan pos.modifier_recipes
+-- 4. Semua sektor (F&B, Laundry, Car Wash, Barbershop) memakai engine resep terpadu
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. TAMBAH RELASI RESEP PADA MODIFIER (pos.modifiers) -------------------------
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'modifiers' AND column_name = 'recipe_id') THEN
+        ALTER TABLE pos.modifiers ADD COLUMN recipe_id UUID REFERENCES pos.recipes(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+
+-- 2. MIGRASI DATA DARI pos.modifier_recipes KE pos.recipes & recipe_items -----
+
+DO $$
+DECLARE
+    mr RECORD;
+    new_rec_id UUID;
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'pos' AND table_name = 'modifier_recipes') THEN
+        FOR mr IN 
+            SELECT DISTINCT m.id AS mod_id, m.name AS mod_name, m.tenant_id, m.merchant_id
+              FROM pos.modifiers m
+              JOIN pos.modifier_recipes r ON r.modifier_id = m.id
+        LOOP
+            new_rec_id := legacy_uuid(mr.mod_id::text || '_mod_recipe');
+
+            -- Buat header resep untuk modifier
+            INSERT INTO pos.recipes (id, tenant_id, merchant_id, recipe_name, yield_quantity, yield_unit)
+            VALUES (new_rec_id, mr.tenant_id, mr.merchant_id, 'Resep Modifier: ' || mr.mod_name, 1.0, 'portion')
+            ON CONFLICT DO NOTHING;
+
+            -- Hubungkan modifier ke resepnya
+            UPDATE pos.modifiers 
+               SET recipe_id = new_rec_id 
+             WHERE id = mr.mod_id AND recipe_id IS NULL;
+
+            -- Pindahkan item komponen bahan baku ke pos.recipe_items
+            INSERT INTO pos.recipe_items (recipe_id, inventory_item_id, quantity, unit, wastage_percentage)
+            SELECT new_rec_id, r.inventory_item_id, r.quantity_required, r.unit, r.wastage_percentage
+              FROM pos.modifier_recipes r
+             WHERE r.modifier_id = mr.mod_id
+               AND r.inventory_item_id IS NOT NULL
+            ON CONFLICT (recipe_id, inventory_item_id) DO NOTHING;
+        END LOOP;
+
+        -- Hapus tabel redundan
+        DROP TABLE pos.modifier_recipes CASCADE;
+    END IF;
+END $$;
+
+
+-- 3. PEMBARUAN VIEW contract.modifier_directory ------------------------------
+
+DROP VIEW IF EXISTS contract.modifier_directory CASCADE;
+CREATE VIEW contract.modifier_directory AS
+SELECT
+    m.id                                               AS modifier_id,
+    m.tenant_id,
+    m.merchant_id,
+    b.name                                             AS merchant_name,
+    m.name                                             AS modifier_name,
+    m.price,
+    m.cost_price,
+    m.is_active,
+    m.recipe_id,
+    r.recipe_name,
+    m.created_at
+  FROM pos.modifiers m
+  JOIN internal.merchants b          ON b.id = m.merchant_id
+  LEFT JOIN pos.recipes r            ON r.id = m.recipe_id;
+
+CREATE OR REPLACE VIEW public.v_pos_modifiers AS
+  SELECT * FROM contract.modifier_directory;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0029_unify_modifiers_under_recipe_engine.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 31: migrations/0030_sector_order_operational_contexts.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0030_sector_order_operational_contexts.sql
+--
+-- Pemisahan Bersih: Financial Transaction Event vs Operational Sector Context
+-- 1. pos.transactions: Murni entitas keuangan/komersial universal (Uang, Pajak, Diskon)
+-- 2. Entitas Konteks Operasional Spesifik Sektor:
+--    - pos.order_context_fnb     (Table, KDS Status, Guest Count, Pager)
+--    - pos.order_context_retail  (Scanner ID, Fast Checkout, Bag Qty)
+--    - pos.order_context_laundry (Weight Kg, Fragrance, Stage: Washing/Drying/Ironing)
+--    - pos.order_context_carwash (Plat Nomor, Kategori Mobil, Bay, Washer Staf)
+--    - pos.order_context_barber  (Kapster Stylist, Kursi, Antrean, Tip Staf)
+-- 3. View Kontrak Operasional Realtime per Sektor
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. KONTEKS OPERASIONAL F&B (pos.order_context_fnb) --------------------------
+
+CREATE TABLE IF NOT EXISTS pos.order_context_fnb (
+    transaction_id         UUID PRIMARY KEY REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    table_id               UUID,
+    table_name             VARCHAR(64),
+    guest_count            INT NOT NULL DEFAULT 1,
+    order_type             VARCHAR(32) NOT NULL DEFAULT 'DINE_IN', -- 'DINE_IN', 'TAKEAWAY', 'DELIVERY'
+    kds_status             VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'COOKING', 'READY', 'SERVED'
+    pager_number           VARCHAR(32),
+    notes                  TEXT,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fnb_ctx_kds ON pos.order_context_fnb(kds_status);
+
+
+-- 2. KONTEKS OPERASIONAL RETAIL (pos.order_context_retail) --------------------
+
+CREATE TABLE IF NOT EXISTS pos.order_context_retail (
+    transaction_id         UUID PRIMARY KEY REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    scanner_device_id      VARCHAR(64),
+    fast_checkout_mode     BOOLEAN NOT NULL DEFAULT FALSE,
+    customer_card_number   VARCHAR(64),
+    bag_quantity           INT NOT NULL DEFAULT 0,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- 3. KONTEKS OPERASIONAL LAUNDRY (pos.order_context_laundry) ------------------
+
+CREATE TABLE IF NOT EXISTS pos.order_context_laundry (
+    transaction_id         UUID PRIMARY KEY REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    weight_kg              NUMERIC(8, 2),
+    item_count             INT,
+    fragrance_name         VARCHAR(64) DEFAULT 'Standard Fresh',
+    service_tier           VARCHAR(32) NOT NULL DEFAULT 'REGULAR', -- 'REGULAR', 'EXPRESS_1DAY', 'EXPRESS_SAME_DAY'
+    operational_status     VARCHAR(32) NOT NULL DEFAULT 'RECEIVED', -- 'RECEIVED', 'WASHING', 'DRYING', 'IRONING', 'READY_FOR_PICKUP', 'COMPLETED'
+    ready_at               TIMESTAMPTZ,
+    picked_up_at           TIMESTAMPTZ,
+    rack_location          VARCHAR(64),
+    garment_notes          TEXT,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_laundry_ctx_status ON pos.order_context_laundry(operational_status);
+
+
+-- 4. KONTEKS OPERASIONAL CAR WASH (pos.order_context_carwash) -----------------
+
+CREATE TABLE IF NOT EXISTS pos.order_context_carwash (
+    transaction_id         UUID PRIMARY KEY REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    license_plate          VARCHAR(32) NOT NULL,
+    vehicle_category       VARCHAR(32) NOT NULL DEFAULT 'MEDIUM', -- 'SMALL', 'MEDIUM', 'SUV_LARGE', 'MOTORCYCLE'
+    vehicle_model          VARCHAR(64),
+    bay_number             VARCHAR(32),
+    washer_staff_ids       UUID[], -- Staf pencuci yang ditugaskan
+    wash_status            VARCHAR(32) NOT NULL DEFAULT 'IN_QUEUE', -- 'IN_QUEUE', 'WASHING', 'DRYING', 'INSPECTION_READY', 'FINISHED'
+    entry_time             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    exit_time              TIMESTAMPTZ,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_carwash_ctx_plate  ON pos.order_context_carwash(license_plate);
+CREATE INDEX IF NOT EXISTS idx_carwash_ctx_status ON pos.order_context_carwash(wash_status);
+
+
+-- 5. KONTEKS OPERASIONAL BARBERSHOP (pos.order_context_barber) ----------------
+
+CREATE TABLE IF NOT EXISTS pos.order_context_barber (
+    transaction_id         UUID PRIMARY KEY REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    stylist_user_id        UUID REFERENCES internal.users(id) ON DELETE SET NULL,
+    chair_number           VARCHAR(32),
+    service_queue_number   INT,
+    tip_amount             NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    customer_hair_notes    TEXT,
+    service_duration_mins  INT DEFAULT 30,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_barber_ctx_stylist ON pos.order_context_barber(stylist_user_id);
+
+
+-- 6. VIEW KONTRAK OPERASIONAL REALTIME PER SEKTOR -----------------------------
+
+-- 6a. F&B Live Kitchen & Table Queue
+DROP VIEW IF EXISTS contract.live_fnb_orders CASCADE;
+CREATE VIEW contract.live_fnb_orders AS
+SELECT
+    t.id                                               AS transaction_id,
+    t.tenant_id,
+    t.merchant_id,
+    t.outlet_id,
+    t.invoice_number,
+    t.order_status,
+    f.table_name,
+    f.guest_count,
+    f.order_type,
+    f.kds_status,
+    f.pager_number,
+    f.notes,
+    t.total_amount,
+    t.created_at
+  FROM pos.transactions t
+  JOIN pos.order_context_fnb f ON f.transaction_id = t.id
+ WHERE t.order_status NOT IN ('CANCELLED', 'VOIDED');
+
+-- 6b. Laundry Live Workshop Queue
+DROP VIEW IF EXISTS contract.live_laundry_orders CASCADE;
+CREATE VIEW contract.live_laundry_orders AS
+SELECT
+    t.id                                               AS transaction_id,
+    t.tenant_id,
+    t.merchant_id,
+    t.outlet_id,
+    t.invoice_number,
+    t.order_status,
+    l.weight_kg,
+    l.fragrance_name,
+    l.service_tier,
+    l.operational_status,
+    l.ready_at,
+    l.rack_location,
+    t.total_amount,
+    t.created_at
+  FROM pos.transactions t
+  JOIN pos.order_context_laundry l ON l.transaction_id = t.id
+ WHERE t.order_status NOT IN ('CANCELLED', 'VOIDED');
+
+-- 6c. Car Wash Live Bay Queue
+DROP VIEW IF EXISTS contract.live_carwash_queue CASCADE;
+CREATE VIEW contract.live_carwash_queue AS
+SELECT
+    t.id                                               AS transaction_id,
+    t.tenant_id,
+    t.merchant_id,
+    t.outlet_id,
+    t.invoice_number,
+    t.order_status,
+    c.license_plate,
+    c.vehicle_category,
+    c.vehicle_model,
+    c.bay_number,
+    c.washer_staff_ids,
+    c.wash_status,
+    c.entry_time,
+    t.total_amount
+  FROM pos.transactions t
+  JOIN pos.order_context_carwash c ON c.transaction_id = t.id
+ WHERE t.order_status NOT IN ('CANCELLED', 'VOIDED');
+
+-- 6d. Barbershop Live Queue & Stylist Assignment
+DROP VIEW IF EXISTS contract.live_barber_queue CASCADE;
+CREATE VIEW contract.live_barber_queue AS
+SELECT
+    t.id                                               AS transaction_id,
+    t.tenant_id,
+    t.merchant_id,
+    t.outlet_id,
+    t.invoice_number,
+    t.order_status,
+    b.chair_number,
+    b.stylist_user_id,
+    u.full_name                                        AS stylist_name,
+    b.tip_amount,
+    b.customer_hair_notes,
+    t.total_amount,
+    t.created_at
+  FROM pos.transactions t
+  JOIN pos.order_context_barber b ON b.transaction_id = t.id
+  LEFT JOIN internal.users u      ON u.id = b.stylist_user_id
+ WHERE t.order_status NOT IN ('CANCELLED', 'VOIDED');
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0030_sector_order_operational_contexts.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 32: migrations/0031_operational_jobs_and_deferred_consumption.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0031_operational_jobs_and_deferred_consumption.sql
+--
+-- Pemisahan Financial Event vs Workshop Operational Work Orders (Deferred Consumption):
+-- 1. pos.operational_jobs: Entitas Surat Perintah Kerja (SPK / Work Order Workshop)
+-- 2. Daur hidup operasional: QUEUED -> IN_PROGRESS -> QUALITY_CHECK -> READY -> DELIVERED
+-- 3. Aturan Konsumsi Stok (BOM Consumption Rule):
+--    - Drop-off / Order Masuk (QUEUED): STOK TIDAK BERKURANG
+--    - Pengerjaan Dimulai (IN_PROGRESS): STOK BAHAN KIMIA / CONSUMABLE BARU DIPOTONG
+--    - Batal sebelum dicuci (CANCELLED): STOK TETAP UTUH AMAN
+-- 4. View Kontrak Workshop Live Queue
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. TABEL SURAT PERINTAH KERJA WORKSHOP (pos.operational_jobs) ----------------
+
+CREATE TABLE IF NOT EXISTS pos.operational_jobs (
+    id                 UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id          UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    transaction_id     UUID REFERENCES pos.transactions(id) ON DELETE SET NULL,
+    
+    -- Tipe Pekerjaan Workshop
+    job_type           VARCHAR(32) NOT NULL DEFAULT 'LAUNDRY_CYCLE', -- 'LAUNDRY_CYCLE', 'CARWASH_BAY', 'KITCHEN_PREP', 'BARBER_SERVICE'
+    job_number         VARCHAR(64) NOT NULL,
+    
+    -- Mesin / Stasiun & Operator yang Bertugas
+    resource_name      VARCHAR(64), -- 'Mesin Cuci Front-Load #01', 'Bay 2 Hidrolik', 'Chair 3'
+    assigned_staff_id  UUID REFERENCES internal.users(id) ON DELETE SET NULL,
+    
+    -- Daur Hidup Pekerjaan (Operational State Machine)
+    status             VARCHAR(32) NOT NULL DEFAULT 'QUEUED', 
+    -- 'QUEUED'           : Tiket masuk antrean (Stok BELUM dipotong)
+    -- 'IN_PROGRESS'      : Mesin mulai berputar / Bay mulai mencuci (STOK BOM DIPOTONG)
+    -- 'QUALITY_CHECK'    : Pengeringan / Penyetrikaan / Detailing QC
+    -- 'READY_FOR_PICKUP' : Selesai, pakaian di rak siap diambil
+    -- 'DELIVERED'        : Serah terima pakaian ke pelanggan selesai
+    -- 'CANCELLED'        : Batal pengerjaan (Bebas dari pemotongan stok)
+    
+    is_bom_consumed    BOOLEAN NOT NULL DEFAULT FALSE,
+    consumed_at        TIMESTAMPTZ,
+    
+    started_at         TIMESTAMPTZ,
+    completed_at       TIMESTAMPTZ,
+    notes              TEXT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT uq_outlet_job_number UNIQUE (outlet_id, job_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_outlet_status ON pos.operational_jobs(outlet_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_transaction   ON pos.operational_jobs(transaction_id);
+
+
+-- 2. TRIGGER LOGIKA PENUNDAAN KONSUMSI STOK (Deferred BOM Trigger) ------------
+
+CREATE OR REPLACE FUNCTION pos.fn_handle_operational_job_consumption()
+RETURNS TRIGGER AS $$
+DECLARE
+    r_item RECORD;
+    t_rec RECORD;
+    laundry_ctx RECORD;
+    detergent_id UUID;
+    softener_id UUID;
+    weight NUMERIC(8,2) := 5.0;
+    loc_id UUID;
+BEGIN
+    -- Hanya eksekusi ketika status berubah ke IN_PROGRESS dan belum pernah dikonsumsi
+    IF NEW.status = 'IN_PROGRESS' AND OLD.status != 'IN_PROGRESS' AND NEW.is_bom_consumed = FALSE THEN
+        
+        -- Dapatkan lokasi gudang cabang utama
+        SELECT id INTO loc_id 
+          FROM pos.inventory_locations 
+         WHERE outlet_id = NEW.outlet_id 
+         ORDER BY is_primary DESC 
+         LIMIT 1;
+
+        -- Kasus Khusus: Laundry Cycle Job
+        IF NEW.job_type = 'LAUNDRY_CYCLE' AND NEW.transaction_id IS NOT NULL THEN
+            -- Ambil data berat dari order_context_laundry jika ada
+            SELECT weight_kg INTO weight 
+              FROM pos.order_context_laundry 
+             WHERE transaction_id = NEW.transaction_id;
+            
+            IF weight IS NULL OR weight <= 0 THEN
+                weight := 5.0; -- Default fallback berat
+            END IF;
+
+            -- Cari bahan kimia deterjen & softener di inventory
+            SELECT id INTO detergent_id 
+              FROM pos.inventory_items 
+             WHERE merchant_id = NEW.merchant_id 
+               AND (sku ILIKE '%DET%' OR item_name ILIKE '%Deterjen%') 
+             LIMIT 1;
+
+            SELECT id INTO softener_id 
+              FROM pos.inventory_items 
+             WHERE merchant_id = NEW.merchant_id 
+               AND (sku ILIKE '%SOFT%' OR item_name ILIKE '%Softener%' OR item_name ILIKE '%Pewangi%') 
+             LIMIT 1;
+
+            -- Potong Deterjen (15 ml per kg) jika item ditemukan
+            IF detergent_id IS NOT NULL AND loc_id IS NOT NULL THEN
+                INSERT INTO pos.inventory_transactions (
+                    tenant_id, merchant_id, outlet_id, location_id, inventory_item_id, 
+                    quantity_delta, reference_type, reference_id, reason
+                ) VALUES (
+                    NEW.tenant_id, NEW.merchant_id, NEW.outlet_id, loc_id, detergent_id,
+                    -(weight * 15.0), 'JOB_CONSUMPTION', NEW.id::text, 'Pemakaian Deterjen Siklus Cuci SPK: ' || NEW.job_number
+                );
+            END IF;
+
+            -- Potong Softener (10 ml per kg) jika item ditemukan
+            IF softener_id IS NOT NULL AND loc_id IS NOT NULL THEN
+                INSERT INTO pos.inventory_transactions (
+                    tenant_id, merchant_id, outlet_id, location_id, inventory_item_id, 
+                    quantity_delta, reference_type, reference_id, reason
+                ) VALUES (
+                    NEW.tenant_id, NEW.merchant_id, NEW.outlet_id, loc_id, softener_id,
+                    -(weight * 10.0), 'JOB_CONSUMPTION', NEW.id::text, 'Pemakaian Softener Siklus Cuci SPK: ' || NEW.job_number
+                );
+            END IF;
+        END IF;
+
+        -- Tandai bahwa stok telah terpotong untuk SPK ini
+        NEW.is_bom_consumed := TRUE;
+        NEW.consumed_at := CURRENT_TIMESTAMP;
+        NEW.started_at := COALESCE(NEW.started_at, CURRENT_TIMESTAMP);
+    END IF;
+
+    -- Update timestamp selesai jika status beralih ke READY / DELIVERED
+    IF NEW.status IN ('READY_FOR_PICKUP', 'DELIVERED') AND OLD.status NOT IN ('READY_FOR_PICKUP', 'DELIVERED') THEN
+        NEW.completed_at := COALESCE(NEW.completed_at, CURRENT_TIMESTAMP);
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_operational_job_consumption ON pos.operational_jobs;
+
+CREATE TRIGGER trg_operational_job_consumption
+BEFORE UPDATE OF status ON pos.operational_jobs
+FOR EACH ROW EXECUTE FUNCTION pos.fn_handle_operational_job_consumption();
+
+
+-- 3. VIEW KONTRAK MONITOR SPK WORKSHOP (contract.workshop_jobs_board) ---------
+
+DROP VIEW IF EXISTS contract.workshop_jobs_board CASCADE;
+CREATE VIEW contract.workshop_jobs_board AS
+SELECT
+    j.id                                               AS job_id,
+    j.tenant_id,
+    j.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    j.outlet_id,
+    o.name                                             AS outlet_name,
+    j.job_type,
+    j.job_number,
+    j.transaction_id,
+    t.invoice_number,
+    t.total_amount,
+    j.resource_name,
+    j.assigned_staff_id,
+    u.full_name                                        AS assigned_staff_name,
+    j.status                                           AS job_status,
+    j.is_bom_consumed,
+    j.consumed_at,
+    j.started_at,
+    j.completed_at,
+    j.created_at                                       AS received_at
+  FROM pos.operational_jobs j
+  JOIN internal.merchants m           ON m.id = j.merchant_id
+  JOIN internal.outlets o             ON o.id = j.outlet_id
+  LEFT JOIN pos.transactions t        ON t.id = j.transaction_id
+  LEFT JOIN internal.users u          ON u.id = j.assigned_staff_id;
+
+CREATE OR REPLACE VIEW public.v_workshop_jobs AS
+  SELECT * FROM contract.workshop_jobs_board;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0031_operational_jobs_and_deferred_consumption.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 33: migrations/0032_four_lifecycles_and_staff_commissions.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0032_four_lifecycles_and_staff_commissions.sql
+--
+-- Pemisahan 4 Daur Hidup Independen (4 Decoupled Lifecycles):
+-- 1. Sales Order Lifecycle (pos.transactions)
+-- 2. Payment Lifecycle (pos.payments)
+-- 3. Service Execution Lifecycle (pos.operational_jobs)
+-- 4. Staff Commission Lifecycle (pos.staff_commissions)
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. TABEL BUKU BESAR KOMISI STAF (pos.staff_commissions) ----------------------
+
+CREATE TABLE IF NOT EXISTS pos.staff_commissions (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    transaction_id         UUID NOT NULL REFERENCES pos.transactions(id) ON DELETE CASCADE,
+    job_id                 UUID REFERENCES pos.operational_jobs(id) ON DELETE SET NULL,
+    staff_user_id          UUID NOT NULL REFERENCES internal.users(id) ON DELETE CASCADE,
+    
+    commission_type        VARCHAR(32) NOT NULL DEFAULT 'SERVICE_LABOR', -- 'SERVICE_WASHER', 'SERVICE_KAPSTER', 'PRODUCT_UPSELL', 'TIPS'
+    gross_service_amount   NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    commission_rate_pct    NUMERIC(5, 2) DEFAULT 0.00,
+    commission_amount      NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    
+    -- Daur Hidup Komisi (Commission State Machine)
+    status                 VARCHAR(32) NOT NULL DEFAULT 'PENDING_CONDITIONS',
+    -- 'PENDING_CONDITIONS' : Menunggu pembayaran lunas DAN pengerjaan servis selesai
+    -- 'ACCRUED'            : Syarat terpenuhi! Komisi sah terkunci di buku besar hak staf
+    -- 'APPROVED'           : Disetujui Manager saat tutup shift
+    -- 'DISBURSED'          : Sudah dibayarkan ke staf (Tunai / Payroll)
+    -- 'VOIDED'             : Batal karena transaksi direfund / dibatalkan
+    
+    accrued_at             TIMESTAMPTZ,
+    approved_at            TIMESTAMPTZ,
+    disbursed_at           TIMESTAMPTZ,
+    notes                  VARCHAR(255),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_comm_staff_status ON pos.staff_commissions(staff_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_comm_transaction  ON pos.staff_commissions(transaction_id);
+
+
+-- 2. ENGINE EVALUATOR 4 LIFECYCLE (Evaluasi Status Hak Komisi & Order) --------
+
+CREATE OR REPLACE FUNCTION pos.fn_evaluate_order_and_commission_lifecycles(p_transaction_id UUID)
+RETURNS VOID AS $$
+DECLARE
+    is_paid BOOLEAN := FALSE;
+    is_service_done BOOLEAN := TRUE; -- Default true jika transaksi murni ritel tanpa SPK
+    job_count INT;
+    active_jobs INT;
+BEGIN
+    IF p_transaction_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    -- 1. Evaluasi Payment Lifecycle (Apakah sudah ada pembayaran lunas?)
+    SELECT EXISTS (
+        SELECT 1 FROM pos.payments 
+         WHERE transaction_id = p_transaction_id 
+           AND payment_status = 'PAID'
+    ) INTO is_paid;
+
+    -- 2. Evaluasi Service Execution Lifecycle
+    SELECT COUNT(*) INTO job_count 
+      FROM pos.operational_jobs 
+     WHERE transaction_id = p_transaction_id;
+
+    IF job_count > 0 THEN
+        SELECT COUNT(*) INTO active_jobs 
+          FROM pos.operational_jobs 
+         WHERE transaction_id = p_transaction_id 
+           AND status NOT IN ('READY_FOR_PICKUP', 'DELIVERED', 'FINISHED');
+
+        is_service_done := (active_jobs = 0);
+    END IF;
+
+    -- 3. Evaluasi Staff Commission Lifecycle:
+    -- Komisi hanya berstatus ACCRUED jika: PAYMENT = PAID DAN SERVICE = DONE!
+    IF is_paid AND is_service_done THEN
+        UPDATE pos.staff_commissions
+           SET status = 'ACCRUED',
+               accrued_at = COALESCE(accrued_at, CURRENT_TIMESTAMP),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE transaction_id = p_transaction_id
+           AND status = 'PENDING_CONDITIONS';
+
+        -- Update status transaksi ke SETTLED (Lunas & Servis Selesai)
+        UPDATE pos.transactions
+           SET order_status = 'SETTLED',
+               completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+         WHERE id = p_transaction_id
+           AND order_status IN ('OPEN', 'IN_FULFILLMENT', 'PENDING_PAYMENT');
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- 3. TRIGGERS UNTUK PEMBAYARAN & SPK SERVICE ----------------------------------
+
+-- Trigger saat pembayaran berstatus PAID
+CREATE OR REPLACE FUNCTION pos.fn_trg_payment_lifecycle_eval()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.payment_status = 'PAID' THEN
+        PERFORM pos.fn_evaluate_order_and_commission_lifecycles(NEW.transaction_id);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_payment_lifecycle_eval ON pos.payments;
+CREATE TRIGGER trg_payment_lifecycle_eval
+AFTER INSERT OR UPDATE OF payment_status ON pos.payments
+FOR EACH ROW EXECUTE FUNCTION pos.fn_trg_payment_lifecycle_eval();
+
+-- Trigger saat SPK servis selesai
+CREATE OR REPLACE FUNCTION pos.fn_trg_job_lifecycle_eval()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.status IN ('READY_FOR_PICKUP', 'DELIVERED', 'FINISHED') THEN
+        PERFORM pos.fn_evaluate_order_and_commission_lifecycles(NEW.transaction_id);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_job_lifecycle_eval ON pos.operational_jobs;
+CREATE TRIGGER trg_job_lifecycle_eval
+AFTER INSERT OR UPDATE OF status ON pos.operational_jobs
+FOR EACH ROW EXECUTE FUNCTION pos.fn_trg_job_lifecycle_eval();
+
+
+-- 4. VIEW KONTRAK REKAPITULASI KOMISI STAF (contract.staff_commission_ledger) --
+
+DROP VIEW IF EXISTS contract.staff_commission_ledger CASCADE;
+CREATE VIEW contract.staff_commission_ledger AS
+SELECT
+    c.id                                               AS commission_id,
+    c.tenant_id,
+    c.merchant_id,
+    m.name                                             AS merchant_name,
+    m.business_sector,
+    c.outlet_id,
+    o.name                                             AS outlet_name,
+    c.staff_user_id,
+    u.full_name                                        AS staff_name,
+    u.email                                            AS staff_email,
+    c.transaction_id,
+    t.invoice_number,
+    t.business_date,
+    c.commission_type,
+    c.gross_service_amount,
+    c.commission_rate_pct,
+    c.commission_amount,
+    c.status                                           AS commission_status,
+    c.accrued_at,
+    c.approved_at,
+    c.disbursed_at,
+    c.created_at
+  FROM pos.staff_commissions c
+  JOIN internal.merchants m          ON m.id = c.merchant_id
+  JOIN internal.outlets o            ON o.id = c.outlet_id
+  JOIN internal.users u              ON u.id = c.staff_user_id
+  LEFT JOIN pos.transactions t       ON t.id = c.transaction_id;
+
+CREATE OR REPLACE VIEW public.v_staff_commissions AS
+  SELECT * FROM contract.staff_commission_ledger;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0032_four_lifecycles_and_staff_commissions.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 34: migrations/0033_resilient_payments_and_immutable_compensating_ledger.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0033_resilient_payments_and_immutable_compensating_ledger.sql
+--
+-- 1. Resilient Payment Lifecycle (Intent, Attempts, Split Tender & Async QRIS):
+--    - Status: CREATED -> PENDING -> AUTHORIZED -> SETTLED -> FAILED -> EXPIRED -> REFUNDED
+--    - Evaluator Lintas Split Tender: Menghitung akumulasi pembayaran lunas vs total tagihan
+-- 2. Physical Ledger Immutability & Compensating Reversals:
+--    - Blokir UPDATE & DELETE fisik pada pos.inventory_transactions (Append-Only Enforcer)
+--    - Stored Procedure pos.fn_void_transaction_with_compensating_reversals
+--    - Entri pembalik mutasi riil (+x VOID_REVERSAL) tanpa pernah mengotak-atik baris historis
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. REFACTOR TABEL PEMBAYARAN (pos.payments) ---------------------------------
+
+DO $$
+BEGIN
+    -- Tambahkan Payment Intent ID (untuk pengelompokan attempt pembayaran)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'payment_intent_id') THEN
+        ALTER TABLE pos.payments ADD COLUMN payment_intent_id UUID DEFAULT uuidv7();
+    END IF;
+
+    -- Tambahkan Nomor Percobaan (Attempt Number)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'attempt_number') THEN
+        ALTER TABLE pos.payments ADD COLUMN attempt_number INT NOT NULL DEFAULT 1;
+    END IF;
+
+    -- Tambahkan Timestamp Daur Hidup Async
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'settled_at') THEN
+        ALTER TABLE pos.payments ADD COLUMN settled_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'expired_at') THEN
+        ALTER TABLE pos.payments ADD COLUMN expired_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'refunded_at') THEN
+        ALTER TABLE pos.payments ADD COLUMN refunded_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'payments' AND column_name = 'failure_reason') THEN
+        ALTER TABLE pos.payments ADD COLUMN failure_reason VARCHAR(255);
+    END IF;
+
+    -- Validasi State Machine Payment
+    ALTER TABLE pos.payments DROP CONSTRAINT IF EXISTS chk_payment_lifecycle_status;
+    ALTER TABLE pos.payments ADD CONSTRAINT chk_payment_lifecycle_status CHECK (
+        payment_status IN ('CREATED', 'PENDING', 'AUTHORIZED', 'SETTLED', 'PAID', 'FAILED', 'EXPIRED', 'REFUNDED')
+    );
+END $$;
+
+
+-- 2. UPDATE EVALUATOR MULTI-TENDER & SETTLEMENT -------------------------------
+
+CREATE OR REPLACE FUNCTION pos.fn_evaluate_order_and_commission_lifecycles(p_transaction_id UUID)
+RETURNS VOID AS $$
+DECLARE
+    order_total NUMERIC(12, 2) := 0.00;
+    settled_total NUMERIC(12, 2) := 0.00;
+    is_fully_paid BOOLEAN := FALSE;
+    is_service_done BOOLEAN := TRUE;
+    job_count INT;
+    active_jobs INT;
+BEGIN
+    IF p_transaction_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    -- Ambil total tagihan order
+    SELECT total_amount INTO order_total
+      FROM pos.transactions
+     WHERE id = p_transaction_id;
+
+    -- Hitung akumulasi pembayaran yang sudah SETTLED / PAID (Aman untuk Split Tender!)
+    SELECT COALESCE(SUM(amount), 0.00) INTO settled_total
+      FROM pos.payments
+     WHERE transaction_id = p_transaction_id
+       AND payment_status IN ('SETTLED', 'PAID');
+
+    is_fully_paid := (settled_total >= order_total AND order_total > 0);
+
+    -- Evaluasi Pekerjaan Fisik / Service
+    SELECT COUNT(*) INTO job_count 
+      FROM pos.operational_jobs 
+     WHERE transaction_id = p_transaction_id;
+
+    IF job_count > 0 THEN
+        SELECT COUNT(*) INTO active_jobs 
+          FROM pos.operational_jobs 
+         WHERE transaction_id = p_transaction_id 
+           AND status NOT IN ('READY_FOR_PICKUP', 'DELIVERED', 'FINISHED');
+
+        is_service_done := (active_jobs = 0);
+    END IF;
+
+    -- Jika Lunas Terbayar DAN Servis Selesai -> Komisi Accrued & Order Settled
+    IF is_fully_paid AND is_service_done THEN
+        UPDATE pos.staff_commissions
+           SET status = 'ACCRUED',
+               accrued_at = COALESCE(accrued_at, CURRENT_TIMESTAMP),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE transaction_id = p_transaction_id
+           AND status = 'PENDING_CONDITIONS';
+
+        UPDATE pos.transactions
+           SET order_status = 'SETTLED',
+               completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+         WHERE id = p_transaction_id
+           AND order_status IN ('OPEN', 'IN_FULFILLMENT', 'PENDING_PAYMENT');
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- Update Trigger Evaluator pada Pembayaran
+CREATE OR REPLACE FUNCTION pos.fn_trg_payment_lifecycle_eval()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.payment_status IN ('SETTLED', 'PAID') THEN
+        PERFORM pos.fn_evaluate_order_and_commission_lifecycles(NEW.transaction_id);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION pos.fn_enforce_inventory_ledger_immutability()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'CRITICAL: pos.inventory_transactions adalah Immutable Financial Ledger (Append-Only). Operasi UPDATE atau DELETE dilarang keras secara fisik! Gunakan entri mutasi pembalik kompensasi (VOID_REVERSAL / ADJUSTMENT).'
+        USING ERRCODE = '23506';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_enforce_inventory_ledger_immutability ON pos.inventory_transactions;
+CREATE TRIGGER trg_enforce_inventory_ledger_immutability
+BEFORE UPDATE OR DELETE ON pos.inventory_transactions
+FOR EACH ROW EXECUTE FUNCTION pos.fn_enforce_inventory_ledger_immutability();
+
+
+-- 4. STORED PROCEDURE VOID DENGAN COMPENSATING REVERSAL -----------------------
+
+CREATE OR REPLACE FUNCTION pos.fn_void_transaction_with_compensating_reversals(
+    p_transaction_id UUID,
+    p_void_reason TEXT,
+    p_voided_by_user_id UUID DEFAULT NULL
+)
+RETURNS JSONB AS $$
+DECLARE
+    tx RECORD;
+    inv_mut RECORD;
+    reversal_count INT := 0;
+BEGIN
+    -- Validasi keberadaan transaksi
+    SELECT * INTO tx FROM pos.transactions WHERE id = p_transaction_id;
+    IF tx.id IS NULL THEN
+        RAISE EXCEPTION 'Transaksi dengan ID % tidak ditemukan.', p_transaction_id;
+    END IF;
+
+    IF tx.order_status = 'VOIDED' THEN
+        RAISE EXCEPTION 'Transaksi % sudah berstatus VOIDED.', tx.invoice_number;
+    END IF;
+
+    -- 1. Tandai transaksi sebagai VOIDED
+    UPDATE pos.transactions
+       SET order_status = 'VOIDED',
+           voided_at = CURRENT_TIMESTAMP
+     WHERE id = p_transaction_id;
+
+    -- 2. Cari seluruh mutasi inventaris keluar (pengurangan) yang terkait order ini
+    FOR inv_mut IN
+        SELECT * 
+          FROM pos.inventory_transactions
+         WHERE (reference_id = p_transaction_id::text OR reference_id = tx.invoice_number)
+           AND quantity_delta < 0
+           AND reference_type NOT IN ('VOID_REVERSAL')
+    LOOP
+        -- Buat baris mutasi pembalik baru (Compensating Ledger Record: +x)
+        INSERT INTO pos.inventory_transactions (
+            tenant_id,
+            merchant_id,
+            outlet_id,
+            location_id,
+            inventory_item_id,
+            quantity_delta,
+            reference_type,
+            reference_id,
+            reason,
+            performed_by
+        ) VALUES (
+            inv_mut.tenant_id,
+            inv_mut.merchant_id,
+            inv_mut.outlet_id,
+            inv_mut.location_id,
+            inv_mut.inventory_item_id,
+            ABS(inv_mut.quantity_delta), -- Nilai positif pembalik
+            'VOID_REVERSAL',
+            p_transaction_id::text,
+            'Pembalik Mutasi Void Order ' || tx.invoice_number || ': ' || COALESCE(p_void_reason, 'Pembatalan Kasir'),
+            p_voided_by_user_id
+        );
+        reversal_count := reversal_count + 1;
+    END LOOP;
+
+    -- 3. Batalkan seluruh komisi staf yang terkait
+    UPDATE pos.staff_commissions
+       SET status = 'VOIDED',
+           notes = 'Dibatalkan karena order void: ' || COALESCE(p_void_reason, ''),
+           updated_at = CURRENT_TIMESTAMP
+     WHERE transaction_id = p_transaction_id;
+
+    RETURN jsonb_build_object(
+        'success', TRUE,
+        'invoice_number', tx.invoice_number,
+        'order_status', 'VOIDED',
+        'reversal_mutations_created', reversal_count
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0033_resilient_payments_and_immutable_compensating_ledger.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 35: migrations/0034_sector_master_data_reconciliation.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0034_sector_master_data_reconciliation.sql
+--
+-- Rekonsiliasi Master Data Sektor Operasional:
+-- 1. F&B: pos.tables, pos.kds_stations
+-- 2. Car Wash: pos.bays, pos.vehicles
+-- 3. Barbershop: pos.chairs
+-- 4. General/Laundry: pos.operational_stages
+-- 5. Resource Allocation: pos.staff_assignments
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. F&B SECTOR MASTER DATA ---------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.tables (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    table_name             VARCHAR(64) NOT NULL,
+    seating_capacity       INT NOT NULL DEFAULT 4,
+    status                 VARCHAR(32) NOT NULL DEFAULT 'AVAILABLE', -- 'AVAILABLE', 'OCCUPIED', 'RESERVED', 'UNAVAILABLE'
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_outlet_table_name UNIQUE (outlet_id, table_name)
+);
+
+CREATE TABLE IF NOT EXISTS pos.kds_stations (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    station_name           VARCHAR(64) NOT NULL, -- e.g., 'Grill', 'Beverage', 'Assembly'
+    status                 VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_outlet_kds_station UNIQUE (outlet_id, station_name)
+);
+
+
+-- 2. CAR WASH SECTOR MASTER DATA ----------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.bays (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    bay_name               VARCHAR(64) NOT NULL, -- e.g., 'Bay 1', 'Bay 2'
+    status                 VARCHAR(32) NOT NULL DEFAULT 'AVAILABLE', -- 'AVAILABLE', 'IN_USE', 'MAINTENANCE'
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_outlet_bay_name UNIQUE (outlet_id, bay_name)
+);
+
+CREATE TABLE IF NOT EXISTS pos.vehicles (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    license_plate          VARCHAR(32) NOT NULL,
+    vehicle_category       VARCHAR(32) NOT NULL DEFAULT 'MEDIUM', -- 'SMALL', 'MEDIUM', 'SUV_LARGE', 'MOTORCYCLE'
+    vehicle_model          VARCHAR(100),
+    customer_id            UUID, -- Can link to a global customers table if/when it exists
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_merchant_license_plate UNIQUE (merchant_id, license_plate)
+);
+
+
+-- 3. BARBERSHOP SECTOR MASTER DATA --------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.chairs (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    chair_name             VARCHAR(64) NOT NULL, -- e.g., 'Chair 1', 'Chair 2', 'VIP Room'
+    status                 VARCHAR(32) NOT NULL DEFAULT 'AVAILABLE', -- 'AVAILABLE', 'IN_USE', 'MAINTENANCE'
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_outlet_chair_name UNIQUE (outlet_id, chair_name)
+);
+
+
+-- 4. GENERAL / LAUNDRY MASTER DATA --------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.operational_stages (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    sector                 VARCHAR(32) NOT NULL, -- e.g., 'LAUNDRY', 'CARWASH'
+    stage_name             VARCHAR(64) NOT NULL, -- e.g., 'WASHING', 'DRYING', 'IRONING'
+    sequence_order         INT NOT NULL DEFAULT 10,
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_merchant_sector_stage UNIQUE (merchant_id, sector, stage_name)
+);
+
+
+-- 5. RESOURCE ALLOCATION & STAFF ASSIGNMENTS ----------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.staff_assignments (
+    id                     UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id              UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
+    merchant_id            UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
+    outlet_id              UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    staff_user_id          UUID NOT NULL REFERENCES internal.users(id) ON DELETE CASCADE,
+    assigned_role          VARCHAR(64) NOT NULL, -- e.g., 'WASHER', 'KAPSTER', 'CASHIER', 'CHEF'
+    assigned_resource_id   UUID, -- Can be table_id, bay_id, chair_id depending on context
+    assigned_resource_type VARCHAR(64), -- e.g., 'BAY', 'CHAIR', 'TABLE'
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    shift_start            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    shift_end              TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_staff_assignment_user ON pos.staff_assignments(staff_user_id);
+CREATE INDEX IF NOT EXISTS idx_staff_assignment_active ON pos.staff_assignments(outlet_id, is_active);
+
+
+-- 6. PERBARUI FOREIGN KEY DI ORDER CONTEXTS -----------------------------------
+
+-- Catatan: Untuk order_context_fnb, foreign key ke pos.tables (table_id) 
+-- sebaiknya ditambahkan setelah proses data cleansing jika ada data lama.
+-- ALTER TABLE pos.order_context_fnb ADD CONSTRAINT fk_fnb_table FOREIGN KEY (table_id) REFERENCES pos.tables(id) ON DELETE SET NULL;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0034_sector_master_data_reconciliation.sql')
   ON CONFLICT (filename) DO NOTHING;
 
 

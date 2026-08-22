@@ -38,6 +38,20 @@ const MIGRATIONS = [
   'migrations/0018_recursive_multilevel_bom.sql',
   'migrations/0019_variants_modifiers_and_order_snapshots.sql',
   'migrations/0020_separate_orders_and_payments.sql',
+  'migrations/0021_operational_and_settings.sql',
+  'migrations/0022_billing_and_tax_refactor.sql',
+  'migrations/0023_merchant_audit_and_inventory.sql',
+  'migrations/0024_fix_inventory_consistency.sql',
+  'migrations/0025_restore_contract_catalog.sql',
+  'migrations/0026_explicit_membership_scopes_and_hierarchy_constraints.sql',
+  'migrations/0027_clean_decoupled_inventory_domain.sql',
+  'migrations/0028_true_recursive_bom.sql',
+  'migrations/0029_unify_modifiers_under_recipe_engine.sql',
+  'migrations/0030_sector_order_operational_contexts.sql',
+  'migrations/0031_operational_jobs_and_deferred_consumption.sql',
+  'migrations/0032_four_lifecycles_and_staff_commissions.sql',
+  'migrations/0033_resilient_payments_and_immutable_compensating_ledger.sql',
+  'migrations/0034_sector_master_data_reconciliation.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

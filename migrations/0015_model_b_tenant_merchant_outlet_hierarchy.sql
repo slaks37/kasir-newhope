@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS internal.tenants (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS company_name VARCHAR(200);
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS tax_id VARCHAR(50);
+ALTER TABLE internal.tenants ADD COLUMN IF NOT EXISTS owner_user_id UUID;
+
 COMMENT ON TABLE internal.tenants IS
     'Tingkat 1: Akun Holding / Perusahaan / Pelanggan Utama Billing SaaS.';
 
@@ -208,13 +212,13 @@ SELECT
     m.is_active,
     m.created_at                                      AS joined_at,
     COUNT(DISTINCT o.id)                              AS outlet_count,
-    COUNT(r.transaction_id)                           AS transaction_count,
+    COUNT(r.id)                                       AS transaction_count,
     COALESCE(SUM(r.total_amount), 0)                  AS gross_revenue,
     MAX(r.created_at)                                 AS last_transaction_at
   FROM internal.merchants m
   JOIN internal.tenants t            ON t.id = m.tenant_id
   LEFT JOIN internal.outlets o       ON o.merchant_id = m.id
-  LEFT JOIN contract.merchant_revenue r ON r.merchant_id = m.id
+  LEFT JOIN pos.transactions r ON r.merchant_id = m.id
  GROUP BY m.id, m.tenant_id, t.name, m.name, m.business_sector,
           m.external_ref, m.is_active, m.created_at;
 

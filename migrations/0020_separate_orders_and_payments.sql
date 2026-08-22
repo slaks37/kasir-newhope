@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS pos.payments (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
     tenant_id          UUID NOT NULL REFERENCES internal.tenants(id) ON DELETE CASCADE,
     merchant_id        UUID NOT NULL REFERENCES internal.merchants(id) ON DELETE CASCADE,
-    outlet_id          UUID NOT NULL REFERENCES internal.outlets(id) ON DELETE CASCADE,
+    outlet_id          UUID REFERENCES internal.outlets(id) ON DELETE SET NULL,
     transaction_id     UUID NOT NULL REFERENCES pos.transactions(id) ON DELETE CASCADE,
     payment_method     VARCHAR(32) NOT NULL DEFAULT 'CASH', -- CASH, QRIS_DYNAMIC, QRIS_STATIC, DEBIT_CARD, CREDIT_CARD, TRANSFER, E_WALLET
     payment_status     VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING, PAID, FAILED, EXPIRED, REFUNDED, PARTIALLY_REFUNDED
@@ -111,6 +111,7 @@ END $$;
 DROP VIEW IF EXISTS contract.merchant_revenue CASCADE;
 CREATE VIEW contract.merchant_revenue AS
 SELECT
+    x.id                                              AS transaction_id,
     x.id,
     x.tenant_id,
     x.merchant_id,

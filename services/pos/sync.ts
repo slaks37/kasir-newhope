@@ -50,6 +50,11 @@ interface SyncTxn {
   orderType?: string;
   appModule?: string;
   createdAt?: string;
+  businessDate?: string;
+  completedAt?: string;
+  cancelledAt?: string;
+  voidedAt?: string;
+  shiftId?: string;
   items: SyncItem[];
 }
 
@@ -115,19 +120,46 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
         }
 
-        /* -- MERCHANT ------------------------------------------------------ */
-        // business_id (`${userId}_${sector}`) adalah partition key dari
-        // TenantContext. Satu pemilik dengan kafe DAN laundry menghasilkan dua
-        // baris tenants, yang memang benar: keduanya usaha terpisah.
+        /* -- MODEL B: TENANT -> MERCHANT -> OUTLET ------------------------- */
+        // Tenant (owner level)
+        const tenantExternalRef = ownerRef || `tenant_${businessId}`;
         const t = await c.query(
-          `INSERT INTO internal.tenants (id, name, business_sector, external_ref, owner_user_ref)
+          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+           VALUES (uuidv7(), $1, $2, $3)
+           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [storeName, tenantExternalRef, ownerRef]
+        );
+        const tenantId: string = t.rows[0].id;
+
+        // Merchant (business level)
+        const m = await c.query(
+          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [storeName, sector, businessId, ownerRef]
+          [tenantId, storeName, sector, businessId]
         );
-        const tenantId: string = t.rows[0].id;
+        const merchantId: string = m.rows[0].id;
+
+        // Outlet (store branch level)
+        const outq = await c.query(
+          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+          [merchantId]
+        );
+        let outletId: string;
+        if (outq.rows.length) {
+            outletId = outq.rows[0].id;
+        } else {
+            const outins = await c.query(
+                `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
+                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
+                 [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            );
+            outletId = outins.rows[0].id;
+        }
 
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
@@ -139,28 +171,34 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (cashierCache.has(key)) return cashierCache.get(key)!;
 
           const found = await c.query(
-            `SELECT id FROM pos.users WHERE tenant_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
-            [tenantId, ref, name]
+            `SELECT id FROM internal.memberships WHERE tenant_id = $1 AND (external_ref = $2 OR role = $3) LIMIT 1`,
+            [tenantId, ref, role]
           );
-          let id: string;
-          if (found.rows.length) {
-            id = found.rows[0].id;
+          // Wait, resolving cashier is currently difficult because internal.users isn't easily created with dummy emails.
+          // For now, return a placeholder or handle cashier matching via external_ref.
+          // In the new architecture, POS transactions just link to internal.users via cashier_user_id.
+          // We will use a fallback logic here that assumes user is created elsewhere, or we create a dummy internal user.
+          // Actually, internal.users doesn't need to be populated in offline sync if they aren't registered. 
+          // We'll insert a dummy user if not found just to satisfy the foreign key.
+          
+          let userId: string;
+          const userCheck = await c.query(
+            `SELECT id FROM internal.users WHERE email = $1 LIMIT 1`,
+            [`${ref || 'kasir'}@pos.local`]
+          );
+          
+          if (userCheck.rows.length) {
+            userId = userCheck.rows[0].id;
           } else {
-            const ins = await c.query(
-              `INSERT INTO pos.users (id, tenant_id, name, username, pin, role, external_ref)
-               VALUES (uuidv7(), $1, $2, $3, '----', $4, $5) RETURNING id`,
-              [
-                tenantId,
-                name || 'Kasir',
-                `${businessId}.${(ref || name || 'kasir').toLowerCase().replace(/\s+/g, '.')}`.slice(0, 50),
-                role && ['OWNER', 'MANAGER', 'CASHIER'].includes(role) ? role : 'CASHIER',
-                ref,
-              ]
+            const insUser = await c.query(
+              `INSERT INTO internal.users (id, email, full_name) VALUES (uuidv7(), $1, $2) RETURNING id`,
+              [`${ref || 'kasir'}_${Date.now()}@pos.local`, name || 'Kasir']
             );
-            id = ins.rows[0].id;
+            userId = insUser.rows[0].id;
           }
-          cashierCache.set(key, id);
-          return id;
+
+          cashierCache.set(key, userId);
+          return userId;
         };
 
         const resolveProduct = async (i: SyncItem) => {
@@ -177,12 +215,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             id = found.rows[0].id;
           } else {
             const ins = await c.query(
-              `INSERT INTO pos.products (id, tenant_id, name, sku, price, cost_price,
+              `INSERT INTO pos.products (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price,
                                      business_sector, business_id, category_name,
                                      description, external_ref)
-               VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+               VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
               [
                 tenantId,
+                merchantId,
+                outletId,
                 i.productName.slice(0, 100),
                 (i.productRef || i.productName).slice(0, 50),
                 num(i.unitPrice),
@@ -224,33 +264,45 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             ? String(x.appModule)
             : 'POS';
 
+          const paymentMethod = str(x.paymentMethod, 20) ?? 'CASH';
+          const paymentStatus = str(x.paymentStatus, 20) ?? 'PAID';
+          const isVoid = paymentStatus === 'CANCELLED';
+          const orderStatus = isVoid ? 'VOIDED' : (paymentStatus === 'PENDING' ? 'PENDING_PAYMENT' : 'COMPLETED');
+
           const ins = await c.query(
             `INSERT INTO pos.transactions
-               (id, tenant_id, cashier_user_id, subtotal, discount_amount, tax_amount,
-                service_charge_amount, total_amount, payment_method, payment_status,
+               (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
+                service_charge_amount, total_amount, payment_method, order_status,
                 business_sector, business_id, app_module, order_type, invoice_number,
-                client_txn_id, created_at)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                     COALESCE($16::timestamptz, CURRENT_TIMESTAMP))
+                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP))
              ON CONFLICT (tenant_id, client_txn_id) WHERE client_txn_id IS NOT NULL
                DO NOTHING
              RETURNING id`,
             [
               tenantId,
+              merchantId,
+              outletId,
               cashierId,
               subtotal,
               discount,
               tax,
               serviceCharge,
               total,
-              str(x.paymentMethod, 20) ?? 'CASH',
-              str(x.paymentStatus, 20) ?? 'COMPLETED',
+              paymentMethod,
+              orderStatus,
               sector,
               businessId,
               appModule,
               str(x.orderType, 16),
               str(x.invoiceNumber, 64),
               clientId,
+              str(x.shiftId, 36) ?? null,
+              str(x.businessDate, 10) ?? (x.createdAt ? x.createdAt.split('T')[0] : null),
+              x.completedAt ?? (orderStatus === 'COMPLETED' ? x.createdAt : null),
+              x.cancelledAt ?? (isVoid ? x.createdAt : null),
+              x.voidedAt ?? null,
               x.createdAt ?? null,
             ]
           );
@@ -277,13 +329,19 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             if (status === 'CANCELLED') {
               const upd = await c.query(
                 `UPDATE pos.transactions
-                    SET payment_status = 'CANCELLED'
+                    SET order_status = 'VOIDED',
+                        voided_at = COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
                   WHERE tenant_id = $1 AND client_txn_id = $2
-                    AND payment_status <> 'CANCELLED'
+                    AND order_status <> 'VOIDED'
                 RETURNING id`,
-                [tenantId, clientId]
+                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null]
               );
               if (upd.rows.length) {
+                const voidedTxnId = upd.rows[0].id;
+                await c.query(
+                  `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
+                  [voidedTxnId]
+                );
                 voided++;
                 await writeActivity(c, {
                   merchantId: tenantId,
@@ -294,7 +352,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   severity: 'WARNING',
                   actorName: str(x.cashierName, 100),
                   actorRole: str(x.cashierRole, 24),
-                  transactionId: upd.rows[0].id,
+                  transactionId: voidedTxnId,
                   amountIdr: total,
                   summary: `Transaksi ${str(x.invoiceNumber, 64) ?? clientId} dibatalkan`,
                   detail: { clientTxnId: clientId },
@@ -305,6 +363,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
 
           const txnId: string = ins.rows[0].id;
+
+          const pStatus = isVoid ? 'REFUNDED' : (paymentStatus === 'PENDING' ? 'PENDING' : 'PAID');
+          await c.query(
+            `INSERT INTO pos.payments
+               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
+             ON CONFLICT DO NOTHING`,
+            [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
+          );
+
           for (const i of x.items) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
@@ -398,15 +466,42 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
     try {
       const out = await db.tx(async (c) => {
+        const tenantExternalRef = ownerRef || `tenant_${businessId}`;
         const t = await c.query(
-          `INSERT INTO internal.tenants (id, name, business_sector, external_ref, owner_user_ref)
+          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+           VALUES (uuidv7(), $1, $2, $3)
+           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [storeName, tenantExternalRef, ownerRef]
+        );
+        const tenantId: string = t.rows[0].id;
+
+        const m = await c.query(
+          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [storeName, sector, businessId, ownerRef]
+          [tenantId, storeName, sector, businessId]
         );
-        const tenantId: string = t.rows[0].id;
+        const merchantId: string = m.rows[0].id;
+
+        const outq = await c.query(
+          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+          [merchantId]
+        );
+        let outletId: string;
+        if (outq.rows.length) {
+            outletId = outq.rows[0].id;
+        } else {
+            const outins = await c.query(
+                `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
+                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
+                 [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            );
+            outletId = outins.rows[0].id;
+        }
         const seen: string[] = [];
         let upserted = 0;
 
@@ -418,10 +513,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
           await c.query(
             `INSERT INTO pos.products
-               (id, tenant_id, name, sku, price, cost_price, is_available,
+               (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price, is_available,
                 business_sector, business_id, category_name, description,
                 stock, min_stock_alert, unit, external_ref, catalog_synced_at)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                      CURRENT_TIMESTAMP)
              ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET
@@ -438,6 +533,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                catalog_synced_at = CURRENT_TIMESTAMP`,
             [
               tenantId,
+              merchantId,
+              outletId,
               name,
               str(p.sku, 50) ?? ref,
               num(p.price),

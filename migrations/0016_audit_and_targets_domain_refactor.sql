@@ -92,7 +92,7 @@ COMMENT ON TABLE internal.business_targets IS
 -- 2b. Migrasi data lama dari ai.merchant_targets ke internal.business_targets
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'merchant_targets') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'merchant_targets' AND table_type = 'BASE TABLE') THEN
         INSERT INTO internal.business_targets (id, merchant_id, tenant_id, target_type, target_value, currency, updated_at)
         SELECT 
             legacy_uuid(merchant_id::text || '_monthly_target'),
@@ -107,6 +107,8 @@ BEGIN
         ON CONFLICT (merchant_id, target_type) DO UPDATE SET
             target_value = EXCLUDED.target_value,
             updated_at   = EXCLUDED.updated_at;
+
+        DROP TABLE ai.merchant_targets CASCADE;
     END IF;
 END $$;
 

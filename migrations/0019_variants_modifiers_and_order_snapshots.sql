@@ -159,6 +159,7 @@ SELECT
     o.name                                               AS outlet_name,
     ti.product_id,
     COALESCE(ti.product_name_snapshot, ti.product_name)  AS product_name,
+    ti.category_name,
     ti.variant_id,
     ti.variant_name_snapshot                             AS variant_name,
     ti.sku_snapshot                                      AS sku,

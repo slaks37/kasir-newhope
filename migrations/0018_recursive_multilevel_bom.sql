@@ -123,7 +123,7 @@ WITH RECURSIVE bom_tree AS (
         ri.input_item_type,
         ri.input_item_id,
         ri.quantity                                          AS step_quantity,
-        ri.quantity                                          AS total_effective_quantity,
+        ri.quantity::NUMERIC                                 AS total_effective_quantity,
         ri.unit,
         ri.wastage_percentage,
         1                                                    AS bom_level,

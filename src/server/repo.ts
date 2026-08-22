@@ -289,9 +289,9 @@ export async function transactionDetail(db: Db, id: string) {
   if (!head.rows.length) return null;
 
   const items = await db.query(
-    `SELECT product_name, category_name, business_sector, quantity::int,
-            unit_price, unit_cost, total_price
-       FROM contract.transaction_items WHERE transaction_id = $1 ORDER BY product_name`,
+    `SELECT product_name, variant_name, modifier_snapshot, category_name, business_sector, quantity::int,
+            unit_price, unit_cost, total_price, gross_profit
+       FROM contract.transaction_items_detailed WHERE transaction_id = $1 ORDER BY product_name`,
     [id]
   );
   return { transaction: head.rows[0], items: items.rows };

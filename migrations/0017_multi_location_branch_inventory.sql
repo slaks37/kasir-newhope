@@ -63,6 +63,11 @@ COMMENT ON TABLE pos.inventory_balances IS
 
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'merchant_id') THEN
+        ALTER TABLE pos.inventory_logs ADD COLUMN merchant_id UUID REFERENCES internal.merchants(id) ON DELETE CASCADE;
+        UPDATE pos.inventory_logs SET merchant_id = tenant_id WHERE merchant_id IS NULL;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'outlet_id') THEN
         ALTER TABLE pos.inventory_logs ADD COLUMN outlet_id UUID REFERENCES internal.outlets(id) ON DELETE SET NULL;
     END IF;
@@ -77,6 +82,10 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'item_type') THEN
         ALTER TABLE pos.inventory_logs ADD COLUMN item_type VARCHAR(20) NOT NULL DEFAULT 'INGREDIENT';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pos' AND table_name = 'inventory_logs' AND column_name = 'item_id') THEN
+        ALTER TABLE pos.inventory_logs ADD COLUMN item_id UUID;
     END IF;
 END $$;
 
