@@ -1313,6 +1313,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       discountTotal:
         cart.reduce((sum, i) => sum + i.discountAmount, 0) + loyaltyDiscount + tierDiscount,
       pointsRedeemed: pointsUsed || undefined,
+      // Dicatat saat diberikan, supaya pembatalan bisa mengembalikan persis
+      // sebanyak ini walau aturan poin toko berubah di kemudian hari.
+      pointsEarned:
+        selectedCustomer && settings.enableLoyalty !== false && settings.loyaltyEarnRate > 0
+          ? Math.floor(grandTotal / settings.loyaltyEarnRate)
+          : undefined,
       loyaltyDiscount: loyaltyDiscount || undefined,
       tierDiscount: tierDiscount || undefined,
       taxTotal,
@@ -1605,6 +1611,41 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           expectedCash: Math.max(0, prevShift.initialCash + cashSales),
         };
       });
+    }
+
+    /*
+     * 4. KEMBALIKAN KEADAAN MEMBER.
+     *
+     * Stok dan kas shift sudah dibalik di atas; poin member TIDAK, dan itu
+     * kerusakan yang paling sulit terlihat. Struk yang dibatalkan tetap
+     * meninggalkan poin, kunjungan, dan total belanja pada membernya — lalu
+     * total belanja itulah yang menaikkan tier. Satu salah input yang
+     * dibatalkan kasir bisa mempromosikan pelanggan ke GOLD secara permanen,
+     * dan tidak ada layar mana pun yang menunjukkan sebabnya.
+     *
+     * Poin yang DITUKAR pada transaksi itu ikut dikembalikan: pelanggan
+     * membayar dengan poinnya, dan pembayaran itu batal.
+     */
+    if (targetOrder.customer) {
+      const idMember = targetOrder.customer.id;
+      const poinDidapat = targetOrder.pointsEarned ?? 0;
+      const poinDitukar = targetOrder.pointsRedeemed ?? 0;
+
+      setCustomers((prev) =>
+        prev.map((c) => {
+          if (c.id !== idMember) return c;
+          return {
+            ...c,
+            // Tier TIDAK diturunkan. Total belanja dikoreksi supaya perhitungan
+            // ke depan benar, tapi memberitahu pelanggan "Anda GOLD" lalu
+            // mencabutnya karena kesalahan kasir adalah percakapan yang tidak
+            // perlu ada di depan meja.
+            points: Math.max(0, c.points - poinDidapat + poinDitukar),
+            totalSpent: Math.max(0, c.totalSpent - targetOrder.total),
+            visitCount: Math.max(0, c.visitCount - 1),
+          };
+        })
+      );
     }
 
     if (soundEnabled) playPOSSound('delete');

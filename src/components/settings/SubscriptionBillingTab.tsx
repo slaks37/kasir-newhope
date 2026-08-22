@@ -95,10 +95,17 @@ export const SubscriptionBillingTab: React.FC = () => {
         }),
       });
       const data = await res.json();
-      setProrationData(data);
+      // Server membungkusnya dalam `calculation`. Sebelumnya seluruh balasan
+      // disimpan apa adanya, lalu modal membaca prorationData.currentPlan.name
+      // — yaitu undefined.name, dan modalnya melempar setiap kali dibuka.
+      if (!data?.ok || !data.calculation) {
+        console.error('Kalkulasi upgrade tidak tersedia:', data?.error);
+        return;
+      }
+      setProrationData(data.calculation);
       setShowProrationModal(true);
     } catch (err) {
-      console.error('Gagal menghitung kalkulasi prorasi:', err);
+      console.error('Gagal menghitung kalkulasi upgrade:', err);
     }
   };
 
@@ -499,31 +506,47 @@ export const SubscriptionBillingTab: React.FC = () => {
               </button>
             </div>
 
+            {/*
+              ANGKA DI SINI HARUS ANGKA YANG BENAR-BENAR DITAGIH.
+
+              Versi sebelumnya menampilkan "Kredit Sisa Paket Lama" dan "Total
+              Selisih Prorasi" dari /subscription/prorated-upgrade — sementara
+              yang benar-benar menerbitkan tagihan, /subscription/pay, memakai
+              harga PENUH dari billing.plans. Layar menjanjikan satu angka dan
+              faktur memakai angka lain.
+
+              Yang diperbaiki adalah layarnya, bukan tagihannya, karena
+              tagihannya memang sudah adil: pembayaran MENAMBAH periode pada
+              sisa yang masih berjalan (GREATEST(current_period_end, now) +
+              durasi), jadi merchant tidak kehilangan satu hari pun yang sudah
+              dibayar. Tidak ada yang perlu dikreditkan — mengkreditkannya
+              justru menghitung hari yang sama dua kali.
+            */}
             <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs">
               <div className="flex justify-between text-slate-600">
-                <span>Paket Lama:</span>
-                <span className="font-bold text-slate-800">{prorationData.currentPlan.name}</span>
+                <span>Paket Sekarang:</span>
+                <span className="font-bold text-slate-800">
+                  {prorationData.currentPlan?.name ?? 'Belum berlangganan'}
+                </span>
               </div>
               <div className="flex justify-between text-slate-600">
-                <span>Paket Baru Target:</span>
-                <span className="font-bold text-amber-700">{prorationData.targetPlan.name}</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Sisa Hari Berjalan:</span>
-                <span className="font-bold">{prorationData.remainingDays} Hari</span>
+                <span>Naik ke:</span>
+                <span className="font-bold text-amber-700">{prorationData.targetPlanName}</span>
               </div>
               <div className="flex justify-between text-slate-600 border-t border-slate-200 pt-2">
-                <span>Kredit Sisa Paket Lama:</span>
+                <span>Sisa hari paket sekarang:</span>
                 <span className="font-bold text-emerald-600">
-                  - {formatRupiah(prorationData.unusedCredit)}
+                  {prorationData.daysRemaining} hari &mdash; tetap Anda miliki
                 </span>
               </div>
               <div className="flex justify-between text-slate-900 font-extrabold text-sm border-t border-slate-300 pt-2">
-                <span>Total Selisih Prorasi Dibayar:</span>
-                <span className="text-amber-600">
-                  {formatRupiah(prorationData.netProratedAmount)}
-                </span>
+                <span>Yang ditagih sekarang:</span>
+                <span className="text-amber-600">{formatRupiah(prorationData.targetPriceIdr)}</span>
               </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed pt-1">
+                Masa aktif paket baru <b>ditambahkan</b> pada sisa hari di atas, bukan
+                menggantikannya.
+              </p>
             </div>
 
             <div className="flex justify-end space-x-2 pt-2">

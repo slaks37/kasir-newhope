@@ -279,6 +279,15 @@ export interface Order {
   discountTotal: number;
   /** Poin member yang ditukar pada transaksi ini. Dicetak di struk. */
   pointsRedeemed?: number;
+  /**
+   * Poin yang DIBERIKAN oleh transaksi ini.
+   *
+   * Disimpan, bukan dihitung ulang saat dibutuhkan. Pembatalan harus
+   * mengembalikan persis sebanyak yang dulu diberikan; menghitungnya ulang
+   * memakai loyaltyEarnRate hari ini mengembalikan jumlah yang salah begitu
+   * merchant pernah mengubah aturan poinnya.
+   */
+  pointsEarned?: number;
   /** Bagian discountTotal yang berasal dari penukaran poin. */
   loyaltyDiscount?: number;
   /** Bagian discountTotal yang berasal dari manfaat tier member. */

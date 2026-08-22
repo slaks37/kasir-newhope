@@ -324,8 +324,52 @@ export function computeMarketBasket(orders, opts = {}) {
 
 const idFor = (merchantId, date, category) => `ins-${merchantId}-${date}-${category}`;
 
-export function buildInsightRows(merchantId, date, { reorder, basket }) {
+/**
+ * Member yang berhenti datang.
+ *
+ * Sektor-netral: kafe, laundry, retail, cuci mobil, dan barbershop sama-sama
+ * punya pelanggan berulang. Berbeda dengan LAYOUT_UTILISATION atau
+ * SHIFT_PERFORMANCE yang hanya masuk akal di sebagian sektor — itu sebabnya
+ * keduanya belum ditulis, bukan karena terlupakan.
+ *
+ * Ambangnya 14 hari DAN minimal dua kunjungan. Tanpa syarat kedua, setiap
+ * pelanggan yang baru sekali mampir dan tidak kembali akan muncul sebagai
+ * "churn", dan daftarnya menjadi terlalu panjang untuk ditindaklanjuti.
+ */
+export function buildChurnRow(merchantId, date, lapsedCustomers = []) {
+  if (!lapsedCustomers.length) return null;
+
+  const teratas = lapsedCustomers[0];
+  const nilaiBerisiko = lapsedCustomers.reduce((n, c) => n + Number(c.belanja || 0), 0);
+
+  return {
+    id: idFor(merchantId, date, 'CRM_CHURN'),
+    merchant_id: merchantId,
+    insight_date: date,
+    category: 'CRM_CHURN',
+    priority: lapsedCustomers.length >= 3 ? 1 : 2,
+    title: `${lapsedCustomers.length} member mulai jarang datang`,
+    summary:
+      `${teratas.name} (${teratas.tier}) terakhir belanja ${teratas.hari} hari lalu, ` +
+      `total belanja seumur hidup Rp ${Number(teratas.belanja).toLocaleString('id-ID')}.`,
+    metric_label: `Rp ${Math.round(nilaiBerisiko).toLocaleString('id-ID')} berisiko`,
+    payload: {
+      kind: 'CRM_CHURN',
+      customers: lapsedCustomers.map((c) => ({
+        name: c.name, tier: c.tier,
+        daysSinceLastVisit: Number(c.hari),
+        lifetimeSpent: Number(c.belanja),
+      })),
+    },
+    actions: [{ label: 'Buka Member', kind: 'OPEN_CUSTOMERS' }],
+  };
+}
+
+export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCustomers }) {
   const rows = [];
+
+  const churn = buildChurnRow(merchantId, date, lapsedCustomers);
+  if (churn) rows.push(churn);
 
   if (reorder.length > 0) {
     const urgent = reorder.filter((r) => r.severity === 'OUT_OF_STOCK' || r.severity === 'CRITICAL');
@@ -414,6 +458,20 @@ async function loadMerchantData(client, merchantId, windowDays) {
   const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE tenant_id = $1', [merchantId]);
   const logs = await client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE tenant_id = $1 AND created_at >= $2", [merchantId, since]);
 
+  // Member yang dulu datang lalu berhenti. Dibaca dari contract.customer_rfm —
+  // permukaan yang sama dengan yang dipakai AI Copilot, supaya angka di kartu
+  // insight dan angka yang disebut asisten tidak pernah berbeda.
+  const lapsed = await client.query(
+    `SELECT name, tier, days_since_last_transaction AS hari, lifetime_spent_recorded AS belanja
+       FROM contract.customer_rfm
+      WHERE merchant_id = $1
+        AND days_since_last_transaction > 14
+        AND transaction_count > 1
+      ORDER BY lifetime_spent_recorded DESC
+      LIMIT 5`,
+    [merchantId]
+  );
+
   const itemsByTx = new Map();
   for (const li of items.rows) {
     if (!itemsByTx.has(li.transaction_id)) itemsByTx.set(li.transaction_id, []);
@@ -421,6 +479,7 @@ async function loadMerchantData(client, merchantId, windowDays) {
   }
 
   return {
+    lapsedCustomers: lapsed.rows,
     products: products.rows,
     stockItems: stockItems.rows,
     inventoryLogs: logs.rows,
@@ -533,7 +592,7 @@ async function main() {
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket });
+    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket, lapsedCustomers: data.lapsedCustomers });
 
     console.log(JSON.stringify({ mode: 'DRY_RUN', insightDate, rows }, null, 2));
     log(`Done in ${Date.now() - startedAt} ms — ${rows.length} insight(s) computed, 0 written.`);
@@ -550,7 +609,7 @@ async function main() {
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket });
+    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket, lapsedCustomers: data.lapsedCustomers });
 
     await client.query('BEGIN');
     const written = await upsertInsights(client, rows);
