@@ -46,6 +46,7 @@ const MIGRATIONS = [
   'migrations/0026_event_dan_ledger.sql',
   'migrations/0027_kredit_ai_ledger.sql',
   'migrations/0028_langganan_per_merchant.sql',
+  'migrations/0029_kredit_yatim.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

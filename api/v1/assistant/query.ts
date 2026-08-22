@@ -1,6 +1,8 @@
 import pg from 'pg';
 import { resolveTenantId } from '../../_lib/tenant.js';
 import { jagaModul } from '../../_lib/entitlementGuard.js';
+import { rutekan } from '../../../src/lib/assistant/router.js';
+import type { IntentName } from '../../../src/lib/assistant/types.js';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -20,19 +22,34 @@ function getPool() {
   return pool;
 }
 
-/** Keyword-based intent matching — deterministic, free. */
-function matchIntent(q: string): { intent: string; markdown: string; title: string } | null {
+/**
+ * Pencocokan intent berbasis kata kunci — deterministik, gratis.
+ *
+ * NAMA INTENT-NYA DARI IntentName, bukan kosakata sendiri.
+ *
+ * Berkas ini dulu menghasilkan 'REVENUE_ANALYSIS', 'STOCK_MANAGEMENT',
+ * 'MARKETING_PROMO' — empat nama yang tidak ada di tipe IntentName yang dipakai
+ * seluruh sisa sistem. Satu konsep dengan dua kosakata berarti router tidak
+ * bisa mengenali apa pun yang keluar dari sini, dan setiap penyatuan berikutnya
+ * harus menerjemahkan lebih dulu.
+ *
+ * `confidence` diberikan di sini karena router memerlukannya. Nilainya
+ * mencerminkan seberapa spesifik polanya, bukan tebakan.
+ */
+function matchIntent(
+  q: string
+): { intent: IntentName; title: string; confidence: number } | null {
   if (/omzet|penjualan|pendapatan|revenue|pemasukan/.test(q)) {
-    return { intent: 'REVENUE_ANALYSIS', title: 'Analisa Omzet', markdown: '__NEEDS_DATA__' };
+    return { intent: 'GET_REVENUE_SUMMARY', title: 'Analisa Omzet', confidence: 0.8 };
   }
   if (/stok|menipis|habis|restok|inventori/.test(q)) {
-    return { intent: 'STOCK_MANAGEMENT', title: 'Manajemen Stok', markdown: '__NEEDS_DATA__' };
+    return { intent: 'GET_STOCK_CRITICAL', title: 'Manajemen Stok', confidence: 0.8 };
   }
   if (/promo|diskon|promosi|voucher/.test(q)) {
-    return { intent: 'MARKETING_PROMO', title: 'Strategi Promo', markdown: '__NEEDS_DATA__' };
+    return { intent: 'GET_PROMO_LIST', title: 'Strategi Promo', confidence: 0.7 };
   }
   if (/pelanggan|customer|loyalti|setia/.test(q)) {
-    return { intent: 'CRM_CHURN', title: 'Analisa Pelanggan', markdown: '__NEEDS_DATA__' };
+    return { intent: 'GET_CHURN_CUSTOMERS', title: 'Analisa Pelanggan', confidence: 0.75 };
   }
   return null;
 }
@@ -144,12 +161,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
 
   const body = req.body ?? {};
-  const merchantId: string = body.merchantId || 'usr-1_FNB';
+
+  /*
+   * IDENTITAS WAJIB, TIDAK ADA BAWAAN.
+   *
+   * Baris ini dulu berbunyi `body.merchantId || 'usr-1_FNB'`. Permintaan tanpa
+   * identitas apa pun karena itu dijawab SEBAGAI merchant usr-1: siapa pun yang
+   * mengirim POST kosong ke endpoint ini membaca omzet, jumlah transaksi, dan
+   * produk terlaris milik toko orang lain. Bawaannya kemungkinan besar sisa
+   * masa pengembangan, dan tidak pernah dicabut.
+   *
+   * Namanya juga diperbaiki. Yang dikirim klien adalah kunci UNIT USAHA
+   * (`usr-budi_FNB`), bukan merchant — dan sejak 0025 merchant adalah entitas
+   * tersendiri yang berarti PEMILIK. `merchantId` tetap diterima supaya klien
+   * yang sudah terlanjur ter-deploy tidak patah, tapi bukan lagi nama utamanya.
+   */
+  const businessId: string = String(body.businessId || body.merchantId || '').trim();
   const queryText: string = (body.query || '').trim();
   const q = queryText.toLowerCase();
   const ctx = body.storeContext ?? {};
   const storeName: string = ctx.storeName || body.storeName || 'Toko Anda';
   const businessSector: string = ctx.businessSector || 'FNB';
+
+  if (!businessId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'BAD_REQUEST',
+      detail: 'businessId wajib diisi.',
+    });
+  }
 
   const db = getPool();
 
@@ -191,13 +231,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let lapsedCustomers: Array<{ name: string; tier: string; hari: number; belanja: string }> = [];
 
     try {
-      // merchantId arrives as a business unit key (`usr-1_FNB`) or an account
-      // ref (`usr-1`), never as the tenant UUID the tables are keyed by.
-      tenantId = await resolveTenantId(db, merchantId);
+      // businessId arrives as a business unit key (`usr-budi_FNB`) or an
+      // account ref (`usr-budi`), never as the UUID the tables are keyed by.
+      tenantId = await resolveTenantId(db, businessId);
 
       if (!tenantId) {
         // Not an error: a merchant that has never synced simply has no rows yet.
-        console.warn(`[query] merchant belum tersinkronisasi: ${merchantId}`);
+        console.warn(`[query] unit usaha belum tersinkronisasi: ${businessId}`);
       } else {
 
         const stats = await db.query(
@@ -287,12 +327,91 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `Transaksi ${storeName} belum selesai tersinkronisasi, jadi angkanya belum bisa ditampilkan di sini. ` +
       `Periksa indikator sinkronisasi di aplikasi kasir, lalu coba lagi.`;
 
-    // --- Deterministic path (gratis) ---
+    /* --- ROUTER: EMPAT PERTIMBANGAN, BUKAN SATU ANGKA -------------------
+     *
+     * Sebelum ini urutannya sederhana: kalau kata kuncinya cocok, jawab dengan
+     * angka; kalau tidak, panggil model. Akibatnya "kenapa omzet saya turun?"
+     * cocok dengan pola /omzet/ dan dijawab tabel omzet — benar secara
+     * harfiah, dan sama sekali bukan jawaban atas pertanyaannya.
+     *
+     * rutekan() memisahkan izin, kemampuan menjawab dengan angka, ketersediaan
+     * insight, dan kebutuhan penalaran menjadi empat pertimbangan yang berdiri
+     * sendiri. Yang menentukan bukan seberapa yakin pencocok pola, melainkan
+     * apakah pertanyaannya bisa dijawab tanpa menghubungkan beberapa fakta.
+     */
     const matched = matchIntent(q);
 
-    if (matched) {
+    // Apakah batch semalam meninggalkan sesuatu yang bisa menjawab. Ditanyakan
+    // SEBELUM merutekan, karena "ada insight" adalah salah satu pertimbangan.
+    let insightTersedia: Map<string, any> = new Map();
+    if (tenantId) {
+      try {
+        const { rows } = await db.query(
+          `SELECT category, title, summary, metric_label, insight_date
+             FROM ai.daily_merchant_insights
+            WHERE business_id = $1 AND status = 'ACTIVE'
+              AND insight_date >= CURRENT_DATE - 2`,
+          [tenantId]
+        );
+        insightTersedia = new Map(rows.map((r: any) => [r.category, r]));
+      } catch (e: any) {
+        console.error('[query] gagal membaca insight batch:', e?.message);
+      }
+    }
+
+    const rute = rutekan({
+      parsed: {
+        intent: matched?.intent ?? 'UNKNOWN',
+        confidence: matched?.confidence ?? 0,
+        entities: {},
+        matchedKeywords: [],
+      },
+      pertanyaan: q,
+      // Sampai di sini jagaModul sudah lolos, jadi modul AI pasti terbuka.
+      modulTerbuka: ['ai'],
+      adaInsightBatch: insightTersedia.size > 0,
+    });
+
+    /* --- LAPISAN 2: insight batch (gratis) ------------------------------ */
+    //
+    // Angkanya sudah dihitung semalam. Menjawab dari sini tidak memanggil model
+    // dan tidak menagih kredit — dan jawabannya sama persis dengan kartu
+    // insight yang dilihat merchant, jadi asisten tidak pernah menyebut angka
+    // yang berbeda dari layarnya sendiri.
+    if (rute.lapisan === 'ANALITIK' && rute.kategoriInsight) {
+      const kartu = insightTersedia.get(rute.kategoriInsight);
+      if (kartu) {
+        const umurHari = Math.round(
+          (Date.now() - new Date(kartu.insight_date).getTime()) / 86_400_000
+        );
+        const catatanUmur =
+          umurHari >= 1
+            ? `\n\n_Dihitung ${umurHari} hari lalu; angka hari ini bisa berbeda._`
+            : '';
+        return answer(
+          `**${kartu.title}**\n\n${kartu.summary}\n\n\`${kartu.metric_label}\`${catatanUmur}`,
+          'BATCH_INSIGHT',
+          kartu.title,
+          matched?.intent ?? 'UNKNOWN',
+          0
+        );
+      }
+    }
+
+    /* --- LAPISAN 1: deterministik (gratis) ------------------------------ */
+    //
+    // Syaratnya "BUKAN penalaran", bukan "DETERMINISTIK". Dua alasan:
+    //
+    //   1. Inilah yang menahan pertanyaan "kenapa/sebaiknya/bagaimana caranya"
+    //      supaya tidak dijawab tabel angka hanya karena kata kuncinya cocok.
+    //   2. Pertanyaan berlapisan ANALITIK yang kartunya kebetulan belum ada
+    //      harus jatuh ke sini, BUKAN ke model. Menuliskannya sebagai
+    //      `=== 'DETERMINISTIK'` membuat pertanyaan stok dan pelanggan —
+    //      selama ini gratis — mulai menagih kredit begitu batch semalam
+    //      belum sempat berjalan.
+    if (matched && rute.lapisan !== 'PENALARAN') {
       let markdown = '';
-      if (matched.intent === 'REVENUE_ANALYSIS') {
+      if (matched.intent === 'GET_REVENUE_SUMMARY') {
         const avg = orderCount > 0 ? Math.round(revenueSum / orderCount) : 0;
         markdown =
           dataSource !== 'DATABASE'
@@ -302,20 +421,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               `- **Jumlah Transaksi:** ${orderCount} struk\n` +
               `- **Rata-rata per Transaksi:** ${fmtRp(avg)}\n\n` +
               `💡 Dorong penjualan produk bundling atau up-selling untuk meningkatkan nilai rata-rata transaksi.`;
-      } else if (matched.intent === 'STOCK_MANAGEMENT') {
+      } else if (matched.intent === 'GET_STOCK_CRITICAL') {
         markdown =
           dataSource !== 'DATABASE'
             ? belumAdaData
             : `**Status Stok — ${storeName}**\n\n` +
               `Produk terlaris minggu ini: ${topProducts.join(', ') || 'belum ada data'}\n\n` +
               `💡 Restok produk-produk terlaris sebelum akhir pekan untuk menghindari kehabisan stok saat lonjakan transaksi.`;
-      } else if (matched.intent === 'MARKETING_PROMO') {
+      } else if (matched.intent === 'GET_PROMO_LIST') {
         markdown =
           `**Ide Promo untuk ${storeName}**\n\n` +
           `- **Happy Hour:** Diskon 10-15% pukul 14:00–16:00\n` +
           `- **Bundle Hemat:** Paket makanan + minuman lebih hemat Rp 5.000\n` +
           `- **Loyalty:** Poin ganda untuk pembayaran QRIS`;
-      } else if (matched.intent === 'CRM_CHURN') {
+      } else if (matched.intent === 'GET_CHURN_CUSTOMERS') {
         if (dataSource !== 'DATABASE') {
           markdown = belumAdaData;
         } else if (!lapsedCustomers.length) {

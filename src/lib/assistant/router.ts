@@ -34,7 +34,7 @@
  * diuji tanpa memanggil apa pun.
  */
 
-import type { ParsedIntent } from './types';
+import type { ParsedIntent, IntentName, InsightCategory } from './types';
 
 export type Lapisan = 'TOLAK' | 'DETERMINISTIK' | 'ANALITIK' | 'PENALARAN';
 
@@ -44,6 +44,8 @@ export interface KeputusanRute {
   alasan: string;
   /** Kredit yang akan ditagih. Hanya lapisan penalaran yang berbayar. */
   biaya: 0 | 1;
+  /** Kartu insight mana yang menjawabnya. Hanya terisi pada lapisan ANALITIK. */
+  kategoriInsight?: InsightCategory;
 }
 
 /**
@@ -62,19 +64,34 @@ const POLA_PENALARAN: readonly RegExp[] = [
 ];
 
 /**
- * Pertanyaan yang jawabannya sudah dihitung batch semalam.
+ * Pertanyaan yang jawabannya sudah dihitung batch semalam, dan kategori
+ * insight mana yang menjawabnya.
  *
  * Bukan penalaran — angkanya ADA, hanya saja mahal dihitung saat ditanya, jadi
  * dihitung lebih dulu. Menjawabnya tidak perlu memanggil model.
+ *
+ * NAMANYA HARUS DARI IntentName. Versi pertama daftar ini memakai kosakata
+ * sendiri ('SLOW_MOVING', 'CHURN_RISK') yang tidak pernah dihasilkan pencocok
+ * intent mana pun — jadi lapisan analitik tidak pernah terpilih satu kali pun,
+ * dan setiap pertanyaan yang seharusnya gratis jatuh ke LLM yang berbayar.
+ * Kegagalan seperti itu tidak memunculkan galat; ia hanya muncul sebagai
+ * tagihan.
  */
-const INTENT_ANALITIK: readonly string[] = [
-  'SLOW_MOVING',
-  'CROSS_SELL',
-  'CHURN_RISK',
-  'BASKET_ANALYSIS',
-  'REORDER_SUGGESTION',
-  'CUSTOMER_SEGMENT',
-];
+export const INTENT_KE_INSIGHT: Readonly<Partial<Record<IntentName, InsightCategory>>> = {
+  GET_SLOW_MOVING: 'INVENTORY_ALERT',
+  GET_STOCK_CRITICAL: 'INVENTORY_ALERT',
+  GET_STOCK_FORECAST: 'INVENTORY_ALERT',
+  GET_CROSS_SELL: 'CROSS_SELL_OPPORTUNITY',
+  GET_CHURN_CUSTOMERS: 'CRM_CHURN',
+  GET_PEAK_HOURS: 'OPERATIONAL_PEAK',
+  GET_CALENDAR_PATTERN: 'CALENDAR_BEHAVIOR',
+  GET_SHIFT_PERFORMANCE: 'SHIFT_PERFORMANCE',
+  GET_STAFF_PERFORMANCE: 'STAFF_BEHAVIOUR',
+  GET_PROFIT_MARGIN: 'FINANCIAL_PERFORMANCE',
+};
+
+const INTENT_ANALITIK: readonly IntentName[] =
+  Object.keys(INTENT_KE_INSIGHT) as IntentName[];
 
 export interface MasukanRute {
   parsed: ParsedIntent;
@@ -116,7 +133,12 @@ export function rutekan(m: MasukanRute): KeputusanRute {
   if (INTENT_ANALITIK.includes(m.parsed.intent)) {
     return m.adaInsightBatch === false
       ? { lapisan: 'PENALARAN', alasan: 'INSIGHT_BATCH_BELUM_ADA', biaya: 1 }
-      : { lapisan: 'ANALITIK', alasan: 'INSIGHT_TERSEDIA', biaya: 0 };
+      : {
+          lapisan: 'ANALITIK',
+          alasan: 'INSIGHT_TERSEDIA',
+          biaya: 0,
+          kategoriInsight: INTENT_KE_INSIGHT[m.parsed.intent],
+        };
   }
 
   // LAPISAN 1 — deterministik. Angka yang bisa dihitung langsung dari data.

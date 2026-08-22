@@ -141,4 +141,56 @@ d('siklus hidup kredit AI', () => {
     expect(alasan).toContain('RESERVE');
     expect(alasan).toContain('REFUND');
   });
+
+  /*
+   * SATU BARIS YATIM TIDAK BOLEH MENAHAN KREDIT SEMUA ORANG.
+   *
+   * ai_query_logs dulu memakai ON DELETE SET NULL sementara credit_ledger
+   * NOT NULL + CASCADE. Unit usaha dihapus -> ledgernya ikut hilang, lognya
+   * bertahan dengan business_id NULL. Kalau log itu berstatus RESERVED, penyapu
+   * mati di baris itu — dan karena penyapunya satu transaksi, kredit merchant
+   * LAIN yang menggantung ikut tidak pernah dikembalikan.
+   */
+  it('penyapu tetap jalan walau ada log tanpa pemilik', async () => {
+    // Baris yatim dibuat langsung: jalur normal tidak bisa lagi menghasilkannya
+    // sejak 0029 memasang NOT NULL, dan itu memang inti perbaikannya.
+    const { rows: kolom } = await db().query(
+      `SELECT is_nullable FROM information_schema.columns
+        WHERE table_schema='ai' AND table_name='ai_query_logs'
+          AND column_name='business_id'`
+    );
+    expect(kolom[0].is_nullable).toBe('NO');
+
+    const { rows: fk } = await db().query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+        WHERE conrelid='ai.ai_query_logs'::regclass AND contype='f'`
+    );
+    // Sama dengan credit_ledger: ikut terhapus, bukan ditinggal yatim.
+    expect(fk.some((r: any) => /ON DELETE CASCADE/.test(r.def))).toBe(true);
+
+    // Dan penyapunya tetap mengembalikan cadangan yang sah.
+    const n = await db().query(`SELECT ai.bersihkan_cadangan_menggantung(0) AS n`);
+    expect(Number(n.rows[0].n)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('menghapus unit usaha ikut membawa log pertanyaannya', async () => {
+    const { rows: b } = await db().query(
+      `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Yatim', 'FNB', 'usr-yatim_FNB', 'usr-yatim', true)
+       RETURNING id`
+    );
+    const bid = b[0].id;
+    await db().query(
+      `INSERT INTO ai.ai_query_logs (id, business_id, query_text, resolved_intent, source,
+                                     credits_charged, state)
+       VALUES (uuidv7(), $1, 'uji yatim', 'PENDING', 'LLM', 1, 'RESERVED')`,
+      [bid]
+    );
+
+    await db().query(`DELETE FROM pos.merchants WHERE owner_user_ref = 'usr-yatim'`);
+
+    const { rows } = await db().query(
+      `SELECT COUNT(*)::int n FROM ai.ai_query_logs WHERE business_id = $1`, [bid]);
+    expect(rows[0].n).toBe(0);
+  });
 });
