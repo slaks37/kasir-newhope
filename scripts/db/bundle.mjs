@@ -29,6 +29,7 @@ const MIGRATIONS = [
   'migrations/0009_service_schemas.sql',
   'migrations/0010_credit_uuid.sql',
   'migrations/0011_identity_grants.sql',
+  'migrations/0012_contract_inventory_and_clean_views.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

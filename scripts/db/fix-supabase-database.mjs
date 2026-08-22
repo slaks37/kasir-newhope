@@ -120,33 +120,64 @@ async function fixSupabase() {
   `);
   console.log('✓ Akun toko, langganan & kredit AI Budi Santoso berhasil disinkronkan.');
 
-  console.log('5. Memperbarui Views Publik untuk Kompatibilitas Supabase Studio...');
+  console.log('5. Memperbarui Views Kontrak & Sanitasi Public (Tanpa Bocoran PIN/Tabel Mentah)...');
   await client.query(`
-    -- Create convenience views in public schema so Supabase table editor or standard queries see them
-    CREATE OR REPLACE VIEW public.v_pos_transactions AS
-      SELECT * FROM pos.transactions;
+    -- 1. Buat view kontrak inventori
+    DROP VIEW IF EXISTS contract.inventory_movements CASCADE;
+    CREATE OR REPLACE VIEW contract.inventory_movements AS
+    SELECT
+        l.id                                               AS movement_id,
+        l.tenant_id                                        AS merchant_id,
+        t.name                                             AS merchant_name,
+        t.business_sector,
+        l.ingredient_id,
+        i.name                                             AS ingredient_name,
+        i.sku                                              AS ingredient_sku,
+        i.unit                                             AS ingredient_unit,
+        l.transaction_id,
+        l.quantity_changed,
+        l.previous_stock,
+        l.new_stock,
+        l.reason,
+        l.created_at
+      FROM pos.inventory_logs l
+      JOIN pos.tenants t          ON t.id = l.tenant_id
+      LEFT JOIN pos.ingredients i ON i.id = l.ingredient_id;
 
-    CREATE OR REPLACE VIEW public.v_pos_products AS
-      SELECT * FROM pos.products;
+    -- 2. Hapus view bypass mentah yang tidak aman
+    DROP VIEW IF EXISTS public.v_pos_transactions        CASCADE;
+    DROP VIEW IF EXISTS public.v_pos_products            CASCADE;
+    DROP VIEW IF EXISTS public.v_pos_tenants             CASCADE;
+    DROP VIEW IF EXISTS public.v_pos_users               CASCADE;
+    DROP VIEW IF EXISTS public.v_billing_plans           CASCADE;
+    DROP VIEW IF EXISTS public.v_billing_subscriptions   CASCADE;
+    DROP VIEW IF EXISTS public.v_ai_insights             CASCADE;
 
-    CREATE OR REPLACE VIEW public.v_pos_tenants AS
-      SELECT * FROM pos.tenants;
+    -- 3. Buat view public yang hanya membaca contract.* (tersanitasi)
+    CREATE OR REPLACE VIEW public.v_merchant_directory AS
+      SELECT * FROM contract.merchant_directory;
 
-    CREATE OR REPLACE VIEW public.v_pos_users AS
-      SELECT * FROM pos.users;
+    CREATE OR REPLACE VIEW public.v_merchant_revenue AS
+      SELECT * FROM contract.merchant_revenue;
 
-    CREATE OR REPLACE VIEW public.v_billing_plans AS
-      SELECT * FROM billing.plans;
+    CREATE OR REPLACE VIEW public.v_catalog AS
+      SELECT * FROM contract.catalog;
 
-    CREATE OR REPLACE VIEW public.v_billing_subscriptions AS
-      SELECT * FROM billing.subscriptions;
+    CREATE OR REPLACE VIEW public.v_stock_status AS
+      SELECT * FROM contract.stock_status;
 
-    CREATE OR REPLACE VIEW public.v_ai_insights AS
-      SELECT * FROM ai.daily_merchant_insights;
+    CREATE OR REPLACE VIEW public.v_subscription_status AS
+      SELECT * FROM contract.subscription_status;
+
+    CREATE OR REPLACE VIEW public.v_transaction_log AS
+      SELECT * FROM contract.transaction_log;
+
+    CREATE OR REPLACE VIEW public.v_inventory_movements AS
+      SELECT * FROM contract.inventory_movements;
   `);
-  console.log('✓ Public compatibility views siap.');
+  console.log('✓ Public sanitized compatibility views siap.');
 
-  console.log('6. Memeriksa Status RLS (Row Level Security)...');
+  console.log('6. Menegakkan PostgreSQL Row Level Security (RLS) sebagai Lapisan Otorisasi Database...');
   await client.query(`
     ALTER TABLE pos.tenants ENABLE ROW LEVEL SECURITY;
     ALTER TABLE pos.users ENABLE ROW LEVEL SECURITY;
@@ -180,7 +211,7 @@ async function fixSupabase() {
       END LOOP;
     END $$;
   `);
-  console.log('✓ RLS Policies terpasang dengan aman.');
+  console.log('✓ RLS Policies terpasang dengan aman sebagai security filter.');
 
   await client.end();
   console.log('\n===============================================================');

@@ -194,12 +194,12 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0001_compat.
 -- New Hope POS SaaS Multi-Tenant Architecture
 
 -- 1. Enum Types for Subscription & Payment Status
-DO $$ BEGIN CREATE TYPE billing_cycle_enum AS ENUM ('MONTHLY', 'YEARLY'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE subscription_status_enum AS ENUM ('TRIAL', 'ACTIVE', 'PAST_DUE', 'EXPIRED', 'CANCELED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE payment_status_enum AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE TYPE billing_cycle_enum AS ENUM ('MONTHLY', 'YEARLY');
+CREATE TYPE subscription_status_enum AS ENUM ('TRIAL', 'ACTIVE', 'PAST_DUE', 'EXPIRED', 'CANCELED');
+CREATE TYPE payment_status_enum AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED');
 
 -- 2. Plans Table
-CREATE TABLE IF NOT EXISTS plans (
+CREATE TABLE plans (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     tier_level INT NOT NULL DEFAULT 1, -- 1: Basic, 2: Pro, 3: Enterprise
@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 
 -- 3. Subscriptions Table
-CREATE TABLE IF NOT EXISTS subscriptions (
+CREATE TABLE subscriptions (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
     plan_id VARCHAR(64) NOT NULL REFERENCES plans(id),
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 -- 4. Invoices / Transactions Table
-CREATE TABLE IF NOT EXISTS invoices (
+CREATE TABLE invoices (
     id VARCHAR(64) PRIMARY KEY,
     subscription_id VARCHAR(64) NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
     tenant_id VARCHAR(64) NOT NULL,
@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 
 -- 5. Webhook Logs Table (For Idempotency)
-CREATE TABLE IF NOT EXISTS webhook_logs (
+CREATE TABLE webhook_logs (
     id VARCHAR(64) PRIMARY KEY,
     event_id VARCHAR(128) NOT NULL UNIQUE,
     event_type VARCHAR(64) NOT NULL,
@@ -253,9 +253,9 @@ CREATE TABLE IF NOT EXISTS webhook_logs (
 );
 
 -- Indexing for High Performance Lookup
-CREATE INDEX IF NOT EXISTS idx_subscriptions_tenant_status ON subscriptions(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id);
-CREATE INDEX IF NOT EXISTS idx_invoices_tenant ON invoices(tenant_id);
+CREATE INDEX idx_subscriptions_tenant_status ON subscriptions(tenant_id, status);
+CREATE INDEX idx_invoices_subscription ON invoices(subscription_id);
+CREATE INDEX idx_invoices_tenant ON invoices(tenant_id);
 
 INSERT INTO public.schema_migrations (filename) VALUES ('schema.sql')
   ON CONFLICT (filename) DO NOTHING;
@@ -269,7 +269,7 @@ INSERT INTO public.schema_migrations (filename) VALUES ('schema.sql')
 -- Includes Bill of Materials (BOM) Recipe Stock Deduction & Analytics Indexes
 
 -- 1. Tenants & Users (Multi-Tenancy & Access Control)
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE tenants (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     business_sector VARCHAR(32) NOT NULL DEFAULT 'FNB',
@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- 2. Raw Materials & Ingredients (Inventory Management)
-CREATE TABLE IF NOT EXISTS ingredients (
+CREATE TABLE ingredients (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -302,7 +302,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
 );
 
 -- 3. Products Catalog
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE products (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 -- 4. Bill of Materials (Product Recipe Mapping BOM)
-CREATE TABLE IF NOT EXISTS product_recipes (
+CREATE TABLE product_recipes (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     product_id VARCHAR(64) NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS product_recipes (
 );
 
 -- 5. Financial Transactions & Line Items
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE transactions (
     id VARCHAR(64) PRIMARY KEY, -- e.g. INV-20260811-001
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     cashier_user_id VARCHAR(64) NOT NULL REFERENCES users(id),
@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS transaction_items (
+CREATE TABLE transaction_items (
     id VARCHAR(64) PRIMARY KEY,
     transaction_id VARCHAR(64) NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
     tenant_id VARCHAR(64) NOT NULL,
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS transaction_items (
 );
 
 -- 6. Inventory Deduction Log Audit Trail
-CREATE TABLE IF NOT EXISTS inventory_logs (
+CREATE TABLE inventory_logs (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
     ingredient_id VARCHAR(64) NOT NULL REFERENCES ingredients(id),
@@ -364,9 +364,9 @@ CREATE TABLE IF NOT EXISTS inventory_logs (
 );
 
 -- High-Performance Analytics Indexes
-CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_transaction_items_tenant_product ON transaction_items(tenant_id, product_id);
-CREATE INDEX IF NOT EXISTS idx_inventory_logs_tenant_ingredient ON inventory_logs(tenant_id, ingredient_id, created_at DESC);
+CREATE INDEX idx_transactions_tenant_date ON transactions(tenant_id, created_at DESC);
+CREATE INDEX idx_transaction_items_tenant_product ON transaction_items(tenant_id, product_id);
+CREATE INDEX idx_inventory_logs_tenant_ingredient ON inventory_logs(tenant_id, ingredient_id, created_at DESC);
 
 INSERT INTO public.schema_migrations (filename) VALUES ('schema_hybrid_pos.sql')
   ON CONFLICT (filename) DO NOTHING;
@@ -2850,6 +2850,121 @@ BEGIN
 END $$;
 
 INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0011_identity_grants.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 13: migrations/0012_contract_inventory_and_clean_views.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0012_contract_inventory_and_clean_views.sql
+--
+-- 1. Menambahkan view kontrak `contract.inventory_movements` untuk domain stok.
+-- 2. Membersihkan view pintasan (bypass views) yang mengekspos tabel mentah
+--    ke skema public (seperti v_pos_users yang mengekspos PIN).
+-- 3. Memastikan skema public hanya memiliki view teranotasi dan tersanitasi
+--    yang merujuk ke skema `contract`.
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+-- 1. KONTRAK INVENTORI & MUTASI STOK -----------------------------------------
+
+DROP VIEW IF EXISTS contract.inventory_movements CASCADE;
+CREATE VIEW contract.inventory_movements AS
+SELECT
+    l.id                                               AS movement_id,
+    l.tenant_id                                        AS merchant_id,
+    t.name                                             AS merchant_name,
+    t.business_sector,
+    l.ingredient_id,
+    i.name                                             AS ingredient_name,
+    i.sku                                              AS ingredient_sku,
+    i.unit                                             AS ingredient_unit,
+    l.transaction_id,
+    l.quantity_changed,
+    l.previous_stock,
+    l.new_stock,
+    l.reason,
+    l.created_at
+  FROM pos.inventory_logs l
+  JOIN pos.tenants t          ON t.id = l.tenant_id
+  LEFT JOIN pos.ingredients i ON i.id = l.ingredient_id;
+
+COMMENT ON VIEW contract.inventory_movements IS
+    'Definisi tunggal mutasi stok dan inventori lintas merchant. Sumber data resmi untuk audit stok, AI inventory assistant, dan backoffice.';
+
+
+-- 2. PEMBERSIHAN VIEW BYPASS DI PUBLIC ---------------------------------------
+-- View yang melakukan `SELECT * FROM pos.*` atau `SELECT * FROM billing.*`
+-- membocorkan kolom rahasia (seperti pin kasir di pos.users).
+
+DROP VIEW IF EXISTS public.v_pos_transactions        CASCADE;
+DROP VIEW IF EXISTS public.v_pos_products            CASCADE;
+DROP VIEW IF EXISTS public.v_pos_tenants             CASCADE;
+DROP VIEW IF EXISTS public.v_pos_users               CASCADE;
+DROP VIEW IF EXISTS public.v_billing_plans           CASCADE;
+DROP VIEW IF EXISTS public.v_billing_subscriptions   CASCADE;
+DROP VIEW IF EXISTS public.v_ai_insights             CASCADE;
+
+
+-- 3. VIEW KOMPATIBILITAS PUBLIK BERSIH (HANYA MERUJUK CONTRACT) -------------
+
+CREATE OR REPLACE VIEW public.v_merchant_directory AS
+  SELECT * FROM contract.merchant_directory;
+
+CREATE OR REPLACE VIEW public.v_merchant_revenue AS
+  SELECT * FROM contract.merchant_revenue;
+
+CREATE OR REPLACE VIEW public.v_catalog AS
+  SELECT * FROM contract.catalog;
+
+CREATE OR REPLACE VIEW public.v_stock_status AS
+  SELECT * FROM contract.stock_status;
+
+CREATE OR REPLACE VIEW public.v_subscription_status AS
+  SELECT * FROM contract.subscription_status;
+
+CREATE OR REPLACE VIEW public.v_transaction_log AS
+  SELECT * FROM contract.transaction_log;
+
+CREATE OR REPLACE VIEW public.v_inventory_movements AS
+  SELECT * FROM contract.inventory_movements;
+
+
+-- 4. HAK AKSES PERAN ---------------------------------------------------------
+
+DO $$
+DECLARE
+    svc TEXT;
+    services TEXT[] := ARRAY['pos','billing','ai','internal'];
+BEGIN
+    FOREACH svc IN ARRAY services LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_' || svc) THEN
+            EXECUTE format('GRANT SELECT ON contract.inventory_movements TO %I', 'svc_' || svc);
+        END IF;
+    END LOOP;
+
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bi_readonly') THEN
+        GRANT SELECT ON contract.inventory_movements TO bi_readonly;
+    END IF;
+
+    -- Grant SELECT on sanitized public views to standard roles
+    FOREACH svc IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = svc) THEN
+            EXECUTE format('GRANT SELECT ON public.v_merchant_directory TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_merchant_revenue TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_catalog TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_stock_status TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_subscription_status TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_transaction_log TO %I', svc);
+            EXECUTE format('GRANT SELECT ON public.v_inventory_movements TO %I', svc);
+        END IF;
+    END LOOP;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0012_contract_inventory_and_clean_views.sql')
   ON CONFLICT (filename) DO NOTHING;
 
 
