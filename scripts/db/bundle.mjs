@@ -37,6 +37,7 @@ const MIGRATIONS = [
   'migrations/0017_multi_location_branch_inventory.sql',
   'migrations/0018_recursive_multilevel_bom.sql',
   'migrations/0019_variants_modifiers_and_order_snapshots.sql',
+  'migrations/0020_separate_orders_and_payments.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

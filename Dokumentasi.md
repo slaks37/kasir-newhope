@@ -217,6 +217,47 @@ Item: Latte (Variant: Large, Rp 32.000)
 
 ---
 
+### 💳 2.4 Pemisahan Daur Hidup Pesanan (Order) vs Pembayaran (Payment)
+
+Untuk mendukung *Split Payment*, *Multi-Tender*, *Partial Payment*, dan pencegahan *Fraud* pada pembayaran digital (QRIS/EDC):
+
+```
+┌────────────────────────────────────────────────────────┐
+│             ORDER LIFECYCLE (pos.transactions)         │
+│   OPEN ➔ PENDING_PAYMENT ➔ COMPLETED                   │
+│   (Batal: CANCELLED / VOIDED / REFUNDED)               │
+└───────────────────────────┬────────────────────────────┘
+                            │ 1 : N
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             PAYMENT LIFECYCLE (pos.payments)           │
+│   PENDING ➔ PAID (Verifikasi Webhook / EDC Trace)      │
+│   (Gagal: FAILED / EXPIRED / REFUNDED)                 │
+└────────────────────────────────────────────────────────┘
+```
+
+#### Alur Pembayaran Digital Aman (Anti-Fraud QRIS Flow):
+```
+1. Kasir memilih pembayaran QRIS
+    ↓
+2. Backend POS memanggil Payment Gateway (Midtrans / Xendit) ➔ Generate Dynamic QRIS
+    ↓
+3. Pelanggan melakukan scan & bayar via m-Banking / E-Wallet
+    ↓
+4. Payment Gateway mengirimkan Webhook terverifikasi (HMAC Signature & Idempotency Key)
+    ↓
+5. Backend POS memvalidasi Webhook ➔ Membuat record pos.payments (status = PAID)
+    ↓
+6. Order berubah menjadi COMPLETED ➔ Bahan baku BOM otomatis dipotong di gudang cabang
+    ↓
+7. Layar Kasir menerima notifikasi Realtime bahwa transaksi lunas (Struk tercetak)
+```
+
+- **Prinsip Keamanan Finansial**: Kasir **TIDAK** menjadi penentu status `PAID` untuk transaksi digital (mencegah manipulasi struk/fraud kasir).
+- **VOID vs Status Pembayaran**: `VOID` adalah pembatalan pesanan yang telah lunas (*Order Lifecycle Event*) yang membutuhkan Step-Up Authorization Manager, bukan sekadar status pembayaran.
+
+---
+
 ## 3. Otentikasi vs Step-Up Otorisasi (Manager PIN)
 
 ```
