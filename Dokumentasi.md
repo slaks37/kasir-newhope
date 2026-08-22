@@ -1,10 +1,10 @@
 # 📖 Dokumentasi Arsitektur Resmi — New Hope POS
 
-Dokumentasi komprehensif arsitektur sistem, domain data model, aliran data (end-to-end data flow), dan tata kelola keamanan New Hope POS.
+Dokumentasi komprehensif arsitektur sistem, model data domain hirarkis (Model B), aliran data (end-to-end data flow), dan tata kelola keamanan New Hope POS.
 
 ---
 
-## 1. Prinsip Arsitektur Utama
+## 1. Prinsip Arsitektur Utama: Clean Multi-Schema Isolation
 
 Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas PostgreSQL (Supabase) dengan batas domain yang ditegakkan secara struktural oleh hak akses database.
 
@@ -26,8 +26,8 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 │                  GLOBAL IDENTITY & AUTHENTICATION                      │
 │   • Supabase Auth / Session Token Resolution                           │
 │   • Global User Plane: internal.users (1 Manusia = 1 User)             │
-│   • Multi-Tenant RBAC: internal.memberships (Peran & PIN Toko)         │
-│   • Resolve Actor & Merchant Identity (merchant_id = tenant_id)        │
+│   • Multi-Tenant RBAC: internal.memberships (Peran & PIN Kios Toko)    │
+│   • Resolve Scope: Tenant ID ➔ Merchant ID ➔ Outlet ID                 │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
@@ -45,18 +45,19 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 │                        POSTGRESQL DATABASE TIER                        │
 │                                                                        │
 │  [internal] (Platform & Org)  [pos] (Operations)  [billing]  [ai]      │
-│  • tenants (Org Boundary)     • products          • plans    • credits │
-│  • users (Global Identity)    • ingredients       • subs     • insight │
-│  • memberships (Tenant RBAC)  • recipes           • invoices • targets │
-│  • access_log                 • transactions      • webhooks • query   │
-│  • health_logs                • trans_items                            │
-│  • feature_usage              • inventory_logs                         │
+│  • tenants (Holding / Corp)   • products          • plans    • credits │
+│  • merchants (Brand / Unit)   • ingredients       • subs     • insight │
+│  • outlets (Physical Branch)  • recipes           • invoices • targets │
+│  • users (Global Identity)    • transactions      • webhooks • query   │
+│  • memberships (Tenant RBAC)  • trans_items                            │
+│  • access_log & health_logs   • inventory_logs                         │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [contract] (Single Source of Truth Cross-Domain Read Surface)         │
-│  • merchant_directory   • merchant_revenue     • catalog               │
-│  • merchant_staff       • stock_status         • inventory_movements   │
-│  • transaction_log      • subscription_status  • sector_summary        │
+│  • tenant_directory     • merchant_directory   • outlet_directory      │
+│  • merchant_revenue     • merchant_staff       • catalog               │
+│  • stock_status         • inventory_movements  • transaction_log       │
+│  • subscription_status  • sector_summary                               │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [PostgreSQL RLS Enforcement] (Database-Level Authorization Filter)    │
@@ -65,39 +66,68 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 
 ---
 
-## 2. Canonical Domain Model: Platform Organization & Identity
+## 2. Canonical Domain Model: Model B (Multi-Tier Enterprise Hierarchy)
 
-### Tenant & User Adalah Milik Tingkat Platform (Bukan POS)
-Organisasi toko (`tenants`) dan Pengguna (`users`) adalah entitas tingkat platform di bawah skema `internal`. Domain POS murni menangani operasional kasir (katalog, resep, transaksi, stok).
+Platform New Hope POS mengadopsi **Model B (Tenant ≠ Merchant ≠ Outlet)** untuk mendukung pertumbuhan bisnis merchant dari single-store hingga enterprise holding company dengan banyak brand dan cabang.
 
-- **`internal.tenants`**: Batas organisasi/toko resmi di tingkat platform (Sektor, Ref Bisnis, Status).
-- **`internal.users`**: Identitas tunggal manusia (Email, Nama, Avatar, Hak Platform).
-- **`internal.memberships`**: Hubungan multi-tenant (1 User dapat menjadi **Owner** di Toko A, **Manager** di Toko B, dan **Cashier** di Toko C tanpa duplikasi akun).
-- **Kiosk PIN**: PIN kasir terikat pada `membership` per toko untuk *fast terminal login* tanpa membocorkan kredensial global.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                TINGKAT 1: TENANT (internal.tenants)                    │
+│      Holding Company / Enterprise Account / Pelanggan SaaS Billing     │
+│      Contoh: "PT Boga Maju Bersama"                                    │
+│      • Memiliki Paket Langganan SaaS (billing.subscriptions)           │
+│      • Memiliki Faktur Tagihan (billing.invoices)                      │
+│      • Memiliki Kuota AI Platform (ai.merchant_ai_credits)             │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ 1 : N
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│               TINGKAT 2: MERCHANT (internal.merchants)                 │
+│         Brand / Business Unit / Lini Bisnis per Sektor Usaha           │
+│         Contoh: "Kopi Senja (F&B)"  &  "Laundry Bersih (Laundry)"      │
+│         • Memiliki Katalog Produk & Resep BOM                          │
+│         • Memiliki Target Omzet Bulanan                                │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ 1 : N
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                TINGKAT 3: OUTLET (internal.outlets)                    │
+│             Cabang Toko Fisik / Terminal Kasir Geofenced               │
+│             Contoh: "Cabang Senayan"  &  "Cabang Sudirman"             │
+│             • Memiliki Kasir & Terminal POS Aktif                      │
+│             • Memiliki Gudang Stok & Mutasi Bahan Baku Fisik           │
+│             • Menghasilkan Transaksi Penjualan & Struk                 │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-### Hierarki Relasi Domain (ERD)
+### Relasi Multi-Tenant RBAC & Keanggotaan Staf (`internal.memberships`)
+
+- **`internal.users`**: 1 Manusia = 1 User ID global (Email, Nama, Avatar).
+- **`internal.memberships`**:
+  - User A dapat menjadi **Owner** di tingkat Tenant (mengakses semua merchant dan outlet).
+  - User B dapat menjadi **Manager** di Merchant "Kopi Senja" (mengakses cabang Senayan & Sudirman).
+  - User C dapat menjadi **Cashier** di Outlet "Cabang Senayan" dengan PIN Kios `1234`.
+
+### Diagram Relasi Entitas (ERD Model B)
 
 ```mermaid
 erDiagram
-    TENANTS ||--o{ MEMBERSHIPS : "memiliki anggota staf"
-    USERS ||--o{ MEMBERSHIPS : "memiliki penugasan toko"
-    TENANTS ||--o{ PRODUCTS : "memiliki katalog"
-    TENANTS ||--o{ INGREDIENTS : "memiliki stok bahan"
-    TENANTS ||--o{ PRODUCT_RECIPES : "memiliki formulasi BOM"
-    TENANTS ||--o{ TRANSACTIONS : "memiliki transaksi"
-    TENANTS ||--o{ INVENTORY_LOGS : "memiliki riwayat mutasi"
-    TENANTS ||--o{ MERCHANT_ACTIVITY_LOG : "memiliki jejak aktivitas"
-    TENANTS ||--|| SUBSCRIPTIONS : "memiliki langganan aktif"
+    TENANTS ||--o{ MERCHANTS : "memiliki brand/unit usaha"
+    MERCHANTS ||--o{ OUTLETS : "memiliki cabang fisik"
+    TENANTS ||--o{ MEMBERSHIPS : "hak akses akun"
+    USERS ||--o{ MEMBERSHIPS : "identitas akun staf"
+    TENANTS ||--|| SUBSCRIPTIONS : "memiliki paket SaaS"
     TENANTS ||--|| MERCHANT_AI_CREDITS : "memiliki kuota AI"
 
-    PRODUCTS ||--o{ PRODUCT_RECIPES : "diuraikan menjadi"
-    INGREDIENTS ||--o{ PRODUCT_RECIPES : "bahan baku untuk"
-    TRANSACTIONS ||--o{ TRANSACTION_ITEMS : "memuat item penjualan"
-    PRODUCTS ||--o{ TRANSACTION_ITEMS : "item tercatat dari"
-    INGREDIENTS ||--o{ INVENTORY_LOGS : "mutasi kuantitas"
-    TRANSACTIONS ||--o{ INVENTORY_LOGS : "dipicu oleh transaksi"
-    PLANS ||--o{ SUBSCRIPTIONS : "paket yang dipilih"
-    SUBSCRIPTIONS ||--o{ INVOICES : "tagihan berkala"
+    MERCHANTS ||--o{ PRODUCTS : "memiliki katalog produk"
+    MERCHANTS ||--o{ INGREDIENTS : "memiliki bahan baku"
+    PRODUCTS ||--o{ PRODUCT_RECIPES : "diformulasikan dari"
+    INGREDIENTS ||--o{ PRODUCT_RECIPES : "komposisi resep"
+
+    OUTLETS ||--o{ TRANSACTIONS : "lokasi penjualan"
+    TRANSACTIONS ||--o{ TRANSACTION_ITEMS : "memuat baris item"
+    OUTLETS ||--o{ INVENTORY_LOGS : "mutasi stok fisik"
+    TRANSACTIONS ||--o{ INVENTORY_LOGS : "pemicu pengurangan stok"
 ```
 
 ---
@@ -106,10 +136,10 @@ erDiagram
 
 | Skema | Service Pemilik | Hak Akses Tulis (Write) | Hak Akses Baca (Read) | Deskripsi |
 |---|---|---|---|---|
-| `internal` | `backoffice-service` | `svc_internal`, `svc_pos` (tenant sync) | `svc_internal`, Semua Service | **Platform Organization & Identity**: Organisasi toko (`tenants`), identitas pengguna (`users`), keanggotaan tenant (`memberships`), audit log operator, dan metrik kesehatan merchant. |
-| `pos` | `pos-service` | `svc_pos` | `svc_pos` | **Store Operations**: Inti operasional kasir (katalog produk, resep BOM, transaksi penjualan, dan mutasi stok fisik). Mereferensikan `internal.tenants(id)`. |
-| `billing` | `billing-service` | `svc_billing` | `svc_billing` | **SaaS Monetization**: Paket langganan SaaS, status tagihan, faktur, dan log webhook. Mereferensikan `internal.tenants(id)`. |
-| `ai` | `ai-service` | `svc_ai` | `svc_ai` | **AI Intelligence**: Dompet kuota kredit AI, agregasi insight bisnis harian, log kueri LLM. Mereferensikan `internal.tenants(id)`. |
+| `internal` | `backoffice-service` | `svc_internal`, `svc_pos` (sync) | `svc_internal`, Semua Service | **Platform Organization & Identity**: Organisasi Holding (`tenants`), Brand (`merchants`), Cabang (`outlets`), Pengguna (`users`), Hak Akses (`memberships`), dan audit log operator. |
+| `pos` | `pos-service` | `svc_pos` | `svc_pos` | **Store Operations**: Inti operasional kasir (katalog produk, resep BOM, transaksi penjualan, dan mutasi stok fisik). Mereferensikan `tenant_id`, `merchant_id`, dan `outlet_id`. |
+| `billing` | `billing-service` | `svc_billing` | `svc_billing` | **SaaS Monetization**: Paket langganan SaaS, status tagihan, faktur, dan log webhook. Mereferensikan `tenant_id`. |
+| `ai` | `ai-service` | `svc_ai` | `svc_ai` | **AI Intelligence**: Dompet kuota kredit AI, agregasi insight bisnis harian, log kueri LLM. Mereferensikan `tenant_id` dan `merchant_id`. |
 | `contract` | *Shared Contract* | Tidak ada (Hanya View) | Semua Service (`svc_*`, `bi_readonly`) | **Satu-satunya antarmuka baca lintas-layanan**. Menjamin angka omzet, staf, dan stok selalu konsisten. |
 | `public` | *Platform Public* | `schema_migrations` | `anon`, `authenticated` | Hanya memuat view tersanitasi yang merujuk ke `contract.*` (tanpa kolom sensitif seperti hash PIN). |
 
@@ -120,29 +150,29 @@ erDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Cashier as Kasir (Terminal POS)
+    actor Cashier as Kasir (Terminal POS Outlet)
     participant Local as LocalStorage / Queue
     participant GW as API Gateway
     participant POS as pos-service
     participant DB as PostgreSQL (pos, internal, contract)
     actor Admin as Admin Backoffice / AI
 
-    Note over Cashier, Local: Operasional Kasir (Offline-First)
+    Note over Cashier, Local: Operasional Kasir (Offline-First di Cabang)
     Cashier->>Local: Buat Pesanan & Bayar (Cash / QRIS)
     Local->>Local: Simpan ke antrean sinkronisasi lokal
 
     Note over Local, POS: Siklus Sinkronisasi Terproteksi (Idempotent)
     Local->>GW: POST /api/v1/sync/transactions (batch + IdempotencyKey)
-    GW->>POS: Validasi Header & Format Body
+    GW->>POS: Validasi Header & Format Body (tenantId, merchantId, outletId)
     
     rect rgb(240, 248, 255)
         Note over POS, DB: Transaksi Database Terisolasi (db.tx)
         POS->>DB: Cek pos.sync_receipts (Idempotency Guard)
-        POS->>DB: Upsert pos.tenants & validasi internal.memberships
-        POS->>DB: INSERT INTO pos.transactions ON CONFLICT DO NOTHING
+        POS->>DB: Upsert internal.tenants, internal.merchants, internal.outlets
+        POS->>DB: INSERT INTO pos.transactions (tenant_id, merchant_id, outlet_id)
         POS->>DB: INSERT INTO pos.transaction_items
-        POS->>DB: INSERT INTO pos.inventory_logs (Deduction BOM)
-        POS->>DB: UPDATE pos.ingredients (Kuantitas Stok)
+        POS->>DB: INSERT INTO pos.inventory_logs (Deduction BOM per Outlet)
+        POS->>DB: UPDATE pos.ingredients (Kuantitas Stok Outlet)
         POS->>DB: Catat pos.merchant_activity_log
         POS->>DB: Catat pos.sync_receipts
     end
@@ -152,8 +182,8 @@ sequenceDiagram
     Local->>Local: Tandai antrean lokal sebagai tersinkron
 
     Note over DB, Admin: Konsumsi Realtime Tanpa Dual-Write
-    Admin->>DB: SELECT * FROM contract.merchant_revenue / transaction_log / merchant_staff
-    DB-->>Admin: Angka omzet & audit trail yang identik dan konsisten
+    Admin->>DB: SELECT * FROM contract.merchant_revenue / transaction_log / outlet_directory
+    DB-->>Admin: Laporan omzet per Holding, per Brand, dan per Cabang secara realtime
 ```
 
 ---
@@ -163,29 +193,29 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Owner as Pemilik Toko (Merchant)
+    actor Owner as Pemilik Usaha (Tenant/Merchant)
     participant FE as Frontend Client
     participant AI as ai-service
-    participant DB as PostgreSQL (ai & contract)
+    participant DB as PostgreSQL (ai, internal, contract)
     participant LLM as Google Gemini / Model Provider
 
-    Owner->>FE: Ajukan Pertanyaan Finansial / Tren Penjualan
-    FE->>AI: POST /api/v1/ai/query (merchantId, prompt)
+    Owner->>FE: Ajukan Pertanyaan Finansial / Performa Lintas Cabang
+    FE->>AI: POST /api/v1/ai/query (tenantId, merchantId, prompt)
     
     rect rgb(255, 245, 245)
-        Note over AI, DB: Verifikasi Saldo Kredit Atomik
-        AI->>DB: SELECT consume_ai_credit(merchantId)
+        Note over AI, DB: Verifikasi Saldo Kredit Atomik Tenant
+        AI->>DB: SELECT consume_ai_credit(tenantId)
         DB-->>AI: TRUE (Kredit Tersedia & Terpotong)
     end
 
-    AI->>DB: SELECT * FROM contract.merchant_revenue, stock_status, merchant_staff
-    DB-->>AI: Agregat Finansial, Status Stok, dan Performa Staf
+    AI->>DB: SELECT * FROM contract.merchant_revenue, stock_status, outlet_directory
+    DB-->>AI: Agregat Finansial, Status Stok Cabang, dan Performa Penjualan
     
-    AI->>LLM: Eksekusi Prompt dengan Konteks Finansial Akurat
+    AI->>LLM: Eksekusi Prompt dengan Konteks Multi-Cabang Akurat
     LLM-->>AI: Respon Analisis & Rekomendasi Bisnis
     
     AI->>DB: Catat ai.ai_query_logs
-    AI-->>FE: Tampilkan Jawaban Analisis Finansial ke Pemilik Toko
+    AI-->>FE: Tampilkan Jawaban Analisis Finansial ke Pemilik Usaha
 ```
 
 ---
@@ -194,10 +224,10 @@ sequenceDiagram
 
 1. **Anti-Leakage Kredensial**:
    - Kolom `pin` di `internal.memberships` tidak pernah diekspos ke skema `contract` atau skema `public`.
-   - View `contract.merchant_staff` hanya mengekspos profil publik (`user_id`, `staff_name`, `email`, `role`, `is_active`).
+   - View `contract.merchant_staff` hanya mengekspos profil publik staf beserta relasi Tenant, Merchant, dan Outlet.
 2. **PostgreSQL RLS (Row Level Security)**:
    - RLS diterapkan pada semua tabel domain (`pos.*`, `billing.*`, `ai.*`, `internal.*`) sebagai lapisan pertahanan database (*defense-in-depth*).
    - Layanan aplikasi beroperasi dengan peran tersendiri (`svc_pos`, `svc_billing`, `svc_ai`, `svc_internal`).
 3. **No Dual-Write Guarantee**:
    - Seluruh transaksi hanya ditulis satu kali ke `pos.transactions`.
-   - Modul pelaporan, analitik backoffice, dan AI Copilot membaca data yang sama melalui view di skema `contract`.
+   - Laporan konsolidasi holding, analitik brand, dan audit cabang membaca data yang sama melalui view di skema `contract`.
