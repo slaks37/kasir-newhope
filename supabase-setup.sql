@@ -6214,14 +6214,22 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0028_langgan
 -- pernah dikembalikan juga. Satu toko yang dihapus setahun lalu diam-diam
 -- menahan kredit semua orang.
 --
--- DUA PERBAIKAN, SENGAJA KEDUANYA:
+-- YANG DIPERBAIKI HANYA PENYAPUNYA, BUKAN SKEMANYA.
 --
---   1. Kedua tabel disamakan: log pertanyaan ikut terhapus bersama unit
---      usahanya, sama seperti ledgernya. Menyimpan log tanpa pemilik tidak
---      menolong siapa pun — dompet yang akan dikreditkan sudah tidak ada.
---   2. Penyapunya tetap dibuat tahan terhadap baris yatim. Perbaikan skema
---      mencegah yang baru; baris yatim yang SUDAH terlanjur ada tetap harus
---      bisa dilewati, dan sapuan tidak boleh berhenti karena satu baris rusak.
+-- Godaan pertama adalah menyamakan kedua tabel — membuat ai_query_logs ikut
+-- CASCADE. Itu KELIRU, dan docs/erd.md menjelaskan kenapa: SET NULL di sana
+-- disengaja. "Jejak akses harus tetap ada setelah merchantnya pergi, justru
+-- saat itulah biasanya dibutuhkan." Sebuah toko yang menghabiskan ribuan
+-- kredit lalu menghapus akunnya adalah persis keadaan yang jejaknya paling
+-- perlu dibaca.
+--
+-- Jadi barisnya tetap disimpan. Yang diperbaiki:
+--
+--   1. Baris yatim yang menggantung DITUTUP, bukan dihapus. Statusnya menjadi
+--      REFUNDED supaya keluar dari antrean penyapu; isinya tetap bisa dibaca.
+--   2. Penyapunya melewati baris tanpa pemilik, dan tidak berhenti pada
+--      kegagalan satu baris. Penyapu yang mati pada gangguan pertama sama
+--      tidak bergunanya dengan penyapu yang tidak pernah dijalankan.
 --
 --   psql "$DATABASE_URL" --single-transaction -f migrations/0029_kredit_yatim.sql
 --
@@ -6242,24 +6250,16 @@ UPDATE ai.ai_query_logs
    AND state = 'RESERVED';
 
 
--- 2. LOG IKUT TERHAPUS BERSAMA UNIT USAHANYA ----------------------------------
-
-ALTER TABLE ai.ai_query_logs
-    DROP CONSTRAINT IF EXISTS fk_ai_query_logs_merchant_id;
-ALTER TABLE ai.ai_query_logs
-    DROP CONSTRAINT IF EXISTS fk_ai_query_logs_business_id;
-
-DELETE FROM ai.ai_query_logs WHERE business_id IS NULL;
-
-ALTER TABLE ai.ai_query_logs
-    ADD CONSTRAINT fk_ai_query_logs_business_id
-    FOREIGN KEY (business_id) REFERENCES pos.businesses(id) ON DELETE CASCADE;
-
-ALTER TABLE ai.ai_query_logs
-    ALTER COLUMN business_id SET NOT NULL;
+-- 2. KENAPA SKEMANYA TIDAK DIUBAH ---------------------------------------------
+--
+-- business_id di sini tetap NULLABLE dan tetap ON DELETE SET NULL. Itu bukan
+-- kelalaian; itu keputusan yang tercatat di docs/erd.md dan masih berlaku.
+-- ai.credit_ledger boleh CASCADE karena ia catatan SALDO — tanpa dompetnya, ia
+-- tidak punya arti. ai_query_logs catatan BIAYA dan pemakaian, dan justru
+-- berguna setelah merchantnya pergi.
 
 COMMENT ON COLUMN ai.ai_query_logs.business_id IS
-    'Unit usaha yang bertanya. CASCADE, sama seperti ai.credit_ledger — log tanpa pemilik tidak bisa dikembalikan kreditnya dan hanya menyumbat penyapu.';
+    'Unit usaha yang bertanya. SET NULL saat unit usahanya dihapus — SENGAJA: jejak biaya harus tetap terbaca setelah merchantnya pergi. Baris tanpa pemilik dilewati penyapu, bukan dihapus.';
 
 
 -- 3. PENYAPU TIDAK BOLEH MATI KARENA SATU BARIS -------------------------------

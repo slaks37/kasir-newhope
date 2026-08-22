@@ -1,8 +1,17 @@
 # ERD — New Hope POS
 
-**27 tabel dan 19 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
+**35 tabel dan 30 view kontrak, dalam 5 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
+
+Aliran datanya — ke mana data bergerak dan siapa yang boleh menyentuhnya — ada
+di [`Dokumentasi.md`](../Dokumentasi.md).
+
+`test/dokumentasi.test.ts` menjaga dokumen ini tetap sesuai: setiap tabel dan
+view kontrak yang ada di database harus disebut di sini. Berkas ini sempat
+tertinggal delapan tabel dan masih menyebut entitas `tenants` yang sudah
+diganti nama pada 0025 — dokumentasi yang salah lebih berbahaya daripada
+dokumentasi yang tidak ada, karena ia dipercaya.
 
 Semua primary key `UUID` (v7) setelah `0005_uuid_keys.sql`, kecuali `plans.id`
 yang tetap kode terbaca dan `feature_usage_events.id` yang `BIGSERIAL`.
@@ -19,12 +28,12 @@ npm run db:reset
 
 ```mermaid
 erDiagram
-    tenants ||--o{ users            : "punya staf"
-    tenants ||--o{ products         : ""
-    tenants ||--o{ ingredients      : ""
-    tenants ||--o{ product_recipes  : ""
-    tenants ||--o{ transactions     : ""
-    tenants ||--o{ customers        : "member toko"
+    businesses ||--o{ users            : "punya staf"
+    businesses ||--o{ products         : ""
+    businesses ||--o{ ingredients      : ""
+    businesses ||--o{ product_recipes  : ""
+    businesses ||--o{ transactions     : ""
+    businesses ||--o{ customers        : "member toko"
 
     products      ||--o{ product_recipes   : "resep"
     ingredients   ||--o{ product_recipes   : "dipakai di"
@@ -35,7 +44,7 @@ erDiagram
     ingredients   |o--o{ inventory_logs    : "mutasi stok"
     transactions  |o--o{ inventory_logs    : "pemicu (nullable)"
 
-    tenants {
+    businesses {
         uuid id PK
         varchar name
         varchar business_sector "FNB / LAUNDRY / RETAIL / CARWASH / BARBERSHOP"
@@ -136,7 +145,7 @@ ikut berubah setiap kali katalog disunting.
 
 **`SET NULL`, bukan `CASCADE`, pada `product_id` dan `cashier_user_id`.** Ini
 bukan detail: dengan `NO ACTION` (bentuk aslinya) satu merchant **tidak bisa
-dihapus sama sekali** — `DELETE tenants` merambat ke `products` lalu ditolak
+dihapus sama sekali** — `DELETE businesses` merambat ke `products` lalu ditolak
 oleh `transaction_items`. Permintaan penghapusan data tidak akan bisa dipenuhi.
 `SET NULL` aman justru karena snapshot di atas: riwayat tetap terbaca utuh
 setelah katalognya hilang.
@@ -182,7 +191,7 @@ erDiagram
     }
     subscriptions {
         varchar id PK
-        varchar tenant_id "TIDAK ada FK ke tenants"
+        uuid business_id "FK ke businesses sejak 0005"
         varchar plan_id FK
         enum status "TRIAL/ACTIVE/PAST_DUE/EXPIRED/CANCELED"
         timestamptz current_period_start
@@ -362,8 +371,8 @@ menjawab "berapa rupiah yang akan hilang kalau dia churn".
 
 ```mermaid
 erDiagram
-    tenants ||--o{ merchant_activity_log : "menghasilkan kejadian"
-    tenants ||--o{ sync_receipts         : ""
+    businesses ||--o{ merchant_activity_log : "menghasilkan kejadian"
+    businesses ||--o{ sync_receipts         : ""
     transactions |o--o{ merchant_activity_log : "kalau kejadiannya penjualan"
     users        |o--o{ merchant_activity_log : "pelaku"
 
@@ -427,6 +436,188 @@ UTC — dan laporan harian merchant tidak akan pernah cocok dengan kasnya.
 
 ---
 
+## 6. Domain IDENTITAS (0025)
+
+Empat tingkat, dan masing-masing menjawab pertanyaan berbeda.
+
+```mermaid
+erDiagram
+    merchants  ||--o{ businesses : "memiliki"
+    businesses ||--o{ outlets    : "punya cabang"
+    outlets    ||--o{ terminals  : "punya perangkat kasir"
+    merchants  ||--o| subscriptions : "berlangganan"
+
+    merchants {
+        uuid   id PK
+        string owner_user_ref UK "identitas akun, mis. usr-budi"
+        string name
+        string email "tujuan pengingat tagihan"
+        bool   is_active
+    }
+    businesses {
+        uuid   id PK
+        uuid   merchant_id FK
+        string business_sector "FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP"
+        string client_key UK "kunci partisi sisi klien: userId_SECTOR"
+        uuid   active_outlet_id
+    }
+    outlets {
+        uuid   id PK
+        uuid   business_id FK
+        string external_ref "id cabang dari perangkat"
+        float  latitude
+        float  longitude
+        int    allowed_radius_meters
+        bool   is_active "menonaktifkan MEMBEBASKAN kuota"
+    }
+    terminals {
+        uuid   id PK
+        uuid   business_id FK
+        uuid   outlet_id FK
+        string device_ref
+    }
+```
+
+**Sektor adalah klasifikasi, bukan identitas.** `client_key` berbentuk
+`userId_SECTOR` dan dipakai perangkat untuk mengenali dirinya sendiri — tapi
+tidak pernah dipakai sebagai kunci apa pun di sisi server. Yang menjadi kunci
+`businesses.id`. Kalau sektor ikut menjadi identitas, merchant yang mengubah
+jenis usahanya akan kehilangan seluruh riwayatnya.
+
+**Langganan menempel di `merchants`, bukan `businesses`** (0028). Pemilik yang
+punya kafe dan laundry membeli satu paket untuk keduanya, dan jatah outletnya
+dihitung untuk seluruh unit usahanya. Sebelum itu `UNIQUE(business_id)` membuat
+orang yang sama menanggung dua langganan, dengan 5 outlet di masing-masing —
+10 outlet dari satu paket yang menjanjikan 5.
+
+---
+
+## 7. Domain PERISTIWA & LEDGER (0026, 0027)
+
+Efek transaksi disimpan sebagai **catatan**, bukan angka yang ditimpa.
+
+```mermaid
+erDiagram
+    transactions ||--o{ domain_events    : "menghasilkan"
+    transactions ||--o{ inventory_ledger : ""
+    transactions ||--o{ loyalty_ledger   : ""
+    ai_query_logs ||--o{ credit_ledger   : ""
+
+    domain_events {
+        uuid   id PK
+        uuid   business_id FK
+        uuid   transaction_id FK
+        string event_type "ORDER_PAID|ORDER_VOIDED|..."
+        jsonb  payload
+    }
+    inventory_ledger {
+        uuid    id PK
+        uuid    business_id FK
+        uuid    ingredient_id FK
+        numeric delta "negatif = terpakai"
+        string  reason
+    }
+    loyalty_ledger {
+        uuid   id PK
+        uuid   business_id FK
+        uuid   customer_id FK
+        int    delta "poin, bisa negatif"
+        string reason
+    }
+    credit_ledger {
+        uuid   id PK
+        uuid   business_id FK
+        uuid   query_id FK
+        int    delta
+        string reason "RESERVE|REFUND|MONTHLY_GRANT|TOPUP|..."
+    }
+```
+
+**Saldo adalah view, bukan kolom.** `contract.stock_balance`,
+`contract.loyalty_balance`, dan `contract.ai_credit_ledger` menjumlahkan
+ledgernya. Karena itu `contract.stock_drift` dan `contract.ai_credit_drift`
+bisa menjawab *"apakah saldo yang tersimpan cocok dengan catatannya"* —
+pertanyaan yang tidak bisa dijawab sama sekali kalau angkanya ditimpa.
+
+**Void menulis baris berlawanan**, bukan menghapus baris lama. Struk yang
+dibatalkan tetap ada di riwayat, dan stok yang kembali punya sebab yang bisa
+dibaca.
+
+**`inventory_mode` menentukan apa yang dikurangi.** `NONE` tidak mengurangi apa
+pun (jasa), `STOCK` mengurangi produknya sendiri, `RECIPE` mengurangi bahan
+bakunya lewat `product_recipes`. Sebelumnya semuanya diperlakukan sebagai
+`STOCK`, jadi kafe yang menjual kopi mengurangi "1 kopi" alih-alih biji kopi
+dan susu.
+
+**`ai.credit_ledger` CASCADE, `ai.ai_query_logs` SET NULL** — perbedaan yang
+disengaja. Yang pertama catatan saldo dan tanpa dompetnya tidak punya arti;
+yang kedua catatan biaya, dan justru berguna setelah merchantnya pergi.
+
+---
+
+## 8. Domain CAKUPAN ALGORITMA (0028)
+
+```mermaid
+erDiagram
+    algorithm_scope {
+        string category PK "INVENTORY_ALERT|CRM_CHURN|..."
+        array  sectors "NULL = semua sektor"
+        bool   is_active
+        bool   implemented "sudah ditulis di batch?"
+        string note
+    }
+```
+
+Sembilan kategori. Enam global, tiga terbatas sektor: `LAYOUT_UTILISATION`
+(FNB, laundry, barbershop), `SHIFT_PERFORMANCE` (FNB, ritel, cuci mobil),
+`STAFF_BEHAVIOUR` (FNB, ritel, barbershop).
+
+Disimpan sebagai tabel, bukan ditulis di kode batch: memindahkan sebuah
+algoritma antar sektor adalah keputusan produk, dan tidak boleh menuntut deploy
+ulang. `contract.algorithm_coverage` menjawab, untuk satu merchant, insight apa
+yang **seharusnya** muncul — dan mana yang belum ditulis.
+
+---
+
+## Seluruh view kontrak
+
+Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
+
+| View | Menjawab |
+|---|---|
+| `merchant_directory` | Daftar unit usaha + ringkasan omzetnya |
+| `business_hierarchy` | Terminal → outlet → unit usaha → pemilik, satu baris |
+| `merchant_revenue` | Omzet per unit usaha |
+| `merchant_entitlements` | Batas yang **berlaku sekarang**, sudah turun bila langganan mati |
+| `merchant_outlet_usage` | Outlet terpakai vs jatah, dihitung semerchant |
+| `subscription_status` | Langganan per unit usaha; MRR dihitung sekali per pemilik |
+| `merchant_invoices` | Riwayat tagihan |
+| `plan_catalog` | Paket yang sedang dijual |
+| `catalog` | Produk per sektor |
+| `product_sales` | Penjualan per produk |
+| `product_recipes` | Resep bahan baku |
+| `raw_materials` | Bahan baku |
+| `stock_status` | Status stok terhadap batas aman |
+| `stock_balance` | Saldo stok menurut ledger |
+| `stock_drift` | Selisih saldo tersimpan vs ledger |
+| `loyalty_balance` | Saldo poin menurut ledger |
+| `customer_rfm` | Recency, frequency, monetary per pelanggan |
+| `branches` | Cabang per unit usaha |
+| `bundles` | Paket bundling |
+| `transaction_log` | Struk |
+| `transaction_items` | Baris struk |
+| `activity_log` | Kejadian di aplikasi kasir |
+| `activity_by_sector` | Kejadian, diagregat per sektor |
+| `sector_summary` | Ringkasan lima sektor |
+| `daily_sector_revenue` | Omzet harian per sektor, dipotong pada `Asia/Jakarta` |
+| `merchant_health_latest` | Skor churn terbaru |
+| `ai_credit_ledger` | Saldo kredit AI menurut ledger |
+| `ai_credit_drift` | Selisih saldo kredit + cadangan menggantung |
+| `insight_freshness` | Umur kartu insight per kategori |
+| `algorithm_coverage` | Insight apa yang seharusnya ada untuk sektor ini |
+
+---
+
 ## Yang sudah diperbaiki, dan yang belum
 
 ### Sudah (0006)
@@ -434,7 +625,7 @@ UTC — dan laporan harian merchant tidak akan pernah cocok dengan kasnya.
 **FK yang hilang sudah dipasang.** 12 kolom `merchant_id`/`tenant_id` di
 `daily_merchant_insights`, `merchant_targets`, `merchant_ai_credits`,
 `merchant_health_logs`, `feature_usage_events`, `subscriptions`, `invoices`
-sekarang benar-benar menunjuk `tenants(id)`. Total foreign key naik dari 11
+sekarang benar-benar menunjuk `businesses(id)`. Total foreign key naik dari 11
 menjadi **34**.
 
 Log audit dan log biaya (`ai_query_logs`, `internal_access_log`) sengaja

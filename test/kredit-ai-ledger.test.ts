@@ -145,35 +145,31 @@ d('siklus hidup kredit AI', () => {
   /*
    * SATU BARIS YATIM TIDAK BOLEH MENAHAN KREDIT SEMUA ORANG.
    *
-   * ai_query_logs dulu memakai ON DELETE SET NULL sementara credit_ledger
-   * NOT NULL + CASCADE. Unit usaha dihapus -> ledgernya ikut hilang, lognya
-   * bertahan dengan business_id NULL. Kalau log itu berstatus RESERVED, penyapu
-   * mati di baris itu — dan karena penyapunya satu transaksi, kredit merchant
-   * LAIN yang menggantung ikut tidak pernah dikembalikan.
+   * ai_query_logs memakai ON DELETE SET NULL — DISENGAJA, dan tercatat di
+   * docs/erd.md: jejak biaya harus tetap terbaca setelah merchantnya pergi.
+   * credit_ledger sebaliknya NOT NULL + CASCADE, karena ia catatan saldo dan
+   * tanpa dompetnya tidak punya arti.
+   *
+   * Perbedaan itu benar, tapi konsekuensinya tidak tertangani: unit usaha
+   * dihapus -> ledgernya ikut hilang, lognya bertahan dengan business_id NULL.
+   * Kalau log itu berstatus RESERVED, penyapu mati di baris itu — dan karena
+   * penyapunya satu transaksi, kredit merchant LAIN yang menggantung ikut
+   * tidak pernah dikembalikan.
    */
-  it('penyapu tetap jalan walau ada log tanpa pemilik', async () => {
-    // Baris yatim dibuat langsung: jalur normal tidak bisa lagi menghasilkannya
-    // sejak 0029 memasang NOT NULL, dan itu memang inti perbaikannya.
-    const { rows: kolom } = await db().query(
-      `SELECT is_nullable FROM information_schema.columns
-        WHERE table_schema='ai' AND table_name='ai_query_logs'
-          AND column_name='business_id'`
-    );
-    expect(kolom[0].is_nullable).toBe('NO');
+  // Baris yatim memang TIDAK pernah dihapus — itu inti perilakunya. Karena itu
+  // ia menumpuk antar-sesi `npm test`, dan menghitung totalnya akan naik terus.
+  // Penandanya dibuat unik per jalannya, lalu yang diperiksa baris itu saja.
+  const penanda = `uji yatim ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  it('jejak biaya TETAP disimpan saat unit usahanya dihapus', async () => {
     const { rows: fk } = await db().query(
       `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
         WHERE conrelid='ai.ai_query_logs'::regclass AND contype='f'`
     );
-    // Sama dengan credit_ledger: ikut terhapus, bukan ditinggal yatim.
-    expect(fk.some((r: any) => /ON DELETE CASCADE/.test(r.def))).toBe(true);
+    // Bukan CASCADE. Menghapus jejak biaya justru saat merchantnya pergi
+    // membuang catatan pada saat ia paling perlu dibaca.
+    expect(fk.some((r: any) => /ON DELETE SET NULL/.test(r.def))).toBe(true);
 
-    // Dan penyapunya tetap mengembalikan cadangan yang sah.
-    const n = await db().query(`SELECT ai.bersihkan_cadangan_menggantung(0) AS n`);
-    expect(Number(n.rows[0].n)).toBeGreaterThanOrEqual(0);
-  });
-
-  it('menghapus unit usaha ikut membawa log pertanyaannya', async () => {
     const { rows: b } = await db().query(
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Yatim', 'FNB', 'usr-yatim_FNB', 'usr-yatim', true)
@@ -183,14 +179,34 @@ d('siklus hidup kredit AI', () => {
     await db().query(
       `INSERT INTO ai.ai_query_logs (id, business_id, query_text, resolved_intent, source,
                                      credits_charged, state)
-       VALUES (uuidv7(), $1, 'uji yatim', 'PENDING', 'LLM', 1, 'RESERVED')`,
-      [bid]
+       VALUES (uuidv7(), $1, $2, 'PENDING', 'LLM', 1, 'RESERVED')`,
+      [bid, penanda]
     );
 
     await db().query(`DELETE FROM pos.merchants WHERE owner_user_ref = 'usr-yatim'`);
 
+    // Barisnya masih ada, hanya kehilangan pemiliknya.
     const { rows } = await db().query(
-      `SELECT COUNT(*)::int n FROM ai.ai_query_logs WHERE business_id = $1`, [bid]);
-    expect(rows[0].n).toBe(0);
+      `SELECT business_id FROM ai.ai_query_logs WHERE query_text = $1`, [penanda]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].business_id).toBeNull();   // kehilangan pemilik, bukan dihapus
+  });
+
+  it('penyapu melewati baris yatim, tidak mati karenanya', async () => {
+    // Baris yatim dari tes di atas masih menggantung di status RESERVED.
+    const { rows: yatim } = await db().query(
+      `SELECT COUNT(*)::int n FROM ai.ai_query_logs
+        WHERE business_id IS NULL AND state = 'RESERVED'`);
+    expect(yatim[0].n).toBeGreaterThanOrEqual(1);
+
+    // Sebelum 0029, panggilan ini melempar:
+    //   null value in column "business_id" of relation "credit_ledger"
+    const n = await db().query(`SELECT ai.bersihkan_cadangan_menggantung(0) AS n`);
+    expect(Number(n.rows[0].n)).toBeGreaterThanOrEqual(0);
+
+    // Dan baris yatimnya tetap ada — dilewati, bukan dihapus.
+    const { rows: sesudah } = await db().query(
+      `SELECT COUNT(*)::int n FROM ai.ai_query_logs WHERE query_text = $1`, [penanda]);
+    expect(sesudah[0].n).toBe(1);
   });
 });
