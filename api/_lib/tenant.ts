@@ -32,13 +32,13 @@ export async function resolveTenantId(
   if (UUID_RE.test(kunci)) return kunci;
 
   const { rows } = await db.query(
-    `SELECT merchant_id FROM contract.merchant_directory
-      WHERE business_id = $1
+    `SELECT business_id FROM contract.merchant_directory
+      WHERE client_key = $1
          OR (owner_user_ref = $1
              AND (SELECT COUNT(*) FROM contract.merchant_directory
                    WHERE owner_user_ref = $1) = 1)
       LIMIT 1`,
     [kunci]
   );
-  return rows[0]?.merchant_id ?? null;
+  return rows[0]?.business_id ?? null;
 }

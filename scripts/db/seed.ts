@@ -5,7 +5,7 @@
  *   npx tsx scripts/db/seed.ts --force    # hapus data lama, isi ulang
  *
  * Salah satu pemilik sengaja menjalankan DUA sektor (kafe + laundry) dengan
- * business_id berbeda. Tanpa itu, kebocoran antar sektor tidak akan pernah
+ * client_key berbeda. Tanpa itu, kebocoran antar sektor tidak akan pernah
  * terlihat di data demo — dan justru itu yang paling perlu diuji.
  *
  * Angka acaknya deterministik (LCG dengan benih tetap), jadi dua kali seed
@@ -135,7 +135,7 @@ const CATALOG = {
 type Sector = keyof typeof CATALOG;
 
 /**
- * `owner` menentukan business_id (`${owner}_${sector}`). Dua baris dengan owner
+ * `owner` menentukan client_key (`${owner}_${sector}`). Dua baris dengan owner
  * yang sama adalah SATU pemilik yang menjalankan dua usaha berbeda.
  */
 const MERCHANTS: Array<{ owner: string; sector: Sector; name: string; days: number; perDay: [number, number] }> = [
@@ -173,7 +173,7 @@ async function wipe(db: Db) {
              inventory_logs, product_recipes, products, ingredients,
              merchant_health_logs, feature_usage_events, daily_merchant_insights,
              merchant_ai_credits, merchant_targets, ai_query_logs,
-             invoices, subscriptions, users, tenants
+             invoices, subscriptions, users, businesses
     RESTART IDENTITY CASCADE
   `);
 }
@@ -187,7 +187,7 @@ async function main() {
   // Dulu penghapusan digantung pada alreadySeeded(), yang memeriksa apakah ada
   // transaksi. Seed yang gagal di tengah jalan meninggalkan merchant tanpa
   // transaksi — keadaan yang lolos pemeriksaan itu — sehingga --force melewati
-  // penghapusan lalu langsung menabrak external_ref yang sudah ada. "Force"
+  // penghapusan lalu langsung menabrak client_key yang sudah ada. "Force"
   // yang menolak bekerja justru pada keadaan berantakan tidak menolong siapa
   // pun; di situlah ia paling dibutuhkan.
   if (force) {
@@ -207,13 +207,13 @@ async function main() {
     const cat = CATALOG[m.sector];
     const businessId = `${m.owner}_${m.sector}`;
 
-    // external_ref WAJIB diisi. Itu satu-satunya kunci yang menghubungkan
+    // client_key WAJIB diisi. Itu satu-satunya kunci yang menghubungkan
     // partition key sisi klien (`${userId}_${sector}`) ke baris tenant — dipakai
-    // endpoint sinkronisasi maupun AI Copilot. Tenant tanpa external_ref hanya
+    // endpoint sinkronisasi maupun AI Copilot. Business tanpa client_key hanya
     // terlihat di admin panel dan tidak akan pernah bisa dijangkau copilot.
     const { rows: tRows } = await db.query(
-      `INSERT INTO tenants (id, name, business_sector, is_active, created_at,
-                            external_ref, owner_user_ref)
+      `INSERT INTO businesses (id, name, business_sector, is_active, created_at,
+                            client_key, owner_user_ref)
        VALUES (uuidv7(), $1, $2, TRUE, CURRENT_TIMESTAMP - ($3::int || ' days')::interval,
                $4, $5)
        RETURNING id`,
@@ -238,8 +238,8 @@ async function main() {
     let cabangUtama: string | null = null;
     for (let i = 0; i < jumlahCabang; i++) {
       const { rows } = await db.query(
-        `INSERT INTO branches
-           (id, tenant_id, external_ref, name, address, latitude, longitude,
+        `INSERT INTO outlets
+           (id, business_id, external_ref, name, address, latitude, longitude,
             allowed_radius_meters, business_sector, is_active)
          VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, 200, $7, TRUE)
          RETURNING id`,
@@ -255,7 +255,7 @@ async function main() {
       );
       if (i === 0) cabangUtama = rows[0].id;
     }
-    await db.query(`UPDATE tenants SET active_branch_id = $2 WHERE id = $1`, [
+    await db.query(`UPDATE businesses SET active_outlet_id = $2 WHERE id = $1`, [
       tenantId,
       cabangUtama,
     ]);
@@ -266,7 +266,7 @@ async function main() {
     for (let i = 0; i < names.length; i++) {
       const role = i === 0 ? 'MANAGER' : 'CASHIER';
       const { rows } = await db.query(
-        `INSERT INTO users (id, tenant_id, name, username, pin, role)
+        `INSERT INTO users (id, business_id, name, username, pin, role)
          VALUES (uuidv7(), $1, $2, $3, $4, $5) RETURNING id`,
         [tenantId, names[i], `${m.owner}.${m.sector.toLowerCase()}.${i}`, '0000', role]
       );
@@ -279,8 +279,8 @@ async function main() {
     }> = [];
     for (const [name, category, price, cost, desc] of cat.items) {
       const { rows } = await db.query(
-        `INSERT INTO products (id, tenant_id, name, sku, price, cost_price, is_available,
-                               business_sector, business_id, category_name, description,
+        `INSERT INTO products (id, business_id, name, sku, price, cost_price, is_available,
+                               business_sector, client_key, category_name, description,
                                stock, min_stock_alert, unit, catalog_synced_at)
          VALUES (uuidv7(), $1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, $10, $11, $12,
                  CURRENT_TIMESTAMP) RETURNING id`,
@@ -309,11 +309,11 @@ async function main() {
         // MENIMPA, bukan menyisipkan. Sejak 0024 setiap merchant baru langsung
         // mendapat langganan percobaan dari trigger, jadi barisnya sudah ada
         // sebelum baris ini dijalankan.
-        `INSERT INTO subscriptions (id, tenant_id, plan_id, status,
+        `INSERT INTO subscriptions (id, business_id, plan_id, status,
                                     current_period_start, current_period_end)
          VALUES (uuidv7(), $1, $2, $3,
                  CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')
-         ON CONFLICT (tenant_id) DO UPDATE SET
+         ON CONFLICT (business_id) DO UPDATE SET
            plan_id              = EXCLUDED.plan_id,
            status               = EXCLUDED.status,
            current_period_start = EXCLUDED.current_period_start,
@@ -353,8 +353,8 @@ async function main() {
 
         const { rows: xRows } = await db.query(
           `INSERT INTO transactions
-             (id, tenant_id, cashier_user_id, subtotal, discount_amount, tax_amount,
-              total_amount, payment_method, payment_status, business_sector, business_id,
+             (id, business_id, cashier_user_id, subtotal, discount_amount, tax_amount,
+              total_amount, payment_method, payment_status, business_sector, client_key,
               app_module, order_type, invoice_number, created_at)
            VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'COMPLETED', $8, $9, $10, $11, $12,
                    (CURRENT_DATE - ($13::int))::timestamptz
@@ -374,7 +374,7 @@ async function main() {
         for (const l of lines) {
           await db.query(
             `INSERT INTO transaction_items
-               (id, transaction_id, tenant_id, product_id, product_name, unit_price,
+               (id, transaction_id, business_id, product_id, product_name, unit_price,
                 quantity, total_price, business_sector, category_name, unit_cost,
                 product_description)
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
@@ -389,7 +389,7 @@ async function main() {
         if (rnd() < 0.25) {
           await db.query(
             `INSERT INTO merchant_activity_log
-               (merchant_id, business_sector, business_id, app_module,
+               (business_id, business_sector, client_key, app_module,
                 event_type, severity, actor_user_id, actor_name, actor_role,
                 transaction_id, amount_idr, summary, detail, occurred_at)
              VALUES ($1, $2, $3, $4, 'SALE', 'INFO', $5, $6, $7, $8, $9, $10, $11::jsonb,
@@ -423,7 +423,7 @@ async function main() {
       const staff = pickOne(staffIds);
       await db.query(
         `INSERT INTO merchant_activity_log
-           (merchant_id, business_sector, business_id, app_module,
+           (business_id, business_sector, client_key, app_module,
             event_type, severity, actor_user_id, actor_name, actor_role,
             summary, detail, occurred_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
@@ -437,7 +437,7 @@ async function main() {
       actTotal++;
     }
 
-    console.log(`  ${m.sector.padEnd(11)} ${m.name.padEnd(26)} business_id=${businessId}`);
+    console.log(`  ${m.sector.padEnd(11)} ${m.name.padEnd(26)} client_key=${businessId}`);
   }
 
   console.log(

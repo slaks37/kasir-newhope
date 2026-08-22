@@ -14,7 +14,7 @@
  * 3. TIDAK PERNAH HILANG, TIDAK PERNAH GANDA. Baris dibuang dari antrian HANYA
  *    setelah server mengonfirmasi. Kalau server sudah menyimpan tapi
  *    jawabannya tidak sampai, kiriman berikutnya akan mengulang — dan ditolak
- *    server lewat UNIQUE (tenant_id, client_txn_id). Menggandakan omzet adalah
+ *    server lewat UNIQUE (business_id, client_txn_id). Menggandakan omzet adalah
  *    kerusakan yang tidak bisa diperbaiki dari layar mana pun; kehilangan satu
  *    struk masih bisa dimasukkan ulang manual. Jadi bias file ini selalu ke
  *    arah kirim-ulang, bukan buang.

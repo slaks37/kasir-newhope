@@ -116,15 +116,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // sini — merchant baru mendapat baris langganan, bukan paket aktif.
     const { rows: sub } = await client.query(
       `INSERT INTO billing.subscriptions
-         (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+         (id, business_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, 'plan-free', 'TRIAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       ON CONFLICT (tenant_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+       ON CONFLICT (business_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
        RETURNING id`,
       [tenantId]
     );
 
     const { rows: merchant } = await client.query(
-      `SELECT name, external_ref FROM pos.tenants WHERE id = $1`,
+      `SELECT name, client_key FROM pos.businesses WHERE id = $1`,
       [tenantId]
     );
 
@@ -133,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { rows: faktur } = await client.query(
       `INSERT INTO billing.invoices
-         (id, subscription_id, tenant_id, invoice_number, plan_id, billing_cycle,
+         (id, subscription_id, business_id, invoice_number, plan_id, billing_cycle,
           amount, currency, payment_status, due_date, expires_at)
        VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, 'IDR', 'PENDING',
                CURRENT_TIMESTAMP + ($7::int || ' minutes')::interval,

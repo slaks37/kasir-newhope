@@ -42,6 +42,7 @@ const MIGRATIONS = [
   'migrations/0022_empat_tier.sql',
   'migrations/0023_entitlement_kedaluwarsa.sql',
   'migrations/0024_trial_otomatis.sql',
+  'migrations/0025_hierarki_identitas.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

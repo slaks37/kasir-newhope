@@ -14,7 +14,7 @@ export default async function handler(req: any, res: any) {
               t.name AS merchant_name
          FROM internal.internal_access_log l
          JOIN internal.internal_users u ON u.id = l.internal_user_id
-         LEFT JOIN pos.tenants t ON t.id = l.merchant_id
+         LEFT JOIN pos.businesses t ON t.id = l.business_id
         ORDER BY l.accessed_at DESC
         LIMIT 200`
     );

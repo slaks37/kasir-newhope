@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `SELECT p.id, p.name, p.price_idr, s.current_period_end
          FROM billing.subscriptions s
          JOIN billing.plans p ON p.id = s.plan_id
-        WHERE s.tenant_id = $1`,
+        WHERE s.business_id = $1`,
       [tenantId]
     );
 

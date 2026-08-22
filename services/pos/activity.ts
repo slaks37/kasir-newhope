@@ -29,7 +29,7 @@ function pick<T extends string>(allowed: readonly T[], v: unknown): T | null {
 
 export interface ActivityInput {
   /**
-   * pos.tenants.id. Dulu ada `tenantId` terpisah di sini yang selalu diisi
+   * pos.businesses.id. Dulu ada `tenantId` terpisah di sini yang selalu diisi
    * nilai yang sama; kolomnya dibuang di migrasi 0019, dan medannya ikut —
    * dua nama untuk satu hal hanya menunggu keduanya berbeda.
    */
@@ -56,7 +56,7 @@ export async function writeActivity(db: Db, a: ActivityInput): Promise<string | 
 
   const { rows } = await db.query(
     `INSERT INTO pos.merchant_activity_log
-       (merchant_id, business_sector, business_id, app_module,
+       (business_id, business_sector, client_key, app_module,
         event_type, severity, actor_user_id, actor_name, actor_role,
         transaction_id, amount_idr, summary, detail, occurred_at)
      VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9,

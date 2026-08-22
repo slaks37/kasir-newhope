@@ -38,7 +38,7 @@ export async function entitlementMerchant(
   const { rows } = await db.query(
     `SELECT product_limit, max_outlets, ai_quota_effective,
             dashboard_access_level, module_access
-       FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+       FROM contract.merchant_entitlements WHERE business_id = $1`,
     [merchantId]
   );
 

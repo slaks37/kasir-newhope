@@ -21,9 +21,9 @@ async function main() {
 
   console.log('\n2. DATA USER CLIENT (pos.users - Merchant Store Staff & Cashiers):');
   const clientUsers = await client.query(`
-    SELECT u.id, u.tenant_id, t.name as store_name, t.business_sector, u.name, u.username, u.role, u.pin
+    SELECT u.id, u.business_id, t.name as store_name, t.business_sector, u.name, u.username, u.role, u.pin
     FROM pos.users u
-    LEFT JOIN pos.tenants t ON t.id = u.tenant_id
+    LEFT JOIN pos.businesses t ON t.id = u.business_id
     ORDER BY t.business_sector, u.role;
   `);
   console.table(clientUsers.rows);

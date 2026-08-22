@@ -91,7 +91,7 @@ function periodeBerikutnya(): string {
  */
 async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null> {
   const kuota = await db.query(
-    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE business_id = $1`,
     [tenantId]
   );
   const jatah = Number(kuota.rows[0]?.ai_quota_effective ?? 0);
@@ -99,9 +99,9 @@ async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null
   try {
     const dibuat = await db.query(
       `INSERT INTO ai.merchant_ai_credits
-         (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+         (business_id, balance, monthly_grant, used_this_month, period_reset_at)
        VALUES ($1, $2, $2, 0, $3::timestamptz)
-       ON CONFLICT (merchant_id) DO NOTHING
+       ON CONFLICT (business_id) DO NOTHING
        RETURNING balance, monthly_grant, used_this_month`,
       [tenantId, jatah, periodeBerikutnya()]
     );
@@ -123,7 +123,7 @@ async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null
                                      THEN $2::timestamptz ELSE period_reset_at END,
               monthly_grant   = $3,
               updated_at      = CURRENT_TIMESTAMP
-        WHERE merchant_id = $1
+        WHERE business_id = $1
         RETURNING balance, monthly_grant, used_this_month`,
       [tenantId, periodeBerikutnya(), jatah]
     );
@@ -203,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const stats = await db.query(
           `SELECT COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0)::numeric AS total
              FROM pos.transactions
-            WHERE tenant_id = $1
+            WHERE business_id = $1
               AND payment_status <> 'CANCELLED'
               AND created_at >= NOW() - INTERVAL '30 days'`,
           [tenantId]
@@ -218,7 +218,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `SELECT i.product_name AS name, SUM(i.quantity)::int AS qty
              FROM pos.transaction_items i
              JOIN pos.transactions t ON t.id = i.transaction_id
-            WHERE t.tenant_id = $1
+            WHERE t.business_id = $1
               AND t.payment_status <> 'CANCELLED'
               AND t.created_at >= NOW() - INTERVAL '7 days'
             GROUP BY i.product_name
@@ -233,7 +233,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const lapsed = await db.query(
           `SELECT name, tier, days_since_last_transaction AS hari, lifetime_spent_recorded AS belanja
              FROM contract.customer_rfm
-            WHERE merchant_id = $1 AND days_since_last_transaction > 14
+            WHERE business_id = $1 AND days_since_last_transaction > 14
             ORDER BY lifetime_spent_recorded DESC
             LIMIT 5`,
           [tenantId]

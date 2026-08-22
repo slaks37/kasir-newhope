@@ -48,14 +48,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 1. Ensure Tenant, keyed on external_ref.
     // This is the same key services/shared/identity.ts resolves through
-    // (contract.merchant_directory.business_id). Keying on legacy_uuid(id)
+    // (contract.merchant_directory.client_key). Keying on legacy_uuid(id)
     // instead produced a tenant that resolveTenant could never find, so the
     // AI wallet and the subscription attached to a different merchant than
     // the transactions did.
     const tenantRes = await client.query(
-      `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref, is_active)
+      `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), $1, $2, $3, $4, true)
-       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+       ON CONFLICT (client_key) WHERE client_key IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
        RETURNING id`,
       [storeName || 'New Hope Store', sector, businessId, ownerRef || null]
@@ -66,9 +66,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const cashierName = String(txns.find((t: any) => t.cashierName)?.cashierName || 'Kasir');
     const cashierRef = ownerRef || 'usr-1';
     const userRes = await client.query(
-      `INSERT INTO pos.users (id, tenant_id, name, username, pin, role, external_ref)
+      `INSERT INTO pos.users (id, business_id, name, username, pin, role, external_ref)
        VALUES (uuidv7(), $1, $2, $3, '----', 'ADMIN', $4)
-       ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+       ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name
        RETURNING id`,
       [tenantId, cashierName.slice(0, 100), `${businessId}.${cashierRef}`.slice(0, 50), cashierRef]
@@ -86,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // aplikasi kasir — bukan "tanpa batas". Merchant yang belum berlangganan
     // bukan merchant dengan paket termahal.
     const batasRes = await client.query(
-      `SELECT product_limit FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+      `SELECT product_limit FROM contract.merchant_entitlements WHERE business_id = $1`,
       [tenantId]
     );
     const batasProduk = batasRes.rows.length
@@ -94,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : ENTITLEMENT_DARURAT.productLimit;
 
     const jumlahRes = await client.query(
-      `SELECT COUNT(*)::int AS n FROM pos.products WHERE tenant_id = $1`,
+      `SELECT COUNT(*)::int AS n FROM pos.products WHERE business_id = $1`,
       [tenantId]
     );
     let jumlahProduk = jumlahRes.rows[0].n as number;
@@ -111,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const found = await client.query(
         `SELECT id FROM pos.products
-          WHERE tenant_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
+          WHERE business_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
         [tenantId, ref, item.productName]
       );
 
@@ -139,8 +139,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // land, or the receipt line is lost along with its revenue.
         const ins = await client.query(
           `INSERT INTO pos.products
-             (id, tenant_id, name, sku, price, cost_price, business_sector,
-              business_id, category_name, description, external_ref)
+             (id, business_id, name, sku, price, cost_price, business_sector,
+              client_key, category_name, description, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING id`,
           [
@@ -178,10 +178,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const tier = String(c.tier || '').toUpperCase();
       const custRes = await client.query(
         `INSERT INTO pos.customers
-           (id, tenant_id, external_ref, name, phone, email, points, total_spent,
-            visit_count, tier, last_visit_at, business_sector, business_id)
+           (id, business_id, external_ref, name, phone, email, points, total_spent,
+            visit_count, tier, last_visit_at, business_sector, client_key)
          VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz, $11, $12)
-         ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+         ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
          DO UPDATE SET
            name          = EXCLUDED.name,
            phone         = COALESCE(EXCLUDED.phone, pos.customers.phone),
@@ -238,7 +238,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (berid.length) {
       const { rows } = await client.query(
         `SELECT client_txn_id FROM pos.transactions
-          WHERE tenant_id = $1 AND client_txn_id = ANY($2::text[])`,
+          WHERE business_id = $1 AND client_txn_id = ANY($2::text[])`,
         [tenantId, berid.map((t: any) => String(t.clientTxnId))]
       );
       for (const r of rows) sudahAda.add(r.client_txn_id);
@@ -315,10 +315,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // lewat cashier_user_id, dan contract.transaction_log yang menggabungkannya.
       await client.query(
         `INSERT INTO pos.transactions (
-           id, client_txn_id, tenant_id, cashier_user_id, customer_id,
+           id, client_txn_id, business_id, cashier_user_id, customer_id,
            invoice_number, subtotal, discount_amount, tax_amount, service_charge_amount,
            total_amount, payment_method, payment_status, order_type, app_module,
-           business_sector, business_id, created_at
+           business_sector, client_key, created_at
          ) VALUES ${barisTxn.join(', ')}`,
         nilaiTxn
       );
@@ -356,7 +356,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (barisItem.length) {
         await client.query(
           `INSERT INTO pos.transaction_items (
-             id, transaction_id, tenant_id, product_id, product_name, product_description,
+             id, transaction_id, business_id, product_id, product_name, product_description,
              category_name, unit_price, unit_cost, quantity, total_price, business_sector
            ) VALUES ${barisItem.join(', ')}`,
           nilaiItem
@@ -371,7 +371,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (idempotencyKey) {
       await client.query(
         `INSERT INTO pos.sync_receipts
-           (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
+           (idempotency_key, business_id, client_key, rows_accepted, rows_duplicate)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (idempotency_key) DO NOTHING`,
         [idempotencyKey, tenantId, businessId, accepted, duplicates]

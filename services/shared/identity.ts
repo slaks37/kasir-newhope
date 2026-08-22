@@ -18,7 +18,7 @@
  * URUTAN PENCARIAN, dari yang paling pasti ke yang paling longgar:
  *
  *   1. Sudah UUID           -> pakai apa adanya
- *   2. businessId           -> contract.merchant_directory.business_id
+ *   2. businessId           -> contract.merchant_directory.client_key
  *   3. merchantId sebagai   -> contract.merchant_directory.owner_user_ref
  *      pemilik akun            (hanya bila TEPAT SATU unit usaha; pemilik
  *                               dengan kafe + laundry ambigu dan harus
@@ -60,11 +60,11 @@ export async function resolveTenant(db: Db, id: IdentitasMerchant): Promise<Hasi
 
   if (businessId) {
     const { rows } = await db.query(
-      `SELECT merchant_id FROM contract.merchant_directory WHERE business_id = $1`,
+      `SELECT business_id FROM contract.merchant_directory WHERE client_key = $1`,
       [businessId]
     );
     if (rows.length) {
-      return { tenantId: rows[0].merchant_id, terdaftar: true, lewat: 'BUSINESS_ID' };
+      return { tenantId: rows[0].business_id, terdaftar: true, lewat: 'BUSINESS_ID' };
     }
   }
 
@@ -73,12 +73,12 @@ export async function resolveTenant(db: Db, id: IdentitasMerchant): Promise<Hasi
     // sini. Menebak salah satunya berarti kredit kafe terpotong untuk
     // pertanyaan tentang laundry — dan tidak akan ada yang menyadarinya.
     const { rows } = await db.query(
-      `SELECT merchant_id FROM contract.merchant_directory
+      `SELECT business_id FROM contract.merchant_directory
         WHERE owner_user_ref = $1 LIMIT 2`,
       [merchantId]
     );
     if (rows.length === 1) {
-      return { tenantId: rows[0].merchant_id, terdaftar: true, lewat: 'OWNER_REF' };
+      return { tenantId: rows[0].business_id, terdaftar: true, lewat: 'OWNER_REF' };
     }
   }
 

@@ -344,7 +344,7 @@ export function buildChurnRow(merchantId, date, lapsedCustomers = []) {
 
   return {
     id: idFor(merchantId, date, 'CRM_CHURN'),
-    merchant_id: merchantId,
+    business_id: merchantId,
     insight_date: date,
     category: 'CRM_CHURN',
     priority: lapsedCustomers.length >= 3 ? 1 : 2,
@@ -375,7 +375,7 @@ export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCust
     const urgent = reorder.filter((r) => r.severity === 'OUT_OF_STOCK' || r.severity === 'CRITICAL');
     rows.push({
       id: idFor(merchantId, date, 'INVENTORY_ALERT'),
-      merchant_id: merchantId,
+      business_id: merchantId,
       insight_date: date,
       category: 'INVENTORY_ALERT',
       priority: urgent.length > 0 ? 1 : 2,
@@ -394,7 +394,7 @@ export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCust
     const top = basket.pairs[0];
     rows.push({
       id: idFor(merchantId, date, 'CROSS_SELL_OPPORTUNITY'),
-      merchant_id: merchantId,
+      business_id: merchantId,
       insight_date: date,
       category: 'CROSS_SELL_OPPORTUNITY',
       priority: 3,
@@ -420,10 +420,10 @@ export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCust
 // setiap penulisan gagal.
 const UPSERT_SQL = `
 INSERT INTO daily_merchant_insights
-  (id, merchant_id, insight_date, category, priority, title, summary, metric_label, payload, actions, status, created_at, updated_at)
+  (id, business_id, insight_date, category, priority, title, summary, metric_label, payload, actions, status, created_at, updated_at)
 VALUES
   (legacy_uuid($1), $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT (merchant_id, insight_date, category) DO UPDATE SET
+ON CONFLICT (business_id, insight_date, category) DO UPDATE SET
   priority     = EXCLUDED.priority,
   title        = EXCLUDED.title,
   summary      = EXCLUDED.summary,
@@ -437,7 +437,7 @@ ON CONFLICT (merchant_id, insight_date, category) DO UPDATE SET
 async function upsertInsights(client, rows) {
   for (const r of rows) {
     await client.query(UPSERT_SQL, [
-      r.id, r.merchant_id, r.insight_date, r.category, r.priority,
+      r.id, r.business_id, r.insight_date, r.category, r.priority,
       r.title, r.summary, r.metric_label,
       JSON.stringify(r.payload), JSON.stringify(r.actions),
     ]);
@@ -452,11 +452,11 @@ async function loadMerchantData(client, merchantId, windowDays) {
   // lima query yang dikirim bersamaan tetap dijalankan satu per satu dalam
   // antrean internal pg — tidak ada yang lebih cepat — sambil memicu peringatan
   // usang yang akan menjadi galat di pg@9.
-  const products = await client.query('SELECT id, name, price, cost_price, 0 AS stock, 0 AS min_stock_alert FROM products WHERE tenant_id = $1', [merchantId]);
-  const stockItems = await client.query('SELECT id, name, current_stock AS stock, min_stock_alert, unit, cost_price FROM ingredients WHERE tenant_id = $1', [merchantId]);
-  const orders = await client.query('SELECT id, created_at AS date, payment_status FROM transactions WHERE tenant_id = $1 AND created_at >= $2', [merchantId, since]);
-  const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE tenant_id = $1', [merchantId]);
-  const logs = await client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE tenant_id = $1 AND created_at >= $2", [merchantId, since]);
+  const products = await client.query('SELECT id, name, price, cost_price, 0 AS stock, 0 AS min_stock_alert FROM products WHERE business_id = $1', [merchantId]);
+  const stockItems = await client.query('SELECT id, name, current_stock AS stock, min_stock_alert, unit, cost_price FROM ingredients WHERE business_id = $1', [merchantId]);
+  const orders = await client.query('SELECT id, created_at AS date, payment_status FROM transactions WHERE business_id = $1 AND created_at >= $2', [merchantId, since]);
+  const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE business_id = $1', [merchantId]);
+  const logs = await client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE business_id = $1 AND created_at >= $2", [merchantId, since]);
 
   // Member yang dulu datang lalu berhenti. Dibaca dari contract.customer_rfm —
   // permukaan yang sama dengan yang dipakai AI Copilot, supaya angka di kartu
@@ -464,7 +464,7 @@ async function loadMerchantData(client, merchantId, windowDays) {
   const lapsed = await client.query(
     `SELECT name, tier, days_since_last_transaction AS hari, lifetime_spent_recorded AS belanja
        FROM contract.customer_rfm
-      WHERE merchant_id = $1
+      WHERE business_id = $1
         AND days_since_last_transaction > 14
         AND transaction_count > 1
       ORDER BY lifetime_spent_recorded DESC
@@ -536,7 +536,7 @@ function demoData() {
 async function catatRun(client, merchantId, status, ditulis, durasiMs, error) {
   await client.query(
     `INSERT INTO batch_job_runs
-       (id, job_name, merchant_id, started_at, finished_at, status,
+       (id, job_name, business_id, started_at, finished_at, status,
         insights_written, duration_ms, error_text)
      VALUES (uuidv7(), 'daily-insights', $1,
              CURRENT_TIMESTAMP - ($4::int || ' milliseconds')::interval,

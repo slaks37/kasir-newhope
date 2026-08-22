@@ -45,7 +45,7 @@ const JATAH_TANPA_PAKET = 0;
  */
 async function kuotaPaket(db: Db, tenantId: string): Promise<number> {
   const { rows } = await db.query(
-    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+    `SELECT ai_quota_effective FROM contract.merchant_entitlements WHERE business_id = $1`,
     [tenantId]
   );
   const n = Number(rows[0]?.ai_quota_effective);
@@ -73,7 +73,7 @@ function periodeBerikutnya(): string {
 
 function keWallet(row: any): AiCreditWallet {
   return {
-    merchantId: row.merchant_id,
+    merchantId: row.business_id,
     balance: Number(row.balance),
     monthlyGrant: Number(row.monthly_grant),
     usedThisMonth: Number(row.used_this_month),
@@ -88,7 +88,7 @@ function keWallet(row: any): AiCreditWallet {
 /**
  * Dompet untuk merchant yang belum pernah sinkron ke database.
  *
- * `merchant_ai_credits.merchant_id` punya foreign key ke `tenants` (0006), jadi
+ * `merchant_ai_credits.business_id` punya foreign key ke `tenants` (0006), jadi
  * dompet TIDAK BISA dibuat untuk merchant yang belum ada. FK itu sengaja
  * dipertahankan — ia yang menjamin dompet ikut terhapus saat merchant pergi.
  *
@@ -127,9 +127,9 @@ async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet
 
   const dibuat = await db.query(
     `INSERT INTO ai.merchant_ai_credits
-       (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+       (business_id, balance, monthly_grant, used_this_month, period_reset_at)
      VALUES ($1, $2, $2, 0, $3::timestamptz)
-     ON CONFLICT (merchant_id) DO NOTHING
+     ON CONFLICT (business_id) DO NOTHING
      RETURNING *`,
     [merchantId, jatah, periodeBerikutnya()]
   );
@@ -167,7 +167,7 @@ async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet
                                    THEN $2::timestamptz ELSE period_reset_at END,
             monthly_grant   = $3,
             updated_at      = CURRENT_TIMESTAMP
-      WHERE merchant_id = $1
+      WHERE business_id = $1
       RETURNING *`,
     [merchantId, periodeBerikutnya(), jatah]
   );
@@ -212,7 +212,7 @@ export async function tambahKredit(
   const { rows } = await db.query(
     `UPDATE ai.merchant_ai_credits
         SET balance = balance + $2, updated_at = CURRENT_TIMESTAMP
-      WHERE merchant_id = $1 RETURNING *`,
+      WHERE business_id = $1 RETURNING *`,
     [merchantId, Math.max(0, Math.trunc(jumlah))]
   );
   return rows.length ? keWallet(rows[0]) : awal;
@@ -246,7 +246,7 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
     const merchantId = await keUuid(db, a.merchantId, a.businessId ?? undefined);
     await db.query(
       `INSERT INTO ai.ai_query_logs
-         (id, merchant_id, query_text, resolved_intent, source,
+         (id, business_id, query_text, resolved_intent, source,
           credits_charged, latency_ms, model, prompt_tokens, completion_tokens)
        VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
@@ -273,7 +273,7 @@ export async function ringkasanAudit(db: Db, merchantIdMentah: string, limit = 5
     `SELECT id, asked_at, query_text, resolved_intent, source, credits_charged,
             latency_ms, model, prompt_tokens, completion_tokens
        FROM ai.ai_query_logs
-      WHERE merchant_id = $1
+      WHERE business_id = $1
       ORDER BY asked_at DESC LIMIT $2`,
     [merchantId, Math.min(Math.max(limit, 1), 200)]
   );
@@ -284,13 +284,13 @@ export async function ringkasanAudit(db: Db, merchantIdMentah: string, limit = 5
             COALESCE(SUM(credits_charged), 0)::int              AS kredit,
             COALESCE(SUM(prompt_tokens), 0)::int                AS prompt_tokens,
             COALESCE(SUM(completion_tokens), 0)::int            AS completion_tokens
-       FROM ai.ai_query_logs WHERE merchant_id = $1`,
+       FROM ai.ai_query_logs WHERE business_id = $1`,
     [merchantId]
   );
 
   const { rows: perSumber } = await db.query(
     `SELECT source, COUNT(*)::int AS n FROM ai.ai_query_logs
-      WHERE merchant_id = $1 GROUP BY source`,
+      WHERE business_id = $1 GROUP BY source`,
     [merchantId]
   );
 

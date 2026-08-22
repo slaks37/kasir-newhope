@@ -51,7 +51,7 @@ d('penegakan modul di server', () => {
     await db().query(
       `UPDATE billing.subscriptions SET plan_id = 'plan-uji-tanpa-ai', status = 'ACTIVE',
               current_period_end = CURRENT_TIMESTAMP + INTERVAL '30 days'
-        WHERE tenant_id = $1`, [tid]);
+        WHERE business_id = $1`, [tid]);
 
     const d = await tanya();
     expect(d.answer.source).toBe('PAYWALL');
@@ -70,7 +70,7 @@ d('penegakan modul di server', () => {
     await db().query(
       `UPDATE billing.subscriptions
           SET current_period_end = CURRENT_TIMESTAMP - INTERVAL '30 days'
-        WHERE tenant_id = $1`, [tid]);
+        WHERE business_id = $1`, [tid]);
 
     const e = await entitlementMerchant(db() as any, tid);
     const free = (await db().query(
@@ -85,7 +85,7 @@ d('penegakan modul di server', () => {
 
   it('merchant tanpa baris langganan jatuh ke entitlement darurat, bukan paket termahal', async () => {
     const tid2 = await merchantUji('usr-uji-nosub_FNB', 'Tanpa Langganan');
-    await db().query('DELETE FROM billing.subscriptions WHERE tenant_id = $1', [tid2]);
+    await db().query('DELETE FROM billing.subscriptions WHERE business_id = $1', [tid2]);
 
     const e = await entitlementMerchant(db() as any, tid2);
     expect(e.aiQuotaMonthly).toBe(0);
@@ -95,6 +95,6 @@ d('penegakan modul di server', () => {
     // Dibersihkan: merchant tanpa langganan adalah keadaan yang sengaja
     // dibuat tes ini, dan tidak boleh terlihat oleh tes lain sebagai
     // kebocoran trigger 0024.
-    await db().query('DELETE FROM pos.tenants WHERE id = $1', [tid2]);
+    await db().query('DELETE FROM pos.businesses WHERE id = $1', [tid2]);
   });
 });

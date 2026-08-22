@@ -119,7 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Baris dikunci supaya dua notifikasi yang tiba bersamaan untuk faktur yang
     // sama tidak sama-sama mengaktifkan dan memperpanjang dua kali.
     const { rows: faktur } = await client.query(
-      `SELECT id, tenant_id, subscription_id, plan_id, billing_cycle, amount, payment_status
+      `SELECT id, business_id, subscription_id, plan_id, billing_cycle, amount, payment_status
          FROM billing.invoices
         WHERE invoice_number = $1
         FOR UPDATE`,

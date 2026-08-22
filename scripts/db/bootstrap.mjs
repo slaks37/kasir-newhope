@@ -51,20 +51,20 @@ INSERT INTO plans (id, name, tier_level, billing_cycle, price_idr, features) VAL
   ('plan-enterprise-monthly', 'Enterprise Ultra', 3, 'MONTHLY', 699000, '[]'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO tenants (id, name, business_sector, created_at) VALUES
+INSERT INTO businesses (id, name, business_sector, created_at) VALUES
   (legacy_uuid('tenant-warung'),  'Warung Sehat',   'FNB',     CURRENT_TIMESTAMP - INTERVAL '120 days'),
   (legacy_uuid('tenant-kopi'),    'Kopi Senja',     'FNB',     CURRENT_TIMESTAMP - INTERVAL '90 days'),
   (legacy_uuid('tenant-laundry'), 'Laundry Bersih', 'LAUNDRY', CURRENT_TIMESTAMP - INTERVAL '200 days')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO users (id, tenant_id, name, username, role, pin) VALUES
+INSERT INTO users (id, business_id, name, username, role, pin) VALUES
   (legacy_uuid('u-warung-1'),  legacy_uuid('tenant-warung'),  'Bu Sari',  'sari', 'ADMIN',   '1234'),
   (legacy_uuid('u-warung-2'),  legacy_uuid('tenant-warung'),  'Rina',     'rina', 'CASHIER', '1111'),
   (legacy_uuid('u-kopi-1'),    legacy_uuid('tenant-kopi'),    'Mas Anto', 'anto', 'ADMIN',   '2222'),
   (legacy_uuid('u-laundry-1'), legacy_uuid('tenant-laundry'), 'Pak Joko', 'joko', 'ADMIN',   '3333')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end) VALUES
+INSERT INTO subscriptions (id, business_id, plan_id, status, current_period_start, current_period_end) VALUES
   (legacy_uuid('sub-warung'),  legacy_uuid('tenant-warung'),  'plan-pro-monthly',   'ACTIVE',
      CURRENT_TIMESTAMP - INTERVAL '10 days', CURRENT_TIMESTAMP + INTERVAL '20 days'),
   (legacy_uuid('sub-kopi'),    legacy_uuid('tenant-kopi'),    'plan-pro-monthly',   'PAST_DUE',
@@ -74,30 +74,30 @@ INSERT INTO subscriptions (id, tenant_id, plan_id, status, current_period_start,
 ON CONFLICT (id) DO NOTHING;
 
 -- Warung: trading today. Kopi: went quiet 9 days ago. Laundry: 25 days silent.
-INSERT INTO transactions (id, tenant_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
+INSERT INTO transactions (id, business_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
 SELECT uuidv7(), legacy_uuid('tenant-warung'), legacy_uuid('u-warung-2'),
        'INV-W-' || g, 150000 + (g * 137 % 90000), 150000 + (g * 137 % 90000), 'CASH', 'COMPLETED',
        CURRENT_TIMESTAMP - (g || ' hours')::interval
   FROM generate_series(1, 240) g;
 
-INSERT INTO transactions (id, tenant_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
+INSERT INTO transactions (id, business_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
 SELECT uuidv7(), legacy_uuid('tenant-kopi'), legacy_uuid('u-kopi-1'),
        'INV-K-' || g, 45000 + (g * 91 % 30000), 45000 + (g * 91 % 30000), 'QRIS', 'COMPLETED',
        CURRENT_TIMESTAMP - INTERVAL '9 days' - (g || ' hours')::interval
   FROM generate_series(1, 60) g;
 
-INSERT INTO transactions (id, tenant_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
+INSERT INTO transactions (id, business_id, cashier_user_id, invoice_number, subtotal, total_amount, payment_method, payment_status, created_at)
 SELECT uuidv7(), legacy_uuid('tenant-laundry'), legacy_uuid('u-laundry-1'),
        'INV-L-' || g, 25000, 25000, 'CASH', 'COMPLETED',
        CURRENT_TIMESTAMP - INTERVAL '25 days' - (g || ' hours')::interval
   FROM generate_series(1, 12) g;
 
-INSERT INTO feature_usage_events (merchant_id, business_id, feature_key, occurred_at)
+INSERT INTO feature_usage_events (business_id, client_key, feature_key, occurred_at)
 SELECT legacy_uuid('tenant-warung'), 'warung_FNB', k,
        CURRENT_TIMESTAMP - (row_number() over () || ' hours')::interval
   FROM unnest(ARRAY['pos.checkout','ai.digest','ai.stock_critical','reports.margin','inventory.restock','crm.loyalty']) k;
 
-INSERT INTO feature_usage_events (merchant_id, business_id, feature_key, occurred_at)
+INSERT INTO feature_usage_events (business_id, client_key, feature_key, occurred_at)
 SELECT legacy_uuid('tenant-kopi'), 'kopi_FNB', k,
        CURRENT_TIMESTAMP - INTERVAL '9 days'
   FROM unnest(ARRAY['pos.checkout','ai.digest']) k;
@@ -109,7 +109,7 @@ SELECT legacy_uuid('tenant-kopi'), 'kopi_FNB', k,
 
 const HEALTH_SQL = `
 INSERT INTO merchant_health_logs (
-  id, merchant_id, log_date,
+  id, business_id, log_date,
   daily_revenue, daily_transaction_count, active_cashiers_count,
   login_status, last_activity_at, days_since_last_txn, active_days_last_7,
   revenue_trend_pct, feature_usage_payload, distinct_features_used,
@@ -117,7 +117,7 @@ INSERT INTO merchant_health_logs (
   churn_risk_score, churn_risk_reasons
 )
 WITH agg AS (
-  SELECT te.id AS merchant_id,
+  SELECT te.id AS business_id,
          MAX(t.created_at) AS last_txn_at,
          COUNT(t.id) FILTER (WHERE t.created_at::date = CURRENT_DATE)           AS txn_today,
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at::date = CURRENT_DATE), 0) AS rev_today,
@@ -126,20 +126,20 @@ WITH agg AS (
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'), 0)  AS rev_7d,
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at <  CURRENT_DATE - INTERVAL '7 days'
                                                AND t.created_at >= CURRENT_DATE - INTERVAL '30 days'), 0)  AS rev_prior
-    FROM tenants te
+    FROM businesses te
     LEFT JOIN transactions t
-           ON t.tenant_id = te.id AND t.payment_status = 'COMPLETED'
+           ON t.business_id = te.id AND t.payment_status = 'COMPLETED'
    GROUP BY te.id
 ),
 feat AS (
-  SELECT merchant_id,
+  SELECT business_id,
          COUNT(DISTINCT feature_key) AS n,
          jsonb_object_agg(feature_key, uses) AS payload
-    FROM (SELECT merchant_id, feature_key, COUNT(*) uses
+    FROM (SELECT business_id, feature_key, COUNT(*) uses
             FROM feature_usage_events
            WHERE occurred_at >= CURRENT_DATE - INTERVAL '30 days'
            GROUP BY 1,2) x
-   GROUP BY merchant_id
+   GROUP BY business_id
 ),
 calc AS (
   SELECT a.*,
@@ -152,11 +152,11 @@ calc AS (
               THEN (((a.rev_7d / 7.0) - (a.rev_prior / 23.0)) / (a.rev_prior / 23.0)) * 100
               ELSE 0 END AS trend_pct
     FROM agg a
-    LEFT JOIN subscriptions s ON s.tenant_id = a.merchant_id
+    LEFT JOIN subscriptions s ON s.business_id = a.business_id
     LEFT JOIN plans p ON p.id = s.plan_id
-    LEFT JOIN feat f ON f.merchant_id = a.merchant_id
+    LEFT JOIN feat f ON f.business_id = a.business_id
 )
-SELECT uuidv7(), c.merchant_id, CURRENT_DATE,
+SELECT uuidv7(), c.business_id, CURRENT_DATE,
        c.rev_today, c.txn_today, c.cashiers_today,
        (c.days_since <= 1), c.last_txn_at, LEAST(c.days_since, 999)::int, LEAST(c.active_days_7, 7)::int,
        ROUND(c.trend_pct, 2), c.payload, c.features::int,
@@ -168,7 +168,7 @@ SELECT uuidv7(), c.merchant_id, CURRENT_DATE,
                           c.features::int, 0::int),
        '[]'::jsonb
   FROM calc c
-ON CONFLICT (merchant_id, log_date) DO UPDATE SET
+ON CONFLICT (business_id, log_date) DO UPDATE SET
   daily_revenue = EXCLUDED.daily_revenue,
   churn_risk_score = EXCLUDED.churn_risk_score,
   updated_at = CURRENT_TIMESTAMP;
@@ -219,7 +219,7 @@ async function verify(query) {
   const fk = await query(`SELECT COUNT(*)::int n FROM pg_constraint WHERE contype='f'`);
   add('foreign keys restored', fk.rows[0].n > 0, `${fk.rows[0].n} FKs`);
 
-  const h = await query(`SELECT merchant_id, churn_risk_score, days_since_last_txn, subscription_status,
+  const h = await query(`SELECT business_id, churn_risk_score, days_since_last_txn, subscription_status,
                                 mrr_idr, contract_mrr_idr
                            FROM v_merchant_health_latest ORDER BY churn_risk_score DESC`);
   add('v_merchant_health_latest returns rows', h.rows.length > 0, `${h.rows.length} merchants`);
@@ -314,7 +314,7 @@ async function main() {
     log('  ' + '-'.repeat(88));
     for (const r of health) {
       log(
-        `  ${String(r.churn_risk_score).padStart(4)}  ${String(r.merchant_id).slice(0, 8)}…  ` +
+        `  ${String(r.churn_risk_score).padStart(4)}  ${String(r.business_id).slice(0, 8)}…  ` +
           `${String(r.days_since_last_txn).padStart(3)}d idle  ${String(r.subscription_status || '-').padEnd(9)} ` +
           `MRR ${String(r.mrr_idr).padStart(9)}  kontrak ${String(r.contract_mrr_idr).padStart(9)}`
       );

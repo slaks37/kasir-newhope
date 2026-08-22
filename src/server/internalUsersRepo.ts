@@ -250,18 +250,18 @@ export async function staffMerchant(
 
   const { rows } = await db.query(
     `SELECT u.id, u.name, u.username, u.role, u.created_at,
-            t.id AS merchant_id, t.name AS merchant_name, t.business_sector,
-            t.external_ref AS business_id,
+            t.id AS business_id, t.name AS merchant_name, t.business_sector,
+            t.external_ref AS client_key,
             (u.pin IS NOT NULL AND u.pin <> '----') AS pin_terpasang
        FROM pos.users u
-       JOIN pos.tenants t ON t.id = u.tenant_id
+       JOIN pos.businesses t ON t.id = u.business_id
        ${where}
       ORDER BY t.name, u.name
       LIMIT $3 OFFSET $4`,
     [sector, search, limit, offset]
   );
   const total = await db.query(
-    `SELECT COUNT(*)::int AS n FROM pos.users u JOIN pos.tenants t ON t.id = u.tenant_id ${where}`,
+    `SELECT COUNT(*)::int AS n FROM pos.users u JOIN pos.businesses t ON t.id = u.business_id ${where}`,
     [sector, search]
   );
   return { rows, total: total.rows[0].n, limit, offset };

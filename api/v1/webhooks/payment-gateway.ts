@@ -149,11 +149,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // kehilangan seluruh entitlementnya justru setelah membayar.
       await client.query(
         `INSERT INTO billing.subscriptions
-           (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+           (id, business_id, plan_id, status, current_period_start, current_period_end)
          VALUES (uuidv7(), $1,
                  COALESCE((SELECT id FROM billing.plans WHERE id = $2 AND is_active), 'plan-free'),
                  'ACTIVE', CURRENT_TIMESTAMP, $3::timestamptz)
-         ON CONFLICT (tenant_id) DO UPDATE SET
+         ON CONFLICT (business_id) DO UPDATE SET
            plan_id = COALESCE(
              (SELECT id FROM billing.plans WHERE id = $2 AND is_active),
              billing.subscriptions.plan_id

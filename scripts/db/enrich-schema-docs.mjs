@@ -13,7 +13,7 @@ async function enrichSchemaDocs() {
   const sql = `
     -- POS SCHEMA COMMENTS
     COMMENT ON SCHEMA pos IS 'Domain Operasional Kasir: Manajemen Tenant, Staf, Produk, Resep Bahan, Transaksi Penjualan, dan Activity Log.';
-    COMMENT ON TABLE pos.tenants IS 'Tabel Utama Merchant/Toko (Multi-Tenant). Menyimpan data bisnis, sektor bisnis (F&B, Retail, Laundry, Barbershop, Carwash), dan status merchant.';
+    COMMENT ON TABLE pos.businesses IS 'Tabel Utama Merchant/Toko (Multi-Tenant). Menyimpan data bisnis, sektor bisnis (F&B, Retail, Laundry, Barbershop, Carwash), dan status merchant.';
     COMMENT ON TABLE pos.users IS 'Daftar Pengguna Kasir & Manajer Toko per Merchant dengan PIN dan Role berbasis RBAC.';
     COMMENT ON TABLE pos.products IS 'Katalog Produk & Layanan Merchant dengan harga jual, harga modal, SKU, stok, dan kategori per sektor.';
     COMMENT ON TABLE pos.transactions IS 'Data Transaksi Penjualan Kasir (Header) dengan nomor invoice, total tagihan, metode bayar (CASH, QRIS, dll), dan status.';

@@ -47,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 1. Ensure Tenant
     const tenantRes = await client.query(
-      `INSERT INTO pos.tenants (id, name, business_sector, is_active)
+      `INSERT INTO pos.businesses (id, name, business_sector, is_active)
        VALUES (legacy_uuid($1), $2, $3, true)
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
        RETURNING id`,
@@ -60,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!p.name) continue;
       await client.query(
         `INSERT INTO pos.products (
-          id, tenant_id, name, sku, price, cost_price, is_available, description
+          id, business_id, name, sku, price, cost_price, is_available, description
         ) VALUES (
           legacy_uuid($1), $2, $3, $4, $5, $6, $7, $8
         )

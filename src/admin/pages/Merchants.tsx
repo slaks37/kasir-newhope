@@ -311,8 +311,8 @@ export default function Merchants({
 
                 return (
                   <tr
-                    key={m.merchant_id}
-                    onClick={() => setOpenId(m.merchant_id)}
+                    key={m.business_id}
+                    onClick={() => setOpenId(m.business_id)}
                     className="cursor-pointer transition-colors hover:bg-amber-50/40"
                   >
                     <Td className="font-extrabold text-slate-950 text-sm">
@@ -349,7 +349,7 @@ export default function Merchants({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setOpenId(m.merchant_id);
+                          setOpenId(m.business_id);
                         }}
                         className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-white font-bold text-xs transition-colors cursor-pointer"
                       >

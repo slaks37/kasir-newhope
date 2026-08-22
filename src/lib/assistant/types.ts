@@ -186,7 +186,7 @@ export interface PeakHoursPayload {
 }
 
 /**
- * Merged deliberately. The spec's UNIQUE (merchant_id, insight_date, category)
+ * Merged deliberately. The spec's UNIQUE (business_id, insight_date, category)
  * allows exactly one row per category per day, and "apakah keuangan saya sehat?"
  * is one merchant question — so run-rate-vs-target is the headline and the
  * statistical anomalies are the supporting detail on the same card.

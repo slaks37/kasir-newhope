@@ -32,11 +32,11 @@ d('entitlement saat langganan mati', () => {
   const pasang = async (hariLalu: number) => {
     await db().query(
       `INSERT INTO billing.subscriptions
-         (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+         (id, business_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, 'plan-pro-monthly', 'ACTIVE',
                CURRENT_TIMESTAMP - ($2::int || ' days')::interval - INTERVAL '30 days',
                CURRENT_TIMESTAMP - ($2::int || ' days')::interval)
-       ON CONFLICT (tenant_id) DO UPDATE SET
+       ON CONFLICT (business_id) DO UPDATE SET
          plan_id = 'plan-pro-monthly', status = 'ACTIVE',
          current_period_start = EXCLUDED.current_period_start,
          current_period_end   = EXCLUDED.current_period_end`,
@@ -46,7 +46,7 @@ d('entitlement saat langganan mati', () => {
 
   const entitlement = async () =>
     (await db().query(
-      `SELECT * FROM contract.merchant_entitlements WHERE merchant_id = $1`, [tid])).rows[0];
+      `SELECT * FROM contract.merchant_entitlements WHERE business_id = $1`, [tid])).rows[0];
 
   const lewatEndpoint = async () => {
     const res = resTiruan();
@@ -107,7 +107,7 @@ d('entitlement saat langganan mati', () => {
 
   it('batas outlet yang ditegakkan server ikut turun', async () => {
     const { rows } = await db().query(
-      `SELECT max_outlets FROM contract.merchant_outlet_usage WHERE merchant_id = $1`, [tid]);
+      `SELECT max_outlets FROM contract.merchant_outlet_usage WHERE business_id = $1`, [tid]);
     expect(Number(rows[0].max_outlets)).toBe(Number(free.max_outlets));
   });
 

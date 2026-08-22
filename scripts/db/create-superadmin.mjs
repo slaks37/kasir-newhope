@@ -78,11 +78,11 @@ async function main() {
   }
 
   console.log(`[4] Inserting into pos.users...`);
-  const tenantRes = await client.query(`SELECT id FROM pos.tenants LIMIT 1;`);
+  const tenantRes = await client.query(`SELECT id FROM pos.businesses LIMIT 1;`);
   const tenantId = tenantRes.rows[0]?.id;
   if (tenantId) {
     await client.query(`
-      INSERT INTO pos.users (tenant_id, name, username, pin, role)
+      INSERT INTO pos.users (business_id, name, username, pin, role)
       VALUES ($1, $2, $3, '2012', 'ADMIN')
       ON CONFLICT DO NOTHING;
     `, [tenantId, fullName, email]);

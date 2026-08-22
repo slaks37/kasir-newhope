@@ -97,14 +97,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const akhir = new Date(Date.now() + 30 * 86_400_000);
 
-    // Satu langganan per merchant. Kunci uniknya tenant_id, bukan id sintetis —
+    // Satu langganan per merchant. Kunci uniknya business_id, bukan id sintetis —
     // dua baris untuk satu merchant membuat "paket mana yang berlaku" tidak
     // punya jawaban.
     const { rows } = await db.query(
       `INSERT INTO billing.subscriptions
-         (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+         (id, business_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, $2, 'ACTIVE', CURRENT_TIMESTAMP, $3::timestamptz)
-       ON CONFLICT (tenant_id) DO UPDATE SET
+       ON CONFLICT (business_id) DO UPDATE SET
          plan_id            = EXCLUDED.plan_id,
          status             = 'ACTIVE',
          current_period_start = CURRENT_TIMESTAMP,

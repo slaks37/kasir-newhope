@@ -77,7 +77,7 @@ export function computeChurnRisk(m) {
 
 const HEALTH_SQL = `
 WITH windowed AS (
-  SELECT t.tenant_id                                   AS merchant_id,
+  SELECT t.business_id                                   AS business_id,
          COUNT(*)                                      AS txn_count,
          COALESCE(SUM(t.total_amount), 0)              AS revenue,
          MAX(t.created_at)                             AS last_txn_at,
@@ -86,40 +86,40 @@ WITH windowed AS (
     FROM transactions t
    WHERE t.created_at >= CURRENT_DATE - INTERVAL '30 days'
      AND t.payment_status = 'COMPLETED'
-   GROUP BY t.tenant_id
+   GROUP BY t.business_id
 ),
 recent AS (
-  SELECT t.tenant_id AS merchant_id,
+  SELECT t.business_id AS business_id,
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'), 0)  AS rev_7d,
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at <  CURRENT_DATE - INTERVAL '7 days'), 0)  AS rev_prior
     FROM transactions t
    WHERE t.created_at >= CURRENT_DATE - INTERVAL '30 days'
      AND t.payment_status = 'COMPLETED'
-   GROUP BY t.tenant_id
+   GROUP BY t.business_id
 ),
 today AS (
-  SELECT t.tenant_id AS merchant_id,
+  SELECT t.business_id AS business_id,
          COUNT(*)                          AS txn_today,
          COALESCE(SUM(t.total_amount), 0)  AS revenue_today,
          COUNT(DISTINCT t.cashier_user_id) AS cashiers_today
     FROM transactions t
    WHERE t.created_at::date = CURRENT_DATE
      AND t.payment_status = 'COMPLETED'
-   GROUP BY t.tenant_id
+   GROUP BY t.business_id
 ),
 features AS (
-  SELECT f.merchant_id,
+  SELECT f.business_id,
          COUNT(DISTINCT f.feature_key) AS distinct_features,
          jsonb_object_agg(f.feature_key, f.uses) AS payload
     FROM (
-      SELECT merchant_id, feature_key, COUNT(*) AS uses
+      SELECT business_id, feature_key, COUNT(*) AS uses
         FROM feature_usage_events
        WHERE occurred_at >= CURRENT_DATE - INTERVAL '30 days'
-       GROUP BY merchant_id, feature_key
+       GROUP BY business_id, feature_key
     ) f
-   GROUP BY f.merchant_id
+   GROUP BY f.business_id
 )
-SELECT te.id                                    AS merchant_id,
+SELECT te.id                                    AS business_id,
        COALESCE(td.revenue_today, 0)            AS daily_revenue,
        COALESCE(td.txn_today, 0)                AS daily_transaction_count,
        COALESCE(td.cashiers_today, 0)           AS active_cashiers_count,
@@ -131,18 +131,18 @@ SELECT te.id                                    AS merchant_id,
        COALESCE(fe.payload, '{}'::jsonb)        AS feature_payload,
        s.status                                 AS subscription_status,
        COALESCE(p.price_idr, 0)                 AS mrr_idr
-  FROM tenants te
-  LEFT JOIN windowed w  ON w.merchant_id  = te.id
-  LEFT JOIN recent   r  ON r.merchant_id  = te.id
-  LEFT JOIN today    td ON td.merchant_id = te.id
-  LEFT JOIN features fe ON fe.merchant_id = te.id
-  LEFT JOIN subscriptions s ON s.tenant_id = te.id
+  FROM businesses te
+  LEFT JOIN windowed w  ON w.business_id  = te.id
+  LEFT JOIN recent   r  ON r.business_id  = te.id
+  LEFT JOIN today    td ON td.business_id = te.id
+  LEFT JOIN features fe ON fe.business_id = te.id
+  LEFT JOIN subscriptions s ON s.business_id = te.id
   LEFT JOIN plans p ON p.id = s.plan_id;
 `;
 
 const UPSERT_SQL = `
 INSERT INTO merchant_health_logs
-  (id, merchant_id, log_date, daily_revenue, daily_transaction_count,
+  (id, business_id, log_date, daily_revenue, daily_transaction_count,
    active_cashiers_count, login_status, last_activity_at, days_since_last_txn,
    active_days_last_7, revenue_trend_pct, feature_usage_payload,
    distinct_features_used, support_tickets_count, subscription_status, mrr_idr,
@@ -150,7 +150,7 @@ INSERT INTO merchant_health_logs
 VALUES
   (legacy_uuid($1),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19::jsonb,
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT (merchant_id, log_date) DO UPDATE SET
+ON CONFLICT (business_id, log_date) DO UPDATE SET
   daily_revenue           = EXCLUDED.daily_revenue,
   daily_transaction_count = EXCLUDED.daily_transaction_count,
   active_cashiers_count   = EXCLUDED.active_cashiers_count,
@@ -197,8 +197,8 @@ export function toHealthRow(raw, today = new Date()) {
     // Kunci alami yang stabil, dibungkus legacy_uuid() saat disimpan: kolom id
     // sudah menjadi UUID sejak 0005, sementara string ini tidak pernah ikut
     // berubah. Setiap penulisan karena itu ditolak Postgres.
-    id: `mhl-${raw.merchant_id}-${logDate}`,
-    merchant_id: raw.merchant_id,
+    id: `mhl-${raw.business_id}-${logDate}`,
+    business_id: raw.business_id,
     log_date: logDate,
     daily_revenue: Number(raw.daily_revenue || 0),
     daily_transaction_count: Number(raw.daily_transaction_count || 0),
@@ -233,10 +233,10 @@ export function toHealthRow(raw, today = new Date()) {
 function demoData() {
   const day = (n) => new Date(Date.now() - n * DAY_MS).toISOString();
   return [
-    { merchant_id: 'tenant-warung-sehat', last_txn_at: day(0), active_days_30: 26, rev_7d: 14_000_000, rev_prior: 42_000_000, daily_revenue: 2_100_000, daily_transaction_count: 41, active_cashiers_count: 2, distinct_features: 6, subscription_status: 'ACTIVE', mrr_idr: 349_000, feature_payload: { 'ai.digest': 22, 'pos.checkout': 900 } },
-    { merchant_id: 'tenant-kopi-senja', last_txn_at: day(9), active_days_30: 4, rev_7d: 300_000, rev_prior: 9_000_000, daily_revenue: 0, daily_transaction_count: 0, active_cashiers_count: 0, distinct_features: 2, subscription_status: 'PAST_DUE', mrr_idr: 349_000, support_tickets: 2, feature_payload: { 'pos.checkout': 40 } },
-    { merchant_id: 'tenant-laundry-bersih', last_txn_at: day(21), active_days_30: 1, rev_7d: 0, rev_prior: 1_200_000, daily_revenue: 0, daily_transaction_count: 0, active_cashiers_count: 0, distinct_features: 1, subscription_status: 'EXPIRED', mrr_idr: 149_000, support_tickets: 3, feature_payload: {} },
-    { merchant_id: 'tenant-barber-rapi', last_txn_at: day(1), active_days_30: 18, rev_7d: 6_000_000, rev_prior: 17_000_000, daily_revenue: 850_000, daily_transaction_count: 17, active_cashiers_count: 1, distinct_features: 4, subscription_status: 'TRIAL', mrr_idr: 0, feature_payload: { 'pos.checkout': 300 } },
+    { business_id: 'tenant-warung-sehat', last_txn_at: day(0), active_days_30: 26, rev_7d: 14_000_000, rev_prior: 42_000_000, daily_revenue: 2_100_000, daily_transaction_count: 41, active_cashiers_count: 2, distinct_features: 6, subscription_status: 'ACTIVE', mrr_idr: 349_000, feature_payload: { 'ai.digest': 22, 'pos.checkout': 900 } },
+    { business_id: 'tenant-kopi-senja', last_txn_at: day(9), active_days_30: 4, rev_7d: 300_000, rev_prior: 9_000_000, daily_revenue: 0, daily_transaction_count: 0, active_cashiers_count: 0, distinct_features: 2, subscription_status: 'PAST_DUE', mrr_idr: 349_000, support_tickets: 2, feature_payload: { 'pos.checkout': 40 } },
+    { business_id: 'tenant-laundry-bersih', last_txn_at: day(21), active_days_30: 1, rev_7d: 0, rev_prior: 1_200_000, daily_revenue: 0, daily_transaction_count: 0, active_cashiers_count: 0, distinct_features: 1, subscription_status: 'EXPIRED', mrr_idr: 149_000, support_tickets: 3, feature_payload: {} },
+    { business_id: 'tenant-barber-rapi', last_txn_at: day(1), active_days_30: 18, rev_7d: 6_000_000, rev_prior: 17_000_000, daily_revenue: 850_000, daily_transaction_count: 17, active_cashiers_count: 1, distinct_features: 4, subscription_status: 'TRIAL', mrr_idr: 0, feature_payload: { 'pos.checkout': 300 } },
   ];
 }
 
@@ -297,7 +297,7 @@ async function main() {
     console.log('-'.repeat(96));
     for (const r of rows) {
       console.log(
-        `${r._band.padEnd(9)} ${String(r.churn_risk_score).padStart(4)}  ${r.merchant_id.padEnd(26)} ` +
+        `${r._band.padEnd(9)} ${String(r.churn_risk_score).padStart(4)}  ${r.business_id.padEnd(26)} ` +
           `${r.days_since_last_txn}d idle | tren ${String(r.revenue_trend_pct).padStart(7)}% | ` +
           `${r.subscription_status ?? '-'} | MRR ${r.mrr_idr}`
       );
@@ -325,7 +325,7 @@ async function main() {
     await client.query('BEGIN');
     for (const r of rows) {
       await client.query(UPSERT_SQL, [
-        r.id, r.merchant_id, r.log_date, r.daily_revenue,
+        r.id, r.business_id, r.log_date, r.daily_revenue,
         r.daily_transaction_count, r.active_cashiers_count, r.login_status,
         r.last_activity_at, r.days_since_last_txn, r.active_days_last_7,
         r.revenue_trend_pct, JSON.stringify(r.feature_usage_payload),

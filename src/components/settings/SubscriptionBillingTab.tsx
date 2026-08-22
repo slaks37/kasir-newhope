@@ -25,7 +25,7 @@ import {
 
 export const SubscriptionBillingTab: React.FC = () => {
   const { settings, updateSettings, currentUser } = usePOS();
-  // Server meresolusi merchant lewat business_id (`userId_sector`). Mengirim
+  // Server meresolusi merchant lewat client_key (`userId_sector`). Mengirim
   // id akun saja hanya berhasil selama pemilik punya tepat satu unit usaha —
   // dan diam-diam menunjuk toko yang salah begitu ia punya dua.
   const tenant = useTenant();

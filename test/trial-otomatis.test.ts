@@ -18,9 +18,9 @@ d('trial otomatis untuk merchant baru', () => {
   afterAll(tutupDb);
 
   const lahirkan = async (ref: string) => {
-    await db().query('DELETE FROM pos.tenants WHERE external_ref = $1', [ref]);
+    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [ref]);
     const { rows } = await db().query(
-      `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref, is_active)
+      `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), $1, 'FNB', $2, 'usr-x', true) RETURNING id`,
       [`Toko ${ref}`, ref]
     );
@@ -29,7 +29,7 @@ d('trial otomatis untuk merchant baru', () => {
 
   const entitlement = async (tid: string) =>
     (await db().query(
-      `SELECT * FROM contract.merchant_entitlements WHERE merchant_id = $1`, [tid])).rows[0];
+      `SELECT * FROM contract.merchant_entitlements WHERE business_id = $1`, [tid])).rows[0];
 
   it('merchant yang baru lahir langsung punya langganan percobaan', async () => {
     const tid = await lahirkan('uji-trial-1_FNB');
@@ -70,10 +70,10 @@ d('trial otomatis untuk merchant baru', () => {
     const tid = await lahirkan('uji-trial-5_FNB');
     await db().query(
       `INSERT INTO billing.subscriptions
-         (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+         (id, business_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, 'plan-pro-monthly', 'ACTIVE',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
-       ON CONFLICT (tenant_id) DO UPDATE SET plan_id = 'plan-pro-monthly', status = 'ACTIVE'`,
+       ON CONFLICT (business_id) DO UPDATE SET plan_id = 'plan-pro-monthly', status = 'ACTIVE'`,
       [tid]
     );
     const e = await entitlement(tid);
@@ -83,8 +83,8 @@ d('trial otomatis untuk merchant baru', () => {
 
   it('tidak ada merchant yang tertinggal tanpa langganan', async () => {
     const { rows } = await db().query(
-      `SELECT COUNT(*)::int n FROM pos.tenants t
-        WHERE NOT EXISTS (SELECT 1 FROM billing.subscriptions s WHERE s.tenant_id = t.id)`);
+      `SELECT COUNT(*)::int n FROM pos.businesses t
+        WHERE NOT EXISTS (SELECT 1 FROM billing.subscriptions s WHERE s.business_id = t.id)`);
     expect(rows[0].n).toBe(0);
   });
 });

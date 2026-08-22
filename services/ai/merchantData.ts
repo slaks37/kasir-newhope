@@ -13,7 +13,7 @@
  * angka berhenti menjadi disiplin dan menjadi sifat struktural.
  *
  * PEMBATASAN CAKUPAN. Setiap query terikat satu merchant lewat parameter, dan
- * merchant itu diturunkan dari `business_id`, bukan dari id yang dikirim klien.
+ * merchant itu diturunkan dari `client_key`, bukan dari id yang dikirim klien.
  * Tidak ada jalur yang menerima UUID tenant langsung dari luar.
  */
 
@@ -45,8 +45,8 @@ const emptyAggregates = (): MerchantAggregates => ({
 
 async function resolveTenant(db: Db, businessId: string) {
   const { rows } = await db.query(
-    `SELECT merchant_id AS id, merchant_name AS name, business_sector
-       FROM contract.merchant_directory WHERE business_id = $1`,
+    `SELECT business_id AS id, merchant_name AS name, business_sector
+       FROM contract.merchant_directory WHERE client_key = $1`,
     [businessId]
   );
   return rows[0] ?? null;
@@ -83,7 +83,7 @@ export async function buildAggregatesFromDb(
          WHERE date_trunc('month', created_at AT TIME ZONE 'Asia/Jakarta')
              = date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')), 0) AS mtd_revenue
      FROM contract.merchant_revenue
-     WHERE merchant_id = $1 ${W}`,
+     WHERE business_id = $1 ${W}`,
     [t]
   );
 
@@ -106,7 +106,7 @@ export async function buildAggregatesFromDb(
     `SELECT COUNT(*) FILTER (WHERE payment_status = 'CANCELLED')::int AS voided,
             COUNT(*)::int                                            AS total
        FROM contract.transaction_log
-      WHERE merchant_id = $1 ${W}`,
+      WHERE business_id = $1 ${W}`,
     [t]
   );
   const v = voids.rows[0];
@@ -118,7 +118,7 @@ export async function buildAggregatesFromDb(
             COALESCE(SUM(i.unit_cost * i.quantity), 0) AS cogs
        FROM contract.transaction_items i
        JOIN contract.merchant_revenue r ON r.transaction_id = i.transaction_id
-      WHERE r.merchant_id = $1
+      WHERE r.business_id = $1
         AND r.created_at >= CURRENT_TIMESTAMP - (${WINDOW_DAYS} || ' days')::interval`,
     [t]
   );
@@ -131,7 +131,7 @@ export async function buildAggregatesFromDb(
   /* -- Produk terlaris & lambat ------------------------------------------- */
   const ps = await db.query(
     `SELECT product_id, product_name, units_sold, revenue, last_sold_at
-       FROM contract.product_sales WHERE merchant_id = $1
+       FROM contract.product_sales WHERE business_id = $1
       ORDER BY units_sold DESC LIMIT 10`,
     [t]
   );
@@ -147,7 +147,7 @@ export async function buildAggregatesFromDb(
   // muncul.
   const slow = await db.query(
     `SELECT product_id, product_name, units_sold, last_sold_at
-       FROM contract.catalog WHERE merchant_id = $1 AND is_available
+       FROM contract.catalog WHERE business_id = $1 AND is_available
       ORDER BY units_sold ASC, product_name LIMIT 10`,
     [t]
   );
@@ -166,7 +166,7 @@ export async function buildAggregatesFromDb(
 
   const pay = await db.query(
     `SELECT payment_method, COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0) AS revenue
-       FROM contract.merchant_revenue WHERE merchant_id = $1 ${W}
+       FROM contract.merchant_revenue WHERE business_id = $1 ${W}
       GROUP BY payment_method ORDER BY revenue DESC`,
     [t]
   );
@@ -178,7 +178,7 @@ export async function buildAggregatesFromDb(
   const otype = await db.query(
     `SELECT COALESCE(order_type, 'LAINNYA') AS order_type,
             COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0) AS revenue
-       FROM contract.merchant_revenue WHERE merchant_id = $1 ${W}
+       FROM contract.merchant_revenue WHERE business_id = $1 ${W}
       GROUP BY COALESCE(order_type, 'LAINNYA') ORDER BY revenue DESC`,
     [t]
   );
@@ -192,7 +192,7 @@ export async function buildAggregatesFromDb(
             SUM(i.quantity)::int AS qty, SUM(i.total_price) AS revenue
        FROM contract.transaction_items i
        JOIN contract.merchant_revenue r ON r.transaction_id = i.transaction_id
-      WHERE r.merchant_id = $1
+      WHERE r.business_id = $1
         AND r.created_at >= CURRENT_TIMESTAMP - (${WINDOW_DAYS} || ' days')::interval
       GROUP BY 1 ORDER BY revenue DESC`,
     [t]
@@ -208,7 +208,7 @@ export async function buildAggregatesFromDb(
   const daily = await db.query(
     `SELECT (created_at AT TIME ZONE 'Asia/Jakarta')::date AS d,
             COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0) AS revenue
-       FROM contract.merchant_revenue WHERE merchant_id = $1 ${W}
+       FROM contract.merchant_revenue WHERE business_id = $1 ${W}
       GROUP BY 1 ORDER BY 1`,
     [t]
   );
@@ -222,7 +222,7 @@ export async function buildAggregatesFromDb(
   // membanjiri merchant dengan peringatan palsu.
   const stock = await db.query(
     `SELECT COUNT(*)::int AS n FROM contract.stock_status
-      WHERE merchant_id = $1 AND is_available AND is_low_stock
+      WHERE business_id = $1 AND is_available AND is_low_stock
         AND catalog_synced_at IS NOT NULL`,
     [t]
   );
@@ -232,7 +232,7 @@ export async function buildAggregatesFromDb(
   // merchant_targets milik skema `ai` sendiri — satu-satunya tabel di fungsi ini
   // yang bukan kontrak.
   const target = await db.query(
-    `SELECT monthly_revenue_target FROM ai.merchant_targets WHERE merchant_id = $1`,
+    `SELECT monthly_revenue_target FROM ai.merchant_targets WHERE business_id = $1`,
     [t]
   );
   if (target.rows.length && Number(target.rows[0].monthly_revenue_target) > 0) {

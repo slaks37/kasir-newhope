@@ -187,7 +187,7 @@ export async function catatAkses(
   try {
     await getPool().query(
       `INSERT INTO internal.internal_access_log
-         (id, internal_user_id, internal_role, merchant_id, action, resource,
+         (id, internal_user_id, internal_role, business_id, action, resource,
           justification, ip_address)
        VALUES (uuidv7(), $1::uuid, $2::internal_role_enum, $3::uuid, $4, $5, $6, $7)`,
       [

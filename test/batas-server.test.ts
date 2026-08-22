@@ -20,7 +20,7 @@ d('batas produk di jalur sinkron', () => {
   let tid = '';
 
   beforeAll(async () => {
-    await db().query('DELETE FROM pos.tenants WHERE external_ref = $1', [BID]);
+    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [BID]);
   });
   afterAll(tutupDb);
 
@@ -45,7 +45,7 @@ d('batas produk di jalur sinkron', () => {
   };
 
   const jumlahProdukKatalog = async () =>
-    (await db().query('SELECT COUNT(*)::int n FROM pos.products WHERE tenant_id = $1', [tid])).rows[0].n;
+    (await db().query('SELECT COUNT(*)::int n FROM pos.products WHERE business_id = $1', [tid])).rows[0].n;
 
   it('merchant baru memakai batas TRIAL — sejak 0024 tidak ada yang lahir tanpa langganan', async () => {
     const hasil = await kirim(40, 'a');
@@ -54,7 +54,7 @@ d('batas produk di jalur sinkron', () => {
 
     const { rows } = await db().query(
       `SELECT e.product_limit, e.status FROM contract.merchant_entitlements e
-        WHERE e.merchant_id = $1`, [tid]);
+        WHERE e.business_id = $1`, [tid]);
     expect(rows[0].status).toBe('TRIAL');
     expect(hasil.productLimit).toBe(Number(rows[0].product_limit));
     expect(await jumlahProdukKatalog()).toBe(40); // 40 < batas trial, semuanya masuk
@@ -77,7 +77,7 @@ d('batas produk di jalur sinkron', () => {
     const { rows } = await db().query(
       `SELECT COUNT(*)::int total, COUNT(product_id)::int berkatalog,
               COALESCE(SUM(total_price),0)::numeric omzet
-         FROM pos.transaction_items WHERE tenant_id = $1`, [tid]);
+         FROM pos.transaction_items WHERE business_id = $1`, [tid]);
     expect(rows[0].total).toBe(100);        // 40 + 60 baris struk, semuanya ada
     expect(rows[0].berkatalog).toBe(80);    // 20 tanpa produk katalog
     expect(Number(rows[0].omzet)).toBe(1_000_000);
@@ -179,13 +179,13 @@ d('batas outlet di jalur sinkron', () => {
     const batasPro = Number((await db().query(
       'SELECT max_outlets FROM billing.plans WHERE id = $1', ['plan-pro-monthly'])).rows[0].max_outlets);
     const { rows } = await db().query(
-      'SELECT COUNT(*)::int n FROM pos.branches WHERE tenant_id = $1 AND is_active', [tid]);
+      'SELECT COUNT(*)::int n FROM pos.outlets WHERE business_id = $1 AND is_active', [tid]);
     expect(rows[0].n).toBe(batasPro);
 
     const sunting = await kirim([{ ...cabang(1), address: 'Alamat diperbaiki' }]);
     expect(sunting.rejected).toHaveLength(0);
     const alamat = await db().query(
-      'SELECT address FROM pos.branches WHERE tenant_id = $1 AND external_ref = $2', [tid, 'branch-1']);
+      'SELECT address FROM pos.outlets WHERE business_id = $1 AND external_ref = $2', [tid, 'branch-1']);
     expect(alamat.rows[0].address).toBe('Alamat diperbaiki');
   });
 
@@ -194,7 +194,7 @@ d('batas outlet di jalur sinkron', () => {
     const tid2 = await merchantUji(BID2, 'Merchant Baru');
 
     const batasTrial = Number((await db().query(
-      `SELECT max_outlets FROM contract.merchant_entitlements WHERE merchant_id = $1`,
+      `SELECT max_outlets FROM contract.merchant_entitlements WHERE business_id = $1`,
       [tid2])).rows[0].max_outlets);
 
     const res = resTiruan();

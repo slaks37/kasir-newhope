@@ -31,13 +31,13 @@ async function run() {
     // Cari langganan aktif/trial yang akan kedaluwarsa 3 hari lagi.
     // Interval 3 hari berarti: sisa waktu antara > 2 hari dan < 3 hari
     const res = await pool.query(`
-      SELECT s.id, s.tenant_id, s.status, s.current_period_end, p.name as plan_name, m.email, m.merchant_name
+      SELECT s.id, s.business_id, s.status, s.current_period_end, p.name as plan_name, m.email, m.merchant_name
       FROM billing.subscriptions s
       JOIN billing.saas_plans p ON s.plan_id = p.id
       JOIN (
         SELECT id, name as merchant_name, 'stefen.maxy.academy@gmail.com' as email -- Placeholder email untuk tenant (atau dapatkan dari tabel akun tenant)
         FROM settings
-      ) m ON m.id = s.tenant_id
+      ) m ON m.id = s.business_id
       WHERE s.status IN ('ACTIVE', 'TRIAL')
         AND s.current_period_end >= NOW() + INTERVAL '2 days'
         AND s.current_period_end < NOW() + INTERVAL '3 days'
@@ -47,7 +47,7 @@ async function run() {
     console.log(`[Billing Reminder] Ditemukan ${subscriptions.length} langganan yang jatuh tempo H-3.`);
 
     for (const sub of subscriptions) {
-      console.log(`-> Mengirim pengingat ke ${sub.tenant_id} (Paket: ${sub.plan_name})...`);
+      console.log(`-> Mengirim pengingat ke ${sub.business_id} (Paket: ${sub.plan_name})...`);
       
       const emailHtml = `
         <div style="font-family: sans-serif; max-w-md; margin: 0 auto;">

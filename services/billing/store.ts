@@ -24,7 +24,7 @@ import type { SaaSSubscription, SaaSInvoice, SubscriptionStatus } from '../../sr
 function keLangganan(r: any): SaaSSubscription {
   return {
     id: r.id,
-    tenantId: r.tenant_id,
+    tenantId: r.business_id,
     planId: r.plan_id,
     status: r.status as SubscriptionStatus,
     currentPeriodStart: new Date(r.current_period_start).toISOString(),
@@ -41,7 +41,7 @@ function keFaktur(r: any): SaaSInvoice {
   return {
     id: r.id,
     subscriptionId: r.subscription_id,
-    tenantId: r.tenant_id,
+    tenantId: r.business_id,
     amount: Number(r.amount),
     currency: r.currency,
     paymentStatus: r.payment_status,
@@ -118,7 +118,7 @@ export async function pastikanTabelFingerprint(db: Db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS billing.device_fingerprints (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      tenant_id UUID NOT NULL,
+      business_id UUID NOT NULL,
       device_id TEXT NOT NULL,
       ip_address TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -139,7 +139,7 @@ export async function ambilAtauBuatLangganan(
   if (!terdaftar) return null;
 
   const ada = await db.query(
-    `SELECT * FROM billing.subscriptions WHERE tenant_id = $1
+    `SELECT * FROM billing.subscriptions WHERE business_id = $1
       ORDER BY created_at DESC LIMIT 1`,
     [tenantId]
   );
@@ -158,14 +158,14 @@ export async function ambilAtauBuatLangganan(
     
     // Simpan fingerprint device
     await db.query(
-      `INSERT INTO billing.device_fingerprints (tenant_id, device_id, ip_address) VALUES ($1, $2, $3)`,
+      `INSERT INTO billing.device_fingerprints (business_id, device_id, ip_address) VALUES ($1, $2, $3)`,
       [tenantId, deviceId, ipAddress]
     );
   }
 
   const { rows } = await db.query(
     `INSERT INTO billing.subscriptions
-       (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+       (id, business_id, plan_id, status, current_period_start, current_period_end)
      VALUES (uuidv7(), $1, $2, $4,
              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + ($3::int || ' days')::interval)
      RETURNING *`,
@@ -177,7 +177,7 @@ export async function ambilAtauBuatLangganan(
 export async function ambilLangganan(db: Db, tenantIdMentah: string): Promise<SaaSSubscription | null> {
   const { uuid: tenantId } = await keTenant(db, tenantIdMentah);
   const { rows } = await db.query(
-    `SELECT * FROM billing.subscriptions WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT * FROM billing.subscriptions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [tenantId]
   );
   return rows.length ? keLangganan(rows[0]) : null;
@@ -218,7 +218,7 @@ export async function buatFaktur(
   const { uuid: tenantId } = await keTenant(db, f.tenantId);
   const { rows } = await db.query(
     `INSERT INTO billing.invoices
-       (id, subscription_id, tenant_id, amount, payment_status, payment_link_url, due_date)
+       (id, subscription_id, business_id, amount, payment_status, payment_link_url, due_date)
      VALUES ($1, $2, $3, $4, 'PENDING', $5, $6::timestamptz)
      RETURNING *`,
     [f.nomor, f.subscriptionId, tenantId, f.amount, f.linkUrl ?? null, f.dueDate]
@@ -245,7 +245,7 @@ export async function daftarFaktur(db: Db, tenantIdMentah: string): Promise<SaaS
        FROM billing.invoices i
        LEFT JOIN billing.subscriptions s ON s.id = i.subscription_id
        LEFT JOIN billing.plans p ON p.id = s.plan_id
-      WHERE i.tenant_id = $1 ORDER BY i.created_at DESC LIMIT 50`,
+      WHERE i.business_id = $1 ORDER BY i.created_at DESC LIMIT 50`,
     [tenantId]
   );
   return rows.map(keFaktur);

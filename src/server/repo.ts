@@ -181,7 +181,7 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
   const { rows } = await db.query(
     `SELECT d.*, h.churn_risk_score, h.subscription_status, h.days_since_last_txn
        FROM contract.merchant_directory d
-       LEFT JOIN contract.merchant_health_latest h ON h.merchant_id = d.merchant_id
+       LEFT JOIN contract.merchant_health_latest h ON h.business_id = d.business_id
        ${w.sql()}
       ORDER BY d.gross_revenue DESC, d.merchant_name
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
@@ -199,7 +199,7 @@ export async function merchantDetail(db: Db, merchantId: string) {
   if (!UUID_RE.test(merchantId)) return null;
 
   const [profile, bySector, health, topProducts] = await Promise.all([
-    db.query(`SELECT * FROM contract.merchant_directory WHERE merchant_id = $1`, [merchantId]),
+    db.query(`SELECT * FROM contract.merchant_directory WHERE business_id = $1`, [merchantId]),
     // Satu merchant bisa menjalankan lebih dari satu sektor.
     db.query(
       `SELECT business_sector,
@@ -208,17 +208,17 @@ export async function merchantDetail(db: Db, merchantId: string) {
               COALESCE(AVG(total_amount), 0)    AS avg_basket,
               MAX(created_at)                   AS last_transaction_at
          FROM contract.merchant_revenue
-        WHERE merchant_id = $1
+        WHERE business_id = $1
         GROUP BY business_sector
         ORDER BY gross_revenue DESC`,
       [merchantId]
     ),
-    db.query(`SELECT * FROM contract.merchant_health_latest WHERE merchant_id = $1`, [merchantId]),
+    db.query(`SELECT * FROM contract.merchant_health_latest WHERE business_id = $1`, [merchantId]),
     db.query(
       `SELECT business_sector, product_name, category_name,
               units_sold::int, revenue, gross_profit, last_sold_at
          FROM contract.product_sales
-        WHERE merchant_id = $1
+        WHERE business_id = $1
         ORDER BY revenue DESC
         LIMIT 15`,
       [merchantId]
@@ -244,7 +244,7 @@ export async function transactionLog(db: Db, f: ListFilter = {}) {
   // Penyaringan CANCELLED sudah dilakukan contract.merchant_revenue — tidak
   // boleh diulang di sini. Satu definisi omzet, satu tempat.
   w.add((p) => `x.business_sector = ${p}`, c.sector);
-  w.add((p) => `x.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add((p) => `x.business_id = ${p}::uuid`, c.merchantId);
   w.add((p) => `x.app_module = ${p}`, c.module);
   w.add((p) => `x.created_at >= ${p}::date`, c.from);
   // `to` inklusif: pengguna yang mengetik 31 Agustus bermaksud memasukkan
@@ -253,7 +253,7 @@ export async function transactionLog(db: Db, f: ListFilter = {}) {
   w.add((p) => `(x.invoice_number ILIKE ${p} OR x.merchant_name ILIKE ${p})`, c.search ? `%${c.search}%` : null);
 
   const { rows } = await db.query(
-    `SELECT x.id, x.invoice_number, x.business_sector, x.business_id, x.app_module,
+    `SELECT x.id, x.invoice_number, x.business_sector, x.client_key, x.app_module,
             x.order_type, x.payment_method, x.payment_status,
             x.subtotal, x.discount_amount, x.tax_amount, x.service_charge_amount,
             x.total_amount, x.created_at, x.merchant_name, x.cashier_name,
@@ -305,7 +305,7 @@ export async function productSales(db: Db, f: ListFilter = {}) {
   const c = cleanFilter(f);
   const w = new Where();
   w.add((p) => `v.business_sector = ${p}`, c.sector);
-  w.add((p) => `v.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add((p) => `v.business_id = ${p}::uuid`, c.merchantId);
   // Pencarian ikut menjangkau deskripsi: "gula aren" harus menemukan produk
   // bernama "Kopi Susu" yang deskripsinya menyebut gula aren.
   w.add(
@@ -314,7 +314,7 @@ export async function productSales(db: Db, f: ListFilter = {}) {
   );
 
   const { rows } = await db.query(
-    `SELECT v.business_sector, v.merchant_id, v.merchant_name, v.product_name,
+    `SELECT v.business_sector, v.business_id, v.merchant_name, v.product_name,
             v.product_description, v.category_name, v.units_sold::int, v.revenue,
             v.cogs, v.gross_profit, v.appeared_in_transactions::int, v.last_sold_at
        FROM contract.product_sales v
@@ -343,14 +343,14 @@ export async function catalog(db: Db, f: ListFilter = {}) {
   const c = cleanFilter(f);
   const w = new Where();
   w.add((p) => `v.business_sector = ${p}`, c.sector);
-  w.add((p) => `v.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add((p) => `v.business_id = ${p}::uuid`, c.merchantId);
   w.add(
     (p) => `(v.product_name ILIKE ${p} OR v.description ILIKE ${p} OR v.sku ILIKE ${p})`,
     c.search ? `%${c.search}%` : null
   );
 
   const { rows } = await db.query(
-    `SELECT v.business_sector, v.merchant_id, v.merchant_name, v.product_id,
+    `SELECT v.business_sector, v.business_id, v.merchant_name, v.product_id,
             v.product_name, v.sku, v.category_name, v.description,
             v.price, v.cost_price, v.margin_pct, v.stock, v.min_stock_alert,
             v.is_low_stock, v.is_available, v.catalog_synced_at,
@@ -390,7 +390,7 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   const c = cleanFilter(f);
   const w = new Where();
   w.add((p) => `a.business_sector = ${p}`, c.sector);
-  w.add((p) => `a.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add((p) => `a.business_id = ${p}::uuid`, c.merchantId);
   w.add((p) => `a.app_module = ${p}`, c.module);
   w.add((p) => `a.severity = ${p}`, c.severity);
   w.add((p) => `a.occurred_at >= ${p}::date`, c.from);
@@ -398,10 +398,10 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   w.add((p) => `(a.summary ILIKE ${p} OR a.event_type ILIKE ${p})`, c.search ? `%${c.search}%` : null);
 
   const { rows } = await db.query(
-    `SELECT a.id, a.business_sector, a.business_id, a.app_module, a.event_type,
+    `SELECT a.id, a.business_sector, a.client_key, a.app_module, a.event_type,
             a.severity, a.actor_name, a.actor_role, a.amount_idr, a.summary,
             a.detail, a.occurred_at, a.transaction_id,
-            a.merchant_name, a.merchant_id
+            a.merchant_name, a.business_id
        FROM contract.activity_log a
        ${w.sql()}
       ORDER BY a.occurred_at DESC
@@ -453,8 +453,8 @@ export async function branches(db: Db, f: ListFilter = {}) {
     `SELECT b.*, t.name AS merchant_name,
             u.max_outlets, u.outlet_aktif, u.sisa_kuota
        FROM contract.branches b
-       JOIN pos.tenants t ON t.id = b.merchant_id
-       LEFT JOIN contract.merchant_outlet_usage u ON u.merchant_id = b.merchant_id
+       JOIN pos.businesses t ON t.id = b.business_id
+       LEFT JOIN contract.merchant_outlet_usage u ON u.business_id = b.business_id
       WHERE ($1::text IS NULL OR b.business_sector = $1)
         AND ($2::text IS NULL OR b.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')
       ORDER BY t.name, b.is_active DESC, b.name
@@ -464,7 +464,7 @@ export async function branches(db: Db, f: ListFilter = {}) {
   const total = await db.query(
     `SELECT COUNT(*)::int AS n
        FROM contract.branches b
-       JOIN pos.tenants t ON t.id = b.merchant_id
+       JOIN pos.businesses t ON t.id = b.business_id
       WHERE ($1::text IS NULL OR b.business_sector = $1)
         AND ($2::text IS NULL OR b.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')`,
     [c.sector, c.search]

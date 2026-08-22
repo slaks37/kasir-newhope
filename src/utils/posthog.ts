@@ -40,7 +40,7 @@ class PostHogTelemetryService {
     // Non-PII identification (only tenantId & role, no personal names, emails, or phone numbers)
     if (typeof window !== 'undefined' && window.posthog) {
       window.posthog.identify(userCtx.userId, {
-        tenant_id: userCtx.tenantId,
+        business_id: userCtx.tenantId,
         user_role: userCtx.role,
         business_sector: userCtx.businessSector || 'FNB',
       });
@@ -49,14 +49,14 @@ class PostHogTelemetryService {
     this.sendEvent('user_logged_in', {
       user_id: userCtx.userId,
       user_role: userCtx.role,
-      tenant_id: userCtx.tenantId,
+      business_id: userCtx.tenantId,
     });
   }
 
   public trackFeatureUsage(featureName: string, metadata: Record<string, any> = {}) {
     this.sendEvent('feature_used', {
       feature_name: featureName,
-      tenant_id: this.currentTenantId,
+      business_id: this.currentTenantId,
       user_role: this.currentUserRole,
       ...metadata,
     });
@@ -65,7 +65,7 @@ class PostHogTelemetryService {
   public trackScreenView(screenName: string) {
     this.sendEvent('screen_viewed', {
       screen_name: screenName,
-      tenant_id: this.currentTenantId,
+      business_id: this.currentTenantId,
       user_role: this.currentUserRole,
     });
   }
@@ -86,7 +86,7 @@ class PostHogTelemetryService {
       item_count: transactionData.itemCount,
       payment_method: transactionData.paymentMethod,
       order_type: transactionData.orderType,
-      tenant_id: transactionData.tenantId || this.currentTenantId,
+      business_id: transactionData.tenantId || this.currentTenantId,
       user_role: transactionData.userRole || this.currentUserRole,
     });
   }
@@ -95,7 +95,7 @@ class PostHogTelemetryService {
     this.sendEvent('app_error_triggered', {
       error_message: errorMessage,
       component_stack: componentStack,
-      tenant_id: this.currentTenantId,
+      business_id: this.currentTenantId,
       user_role: this.currentUserRole,
     });
   }

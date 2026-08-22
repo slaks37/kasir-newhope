@@ -96,9 +96,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // yang tidak dia beli.
     const { rows } = await db.query(
       `INSERT INTO ai.merchant_ai_credits
-         (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+         (business_id, balance, monthly_grant, used_this_month, period_reset_at)
        VALUES ($1::uuid, $2, 0, 0, date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '1 month')
-       ON CONFLICT (merchant_id) DO UPDATE SET
+       ON CONFLICT (business_id) DO UPDATE SET
          balance    = ai.merchant_ai_credits.balance + $2,
          updated_at = CURRENT_TIMESTAMP
        RETURNING balance`,

@@ -74,7 +74,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.merchant_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL UNIQUE REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL UNIQUE REFERENCES public.merchants(id) ON DELETE CASCADE,
     enable_tax BOOLEAN NOT NULL DEFAULT true,
     tax_rate NUMERIC(5,2) NOT NULL DEFAULT 10.00,
     enable_service BOOLEAN NOT NULL DEFAULT false,
@@ -91,7 +91,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.store_branches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     name VARCHAR(150) NOT NULL,
     address TEXT,
     latitude NUMERIC(10,7),
@@ -106,7 +106,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.saas_subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     plan_id VARCHAR(64) NOT NULL REFERENCES public.saas_plans(id),
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
     current_period_start TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -121,7 +121,7 @@ async function main() {
   CREATE TABLE IF NOT EXISTS public.saas_invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     subscription_id UUID NOT NULL REFERENCES public.saas_subscriptions(id) ON DELETE CASCADE,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     invoice_number VARCHAR(64) NOT NULL UNIQUE,
     amount NUMERIC(15,2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'IDR',
@@ -138,7 +138,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     branch_id UUID REFERENCES public.store_branches(id) ON DELETE SET NULL,
     name VARCHAR(150) NOT NULL,
     username VARCHAR(80) NOT NULL,
@@ -150,12 +150,12 @@ async function main() {
     avatar TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_merchant_username UNIQUE(merchant_id, username)
+    CONSTRAINT uq_merchant_username UNIQUE(business_id, username)
   );
 
   CREATE TABLE IF NOT EXISTS public.user_shifts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     cashier_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     cashier_name VARCHAR(150) NOT NULL,
     start_time TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -176,7 +176,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.staff_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     name VARCHAR(150) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'Barista',
     sector VARCHAR(50) NOT NULL DEFAULT 'FNB',
@@ -187,7 +187,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.attendance_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     staff_id UUID NOT NULL REFERENCES public.staff_members(id) ON DELETE CASCADE,
     branch_id UUID REFERENCES public.store_branches(id) ON DELETE SET NULL,
     clock_in_time TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -204,7 +204,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.categories (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     name VARCHAR(120) NOT NULL,
     icon VARCHAR(64) DEFAULT 'Package',
     color VARCHAR(64) DEFAULT 'bg-amber-500',
@@ -214,7 +214,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.products (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     category_id VARCHAR(64) REFERENCES public.categories(id) ON DELETE SET NULL,
     sku VARCHAR(64) NOT NULL,
     barcode VARCHAR(64),
@@ -253,7 +253,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.raw_materials (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     sku VARCHAR(64) NOT NULL,
     name VARCHAR(200) NOT NULL,
     type VARCHAR(32) NOT NULL DEFAULT 'BAHAN_BAKU', -- 'BAHAN_BAKU', 'SETENGAH_JADI', 'JADI'
@@ -272,7 +272,7 @@ async function main() {
     id VARCHAR(64) PRIMARY KEY,
     product_id VARCHAR(64) NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
     raw_material_id VARCHAR(64) NOT NULL REFERENCES public.raw_materials(id) ON DELETE CASCADE,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     quantity NUMERIC(15,3) NOT NULL DEFAULT 1,
     unit VARCHAR(32) NOT NULL DEFAULT 'Gram',
     cost_per_unit NUMERIC(15,2) NOT NULL DEFAULT 0,
@@ -285,7 +285,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.product_bundles (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     sku VARCHAR(64) NOT NULL,
     name VARCHAR(200) NOT NULL,
     description TEXT,
@@ -312,7 +312,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.customers (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     name VARCHAR(150) NOT NULL,
     phone VARCHAR(50) NOT NULL,
     email VARCHAR(120),
@@ -326,7 +326,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.promo_codes (
     code VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0,
     max_discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
     min_purchase_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
@@ -339,7 +339,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.orders (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     branch_id UUID REFERENCES public.store_branches(id) ON DELETE SET NULL,
     shift_id UUID REFERENCES public.user_shifts(id) ON DELETE SET NULL,
     cashier_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
@@ -389,7 +389,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.inventory_logs (
     id VARCHAR(64) PRIMARY KEY,
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     product_id VARCHAR(64) REFERENCES public.products(id) ON DELETE SET NULL,
     raw_material_id VARCHAR(64) REFERENCES public.raw_materials(id) ON DELETE SET NULL,
     item_name VARCHAR(200) NOT NULL,
@@ -408,7 +408,7 @@ async function main() {
   -- =========================================================================
   CREATE TABLE IF NOT EXISTS public.ai_merchant_insights (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     headline VARCHAR(255) NOT NULL,
     category VARCHAR(50) NOT NULL, -- 'REVENUE', 'INVENTORY', 'CHURN', 'ANOMALY'
     impact_level VARCHAR(32) NOT NULL DEFAULT 'HIGH', -- 'HIGH', 'MEDIUM', 'LOW'
@@ -420,7 +420,7 @@ async function main() {
 
   CREATE TABLE IF NOT EXISTS public.merchant_health_scores (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     score INT NOT NULL DEFAULT 85,
     risk_level VARCHAR(32) NOT NULL DEFAULT 'HEALTHY',
     churn_probability NUMERIC(5,2) DEFAULT 0.05,
@@ -481,19 +481,19 @@ async function main() {
     monthly_revenue_target = EXCLUDED.monthly_revenue_target;
 
   -- 4. Merchant Settings
-  INSERT INTO public.merchant_settings (merchant_id, enable_tax, tax_rate, enable_service, service_rate)
+  INSERT INTO public.merchant_settings (business_id, enable_tax, tax_rate, enable_service, service_rate)
   SELECT id, true, 10.00, true, 5.00 FROM public.merchants
-  ON CONFLICT (merchant_id) DO NOTHING;
+  ON CONFLICT (business_id) DO NOTHING;
 
   -- 5. Branches
-  INSERT INTO public.store_branches (id, merchant_id, name, address, latitude, longitude, allowed_radius_meters)
+  INSERT INTO public.store_branches (id, business_id, name, address, latitude, longitude, allowed_radius_meters)
   VALUES
     ('10000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', 'Cabang Senopati Utama', 'Jl. Senopati No. 45', -6.2297, 106.8074, 100),
     ('10000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000002', 'Cabang Senayan City Mall', 'Senayan City LG-08', -6.2270, 106.7972, 100)
   ON CONFLICT (id) DO NOTHING;
 
   -- 6. Subscriptions
-  INSERT INTO public.saas_subscriptions (id, merchant_id, plan_id, status)
+  INSERT INTO public.saas_subscriptions (id, business_id, plan_id, status)
   VALUES
     ('20000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', 'plan-enterprise-monthly', 'ACTIVE'),
     ('20000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000002', 'plan-pro-monthly', 'ACTIVE'),
@@ -504,18 +504,18 @@ async function main() {
   ON CONFLICT (id) DO NOTHING;
 
   -- 7. Client Users
-  INSERT INTO public.users (id, merchant_id, name, username, role, pin, email)
+  INSERT INTO public.users (id, business_id, name, username, role, pin, email)
   VALUES
     ('30000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000002', 'Budi Santoso', 'budi.admin', 'ADMIN', '1234', 'budi@newhopepos.id'),
     ('30000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000002', 'Siti Aminah', 'siti.manager', 'MANAGER', '5555', 'siti@newhopepos.id'),
     ('30000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000002', 'Rian Ardiansyah', 'rian.kasir', 'CASHIER', '0000', 'rian@newhopepos.id')
-  ON CONFLICT (merchant_id, username) DO UPDATE SET
+  ON CONFLICT (business_id, username) DO UPDATE SET
     name = EXCLUDED.name,
     role = EXCLUDED.role,
     pin = EXCLUDED.pin;
 
   -- 8. Categories
-  INSERT INTO public.categories (id, merchant_id, name, icon, color, business_sector)
+  INSERT INTO public.categories (id, business_id, name, icon, color, business_sector)
   VALUES
     ('cat-makanan', 'a0000000-0000-0000-0000-000000000002', 'Makanan Utama', 'Utensils', 'bg-amber-500', 'FNB'),
     ('cat-minuman', 'a0000000-0000-0000-0000-000000000002', 'Minuman & Kopi', 'CupSoda', 'bg-emerald-500', 'FNB'),
@@ -523,7 +523,7 @@ async function main() {
   ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
 
   -- 9. Products
-  INSERT INTO public.products (id, merchant_id, category_id, sku, name, price, cost_price, stock, min_stock_alert, unit, image)
+  INSERT INTO public.products (id, business_id, category_id, sku, name, price, cost_price, stock, min_stock_alert, unit, image)
   VALUES
     ('prod-1', 'a0000000-0000-0000-0000-000000000002', 'cat-makanan', 'SKU-NG-01', 'Nasi Goreng Spesial', 25000, 12000, 50, 10, 'porsi', 'https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Food/Steaming%20Bowl.png'),
     ('prod-2', 'a0000000-0000-0000-0000-000000000002', 'cat-makanan', 'SKU-MG-02', 'Mie Goreng Telur', 22000, 10000, 45, 10, 'porsi', 'https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Food/Spaghetti.png'),
@@ -536,7 +536,7 @@ async function main() {
     stock = EXCLUDED.stock;
 
   -- 10. Raw Materials (Bahan Baku & Mentah)
-  INSERT INTO public.raw_materials (id, merchant_id, sku, name, type, stock, min_stock_alert, unit, cost_price, location)
+  INSERT INTO public.raw_materials (id, business_id, sku, name, type, stock, min_stock_alert, unit, cost_price, location)
   VALUES
     ('raw-coffee-bean', 'a0000000-0000-0000-0000-000000000002', 'RAW-COFFEE-01', 'Biji Kopi Arabica Gayo Roasted', 'BAHAN_BAKU', 25000, 2000, 'Gram', 160, 'Gudang Kering Bar'),
     ('raw-fresh-milk',   'a0000000-0000-0000-0000-000000000002', 'RAW-MILK-01', 'Susu Segar Pasteurisasi Diamond', 'BAHAN_BAKU', 50000, 5000, 'ml', 20, 'Kulkas Pendingin Bar'),
@@ -548,7 +548,7 @@ async function main() {
     stock = EXCLUDED.stock;
 
   -- 11. Product Recipes (BOM Linking Multiple Ingredients)
-  INSERT INTO public.product_recipes (id, product_id, raw_material_id, merchant_id, quantity, unit, cost_per_unit, subtotal_cost)
+  INSERT INTO public.product_recipes (id, product_id, raw_material_id, business_id, quantity, unit, cost_per_unit, subtotal_cost)
   VALUES
     ('rec-esp-1', 'prod-5', 'raw-coffee-bean', 'a0000000-0000-0000-0000-000000000002', 18, 'Gram', 160, 2880),
     ('rec-esp-2', 'prod-5', 'raw-fresh-milk',   'a0000000-0000-0000-0000-000000000002', 150, 'ml', 20, 3000),
@@ -559,7 +559,7 @@ async function main() {
     subtotal_cost = EXCLUDED.subtotal_cost;
 
   -- 12. Product Bundling (Paket Combo Sets)
-  INSERT INTO public.product_bundles (id, merchant_id, sku, name, description, regular_price, bundle_price, discount_percent)
+  INSERT INTO public.product_bundles (id, business_id, sku, name, description, regular_price, bundle_price, discount_percent)
   VALUES
     ('bun-1', 'a0000000-0000-0000-0000-000000000002', 'BUN-KENYANG-01', 'Paket Kenyang Hemat (Nasi Goreng + Es Kopi)', '1x Nasi Goreng Spesial + 1x Es Kopi Susu Aren', 43000, 35000, 18.6),
     ('bun-2', 'a0000000-0000-0000-0000-000000000002', 'BUN-SARAPAN-01', 'Paket Sarapan Santai (Mie Goreng + Es Teh)', '1x Mie Goreng Telur + 1x Es Teh Manis Segar', 30000, 25000, 16.7)
@@ -579,13 +579,13 @@ async function main() {
     subtotal_price = EXCLUDED.subtotal_price;
 
   -- 13. AI Merchant Insights & Health Scores
-  INSERT INTO public.ai_merchant_insights (merchant_id, headline, category, impact_level, details, recommendation)
+  INSERT INTO public.ai_merchant_insights (business_id, headline, category, impact_level, details, recommendation)
   VALUES
     ('a0000000-0000-0000-0000-000000000001', 'Kopi Kenangan Senopati Cetak Rekor Omzet Tertinggi Rp 184,5 Juta', 'REVENUE', 'HIGH', 'Kontribusi GMV merchant mencapai 38.6% dari total ekosistem dengan margin bersih 55%.', 'Beri insentif loyalitas & reward program ekspansi multi-cabang.'),
     ('a0000000-0000-0000-0000-000000000003', 'Laundry Kilat Dago Masuk Kategori At-Risk (Omzet Rendah)', 'CHURN', 'HIGH', 'Omzet bulan ini Rp 4,2 Juta jauh di bawah target Rp 10 Juta dengan margin tipis 35%.', 'Aktifkan promo bundling cuci kilat + parfum laundry premium via WhatsApp blast.')
   ON CONFLICT (id) DO NOTHING;
 
-  INSERT INTO public.merchant_health_scores (merchant_id, score, risk_level, churn_probability, daily_avg_gmv, daily_avg_tx_count)
+  INSERT INTO public.merchant_health_scores (business_id, score, risk_level, churn_probability, daily_avg_gmv, daily_avg_tx_count)
   VALUES
     ('a0000000-0000-0000-0000-000000000001', 98, 'HEALTHY', 0.02, 6150000, 128),
     ('a0000000-0000-0000-0000-000000000002', 91, 'HEALTHY', 0.04, 2980000, 68),

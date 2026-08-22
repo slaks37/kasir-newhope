@@ -75,11 +75,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Batas dibaca DI DALAM transaksi dan barisnya dikunci, supaya dua
     // perangkat yang sama-sama menambah cabang terakhir tidak lolos berdua.
-    await client.query('SELECT id FROM pos.tenants WHERE id = $1 FOR UPDATE', [tenantId]);
+    await client.query('SELECT id FROM pos.businesses WHERE id = $1 FOR UPDATE', [tenantId]);
 
     const { rows: kuota } = await client.query(
       `SELECT max_outlets, outlet_aktif
-         FROM contract.merchant_outlet_usage WHERE merchant_id = $1`,
+         FROM contract.merchant_outlet_usage WHERE business_id = $1`,
       [tenantId]
     );
     const maksOutlet = Number(kuota[0]?.max_outlets ?? 1);
@@ -99,14 +99,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // bisa memperbaiki alamat atau menonaktifkan cabang yang sudah ditutup —
       // padahal menonaktifkannya justru yang membebaskan kuotanya.
       const { rows: ada } = await client.query(
-        `SELECT id FROM pos.branches WHERE tenant_id = $1 AND external_ref = $2`,
+        `SELECT id FROM pos.outlets WHERE business_id = $1 AND external_ref = $2`,
         [tenantId, cref]
       );
 
       if (!ada.length && aktif) {
         const { rows: hitung } = await client.query(
-          `SELECT COUNT(*)::int AS n FROM pos.branches
-            WHERE tenant_id = $1 AND is_active`,
+          `SELECT COUNT(*)::int AS n FROM pos.outlets
+            WHERE business_id = $1 AND is_active`,
           [tenantId]
         );
         if (hitung[0].n >= maksOutlet) {
@@ -120,11 +120,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const { rows: simpan } = await client.query(
-        `INSERT INTO pos.branches
-           (id, tenant_id, external_ref, name, address, latitude, longitude,
+        `INSERT INTO pos.outlets
+           (id, business_id, external_ref, name, address, latitude, longitude,
             allowed_radius_meters, business_sector, is_active, notes)
          VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
+         ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
          DO UPDATE SET
            name                  = EXCLUDED.name,
            address               = EXCLUDED.address,
@@ -155,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.activeBranchRef) {
       const cocok = tersimpan.find((t) => t.ref === String(body.activeBranchRef));
       if (cocok) {
-        await client.query('UPDATE pos.tenants SET active_branch_id = $2 WHERE id = $1', [
+        await client.query('UPDATE pos.businesses SET active_outlet_id = $2 WHERE id = $1', [
           tenantId,
           cocok.id,
         ]);
@@ -164,7 +164,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { rows: akhir } = await client.query(
       `SELECT max_outlets, outlet_aktif, sisa_kuota
-         FROM contract.merchant_outlet_usage WHERE merchant_id = $1`,
+         FROM contract.merchant_outlet_usage WHERE business_id = $1`,
       [tenantId]
     );
 

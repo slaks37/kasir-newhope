@@ -1535,7 +1535,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 1b. Antrikan pembatalannya.
     //
     // Void selalu datang SETELAH transaksinya tersimpan, jadi kiriman ini akan
-    // menabrak UNIQUE (tenant_id, client_txn_id) di server. Server sengaja
+    // menabrak UNIQUE (business_id, client_txn_id) di server. Server sengaja
     // memperlakukan tabrakan berstatus CANCELLED sebagai pembaruan, bukan
     // duplikat — kalau tidak, uang yang sudah dikembalikan ke pelanggan akan
     // terus terhitung sebagai omzet di admin panel.

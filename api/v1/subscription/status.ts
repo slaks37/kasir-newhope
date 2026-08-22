@@ -77,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const subRes = await db.query(
-      `SELECT s.id, s.tenant_id AS "tenantId", s.plan_id AS "planId", s.status,
+      `SELECT s.id, s.business_id AS "tenantId", s.plan_id AS "planId", s.status,
               s.current_period_start AS "currentPeriodStart",
               s.current_period_end   AS "currentPeriodEnd",
               s.grace_period_end     AS "gracePeriodEnd",
@@ -114,8 +114,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               e.dashboard_access_level_plan AS "dashboardAccessLevelPlan"
          FROM billing.subscriptions s
          LEFT JOIN billing.plans p ON p.id = s.plan_id
-         LEFT JOIN contract.merchant_entitlements e ON e.merchant_id = s.tenant_id
-        WHERE s.tenant_id = $1
+         LEFT JOIN contract.merchant_entitlements e ON e.business_id = s.business_id
+        WHERE s.business_id = $1
         ORDER BY s.created_at DESC
         LIMIT 1`,
       [tenantId]
@@ -174,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : null;
 
     const invoices = await db.query(
-      `SELECT i.id, i.subscription_id AS "subscriptionId", i.tenant_id AS "tenantId",
+      `SELECT i.id, i.subscription_id AS "subscriptionId", i.business_id AS "tenantId",
               i.amount, i.currency, i.payment_status AS "paymentStatus",
               i.payment_gateway_ref AS "paymentGatewayRef",
               i.payment_link_url AS "paymentLinkUrl",
@@ -183,7 +183,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          FROM billing.invoices i
          LEFT JOIN billing.subscriptions s ON s.id = i.subscription_id
          LEFT JOIN billing.plans p ON p.id = s.plan_id
-        WHERE i.tenant_id = $1
+        WHERE i.business_id = $1
         ORDER BY i.created_at DESC
         LIMIT 24`,
       [tenantId]

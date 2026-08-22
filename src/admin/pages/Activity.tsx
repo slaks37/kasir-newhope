@@ -118,7 +118,7 @@ export default function ActivityPage({ sector, onSector }: { sector: string; onS
                           {JSON.stringify(a.detail, null, 2)}
                         </pre>
                         <p className="mt-1.5 font-mono text-xs text-slate-400">
-                          business_id: {a.business_id ?? '—'}
+                          client_key: {a.client_key ?? '—'}
                         </p>
                       </td>
                     </tr>

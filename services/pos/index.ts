@@ -30,14 +30,14 @@ startService({
      * ai-service TIDAK memanggil endpoint ini untuk angka uang — itu dibaca
      * langsung dari contract.merchant_revenue, supaya definisi omzetnya
      * dijamin sama. Endpoint ini hanya melayani hal yang butuh logika pos:
-     * memetakan business_id ke merchant.
+     * memetakan client_key ke merchant.
      */
     app.get('/internal/resolve-tenant', async (req, res) => {
       const businessId = String(req.query.businessId || '').trim();
       if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
 
       const { rows } = await ctx.db.query(
-        `SELECT id, name, business_sector FROM pos.tenants WHERE external_ref = $1`,
+        `SELECT id, name, business_sector FROM pos.businesses WHERE client_key = $1`,
         [businessId]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
@@ -49,7 +49,7 @@ startService({
       const { rows } = await ctx.db.query(
         `SELECT COUNT(*)::int AS products,
                 COUNT(*) FILTER (WHERE stock <= min_stock_alert)::int AS low_stock
-           FROM pos.products WHERE tenant_id = $1::uuid AND is_available`,
+           FROM pos.products WHERE business_id = $1::uuid AND is_available`,
         [req.params.merchantId]
       );
       res.json({ ok: true, ...rows[0] });

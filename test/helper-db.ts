@@ -38,9 +38,9 @@ export async function tutupDb(): Promise<void> {
 /** Membuat merchant uji yang bersih, membuang sisa percobaan sebelumnya. */
 export async function merchantUji(businessId: string, nama = 'Toko Uji'): Promise<string> {
   const d = db();
-  await d.query('DELETE FROM pos.tenants WHERE external_ref = $1', [businessId]);
+  await d.query('DELETE FROM pos.businesses WHERE client_key = $1', [businessId]);
   const { rows } = await d.query(
-    `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref, is_active)
+    `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
      VALUES (uuidv7(), $1, 'FNB', $2, $3, true) RETURNING id`,
     [nama, businessId, businessId.split('_')[0]]
   );
@@ -50,9 +50,9 @@ export async function merchantUji(businessId: string, nama = 'Toko Uji'): Promis
 export async function pasangPaket(tenantId: string, planId: string): Promise<void> {
   await db().query(
     `INSERT INTO billing.subscriptions
-       (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+       (id, business_id, plan_id, status, current_period_start, current_period_end)
      VALUES (uuidv7(), $1, $2, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
-     ON CONFLICT (tenant_id) DO UPDATE SET
+     ON CONFLICT (business_id) DO UPDATE SET
        plan_id = $2, status = 'ACTIVE',
        current_period_end = CURRENT_TIMESTAMP + INTERVAL '30 days'`,
     [tenantId, planId]

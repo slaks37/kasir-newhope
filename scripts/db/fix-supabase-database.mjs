@@ -63,10 +63,10 @@ async function fixSupabase() {
   `);
   console.log('✓ Paket SaaS billing.plans berhasil disinkronkan.');
 
-  console.log('4. Memastikan Akun Toko Resmi (Budi Santoso, Siti Aminah, Rian Ardiansyah) di pos.users & pos.tenants...');
+  console.log('4. Memastikan Akun Toko Resmi (Budi Santoso, Siti Aminah, Rian Ardiansyah) di pos.users & pos.businesses...');
   await client.query(`
     -- Tenant Utama Toko
-    INSERT INTO pos.tenants (id, name, business_sector, created_at)
+    INSERT INTO pos.businesses (id, name, business_sector, created_at)
     VALUES (
       legacy_uuid('usr-1_FNB'),
       'New Hope Resto & Cafe (Senayan Jakarta)',
@@ -78,7 +78,7 @@ async function fixSupabase() {
       business_sector = EXCLUDED.business_sector;
 
     -- Pengguna Staf & Admin
-    INSERT INTO pos.users (id, tenant_id, name, username, role, pin)
+    INSERT INTO pos.users (id, business_id, name, username, role, pin)
     VALUES
       (legacy_uuid('usr-1'), legacy_uuid('usr-1_FNB'), 'Budi Santoso', 'budi.admin', 'ADMIN', '1234'),
       (legacy_uuid('usr-2'), legacy_uuid('usr-1_FNB'), 'Siti Aminah', 'siti.manager', 'MANAGER', '5555'),
@@ -90,7 +90,7 @@ async function fixSupabase() {
       pin = EXCLUDED.pin;
 
     -- Langganan Aktif untuk Toko Budi Santoso
-    INSERT INTO billing.subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+    INSERT INTO billing.subscriptions (id, business_id, plan_id, status, current_period_start, current_period_end)
     VALUES (
       legacy_uuid('sub-budi-pro'),
       legacy_uuid('usr-1_FNB'),
@@ -105,7 +105,7 @@ async function fixSupabase() {
       current_period_end = EXCLUDED.current_period_end;
 
     -- AI Credits untuk Budi Santoso
-    INSERT INTO ai.merchant_ai_credits (merchant_id, balance, monthly_grant, used_this_month, period_reset_at)
+    INSERT INTO ai.merchant_ai_credits (business_id, balance, monthly_grant, used_this_month, period_reset_at)
     VALUES (
       legacy_uuid('usr-1_FNB'),
       100,
@@ -113,7 +113,7 @@ async function fixSupabase() {
       0,
       CURRENT_TIMESTAMP + INTERVAL '30 days'
     )
-    ON CONFLICT (merchant_id) DO UPDATE SET
+    ON CONFLICT (business_id) DO UPDATE SET
       balance = GREATEST(ai.merchant_ai_credits.balance, 100),
       monthly_grant = 100;
   `);
@@ -129,7 +129,7 @@ async function fixSupabase() {
       SELECT * FROM pos.products;
 
     CREATE OR REPLACE VIEW public.v_pos_tenants AS
-      SELECT * FROM pos.tenants;
+      SELECT * FROM pos.businesses;
 
     CREATE OR REPLACE VIEW public.v_pos_users AS
       SELECT * FROM pos.users;
@@ -147,7 +147,7 @@ async function fixSupabase() {
 
   console.log('6. Memeriksa Status RLS (Row Level Security)...');
   await client.query(`
-    ALTER TABLE pos.tenants ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE pos.businesses ENABLE ROW LEVEL SECURITY;
     ALTER TABLE pos.users ENABLE ROW LEVEL SECURITY;
     ALTER TABLE pos.products ENABLE ROW LEVEL SECURITY;
     ALTER TABLE pos.transactions ENABLE ROW LEVEL SECURITY;
