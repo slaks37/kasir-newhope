@@ -57,16 +57,16 @@ Dokumentasi arsitektur sistem, hirarki multi-tenant (Model B), otentikasi & step
 │  │ [internal]              │  │ [pos]                   │              │
 │  │ (Platform Plane)        │  │ (Store Operations)      │              │
 │  ├─────────────────────────┤  ├─────────────────────────┤              │
-│  │ • tenants (Holding/Corp)│  │ • products              │              │
-│  │ • merchants (Brand/Unit)│  │ • ingredients           │              │
+│  │ • tenants (Holding/Corp)│  │ • products (Master Data)│              │
+│  │ • merchants (Brand/Unit)│  │ • ingredients (Master)  │              │
 │  │ • outlets (Store Branch)│  │ • product_recipes (BOM) │              │
-│  │ • users (Global ID 1:1) │  │ • transactions          │              │
-│  │ • memberships (RBAC/PIN)│  │ • transaction_items     │              │
-│  │ • audit_logs (Platform) │  │ • inventory_logs        │              │
-│  │ • business_targets      │  │ • sync_receipts         │              │
-│  │ • feature_usage (Telem.)│  └────────────┬────────────┘              │
-│  │ • access_log (Operator) │               │                           │
-│  │ • health_logs           │               │                           │
+│  │ • users (Global ID 1:1) │  │ • inventory_locations   │              │
+│  │ • memberships (RBAC/PIN)│  │ • inventory_balances    │              │
+│  │ • audit_logs (Platform) │  │ • inventory_logs (Audit)│              │
+│  │ • business_targets      │  │ • transactions          │              │
+│  │ • feature_usage (Telem.)│  │ • transaction_items     │              │
+│  │ • access_log (Operator) │  │ • sync_receipts         │              │
+│  │ • health_logs           │  └────────────┬────────────┘              │
 │  └────────────┬────────────┘               │                           │
 │               │                            │                           │
 │               ├────────────────────────────┤                           │
@@ -137,6 +137,29 @@ Struktur data New Hope POS dirancang untuk mendukung ekspansi bisnis dari 1 toko
   - User A dapat menjadi **Owner** di tingkat Tenant (mengakses semua merchant dan outlet).
   - User B dapat menjadi **Manager** di Merchant "Kopi Senja" (mengakses cabang Senayan & Sudirman).
   - User C dapat menjadi **Cashier** di Outlet "Cabang Senayan" dengan PIN Kios `1234`.
+
+---
+
+### 📦 2.1 Domain Inventory Multi-Location (Branch-Aware Inventory)
+
+Sistem membedakan secara tegas antara **Master Data Katalog** dengan **Fisik Saldo Stok Per Cabang**:
+
+```
+[MASTER DATA BRAND (Merchant-Scoped)]
+pos.products          : Definisi produk, SKU, kategori, harga jual, harga pokok
+pos.ingredients       : Definisi bahan baku mentah (biji kopi, susu, deterjen)
+pos.product_recipes   : Bill of Materials (BOM) per porsi produk
+        │
+        ▼ (Diturunkan ke masing-masing cabang)
+[PHYSICAL INVENTORY (Outlet-Scoped)]
+pos.inventory_locations : Titik gudang per cabang (Gudang Utama, Dapur, Rak Display)
+pos.inventory_balances  : Saldo stok riil per (outlet_id, location_id, item_id)
+pos.inventory_logs      : Audit mutasi riil per (outlet_id, transaction_id, type)
+```
+
+- **Contoh Kasus**: Kopi Susu Gula Aren memiliki stok di **Cabang Senayan = 20 cup** dan **Cabang Sudirman = 50 cup**.
+- Data saldo fisik tersimpan terisolasi di `pos.inventory_balances`, bukan di tabel global `pos.products.stock`.
+- Konsumen lintas domain membaca kondisi stok melalui view `contract.stock_status`.
 
 ---
 

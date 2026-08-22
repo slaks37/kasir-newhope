@@ -34,6 +34,7 @@ const MIGRATIONS = [
   'migrations/0014_tenants_to_internal_platform.sql',
   'migrations/0015_model_b_tenant_merchant_outlet_hierarchy.sql',
   'migrations/0016_audit_and_targets_domain_refactor.sql',
+  'migrations/0017_multi_location_branch_inventory.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';
