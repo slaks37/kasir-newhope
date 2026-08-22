@@ -171,10 +171,19 @@ export type InternalCapability =
   | 'VIEW_TRANSACTION_LOG'
   | 'VIEW_PRODUCT_SALES'
   | 'VIEW_ACTIVITY_LOG'
-  // Menulis dan menerbitkan artikel di situs publik. Bukan kemampuan analitik:
-  // yang memilikinya bisa mengubah apa yang dibaca calon pelanggan di halaman
-  // depan. Panel blog sempat digerbangi VIEW_SECTOR_ANALYTICS, yang berarti
-  // seluruh tim Growth memegang tombol terbit.
+  /*
+   * Menulis dan menerbitkan artikel di situs publik. Bukan kemampuan analitik:
+   * yang memilikinya bisa mengubah apa yang dibaca calon pelanggan di halaman
+   * depan. Panel blog sempat digerbangi VIEW_SECTOR_ANALYTICS, yang berarti
+   * seluruh tim Growth memegang tombol terbit.
+   *
+   * BELUM DITEGAKKAN DI SERVER. Panel blog menyimpan artikelnya di
+   * localStorage peramban — tidak ada tabel, tidak ada endpoint, jadi tidak ada
+   * tempat memeriksa capability ini selain menyembunyikan menunya. Sampai blog
+   * punya sisi server, ini penanda niat, bukan penjagaan; sengaja TIDAK
+   * dimasukkan ke AUDITED_CAPABILITIES supaya tidak terlihat seolah tercatat
+   * padahal tidak ada yang bisa mencatatnya.
+   */
   | 'MANAGE_PUBLIC_CONTENT';
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
@@ -238,8 +247,9 @@ export const AUDITED_CAPABILITIES: InternalCapability[] = [
   'VIEW_TRANSACTION_LOG',
   'VIEW_PRODUCT_SALES',
   'VIEW_ACTIVITY_LOG',
-  // Yang terbit di halaman depan harus punya nama di belakangnya.
-  'MANAGE_PUBLIC_CONTENT',
+  // MANAGE_PUBLIC_CONTENT sengaja TIDAK di sini. Blog belum punya sisi server,
+  // jadi tidak ada permintaan yang bisa dicatat. Mencantumkannya hanya membuat
+  // daftar ini berbohong tentang apa yang benar-benar terekam.
 ];
 
 export function requiresAudit(cap: InternalCapability): boolean {

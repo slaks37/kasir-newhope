@@ -438,6 +438,88 @@ diagramnya yang harus diperbaiki — bukan tabelnya yang disesuaikan.
 
 ---
 
+## Matriks kepemilikan data
+
+Siapa boleh **menulis** ke mana. Ini yang paling sering diasumsikan dan paling
+jarang ditulis, sehingga pelanggarannya baru ketahuan setelah dua tempat
+menulis kolom yang sama dengan aturan berbeda.
+
+| Skema | Pemilik | Yang boleh menulis | Yang lain |
+|---|---|---|---|
+| `pos.*` | POS | jalur sinkron (`P1`) | baca lewat `contract` |
+| `billing.plans`<br/>`billing.plan_change_log` | Billing | **panel internal** (`P5.4`) | baca lewat `contract` |
+| `billing.subscriptions`<br/>`billing.invoices` | Billing | **hanya `P2`** — penerbitan faktur & webhook pembayaran | baca lewat `contract` |
+| `billing.webhook_logs` | Billing | `P2.2` | — |
+| `ai.*` | AI | `P3` (kredit & log), `P4` (kartu insight) | baca lewat `contract` |
+| `internal.*` | Backoffice | `P5` | — |
+| `contract.*` | — | **tidak ada.** Hanya view. | semua service, baca |
+
+**Pembagian di dalam `billing` itu disengaja, dan inilah bagian yang paling
+mudah dilanggar.** Panel internal boleh mengubah **katalog** — nama paket,
+harga, batas, modul. Itu keputusan produk, dan tempatnya memang di panel.
+
+Panel internal **tidak boleh** menyentuh `subscriptions` dan `invoices`. Yang
+mengubah keadaan uang hanya `P2`, dan hanya dari notifikasi pembayaran yang
+tanda tangannya sah. Kalau panel bisa menyalakan langganan, satu akun internal
+yang jebol menjadi cara memberi paket termahal kepada siapa pun tanpa uang
+berpindah — dan tidak akan muncul di rekonsiliasi mana pun, karena tidak ada
+faktur yang dilanggarnya.
+
+Yang menegakkannya saat ini konvensi, bukan hak akses database: `svc_backoffice`
+belum dibatasi per tabel di dalam `billing`. Sampai itu ada, aturan ini dijaga
+oleh peninjauan kode dan oleh tabel ini.
+
+`src/server/plansRepo.ts` adalah satu-satunya berkas panel yang menulis
+`billing`, dan hanya ke dua tabel katalog itu. `billing.subscriptions` di
+berkas yang sama hanya dibaca — untuk menghitung berapa merchant yang memakai
+sebuah paket sebelum harganya diubah.
+
+---
+
+## Matriks kemampuan
+
+Capability mana membuka apa, dan mana yang tercatat.
+
+| Capability | Membuka | Diaudit | Alasan wajib (SUPPORT) |
+|---|---|---|---|
+| `VIEW_MERCHANT_HEALTH` | Skor churn, agregat | — | — |
+| `VIEW_CHURN_COHORT` | Kohor retensi | — | — |
+| `VIEW_PLATFORM_REVENUE` | MRR seluruh platform | — | — |
+| `VIEW_FEATURE_ADOPTION` | Adopsi fitur | — | — |
+| `VIEW_SECTOR_ANALYTICS` | Ringkasan lima sektor | — | — |
+| `VIEW_MERCHANT_DETAIL` | Pembukuan satu merchant | ya | ya |
+| `VIEW_TRANSACTION_LOG` | Struk satu merchant | ya | ya |
+| `VIEW_PRODUCT_SALES` | Penjualan per produk | ya | ya |
+| `VIEW_ACTIVITY_LOG` | Kejadian di aplikasi kasir | ya | ya |
+| `VIEW_ACCESS_AUDIT` | Log akses internal | — | — |
+| `IMPERSONATE_MERCHANT` | Menyamar sebagai merchant | ya | ya |
+| `MANAGE_SUBSCRIPTION` | Ubah katalog paket & harga | ya | ya |
+| `GRANT_AI_CREDITS` | Menambah kredit AI | ya | ya |
+| `MANAGE_INTERNAL_USERS` | Buat & ubah peran akun internal | ya | ya |
+| `MANAGE_PUBLIC_CONTENT` | Terbitkan artikel blog | **belum bisa** | — |
+
+**Empat yang pertama sengaja tidak diaudit.** Semuanya agregat murni — tidak
+ada merchant yang bisa dikenali dari angkanya. Menuntut jejak dan alasan untuk
+membuka dasbor ringkasan hanya melatih staf mengetik "cek" di setiap kotak,
+dan kebiasaan itu merusak nilai jejak yang benar-benar penting.
+
+**Pembacaan yang membidik satu merchant selalu dicatat**, beserta alasannya
+bila yang membuka role SUPPORT. Aturan pencatatannya:
+`requiresAudit(capability) && merchantId` — jadi `VIEW_TRANSACTION_LOG` yang
+dipakai untuk tampilan agregat tidak dicatat, sementara yang membidik
+`?merchantId=…` dicatat.
+
+**Mutasi dicatat di endpointnya masing-masing**, bukan lewat pembungkus:
+`INTERNAL_USER_INVITE`, `INTERNAL_USER_ROLE_*`, `PLAN_ACTIVATE`,
+`PLAN_DEACTIVATE`, `PLAN_*`. Konsekuensinya harus disadari: **endpoint tulis
+baru yang lupa memanggil `catatAkses` tidak akan mengeluh** — ia hanya diam
+tidak tercatat. Belum ada pembungkus tulis yang setara `layaniBaca`.
+
+**`MANAGE_PUBLIC_CONTENT` belum bisa diaudit** karena blog belum punya sisi
+server sama sekali — lihat [Yang belum](#yang-belum).
+
+---
+
 ## Dua bentuk deployment, satu aliran
 
 Diagram di atas berlaku untuk keduanya. Yang berbeda hanya di mana prosesnya
@@ -463,6 +545,26 @@ Ditulis di sini supaya tidak terlihat seperti sudah selesai.
 - **Jabat tangan DOKU belum diuji ke server sungguhan.** Tanda tangannya sudah
   diuji terhadap vektor uji, tapi `api-sandbox.doku.com` diblokir dari
   lingkungan pengembangan ini. Harus dijalankan dari mesin sendiri.
+- **Blog belum punya sisi server sama sekali.** `src/lib/blogStorage.ts`
+  menyimpan artikel di `localStorage` peramban. Tidak ada tabel, tidak ada
+  endpoint, tidak ada penegakan `MANAGE_PUBLIC_CONTENT` selain menyembunyikan
+  menunya — kelas penjagaan yang bisa dilewati siapa pun yang menyunting bundel
+  JavaScript. Yang lebih mengejutkan bagi produknya: artikel yang ditulis admin
+  **tidak sampai ke pengunjung mana pun**. Halaman blog publik memuat konstanta
+  bawaan, bukan yang ditulis di panel, dan membersihkan data peramban
+  menghilangkan seluruh tulisan.
+
+- **Belum ada pembungkus untuk jalur TULIS panel internal.** Pembacaan lewat
+  `layaniBaca`, yang menyatukan metode, token, capability, kewajiban alasan,
+  dan jejak audit. Penulisan memanggil `wajibAdmin` lalu `catatAkses` sendiri —
+  benar hari ini, tapi endpoint tulis berikutnya yang lupa memanggilnya tidak
+  akan mengeluh.
+
+- **Hak akses per tabel di dalam `billing` belum dipasang.** Pembagian di
+  [matriks kepemilikan](#matriks-kepemilikan-data) — panel boleh menulis
+  katalog tapi tidak boleh menyentuh langganan — saat ini dijaga konvensi dan
+  peninjauan kode, bukan oleh `GRANT` yang menolak.
+
 - **`LAYOUT_UTILISATION` memakai pendekatan.** Meja, bay, dan kursi belum
   menjadi entitas, jadi yang dihitung adalah pesanan yang dilayani di tempat
   (`order_type = DINE_IN`) — bukan perputaran meja yang sesungguhnya. Payload

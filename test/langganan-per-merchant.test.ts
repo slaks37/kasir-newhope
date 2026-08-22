@@ -125,7 +125,9 @@ d('langganan per merchant', () => {
     const { rows } = await db().query(
       `SELECT COUNT(*)::int baris,
               COUNT(*) FILTER (WHERE unit_penagihan)::int penagih,
-              SUM(recognised_mrr_idr)::numeric mrr
+              SUM(contracted_mrr_idr)::numeric kontrak,
+              SUM(active_mrr_idr)::numeric     aktif,
+              SUM(collected_mrr_idr)::numeric  masuk
          FROM contract.subscription_status s
          JOIN pos.businesses b ON b.id = s.business_id
         WHERE b.client_key LIKE $1`,
@@ -134,9 +136,72 @@ d('langganan per merchant', () => {
     const harga = Number((await db().query(
       `SELECT price_idr FROM billing.plans WHERE id = 'plan-pro-monthly'`)).rows[0].price_idr);
 
-    expect(rows[0].baris).toBeGreaterThan(1);   // beberapa unit usaha
-    expect(rows[0].penagih).toBe(1);            // satu yang membawa nominal
-    expect(Number(rows[0].mrr)).toBe(harga);    // ditagih sekali
+    expect(rows[0].baris).toBeGreaterThan(1);        // beberapa unit usaha
+    expect(rows[0].penagih).toBe(1);                 // satu yang membawa nominal
+    expect(Number(rows[0].kontrak)).toBe(harga);     // ditagih sekali
+    expect(Number(rows[0].aktif)).toBe(harga);       // langganannya memang berjalan
+  });
+
+  /*
+   * "Langganan aktif" tidak sama dengan "uang sudah masuk".
+   *
+   * Sebelum 0030 view ini memberi `recognised_mrr_idr` yang isinya harga paket
+   * untuk setiap langganan ACTIVE. Dashboard yang membacanya melaporkan
+   * pendapatan yang belum tentu pernah diterima — dan angkanya bergerak ke
+   * arah yang salah persis ketika keadaannya memburuk, karena merchant yang
+   * pembayarannya gagal tetap ACTIVE sampai periodenya habis.
+   */
+  it('MRR yang MASUK hanya dihitung dari faktur yang benar-benar lunas', async () => {
+    const { rows: sebelum } = await db().query(
+      `SELECT SUM(collected_mrr_idr)::numeric n FROM contract.subscription_status s
+         JOIN pos.businesses b ON b.id = s.business_id WHERE b.client_key LIKE $1`,
+      [`${OWNER}\\_%`]
+    );
+    // Langganannya ACTIVE, tapi belum ada faktur lunas sama sekali.
+    expect(Number(sebelum[0].n)).toBe(0);
+
+    const { rows: sub } = await db().query(
+      `SELECT s.id FROM billing.subscriptions s
+         JOIN pos.merchants m ON m.id = s.merchant_id
+        WHERE m.owner_user_ref = $1`, [OWNER]);
+    await db().query(
+      `INSERT INTO billing.invoices
+         (id, subscription_id, business_id, invoice_number, plan_id, billing_cycle,
+          amount, currency, payment_status, paid_at, due_date)
+       VALUES (uuidv7(), $1, $2, $3, 'plan-pro-monthly', 'MONTHLY',
+               299000, 'IDR', 'PAID', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [sub[0].id, idKafe, `INV-UJI-${Date.now()}`]
+    );
+
+    const { rows: sesudah } = await db().query(
+      `SELECT SUM(collected_mrr_idr)::numeric n FROM contract.subscription_status s
+         JOIN pos.businesses b ON b.id = s.business_id WHERE b.client_key LIKE $1`,
+      [`${OWNER}\\_%`]
+    );
+    expect(Number(sesudah[0].n)).toBe(299000);
+  });
+
+  it('faktur TAHUNAN dibagi 12 supaya sebanding dengan bulanan', async () => {
+    const { rows: sub } = await db().query(
+      `SELECT s.id FROM billing.subscriptions s
+         JOIN pos.merchants m ON m.id = s.merchant_id
+        WHERE m.owner_user_ref = $1`, [OWNER]);
+    await db().query(
+      `INSERT INTO billing.invoices
+         (id, subscription_id, business_id, invoice_number, plan_id, billing_cycle,
+          amount, currency, payment_status, paid_at, due_date)
+       VALUES (uuidv7(), $1, $2, $3, 'plan-pro-monthly', 'YEARLY',
+               2868000, 'IDR', 'PAID', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [sub[0].id, idKafe, `INV-UJI-Y-${Date.now()}`]
+    );
+
+    const { rows } = await db().query(
+      `SELECT SUM(collected_mrr_idr)::numeric n FROM contract.subscription_status s
+         JOIN pos.businesses b ON b.id = s.business_id WHERE b.client_key LIKE $1`,
+      [`${OWNER}\\_%`]
+    );
+    // 299.000 bulanan + 2.868.000/12 = 299.000 + 239.000
+    expect(Number(rows[0].n)).toBe(299000 + 239000);
   });
 
   it('langganan tidak punya kolom business_id lagi', async () => {
