@@ -33,6 +33,7 @@ const MIGRATIONS = [
   'migrations/0013_user_membership_identity_plane.sql',
   'migrations/0014_tenants_to_internal_platform.sql',
   'migrations/0015_model_b_tenant_merchant_outlet_hierarchy.sql',
+  'migrations/0016_audit_and_targets_domain_refactor.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

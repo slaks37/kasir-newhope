@@ -229,10 +229,9 @@ export async function buildAggregatesFromDb(
   a.stockCritical = stock.rows[0].n;
 
   /* -- Target bulanan ------------------------------------------------------ */
-  // merchant_targets milik skema `ai` sendiri — satu-satunya tabel di fungsi ini
-  // yang bukan kontrak.
+  // Dibaca dari contract.business_targets — AI bertindak murni sebagai konsumen data
   const target = await db.query(
-    `SELECT monthly_revenue_target FROM ai.merchant_targets WHERE merchant_id = $1`,
+    `SELECT monthly_revenue_target FROM contract.business_targets WHERE merchant_id = $1`,
     [t]
   );
   if (target.rows.length && Number(target.rows[0].monthly_revenue_target) > 0) {

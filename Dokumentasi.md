@@ -44,20 +44,24 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        POSTGRESQL DATABASE TIER                        │
 │                                                                        │
-│  [internal] (Platform & Org)  [pos] (Operations)  [billing]  [ai]      │
+│  [internal] (Platform Plane)  [pos] (Operations)  [billing]  [ai]      │
 │  • tenants (Holding / Corp)   • products          • plans    • credits │
 │  • merchants (Brand / Unit)   • ingredients       • subs     • insight │
-│  • outlets (Physical Branch)  • recipes           • invoices • targets │
-│  • users (Global Identity)    • transactions      • webhooks • query   │
+│  • outlets (Physical Branch)  • recipes           • invoices • query   │
+│  • users (Global Identity)    • transactions      • webhooks           │
 │  • memberships (Tenant RBAC)  • trans_items                            │
-│  • access_log & health_logs   • inventory_logs                         │
+│  • audit_logs (Cross-Cutting) • inventory_logs                         │
+│  • business_targets                                                    │
+│  • feature_usage (Telemetry)                                           │
+│  • health_logs                                                         │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [contract] (Single Source of Truth Cross-Domain Read Surface)         │
 │  • tenant_directory     • merchant_directory   • outlet_directory      │
 │  • merchant_revenue     • merchant_staff       • catalog               │
 │  • stock_status         • inventory_movements  • transaction_log       │
-│  • subscription_status  • sector_summary                               │
+│  • subscription_status  • sector_summary       • business_targets      │
+│  • activity_log (Platform Audit Stream)                                │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [PostgreSQL RLS Enforcement] (Database-Level Authorization Filter)    │

@@ -51,25 +51,23 @@ export async function writeActivity(db: Db, a: ActivityInput): Promise<string | 
   if (!sector || !mod || !UUID_RE.test(a.merchantId)) return null;
 
   const { rows } = await db.query(
-    `INSERT INTO pos.merchant_activity_log
-       (merchant_id, tenant_id, business_sector, business_id, app_module,
-        event_type, severity, actor_user_id, actor_name, actor_role,
-        transaction_id, amount_idr, summary, detail, occurred_at)
-     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9, $10,
-             $11::uuid, $12, $13, $14::jsonb, COALESCE($15::timestamptz, CURRENT_TIMESTAMP))
+    `INSERT INTO internal.audit_logs
+       (merchant_id, tenant_id, domain,
+        event_type, severity, actor_id, actor_name, actor_role,
+        amount_idr, summary, detail, occurred_at)
+     VALUES ($1::uuid, $2::uuid, $3,
+             $4, $5, $6::uuid, $7, $8,
+             $9, $10, $11::jsonb, COALESCE($12::timestamptz, CURRENT_TIMESTAMP))
      RETURNING id`,
     [
       a.merchantId,
       a.tenantId && UUID_RE.test(a.tenantId) ? a.tenantId : a.merchantId,
-      sector,
-      a.businessId ?? null,
       mod,
       a.eventType.slice(0, 48),
       pick(SEVERITIES, a.severity) ?? 'INFO',
       a.actorUserId && UUID_RE.test(a.actorUserId) ? a.actorUserId : null,
       a.actorName ?? null,
       a.actorRole ?? null,
-      a.transactionId && UUID_RE.test(a.transactionId) ? a.transactionId : null,
       a.amountIdr ?? null,
       a.summary.slice(0, 240),
       JSON.stringify(a.detail ?? {}),
