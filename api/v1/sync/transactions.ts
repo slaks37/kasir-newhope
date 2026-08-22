@@ -2,6 +2,7 @@ type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
 import { ENTITLEMENT_DARURAT, TANPA_BATAS } from '../../../src/lib/plans/entitlements.js';
+import { orderPaid, orderVoided } from '../../_lib/efekDomain.js';
 
 let pool: pg.Pool | null = null;
 
@@ -39,6 +40,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!businessId || !sector) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId and sector are required' });
   }
+
+  // Perangkat yang mengirim. Sudah lama dikirim aplikasi sebagai x-device-id;
+  // sejak 0025 ada tempat untuk menyimpannya, dan sejak 0026 ia menandai siapa
+  // yang menerbitkan tiap peristiwa.
+  const deviceRef = String(req.headers?.['x-device-id'] ?? '').slice(0, 128) || null;
 
   const db = getPool();
   const client = await db.connect();
@@ -250,14 +256,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // bersalah.
     const dalamBatch = new Set<string>();
     const baru: any[] = [];
+    // Pembatalan untuk struk yang SUDAH tersimpan. Ini bukan duplikat: void
+    // selalu datang SETELAH penjualannya, jadi ia pasti menabrak
+    // UNIQUE (business_id, client_txn_id). Membuangnya sebagai duplikat berarti
+    // uang yang sudah dikembalikan ke pelanggan terus terhitung sebagai omzet,
+    // dan stoknya tidak pernah kembali.
+    const pembatalanSusulan: any[] = [];
+
+    const dibatalkan = (t: any) =>
+      String(t.paymentStatus ?? '').toUpperCase() === 'CANCELLED' ||
+      String(t.status ?? '').toUpperCase() === 'VOID';
+
     for (const t of berid) {
       const kunci = String(t.clientTxnId);
-      if (sudahAda.has(kunci) || dalamBatch.has(kunci)) {
+      if (sudahAda.has(kunci)) {
+        if (dibatalkan(t)) pembatalanSusulan.push(t);
+        else duplicates++;
+        continue;
+      }
+      if (dalamBatch.has(kunci)) {
         duplicates++;
         continue;
       }
       dalamBatch.add(kunci);
       baru.push(t);
+    }
+
+    // Dikerjakan lebih dulu: baris transaksinya sudah ada, tinggal ditandai
+    // batal dan efeknya dibalik.
+    for (const t of pembatalanSusulan) {
+      const { rows } = await client.query(
+        `UPDATE pos.transactions SET payment_status = 'CANCELLED'
+          WHERE business_id = $1 AND client_txn_id = $2
+          RETURNING id`,
+        [tenantId, String(t.clientTxnId)]
+      );
+      if (rows.length) {
+        await orderVoided(client, tenantId, rows[0].id, String(t.clientTxnId), deviceRef);
+      }
     }
 
     if (baru.length) {
@@ -364,6 +400,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       accepted = baru.length;
+
+      /*
+       * EFEK DOMAIN.
+       *
+       * Sampai di sini yang tersimpan barulah struknya. Peristiwa ORDER_PAID
+       * dan turunannya — mutasi persediaan dan mutasi poin — dicatat di sini,
+       * di dalam transaksi database yang sama. Kalau salah satu gagal,
+       * seluruhnya batal: struk yang tercatat tanpa efeknya lebih buruk
+       * daripada struk yang gagal masuk, karena yang pertama terlihat benar.
+       *
+       * Struk yang DIBATALKAN tidak menerbitkan ORDER_PAID. Ia membalik efek
+       * struk yang sudah ada — dan kalau struknya belum pernah masuk, tidak
+       * ada yang perlu dibalik.
+       */
+      for (let i = 0; i < baru.length; i++) {
+        const t = baru[i];
+        const dibatalkan =
+          String(t.paymentStatus ?? '').toUpperCase() === 'CANCELLED' ||
+          String(t.status ?? '').toUpperCase() === 'VOID';
+
+        if (dibatalkan) {
+          await orderVoided(client, tenantId, idTxn[i], String(t.clientTxnId), deviceRef);
+          continue;
+        }
+
+        await orderPaid(client, {
+          businessId: tenantId,
+          transactionId: idTxn[i],
+          idempotencyKey: String(t.clientTxnId),
+          deviceRef,
+          items: (Array.isArray(t.items) ? t.items : []).map((item: any) => ({
+            productId: idProduk.get(item) ?? null,
+            productName: String(item.productName ?? ''),
+            quantity: Math.max(1, Math.trunc(Number(item.quantity) || 1)),
+          })),
+          customerId: t.customer?.ref ? customerIds.get(t.customer.ref) ?? null : null,
+          pointsEarned: Number(t.pointsEarned) || 0,
+          pointsRedeemed: Number(t.pointsRedeemed) || 0,
+          totalAmount: Number(t.totalAmount) || 0,
+          occurredAt: t.createdAt || null,
+        });
+      }
     }
 
     // Log sync receipt. idempotency_key is the primary key — there is no
