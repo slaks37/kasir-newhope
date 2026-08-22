@@ -77,15 +77,30 @@ async function main() {
     console.log('auth.users password updated:', updatedAuthUser.rows[0]);
   }
 
-  console.log(`[4] Inserting into pos.users...`);
-  const tenantRes = await client.query(`SELECT id FROM pos.tenants LIMIT 1;`);
+  console.log(`[4] Inserting into internal.users and internal.memberships...`);
+  const globalUser = await client.query(`
+    INSERT INTO internal.users (email, full_name, is_platform_user, platform_role, is_active)
+    VALUES ($1, $2, TRUE, 'ROLE_SUPERADMIN', TRUE)
+    ON CONFLICT (email) DO UPDATE SET
+      full_name = EXCLUDED.full_name,
+      is_platform_user = TRUE,
+      platform_role = 'ROLE_SUPERADMIN',
+      is_active = TRUE
+    RETURNING id;
+  `, [email, fullName]);
+  const globalUserId = globalUser.rows[0]?.id;
+
+  const tenantRes = await client.query(`SELECT id FROM internal.tenants LIMIT 1;`);
   const tenantId = tenantRes.rows[0]?.id;
-  if (tenantId) {
+  if (tenantId && globalUserId) {
     await client.query(`
-      INSERT INTO pos.users (tenant_id, name, username, pin, role)
-      VALUES ($1, $2, $3, '2012', 'ADMIN')
-      ON CONFLICT DO NOTHING;
-    `, [tenantId, fullName, email]);
+      INSERT INTO internal.memberships (user_id, tenant_id, role, pin, is_active)
+      VALUES ($1, $2, 'OWNER', '2012', TRUE)
+      ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+        role = 'OWNER',
+        pin = '2012',
+        is_active = TRUE;
+    `, [globalUserId, tenantId]);
   }
 
   console.log(`✅ Superadmin ${email} has been successfully configured in Supabase!`);

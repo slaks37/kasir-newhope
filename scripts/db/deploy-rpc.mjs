@@ -53,13 +53,26 @@ BEGIN
     false
   );
 
-  -- Insert Tenant di skema pos
-  INSERT INTO pos.tenants (id, name, business_sector, owner_user_ref, is_active)
-  VALUES (new_tenant_id, user_store_name, user_sector, new_user_id::text, true);
+  -- 1. Insert Tenant (Holding / Akun Billing)
+  INSERT INTO internal.tenants (id, name, owner_user_ref, is_active)
+  VALUES (new_tenant_id, user_store_name, new_user_id::text, true);
 
-  -- Insert Owner User di pos.users (PIN default: 1234)
-  INSERT INTO pos.users (id, tenant_id, name, username, pin, role)
-  VALUES (gen_random_uuid(), new_tenant_id, user_full_name, split_part(user_email, '@', 1), '1234', 'ADMIN');
+  -- 2. Insert Merchant (Brand / Business Unit)
+  INSERT INTO internal.merchants (id, tenant_id, name, business_sector, is_active)
+  VALUES (new_tenant_id, new_tenant_id, user_store_name, user_sector, true);
+
+  -- 3. Insert Outlet (Cabang Utama)
+  INSERT INTO internal.outlets (id, tenant_id, merchant_id, name, is_active)
+  VALUES (gen_random_uuid(), new_tenant_id, new_tenant_id, user_store_name || ' (Cabang Utama)', true);
+
+  -- 4. Insert Global User
+  INSERT INTO internal.users (id, email, full_name, is_active)
+  VALUES (new_user_id, user_email, user_full_name, true)
+  ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name;
+
+  -- 5. Insert Multi-Tenant Membership (Owner Role)
+  INSERT INTO internal.memberships (id, user_id, tenant_id, merchant_id, role, pin, is_active)
+  VALUES (gen_random_uuid(), new_user_id, new_tenant_id, new_tenant_id, 'OWNER', '1234', true);
 
   -- Insert Trial Subscription (45 hari)
   INSERT INTO billing.subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end)
