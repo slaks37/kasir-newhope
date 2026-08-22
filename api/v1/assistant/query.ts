@@ -381,8 +381,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Dipotong SEBELUM model dipanggil, lewat fungsi atomik yang sama dengan
     // ai-service. Memotong sesudahnya berarti dua request bersamaan pada kredit
     // terakhir sama-sama lolos — dan panggilan keduanya tetap ditagihkan.
-    const terpakai = await db.query(`SELECT consume_ai_credit($1::uuid) AS ok`, [tenantId]);
+    //
+    // MESIN KEADAAN, bukan sekadar potong-lalu-kembalikan.
+    //
+    // Baris pertanyaan dibuat lebih dulu dalam keadaan RESERVED, baru
+    // kreditnya dicadangkan terhadap baris itu. Kalau proses mati setelah model
+    // menjawab tapi sebelum jawabannya tercatat, yang tertinggal bukan kredit
+    // hilang tanpa jejak melainkan satu baris RESERVED yang bisa ditemukan dan
+    // dikembalikan oleh ai.bersihkan_cadangan_menggantung().
+    //
+    // idempotencyKey mengikat percobaan ulang ke cadangan yang sama: jaringan
+    // yang putus lalu dicoba lagi tidak menagih dua kali untuk satu jawaban.
+    const idemKey =
+      String(req.headers?.['x-idempotency-key'] ?? '').slice(0, 128) ||
+      `${tenantId}:${queryText}`.slice(0, 128);
+
+    const { rows: qRows } = await db.query(
+      `INSERT INTO ai.ai_query_logs
+         (id, business_id, query_text, resolved_intent, source, credits_charged,
+          state, idempotency_key)
+       VALUES (uuidv7(), $1, $2, 'PENDING', 'LLM', 1, 'RESERVED', $3)
+       ON CONFLICT (business_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+       DO NOTHING
+       RETURNING id`,
+      [tenantId, String(queryText).slice(0, 2000), idemKey]
+    );
+
+    // Tidak ada baris berarti pertanyaan yang sama sedang atau sudah diproses.
+    // Menjawabnya dengan memotong kredit lagi adalah menagih dua kali.
+    if (!qRows.length) {
+      return answer(
+        'Pertanyaan yang sama sedang diproses. Tunggu sebentar lalu muat ulang.',
+        'PAYWALL', 'Sedang diproses', 'DUPLIKAT', 0
+      );
+    }
+    const queryId = qRows[0].id;
+
+    const terpakai = await db.query(
+      `SELECT ai.cadangkan_kredit($1::uuid, $2::uuid, $3) AS ok`,
+      [tenantId, queryId, idemKey]
+    );
     if (terpakai.rows[0]?.ok !== true) {
+      await db.query(`DELETE FROM ai.ai_query_logs WHERE id = $1 AND state = 'RESERVED'`, [queryId]);
       return answer(
         '**Jatah AI bulan ini sudah habis.**\n\nPertanyaan seputar omzet, stok, dan pelanggan tetap gratis lewat tombol cepat di atas.',
         'PAYWALL', 'Jatah AI bulan ini habis', 'UNKNOWN', 0
@@ -400,6 +440,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const llmText = await callDeepSeek(systemPrompt, queryText || 'Beri ringkasan kondisi toko.');
+      // Cadangan diselesaikan HANYA setelah jawabannya benar-benar ada.
+      await db.query(`SELECT ai.selesaikan_kredit($1::uuid)`, [queryId]);
       return answer(llmText, 'LLM', 'Analisa AI Generatif', 'UNKNOWN', 1);
     } catch (llmErr: any) {
       console.error('[query] LLM error:', llmErr?.message);
@@ -407,7 +449,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Kredit dikembalikan. Merchant tidak boleh membayar untuk panggilan yang
       // tidak pernah menghasilkan jawaban — itu kegagalan kami, bukan pemakaian.
       try {
-        await db.query(`SELECT refund_ai_credit($1::uuid)`, [tenantId]);
+        await db.query(`SELECT ai.kembalikan_kredit($1::uuid, $2)`,
+          [queryId, 'Panggilan model gagal']);
         dompet = { ...dompet, balance: dompet.balance + 1, usedThisMonth: Math.max(0, dompet.usedThisMonth - 1) };
       } catch (refundErr: any) {
         console.error('[query] gagal mengembalikan kredit:', refundErr?.message);
