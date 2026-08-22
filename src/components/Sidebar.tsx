@@ -17,6 +17,7 @@ import {
   Lock,
   UserCheck,
   Home,
+  BookOpen,
 } from 'lucide-react';
 
 import { BUSINESS_PRESETS } from '../data/businessPresets';
@@ -204,16 +205,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         {onGoToHome && (
-          <button
-            onClick={onGoToHome}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 shadow-xs"
-            title="Kembali ke Landing Page / Halaman Beranda"
-          >
-            <div className="flex items-center space-x-2.5 min-w-0">
-              <Home className="w-4 h-4 shrink-0 text-slate-600" />
-              <span className="hidden lg:inline truncate leading-tight">Halaman Depan</span>
-            </div>
-          </button>
+          <div className="space-y-1.5 pt-1">
+            <button
+              onClick={onGoToHome}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 shadow-xs"
+              title="Kembali ke Landing Page / Halaman Beranda"
+            >
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <Home className="w-4 h-4 shrink-0 text-slate-600" />
+                <span className="hidden lg:inline truncate leading-tight">Halaman Depan</span>
+              </div>
+            </button>
+
+            <a
+              href="#blog"
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-500/30 shadow-xs"
+              title="Buka Portal Blog Harapan Baru"
+            >
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <BookOpen className="w-4 h-4 shrink-0 text-amber-600" />
+                <span className="hidden lg:inline truncate leading-tight">Blog Harapan Baru</span>
+              </div>
+            </a>
+          </div>
         )}
       </div>
     </aside>

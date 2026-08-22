@@ -16,6 +16,7 @@ import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
 import { ClockInModal } from './components/pos/ClockInModal';
 import { LoginPage } from './components/auth/LoginPage';
 import { HomePage } from './components/home/HomePage';
+import { BlogHarapanBaru } from './components/blog/BlogHarapanBaru';
 import { OverviewPage } from './components/overview/OverviewPage';
 import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
@@ -405,10 +406,16 @@ export function App() {
   const [guestMode, setGuestMode] = useState<boolean>(() => {
     return localStorage.getItem('newhope_pos_guest_mode') === 'true';
   });
-  const [authView, setAuthView] = useState<'home' | 'login' | 'register'>(() => {
+  const [authView, setAuthView] = useState<'home' | 'login' | 'register' | 'blog'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'login' || hash === 'register') return hash;
+    if (hash.startsWith('blog')) return 'blog';
     return 'home';
+  });
+  const [blogSlug, setBlogSlug] = useState<string | null>(() => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash.startsWith('blog/')) return hash.replace('blog/', '');
+    return null;
   });
 
   React.useEffect(() => {
@@ -416,8 +423,12 @@ export function App() {
       const hash = window.location.hash.replace('#', '');
       if (hash === 'login' || hash === 'register') {
         setAuthView(hash);
-      } else if (hash === '') {
+      } else if (hash.startsWith('blog')) {
+        setAuthView('blog');
+        setBlogSlug(hash.startsWith('blog/') ? hash.replace('blog/', '') : null);
+      } else if (hash === '' || hash === 'home') {
         setAuthView('home');
+        setBlogSlug(null);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
@@ -456,6 +467,18 @@ export function App() {
           onStartDemo={handleStartDemo}
           initialMode={authView}
         />
+      );
+    }
+    if (authView === 'blog') {
+      return (
+        <POSProvider>
+          <BlogHarapanBaru
+            initialSlug={blogSlug}
+            onBackToHome={() => { window.location.hash = ''; }}
+            onOpenPOS={handleStartDemo}
+            onOpenRegister={() => { window.location.hash = 'register'; }}
+          />
+        </POSProvider>
       );
     }
     return (

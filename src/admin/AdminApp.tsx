@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard
+  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, BookOpen
 } from 'lucide-react';
 import { api, getIdentity, setIdentity, ROLE_LABEL, type Identity, type Session } from './api';
 import { ErrorBox, Loading } from './ui';
@@ -12,8 +12,9 @@ import ActivityPage from './pages/Activity';
 import Audit from './pages/Audit';
 import UserManagement from './pages/UserManagement';
 import Subscriptions from './pages/Subscriptions';
+import BlogManagement from './pages/BlogManagement';
 
-type PageId = 'overview' | 'merchants' | 'subscriptions' | 'transactions' | 'products' | 'activity' | 'audit' | 'users';
+type PageId = 'overview' | 'merchants' | 'subscriptions' | 'users' | 'blog' | 'transactions' | 'products' | 'activity' | 'audit';
 
 /**
  * Setiap menu menyatakan capability yang dibutuhkannya. Menu yang tidak dimiliki
@@ -25,6 +26,7 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'overview', label: 'Ringkasan Sektor', icon: LayoutDashboard, cap: 'VIEW_SECTOR_ANALYTICS' },
   { id: 'merchants', label: 'Merchant', icon: Store, cap: 'VIEW_MERCHANT_HEALTH' },
   { id: 'subscriptions', label: 'Langganan (SaaS)', icon: CreditCard, cap: 'VIEW_MERCHANT_HEALTH' },
+  { id: 'blog', label: 'Blog Harapan Baru', icon: BookOpen, cap: 'VIEW_SECTOR_ANALYTICS' },
   { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'VIEW_ACCESS_AUDIT' },
   { id: 'transactions', label: 'Log Transaksi', icon: Receipt, cap: 'VIEW_TRANSACTION_LOG' },
   { id: 'products', label: 'Produk Terjual', icon: Package, cap: 'VIEW_PRODUCT_SALES' },
@@ -264,6 +266,7 @@ export default function AdminApp() {
         {page === 'merchants' && <Merchants sector={sector} onSector={setSector} />}
         {page === 'subscriptions' && <Subscriptions />}
         {page === 'users' && <UserManagement />}
+        {page === 'blog' && <BlogManagement />}
         {page === 'transactions' && <Transactions sector={sector} onSector={setSector} />}
         {page === 'products' && <Products sector={sector} onSector={setSector} />}
         {page === 'activity' && <ActivityPage sector={sector} onSector={setSector} />}
