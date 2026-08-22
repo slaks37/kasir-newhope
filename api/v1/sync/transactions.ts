@@ -3,6 +3,7 @@ type VercelResponse = any;
 import pg from 'pg';
 import { ENTITLEMENT_DARURAT, TANPA_BATAS } from '../../../src/lib/plans/entitlements.js';
 import { orderPaid, orderVoided } from '../../_lib/efekDomain.js';
+import { pastikanStaf } from '../../../src/lib/staf/resolusi.js';
 
 let pool: pg.Pool | null = null;
 
@@ -34,8 +35,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const body = req.body ?? {};
-  const { businessId, sector, storeName, ownerRef, idempotencyKey, transactions } = body;
+  const { businessId, sector, storeName, idempotencyKey, transactions } = body;
   const txns = Array.isArray(transactions) ? transactions : [];
+
+  // businessId berbentuk `${userId}_${sector}`, jadi pemiliknya selalu bisa
+  // diturunkan darinya. Tanpa turunan ini, kiriman yang lupa menyertakan
+  // ownerRef melahirkan unit usaha TANPA merchant — dan trigger yang membuat
+  // merchant serta langganan trialnya melewatinya diam-diam. Tokonya berdiri
+  // tanpa langganan, tanpa entitlement, dan tanpa satu pun galat.
+  //
+  // api/v1/sync/catalog.ts sudah melakukan ini; endpoint ini belum, dan
+  // akibatnya toko yang sama bisa punya merchant atau tidak tergantung
+  // endpoint mana yang lebih dulu menerimanya.
+  const ownerRef = body.ownerRef || String(businessId ?? '').split('_')[0] || null;
 
   if (!businessId || !sector) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId and sector are required' });
@@ -64,22 +76,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        ON CONFLICT (client_key) WHERE client_key IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
        RETURNING id`,
-      [storeName || 'New Hope Store', sector, businessId, ownerRef || null]
+      [storeName || 'New Hope Store', sector, businessId, ownerRef]
     );
     const tenantId = tenantRes.rows[0].id;
 
     // 2. Ensure the cashier this batch is attributed to.
+    //
+    // Sejak 0033 ini hanya mencatat KEPEGAWAIAN. Kredensial tidak lagi dibuat
+    // di sini — lihat src/lib/staf/resolusi.ts.
     const cashierName = String(txns.find((t: any) => t.cashierName)?.cashierName || 'Kasir');
-    const cashierRef = ownerRef || 'usr-1';
-    const userRes = await client.query(
-      `INSERT INTO pos.users (id, business_id, name, username, pin, role, external_ref)
-       VALUES (uuidv7(), $1, $2, $3, '----', 'ADMIN', $4)
-       ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
-       DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`,
-      [tenantId, cashierName.slice(0, 100), `${businessId}.${cashierRef}`.slice(0, 50), cashierRef]
-    );
-    const defaultUserId = userRes.rows[0].id;
+    const cashierRef = ownerRef || 'kasir';
+    const defaultUserId = await pastikanStaf(client, {
+      businessId: tenantId,
+      employeeCode: cashierRef,
+      name: cashierName,
+      role: 'ADMIN',
+    });
 
     // 2b. BATAS PRODUK PAKET — ditegakkan DI SINI, bukan hanya di aplikasi kasir.
     //

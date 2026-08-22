@@ -14,7 +14,12 @@ async function enrichSchemaDocs() {
     -- POS SCHEMA COMMENTS
     COMMENT ON SCHEMA pos IS 'Domain Operasional Kasir: Manajemen Tenant, Staf, Produk, Resep Bahan, Transaksi Penjualan, dan Activity Log.';
     COMMENT ON TABLE pos.businesses IS 'Tabel Utama Merchant/Toko (Multi-Tenant). Menyimpan data bisnis, sektor bisnis (F&B, Retail, Laundry, Barbershop, Carwash), dan status merchant.';
-    COMMENT ON TABLE pos.users IS 'Daftar Pengguna Kasir & Manajer Toko per Merchant dengan PIN dan Role berbasis RBAC.';
+    COMMENT ON TABLE pos.auth_users IS 'Kredensial masuk (login + PIN) per unit usaha. Dipisah dari kepegawaian sejak 0033.';
+    COMMENT ON TABLE pos.staff_users IS 'Catatan Kepegawaian Kasir & Manajer per Merchant: status AKTIF/CUTI/BERHENTI, tanggal masuk dan keluar. Baris tidak dihapus saat orang berhenti.';
+    COMMENT ON TABLE pos.roles IS 'Katalog peran (ADMIN, MANAGER, CASHIER).';
+    COMMENT ON TABLE pos.permissions IS 'Katalog izin, satu baris per layar atau tindakan yang bisa dibatasi.';
+    COMMENT ON TABLE pos.role_permissions IS 'Peran -> izin. Sumber kebenaran RBAC merchant.';
+    COMMENT ON TABLE pos.user_roles IS 'Staf -> peran. Satu orang boleh memegang lebih dari satu.';
     COMMENT ON TABLE pos.products IS 'Katalog Produk & Layanan Merchant dengan harga jual, harga modal, SKU, stok, dan kategori per sektor.';
     COMMENT ON TABLE pos.transactions IS 'Data Transaksi Penjualan Kasir (Header) dengan nomor invoice, total tagihan, metode bayar (CASH, QRIS, dll), dan status.';
     COMMENT ON TABLE pos.transaction_items IS 'Rincian Item Produk yang dibeli dalam satu transaksi (Detail Baris).';

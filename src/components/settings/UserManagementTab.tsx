@@ -120,7 +120,7 @@ export const UserManagementTab: React.FC = () => {
             <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-extrabold border border-blue-200 uppercase tracking-wider">
               Data Pengguna Toko (Client Users)
             </span>
-            <span className="text-[11px] text-slate-400">Tabel: pos.users</span>
+            <span className="text-[11px] text-slate-400">Tabel: pos.staff_users + pos.auth_users</span>
           </div>
           <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2 mt-1">
             <ShieldCheck className="w-6 h-6 text-amber-600" />

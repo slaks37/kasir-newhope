@@ -1090,7 +1090,7 @@ async function loadMerchantData(client, merchantId, windowDays) {
   // Nama kasir dibaca sekali, bukan di-join per transaksi. Insight staf
   // menyebut nama; id UUID di kartu tidak menolong siapa pun.
   const kasir = await client.query(
-    'SELECT id, name FROM users WHERE business_id = $1', [merchantId]);
+    'SELECT id, name FROM staff_users WHERE business_id = $1', [merchantId]);
   const namaKasir = new Map(kasir.rows.map((u) => [u.id, u.name]));
 
   // Sektor menentukan algoritma mana yang dijalankan.

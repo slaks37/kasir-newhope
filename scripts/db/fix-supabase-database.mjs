@@ -1,3 +1,30 @@
+/**
+ * TIDAK DIPAKAI LAGI — DAN BERBAHAYA JIKA DIJALANKAN.
+ *
+ * Skrip ini lahir sebelum ada rantai migrasi. Sekarang yang membentuk database
+ * adalah `services/db-server/migrate.ts`, dan skrip ini tertinggal di tiga hal
+ * sekaligus:
+ *
+ *   1. Ia menyisipkan ke `pos.users`, yang sejak 0033 sudah pecah menjadi
+ *      auth_users / staff_users / user_roles.
+ *   2. Ia menyisipkan `billing.subscriptions (business_id, ...)`. Kolom itu
+ *      DIBUANG di 0028 — langganan sekarang berkunci merchant_id.
+ *   3. Yang paling berat: ia memasang policy `FOR ALL TO anon, authenticated,
+ *      service_role USING (true) WITH CHECK (true)` pada seluruh tabel pos dan
+ *      billing. Migrasi 0032 baru saja MENCABUT hak tulis lintas layanan dan
+ *      membuktikannya dengan panel yang tidak bisa lagi meng-UPDATE
+ *      billing.subscriptions. Menjalankan skrip ini akan membuka kembali
+ *      semuanya, dan tidak ada satu pun galat yang memberi tahu.
+ *
+ * Dibiarkan berhenti di sini alih-alih dihapus supaya keputusan menghapusnya
+ * ada di tangan pemilik repo. Yang menggantikannya: `npm run db:migrate`.
+ */
+console.error(
+  '[fix-supabase-database] Dihentikan. Skrip ini usang dan akan membuka kembali\n' +
+  'hak tulis anon yang dicabut migrasi 0032. Pakai `npm run db:migrate`.'
+);
+process.exit(1);
+
 import 'dotenv/config';
 import pg from 'pg';
 

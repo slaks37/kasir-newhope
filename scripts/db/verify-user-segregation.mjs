@@ -19,12 +19,16 @@ async function main() {
   `);
   console.table(adminUsers.rows);
 
-  console.log('\n2. DATA USER CLIENT (pos.users - Merchant Store Staff & Cashiers):');
+  // PIN sengaja TIDAK dibaca: skrip pemeriksa yang mencetak kredensial ke
+  // terminal adalah kebocoran yang dibuat sendiri. staff_directory memang tidak
+  // memuatnya, jadi ini tidak bisa lupa.
+  console.log('\n2. DATA USER CLIENT (contract.staff_directory - Merchant Store Staff & Cashiers):');
   const clientUsers = await client.query(`
-    SELECT u.id, u.business_id, t.name as store_name, t.business_sector, u.name, u.username, u.role, u.pin
-    FROM pos.users u
-    LEFT JOIN pos.businesses t ON t.id = u.business_id
-    ORDER BY t.business_sector, u.role;
+    SELECT d.staff_user_id AS id, d.business_id, t.name as store_name, t.business_sector,
+           d.name, d.login, d.status, d.roles
+    FROM contract.staff_directory d
+    LEFT JOIN pos.businesses t ON t.id = d.business_id
+    ORDER BY t.business_sector, d.name;
   `);
   console.table(clientUsers.rows);
 

@@ -155,6 +155,12 @@ function ModalUndang({
 
 type Tab = 'ADMIN_USERS' | 'CLIENT_USERS';
 
+const STATUS_STAF: Record<string, string> = {
+  AKTIF: 'border border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+  CUTI: 'border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  BERHENTI: 'border border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400',
+};
+
 export default function UserManagement() {
   const [tab, setTab] = useState<Tab>('ADMIN_USERS');
   const [rows, setRows] = useState<InternalUserRow[]>([]);
@@ -367,7 +373,7 @@ export default function UserManagement() {
           ) : (
             <Card
               title={`Staf Kasir Merchant (${staff?.total ?? 0})`}
-              subtitle="Hanya baca. PIN tidak pernah ikut dikirim ke konsol internal."
+              subtitle="Hanya baca. PIN tidak pernah ikut dikirim ke konsol internal — view yang dibacanya memang tidak memuatnya."
             >
               <Table>
                 <thead>
@@ -375,8 +381,9 @@ export default function UserManagement() {
                     <Th>Staf</Th>
                     <Th>Toko</Th>
                     <Th>Sektor</Th>
+                    <Th>Kepegawaian</Th>
                     <Th>Peran</Th>
-                    <Th>PIN</Th>
+                    <Th>Login</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -384,19 +391,36 @@ export default function UserManagement() {
                     <tr key={u.id}>
                       <Td>
                         <span className="block font-semibold text-slate-900 dark:text-slate-100">{u.name}</span>
-                        <span className="block font-mono text-[11px] text-slate-500">{u.username}</span>
+                        <span className="block font-mono text-[11px] text-slate-500">{u.employee_code ?? '—'}</span>
                       </Td>
                       <Td className="text-slate-700 dark:text-slate-300">{u.merchant_name}</Td>
                       <Td className="text-[11px] text-slate-600 dark:text-slate-400">
                         {SECTOR_LABEL[u.business_sector as Sector] ?? u.business_sector}
                       </Td>
                       <Td>
-                        <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                          {u.role}
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_STAF[u.status] ?? STATUS_STAF.BERHENTI}`}>
+                          {u.status}
+                        </span>
+                      </Td>
+                      <Td>
+                        {/* Satu orang boleh memegang lebih dari satu peran sejak
+                            peran pindah ke tabel penghubung. */}
+                        <span className="flex flex-wrap gap-1">
+                          {(u.roles ?? []).length === 0 ? (
+                            <span className="text-[11px] text-slate-500">—</span>
+                          ) : (
+                            (u.roles as string[]).map((r) => (
+                              <span key={r} className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                {r}
+                              </span>
+                            ))
+                          )}
                         </span>
                       </Td>
                       <Td className="text-[11px] text-slate-600 dark:text-slate-400">
-                        {u.pin_terpasang ? 'Terpasang' : 'Belum diatur'}
+                        {/* Tiga keadaan, bukan dua: staf yang masuk lewat sinkron
+                            memang tidak pernah diberi kredensial. */}
+                        {!u.punya_login ? 'Belum diberi' : u.login_aktif ? u.login : `${u.login} (nonaktif)`}
                       </Td>
                     </tr>
                   ))}

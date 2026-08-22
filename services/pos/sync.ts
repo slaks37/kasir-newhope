@@ -8,7 +8,8 @@
  * menekan "sinkronkan" dua kali, tab dibuka rangkap — semuanya normal.
  *
  * Karena itu tidak ada satu pun INSERT di sini yang tanpa pengaman:
- *   - tenants / users / products  -> dicocokkan lewat external_ref
+ *   - tenants / staff / products  -> dicocokkan lewat kode (client_key,
+ *                                    employee_code, external_ref)
  *   - transactions                -> UNIQUE (business_id, client_txn_id)
  *   - seluruh batch               -> sync_receipts.idempotency_key
  *
@@ -19,6 +20,7 @@
 import type express from 'express';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
+import { pastikanStaf } from '../../src/lib/staf/resolusi';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -93,7 +95,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(body.businessId, 96);
     const sector = str(body.sector, 16);
     const storeName = str(body.storeName, 100) ?? 'Tanpa Nama';
-    const ownerRef = str(body.ownerRef, 64);
+    // businessId berbentuk `${userId}_${sector}`, jadi pemiliknya selalu bisa
+    // diturunkan darinya. Tanpa turunan ini, kiriman yang lupa ownerRef
+    // melahirkan unit usaha TANPA merchant — dan trigger yang membuat merchant
+    // beserta langganan trialnya melewatinya diam-diam.
+    const ownerRef = str(body.ownerRef, 64) ?? (businessId ? businessId.split('_')[0] : null);
     const idemKey = str(body.idempotencyKey, 120);
     const txns: SyncTxn[] = Array.isArray(body.transactions) ? body.transactions : [];
 
@@ -148,32 +154,21 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         const cashierCache = new Map<string, string>();
         const productCache = new Map<string, string>();
 
+        // Sejak 0033, keduanya lewat satu jalur yang sama — dulu salinan di sini
+        // menulis peran dari perangkat sementara salinan di api/v1/sync menulis
+        // 'ADMIN', untuk kejadian yang sama.
         const resolveCashier = async (ref: string | null, name: string | null, role: string | null) => {
           const key = ref || name;
           if (!key) return null;
           if (cashierCache.has(key)) return cashierCache.get(key)!;
 
-          const found = await c.query(
-            `SELECT id FROM pos.users WHERE business_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
-            [tenantId, ref, name]
-          );
-          let id: string;
-          if (found.rows.length) {
-            id = found.rows[0].id;
-          } else {
-            const ins = await c.query(
-              `INSERT INTO pos.users (id, business_id, name, username, pin, role, external_ref)
-               VALUES (uuidv7(), $1, $2, $3, '----', $4, $5) RETURNING id`,
-              [
-                tenantId,
-                name || 'Kasir',
-                `${businessId}.${(ref || name || 'kasir').toLowerCase().replace(/\s+/g, '.')}`.slice(0, 50),
-                role && ['OWNER', 'MANAGER', 'CASHIER'].includes(role) ? role : 'CASHIER',
-                ref,
-              ]
-            );
-            id = ins.rows[0].id;
-          }
+          const id = await pastikanStaf(c, {
+            businessId: tenantId,
+            employeeCode: ref,
+            name,
+            role,
+          });
+          if (!id) return null;
           cashierCache.set(key, id);
           return id;
         };
@@ -461,7 +456,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(b.businessId, 96);
     const sector = str(b.sector, 16);
     const storeName = str(b.storeName, 100) ?? 'Tanpa Nama';
-    const ownerRef = str(b.ownerRef, 64);
+    // businessId berbentuk `${userId}_${sector}`, jadi pemiliknya selalu bisa
+    // diturunkan darinya. Tanpa turunan ini, kiriman yang lupa ownerRef
+    // melahirkan unit usaha TANPA merchant — dan trigger yang membuat merchant
+    // beserta langganan trialnya melewatinya diam-diam.
+    const ownerRef = str(b.ownerRef, 64) ?? (businessId ? businessId.split('_')[0] : null);
     const products: any[] = Array.isArray(b.products) ? b.products : [];
     const pelanggan: any[] = Array.isArray(b.customers) ? b.customers : [];
     const bundel: any[] = Array.isArray(b.bundles) ? b.bundles : [];

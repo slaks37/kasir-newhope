@@ -230,10 +230,23 @@ export async function cabutPassword(
 }
 
 /**
- * Staf merchant (pos.users), untuk tab "User Client" di panel.
+ * Staf merchant, untuk tab "User Client" di panel.
  *
- * PIN tidak pernah ikut — nilainya tidak berguna bagi konsol internal dan
- * membocorkannya berarti staf internal bisa masuk sebagai kasir merchant.
+ * Dibaca lewat contract.staff_directory, bukan langsung dari tabelnya. Konsol
+ * internal adalah KONSUMEN data merchant, dan konsumen membaca permukaan
+ * kontrak — itu yang membuat perubahan bentuk tabel tidak menyeret panel ikut
+ * rusak. Dua hal yang ditemukan justru karena aturan itu tidak diikuti di sini:
+ *
+ *   - `t.external_ref` sudah lama berganti nama menjadi `client_key`, dan
+ *     kueri ini tidak ikut diperbarui — artinya /api/admin/merchant-staff
+ *     mengembalikan galat SQL, bukan daftar staf. Endpoint yang membaca dari
+ *     view tidak bisa gagal begitu.
+ *   - `pin <> '----'` menebak "PIN terpasang" dari nilai sentinel. Sejak 0033
+ *     kredensial punya tabelnya sendiri, jadi pertanyaannya bisa dijawab
+ *     langsung: ada barisnya atau tidak.
+ *
+ * PIN tidak pernah ikut — staff_directory memang tidak memuatnya, jadi bocornya
+ * tidak lagi bergantung pada kolom mana yang kebetulan ditulis di SELECT.
  */
 export async function staffMerchant(
   db: Db,
@@ -246,22 +259,30 @@ export async function staffMerchant(
 
   const where = `
      WHERE ($1::text IS NULL OR t.business_sector = $1)
-       AND ($2::text IS NULL OR u.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')`;
+       AND ($2::text IS NULL OR d.name ILIKE '%' || $2 || '%' OR t.name ILIKE '%' || $2 || '%')`;
 
   const { rows } = await db.query(
-    `SELECT u.id, u.name, u.username, u.role, u.created_at,
+    `SELECT d.staff_user_id AS id, d.name, d.employee_code, d.status,
+            d.joined_at, d.left_at, d.login, d.last_login_at,
+            -- Tiga keadaan yang berbeda, dan panel perlu membedakannya:
+            -- belum pernah diberi login, punya login yang dinonaktifkan, dan
+            -- punya login aktif.
+            (d.login IS NOT NULL)                       AS punya_login,
+            COALESCE(d.login_aktif, false)              AS login_aktif,
+            d.roles,
             t.id AS business_id, t.name AS merchant_name, t.business_sector,
-            t.external_ref AS client_key,
-            (u.pin IS NOT NULL AND u.pin <> '----') AS pin_terpasang
-       FROM pos.users u
-       JOIN pos.businesses t ON t.id = u.business_id
+            t.client_key
+       FROM contract.staff_directory d
+       JOIN pos.businesses t ON t.id = d.business_id
        ${where}
-      ORDER BY t.name, u.name
+      ORDER BY t.name, d.name
       LIMIT $3 OFFSET $4`,
     [sector, search, limit, offset]
   );
   const total = await db.query(
-    `SELECT COUNT(*)::int AS n FROM pos.users u JOIN pos.businesses t ON t.id = u.business_id ${where}`,
+    `SELECT COUNT(*)::int AS n
+       FROM contract.staff_directory d
+       JOIN pos.businesses t ON t.id = d.business_id ${where}`,
     [sector, search]
   );
   return { rows, total: total.rows[0].n, limit, offset };

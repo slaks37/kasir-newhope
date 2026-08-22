@@ -429,12 +429,12 @@ membuktikannya.
 
 | Store | Level 1 | Level 2 | Tabel |
 |---|---|---|---|
-| `D1` pos | P1, P2, P3, P4, P5 | P1.1–P1.5, P2.1, P3.2, P4.1, P4.5, P5.3 | 19 |
+| `D1` pos | P1, P2, P3, P4, P5 | P1.1–P1.5, P2.1, P3.2, P4.1, P4.5, P5.3 | 24 |
 | `D2` billing | P1, P2, P3, P5 | P1.3, P2.1–P2.4, P3.0, P3.4, P5.3, P5.4 | 5 |
 | `D3` ai | P3, P4 | P3.3–P3.6, P4.2–P4.4 | 7 |
 | `D4` internal | P4, P5 | P4.5, P5.1–P5.6 | 5 |
 
-**Total 36 tabel.** `contract` (30 view) sengaja tidak ada di tabel ini —
+**Total 41 tabel.** `contract` (33 view) sengaja tidak ada di tabel ini —
 alasannya di bagian [`contract` BUKAN data store](#contract-bukan-data-store).
 
 Tidak ada store yang muncul di Level 2 tapi hilang di Level 1, dan tidak ada

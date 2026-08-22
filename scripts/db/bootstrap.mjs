@@ -57,12 +57,31 @@ INSERT INTO businesses (id, name, business_sector, created_at) VALUES
   (legacy_uuid('tenant-laundry'), 'Laundry Bersih', 'LAUNDRY', CURRENT_TIMESTAMP - INTERVAL '200 days')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO users (id, business_id, name, username, role, pin) VALUES
-  (legacy_uuid('u-warung-1'),  legacy_uuid('tenant-warung'),  'Bu Sari',  'sari', 'ADMIN',   '1234'),
-  (legacy_uuid('u-warung-2'),  legacy_uuid('tenant-warung'),  'Rina',     'rina', 'CASHIER', '1111'),
-  (legacy_uuid('u-kopi-1'),    legacy_uuid('tenant-kopi'),    'Mas Anto', 'anto', 'ADMIN',   '2222'),
-  (legacy_uuid('u-laundry-1'), legacy_uuid('tenant-laundry'), 'Pak Joko', 'joko', 'ADMIN',   '3333')
+-- Sejak 0033: kredensial, kepegawaian, dan peran adalah tiga baris berbeda.
+INSERT INTO auth_users (id, business_id, login, pin) VALUES
+  (legacy_uuid('cred-warung-1'),  legacy_uuid('tenant-warung'),  'sari', '1234'),
+  (legacy_uuid('cred-warung-2'),  legacy_uuid('tenant-warung'),  'rina', '1111'),
+  (legacy_uuid('cred-kopi-1'),    legacy_uuid('tenant-kopi'),    'anto', '2222'),
+  (legacy_uuid('cred-laundry-1'), legacy_uuid('tenant-laundry'), 'joko', '3333')
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO staff_users (id, business_id, merchant_id, auth_user_id, name, employee_code, status, joined_at)
+SELECT v.id, v.business_id, b.merchant_id, v.auth_user_id, v.name, v.employee_code, 'AKTIF', CURRENT_TIMESTAMP
+  FROM (VALUES
+    (legacy_uuid('u-warung-1'),  legacy_uuid('tenant-warung'),  legacy_uuid('cred-warung-1'),  'Bu Sari',  'sari'),
+    (legacy_uuid('u-warung-2'),  legacy_uuid('tenant-warung'),  legacy_uuid('cred-warung-2'),  'Rina',     'rina'),
+    (legacy_uuid('u-kopi-1'),    legacy_uuid('tenant-kopi'),    legacy_uuid('cred-kopi-1'),    'Mas Anto', 'anto'),
+    (legacy_uuid('u-laundry-1'), legacy_uuid('tenant-laundry'), legacy_uuid('cred-laundry-1'), 'Pak Joko', 'joko')
+  ) AS v(id, business_id, auth_user_id, name, employee_code)
+  JOIN businesses b ON b.id = v.business_id
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO user_roles (staff_user_id, role_code) VALUES
+  (legacy_uuid('u-warung-1'),  'ADMIN'),
+  (legacy_uuid('u-warung-2'),  'CASHIER'),
+  (legacy_uuid('u-kopi-1'),    'ADMIN'),
+  (legacy_uuid('u-laundry-1'), 'ADMIN')
+ON CONFLICT DO NOTHING;
 
 INSERT INTO subscriptions (id, business_id, plan_id, status, current_period_start, current_period_end) VALUES
   (legacy_uuid('sub-warung'),  legacy_uuid('tenant-warung'),  'plan-pro-monthly',   'ACTIVE',

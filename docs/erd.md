@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**36 tabel dan 31 view kontrak, dalam 6 domain.** Diturunkan langsung dari file
+**41 tabel dan 33 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -28,7 +28,7 @@ npm run db:reset
 
 ```mermaid
 erDiagram
-    businesses ||--o{ users            : "punya staf"
+    businesses ||--o{ staff_users      : "punya staf"
     businesses ||--o{ products         : ""
     businesses ||--o{ ingredients      : ""
     businesses ||--o{ product_recipes  : ""
@@ -37,7 +37,7 @@ erDiagram
 
     products      ||--o{ product_recipes   : "resep"
     ingredients   ||--o{ product_recipes   : "dipakai di"
-    users         |o--o{ transactions      : "kasir (SET NULL)"
+    staff_users   |o--o{ transactions      : "kasir (SET NULL)"
     customers     |o--o{ transactions      : "member (SET NULL)"
     transactions  ||--o{ transaction_items : "baris struk"
     products      |o--o{ transaction_items : "katalog (SET NULL)"
@@ -46,23 +46,27 @@ erDiagram
 
     businesses {
         uuid id PK
+        uuid merchant_id FK "pemilik (0025)"
         varchar name
         varchar business_sector "FNB / LAUNDRY / RETAIL / CARWASH / BARBERSHOP"
-        varchar external_ref UK "business_id dari klien: userId_sector"
+        varchar client_key UK "business_id dari klien: userId_sector"
         varchar owner_user_ref "akun pemilik"
         boolean is_active
     }
-    users {
+    staff_users {
         uuid id PK
-        uuid tenant_id FK
-        varchar username
-        varchar pin
-        varchar role "OWNER / MANAGER / CASHIER"
-        varchar external_ref "id sisi klien"
+        uuid business_id FK
+        uuid merchant_id FK "pemberi kerja; FK gabungan ke (businesses.id, merchant_id)"
+        uuid auth_user_id FK "kredensialnya, NULL bila belum pernah diberi login"
+        varchar name
+        varchar employee_code "id sisi klien"
+        varchar status "AKTIF / CUTI / BERHENTI"
+        timestamptz joined_at
+        timestamptz left_at
     }
     products {
         uuid id PK
-        uuid tenant_id FK
+        uuid business_id FK
         varchar sku
         numeric price
         numeric cost_price "HPP — dikunci RBAC"
@@ -356,8 +360,8 @@ erDiagram
     }
 ```
 
-`internal_users` **sengaja terpisah** dari `users`. Kalau SUPERADMIN cuma satu
-nilai lagi di kolom `users.role`, maka satu bug mass-assignment di form
+`internal_users` **sengaja terpisah** dari `staff_users`. Kalau SUPERADMIN cuma
+satu peran lagi di `pos.user_roles`, maka satu bug mass-assignment di form
 pengaturan merchant menjadi jalan ke seluruh data semua tenant. Tidak ada satu
 pun jalur kode sisi merchant yang bisa menulis ke tabel ini.
 
@@ -620,6 +624,114 @@ untuk semua pembacanya sekaligus.
 
 ---
 
+## 10. Domain IDENTITAS STAF & IZIN (0033)
+
+Sebelum 0033, satu baris `pos.users` merangkap **tiga hal yang berubah pada
+waktu berbeda dan karena sebab berbeda**:
+
+| Yang dicampur | Berubah karena | Konsekuensi dicampur |
+|---|---|---|
+| Kredensial (`username`, `pin`) | PIN bocor, diganti berkala | Menonaktifkan login = menghapus staf |
+| Kepegawaian (`name`, `external_ref`) | Orang pindah cabang atau berhenti | Menghapus staf = struk lama kehilangan kasirnya |
+| Izin (`role`) | Perannya naik | Tidak bisa diubah tanpa menyentuh keduanya |
+
+```mermaid
+erDiagram
+    businesses  ||--o{ auth_users   : "kredensial dilingkupi unit usaha"
+    auth_users  |o--o| staff_users  : "boleh tidak punya"
+    merchants   ||--o{ staff_users  : "pemberi kerja"
+    staff_users ||--o{ user_roles   : ""
+    roles       ||--o{ user_roles   : ""
+    roles       ||--o{ role_permissions : ""
+    permissions ||--o{ role_permissions : ""
+    staff_users |o--o{ transactions : "kasir (SET NULL)"
+
+    auth_users {
+        uuid id PK
+        uuid business_id FK
+        varchar login "UNIQUE (business_id, login)"
+        varchar pin "belum di-hash — lihat Belum"
+        boolean is_active
+        timestamptz last_login_at
+    }
+    staff_users {
+        uuid id PK
+        uuid business_id FK
+        uuid merchant_id FK
+        uuid auth_user_id FK "NULL = belum pernah diberi login"
+        varchar name
+        varchar employee_code
+        varchar status "AKTIF / CUTI / BERHENTI"
+        timestamptz joined_at
+        timestamptz left_at
+    }
+    roles {
+        varchar code PK "ADMIN / MANAGER / CASHIER"
+        varchar name
+        boolean is_system "peran bawaan, merchant tidak boleh menghapus"
+    }
+    permissions {
+        varchar code PK "sama persis dengan PermissionFeature di src/types.ts"
+        varchar name
+    }
+    role_permissions {
+        varchar role_code PK_FK
+        varchar permission_code PK_FK
+    }
+    user_roles {
+        uuid staff_user_id PK_FK
+        varchar role_code PK_FK
+        timestamptz granted_at
+        uuid granted_by FK
+    }
+```
+
+**Kenapa RENAME, bukan tabel baru.** `transactions.cashier_user_id` dan
+`merchant_activity_log.actor_user_id` menunjuk ke tabel ini. `ALTER TABLE …
+RENAME` mempertahankan OID-nya, jadi kedua foreign key ikut berpindah sendiri
+tanpa satu baris pun bergerak. Menyalin ke tabel baru lalu memindahkan isinya
+akan memutus keduanya — dan struk lama kehilangan kasirnya, permanen.
+
+**Kenapa login dilingkupi `business_id`, bukan global.** Login global menuntut
+email, dan kasir warung tidak punya email perusahaan. Yang sungguh terjadi di
+lapangan: nama pendek dan PIN empat angka, diketik di terminal di toko itu.
+"Budi" di dua toko berbeda memang dua orang berbeda.
+
+**Kenapa `auth_user_id` boleh NULL.** Staf yang masuk lewat sinkronisasi dari
+perangkat kasir adalah catatan kepegawaian, bukan seseorang yang login ke
+server. Sebelum 0033 kedua jalur sinkron menyisipkan `pin = '----'` untuk setiap
+nama kasir yang lewat — kredensial yang tidak pernah bisa dipakai, dibuat hanya
+karena kolomnya NOT NULL. Panel admin bahkan sudah memperlakukan `'----'`
+sebagai "PIN belum dipasang". Sekarang ketiadaan kredensial punya cara
+mengatakannya sendiri.
+
+**`merchant_id` di sini adalah salinan, dan dijaga sebagai salinan.**
+`fk_staff_merchant_sama_dengan_usaha` adalah foreign key gabungan ke
+`businesses (id, merchant_id)`: baris staf tidak bisa menyebut pemilik yang
+bukan pemilik unit usahanya. Yang menjaganya database, bukan kesepakatan antar
+penulis kode.
+
+**Satu perubahan perilaku yang disengaja.** Di `src/data/rolePermissions.ts`,
+ADMIN dan MANAGER dulu punya daftar izin yang **persis sama** — artinya
+menurunkan seseorang dari Admin ke Manajer tidak mencabut apa pun, dan salah
+satu dari dua peran itu hanya hiasan. Memindahkan tabel itu ke database membuat
+kesamaannya terlihat, jadi diperbaiki: `billing_subscription` dicabut dari
+MANAGER. Mengganti paket langganan adalah keputusan pemilik.
+
+**Dua salinan tabel izin, dan yang menjaganya.** Aplikasi kasir offline-first,
+jadi pemeriksaan izin harus bisa terjadi tanpa internet — tabelnya wajib ada di
+perangkat (`src/data/rolePermissions.ts`) *dan* di server
+(`pos.role_permissions`). Dua salinan berarti dua kesempatan menyimpang, dan
+menyimpangnya tidak berisik. `test/izin-peran.test.ts` membandingkan keduanya
+dan gagal kalau berbeda.
+
+| View kontrak | Menjawab |
+|---|---|
+| `staff_directory` | Staf + status kepegawaian + kredensial + peran. PIN sengaja tidak ikut. |
+| `staff_permissions` | Izin **efektif** per staf, gabungan semua perannya. Staf non-AKTIF tidak menghasilkan baris. |
+
+---
+
 ## Seluruh view kontrak
 
 Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
@@ -657,6 +769,8 @@ Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
 | `insight_freshness` | Umur kartu insight per kategori |
 | `algorithm_coverage` | Insight apa yang seharusnya ada untuk sektor ini |
 | `blog_published` | Artikel blog yang BENAR-BENAR terbit — draf disaring di sini |
+| `staff_directory` | Staf + status kepegawaian + kredensial + peran. PIN tidak ikut |
+| `staff_permissions` | Izin efektif per staf; staf non-AKTIF tidak menghasilkan baris |
 
 ---
 

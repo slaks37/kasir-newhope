@@ -77,15 +77,29 @@ async function main() {
     console.log('auth.users password updated:', updatedAuthUser.rows[0]);
   }
 
-  console.log(`[4] Inserting into pos.users...`);
-  const tenantRes = await client.query(`SELECT id FROM pos.businesses LIMIT 1;`);
+  // Sejak 0033 kredensial dan kepegawaian terpisah, jadi ini tiga sisipan.
+  console.log(`[4] Inserting into pos.auth_users / pos.staff_users...`);
+  const tenantRes = await client.query(`SELECT id, merchant_id FROM pos.businesses LIMIT 1;`);
   const tenantId = tenantRes.rows[0]?.id;
   if (tenantId) {
+    const cred = await client.query(`
+      INSERT INTO pos.auth_users (business_id, login, pin)
+      VALUES ($1, $2, '2012')
+      ON CONFLICT (business_id, login) DO UPDATE SET pin = EXCLUDED.pin
+      RETURNING id;
+    `, [tenantId, email]);
+    const staf = await client.query(`
+      INSERT INTO pos.staff_users
+        (business_id, merchant_id, auth_user_id, name, employee_code, status, joined_at)
+      VALUES ($1, $2, $3, $4, $5, 'AKTIF', CURRENT_TIMESTAMP)
+      ON CONFLICT (business_id, employee_code) WHERE employee_code IS NOT NULL
+      DO UPDATE SET name = EXCLUDED.name, auth_user_id = EXCLUDED.auth_user_id
+      RETURNING id;
+    `, [tenantId, tenantRes.rows[0]?.merchant_id ?? null, cred.rows[0].id, fullName, email]);
     await client.query(`
-      INSERT INTO pos.users (business_id, name, username, pin, role)
-      VALUES ($1, $2, $3, '2012', 'ADMIN')
+      INSERT INTO pos.user_roles (staff_user_id, role_code) VALUES ($1, 'ADMIN')
       ON CONFLICT DO NOTHING;
-    `, [tenantId, fullName, email]);
+    `, [staf.rows[0].id]);
   }
 
   console.log(`✅ Superadmin ${email} has been successfully configured in Supabase!`);

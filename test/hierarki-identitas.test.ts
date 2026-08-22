@@ -33,12 +33,38 @@ d('satu konsep, satu nama', () => {
         WHERE column_name = 'merchant_id' AND table_schema IN ('pos','ai','internal','billing')
         ORDER BY 1`
     );
-    // Dua tempat, dan keduanya benar-benar berarti PEMILIK: unit usaha menunjuk
-    // pemiliknya, dan langganan dimiliki pemiliknya (0028). Yang dijaga tes ini
-    // bukan "hanya satu tabel", melainkan bahwa merchant_id tidak pernah lagi
-    // dipakai sebagai nama lain untuk business_id — daftarnya ditulis tegas
-    // supaya kolom baru bernama merchant_id harus dibenarkan lebih dulu.
-    expect(rows.map((r: any) => r.t)).toEqual(['billing.subscriptions', 'pos.businesses']);
+    // Tiga tempat, dan ketiganya benar-benar berarti PEMILIK: unit usaha
+    // menunjuk pemiliknya, langganan dimiliki pemiliknya (0028), dan staf
+    // bekerja untuk pemiliknya (0033). Yang dijaga tes ini bukan "hanya satu
+    // tabel", melainkan bahwa merchant_id tidak pernah lagi dipakai sebagai
+    // nama lain untuk business_id — daftarnya ditulis tegas supaya kolom baru
+    // bernama merchant_id harus dibenarkan lebih dulu.
+    expect(rows.map((r: any) => r.t)).toEqual([
+      'billing.subscriptions',
+      'pos.businesses',
+      'pos.staff_users',
+    ]);
+  });
+
+  it('merchant staf tidak bisa berbeda dari merchant unit usahanya', async () => {
+    // pos.staff_users.merchant_id adalah SALINAN dari businesses.merchant_id.
+    // Salinan yang hanya dijaga kode aplikasi akan menyimpang suatu hari —
+    // lewat perbaikan data manual, lewat skrip, lewat endpoint yang belum
+    // ditulis. Yang dijaga di sini adalah bahwa databasenya sendiri menolak.
+    const { rows } = await db().query(
+      `SELECT COUNT(*)::int AS n FROM pg_constraint
+        WHERE conname = 'fk_staff_merchant_sama_dengan_usaha'
+          AND conrelid = 'pos.staff_users'::regclass`
+    );
+    expect(rows[0].n).toBe(1);
+
+    // Dan tidak ada satu baris pun yang sudah terlanjur berbeda.
+    const { rows: beda } = await db().query(
+      `SELECT COUNT(*)::int AS n FROM pos.staff_users s
+         JOIN pos.businesses b ON b.id = s.business_id
+        WHERE s.merchant_id IS DISTINCT FROM b.merchant_id`
+    );
+    expect(beda[0].n).toBe(0);
   });
 
   it('langganan dimiliki merchant, dan tidak punya jalan lain ke business', async () => {

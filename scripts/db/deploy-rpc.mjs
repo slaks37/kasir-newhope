@@ -1,3 +1,24 @@
+/**
+ * TIDAK DIPAKAI LAGI — MERUJUK TABEL YANG SUDAH TIDAK ADA.
+ *
+ * Fungsi RPC di bawah menyisipkan ke `pos.tenants` (sudah lama menjadi
+ * `pos.businesses`), ke `pos.users` (sejak 0033 pecah menjadi auth_users /
+ * staff_users / user_roles), dan ke `billing.subscriptions (tenant_id, ...)`
+ * (kolomnya dibuang di 0028). Dijalankan apa adanya, ia hanya menghasilkan
+ * galat — tapi galatnya baru muncul saat merchant pertama mendaftar, bukan saat
+ * skripnya dijalankan.
+ *
+ * Pendaftaran merchant sekarang lewat jalur aplikasi, bukan RPC di database.
+ *
+ * Dibiarkan berhenti di sini alih-alih dihapus supaya keputusan menghapusnya
+ * ada di tangan pemilik repo.
+ */
+console.error(
+  '[deploy-rpc] Dihentikan. RPC ini merujuk pos.tenants dan pos.users yang\n' +
+  'sudah tidak ada. Jangan dipasang ke database mana pun.'
+);
+process.exit(1);
+
 import 'dotenv/config';
 import pg from 'pg';
 

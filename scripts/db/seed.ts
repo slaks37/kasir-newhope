@@ -207,7 +207,8 @@ async function wipe(db: Db) {
              inventory_logs, product_recipes, products, ingredients,
              merchant_health_logs, feature_usage_events, daily_merchant_insights,
              merchant_ai_credits, merchant_targets, ai_query_logs,
-             invoices, subscriptions, users, businesses, merchants
+             invoices, subscriptions, user_roles, staff_users, auth_users,
+             businesses, merchants
     RESTART IDENTITY CASCADE
   `);
 }
@@ -344,14 +345,39 @@ async function main() {
     ]);
 
     // Staf — terpisah per sektor, persis seperti di aplikasi.
+    //
+    // Sejak 0033 satu orang berarti TIGA baris: kredensialnya, catatan
+    // kepegawaiannya, dan perannya. Seed sengaja menulis ketiganya supaya data
+    // contoh punya bentuk yang sama dengan data sungguhan — kalau hanya menulis
+    // staff_users, seluruh staf contoh akan tampak "belum diberi login" dan
+    // layar Kelola Staf tidak pernah teruji dengan baris yang lengkap.
     const staffIds: Array<{ id: string; name: string; role: string }> = [];
     const names = STAFF_BY_SECTOR[m.sector];
     for (let i = 0; i < names.length; i++) {
       const role = i === 0 ? 'MANAGER' : 'CASHIER';
+      const login = `${m.owner}.${m.sector.toLowerCase()}.${i}`;
+      const kredensial = await db.query(
+        `INSERT INTO auth_users (id, business_id, login, pin)
+         VALUES (uuidv7(), $1, $2, $3)
+         ON CONFLICT (business_id, login) DO UPDATE SET pin = EXCLUDED.pin
+         RETURNING id`,
+        [tenantId, login, '0000']
+      );
       const { rows } = await db.query(
-        `INSERT INTO users (id, business_id, name, username, pin, role)
-         VALUES (uuidv7(), $1, $2, $3, $4, $5) RETURNING id`,
-        [tenantId, names[i], `${m.owner}.${m.sector.toLowerCase()}.${i}`, '0000', role]
+        // merchant_id dibaca dari businesses, tidak diketik ulang: ia diisi
+        // trigger saat unit usaha dibuat, dan menyalinnya di sini berarti seed
+        // menebak nilai yang sudah ada jawabannya.
+        `INSERT INTO staff_users
+           (id, business_id, merchant_id, auth_user_id, name, employee_code, status, joined_at)
+         SELECT uuidv7(), b.id, b.merchant_id, $2, $3, $4, 'AKTIF', CURRENT_TIMESTAMP
+           FROM businesses b WHERE b.id = $1
+         RETURNING id`,
+        [tenantId, kredensial.rows[0].id, names[i], `${login}.staf`]
+      );
+      await db.query(
+        `INSERT INTO user_roles (staff_user_id, role_code) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [rows[0].id, role]
       );
       staffIds.push({ id: rows[0].id, name: names[i], role });
     }
