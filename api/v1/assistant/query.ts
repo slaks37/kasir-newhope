@@ -381,8 +381,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (rute.lapisan === 'ANALITIK' && rute.kategoriInsight) {
       const kartu = insightTersedia.get(rute.kategoriInsight);
       if (kartu) {
-        const umurHari = Math.round(
-          (Date.now() - new Date(kartu.insight_date).getTime()) / 86_400_000
+        // Jarak TANGGAL, bukan pembulatan selisih milidetik.
+        //
+        // insight_date adalah tanggal (tengah malam UTC). Math.round atas
+        // selisih milidetik membuat kartu kemarin sore dilaporkan "2 hari
+        // lalu" begitu jam lewat tengah hari — angka yang salah tentang
+        // seberapa lama data itu, di kalimat yang justru bertugas
+        // memperingatkan bahwa datanya lama.
+        const hariIni = new Date();
+        const nolkan = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        const umurHari = Math.floor(
+          (nolkan(hariIni) - nolkan(new Date(kartu.insight_date))) / 86_400_000
         );
         const catatanUmur =
           umurHari >= 1

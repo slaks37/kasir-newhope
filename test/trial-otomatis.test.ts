@@ -93,10 +93,43 @@ d('trial otomatis untuk merchant baru', () => {
   });
 
   it('tidak ada merchant yang tertinggal tanpa langganan', async () => {
+    /*
+     * DIBATASI PADA PEMILIK YANG BUKAN BUATAN TES LAIN.
+     *
+     * Versi pertama memeriksa SELURUH baris pos.businesses. Vitest menjalankan
+     * berkas tes secara paralel, dan berkas lain sengaja membuat merchant
+     * tanpa langganan untuk menguji batas darurat — sebuah keadaan yang sah
+     * dan sementara. Invarian global karena itu gagal karena BERKAS LAIN,
+     * kadang-kadang, tergantung urutan penjadwalan.
+     *
+     * Kegagalan seperti itu muncul di berkas yang tidak bersalah, tidak bisa
+     * diulang dengan andal, dan berakhir dianggap "tes rewel" lalu diabaikan —
+     * bersama seluruh nilai yang seharusnya dijaganya.
+     *
+     * Yang diperiksa sekarang: merchant dari data seed dan dari berkas ini.
+     */
     const { rows } = await db().query(
-      `SELECT COUNT(*)::int n FROM pos.businesses t
-        WHERE NOT EXISTS (
+      `SELECT COUNT(*)::int n
+         FROM pos.businesses t
+         JOIN pos.merchants m ON m.id = t.merchant_id
+        WHERE m.owner_user_ref NOT LIKE 'usr-uji-%'
+          AND m.owner_user_ref NOT LIKE '%nosub%'
+          AND NOT EXISTS (
                 SELECT 1 FROM billing.subscriptions s WHERE s.merchant_id = t.merchant_id)`);
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('unit usaha SELALU tertaut ke merchant — tidak ada yang yatim', async () => {
+    /*
+     * Invarian yang lebih dasar, dan yang sempat dilanggar diam-diam:
+     * api/v1/sync/catalog.ts membuat business lewat legacy_uuid() tanpa
+     * client_key dan tanpa owner_user_ref, jadi trigger penaut merchant tidak
+     * punya apa pun untuk ditautkan. Hasilnya baris yatim yang tidak bisa
+     * ditemukan resolveTenantId, tidak punya langganan, dan menampung produk
+     * merchant yang transaksinya ada di baris lain.
+     */
+    const { rows } = await db().query(
+      `SELECT COUNT(*)::int n FROM pos.businesses WHERE merchant_id IS NULL`);
     expect(rows[0].n).toBe(0);
   });
 });

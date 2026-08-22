@@ -1,6 +1,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { ENTITLEMENT_DARURAT } from '../../../src/lib/plans/entitlements.js';
 
 let pool: pg.Pool | null = null;
 
@@ -45,19 +46,90 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await client.query('BEGIN');
 
-    // 1. Ensure Tenant
+    /*
+     * 1. IDENTITAS UNIT USAHA — DIKUNCI PADA client_key, SEPERTI JALUR LAIN.
+     *
+     * Berkas ini memakai `legacy_uuid(businessId)`, sementara sync/transactions
+     * mengunci pada `client_key`. Dua aturan identitas untuk satu konsep, dan
+     * bedanya tidak muncul sebagai galat:
+     *
+     *   sinkron transaksi  -> business A (punya client_key, punya pemilik)
+     *   sinkron katalog    -> business B (yatim: tanpa client_key, tanpa
+     *                                     owner_user_ref, tanpa merchant)
+     *
+     * Produk merchant mendarat di baris yang TIDAK punya transaksinya, tidak
+     * bisa ditemukan resolveTenantId, dan tidak punya langganan untuk
+     * dibandingkan batasnya. Laporan tidak cocok, batas produk dihitung
+     * terhadap baris yang salah, dan tidak ada satu pun pesan galat.
+     *
+     * Kekeliruan yang sama pernah diperbaiki di sync/transactions — komentar
+     * di sana masih menjelaskannya — dan berkas ini terlewat.
+     *
+     * owner_user_ref ikut diisi supaya trigger dari 0025 menautkannya ke
+     * merchant. Tanpa itu, unit usahanya tidak punya pemilik, dan langganan
+     * yang menempel di merchant tidak akan pernah menemukannya.
+     */
     const tenantRes = await client.query(
-      `INSERT INTO pos.businesses (id, name, business_sector, is_active)
-       VALUES (legacy_uuid($1), $2, $3, true)
-       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
+      `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
+       VALUES (uuidv7(), $1, $2, $3, $4, true)
+       ON CONFLICT (client_key) WHERE client_key IS NOT NULL
+       DO UPDATE SET name = EXCLUDED.name, business_sector = EXCLUDED.business_sector
        RETURNING id`,
-      [businessId, storeName || 'New Hope Store', sector]
+      [storeName || 'New Hope Store', sector, businessId, ownerRef || businessId.split('_')[0] || null]
     );
     const tenantId = tenantRes.rows[0].id;
 
-    // 2. Upsert Products
+    /*
+     * 2. BATAS PRODUK DITEGAKKAN DI SINI — sebelumnya TIDAK sama sekali.
+     *
+     * Jalur ini menyisipkan apa pun yang dikirim. Penegakan batas hanya ada di
+     * sync/transactions (katalog yang lahir dari struk), sementara berkas ini —
+     * jalur yang dipakai impor katalog langsung — melewatinya sepenuhnya.
+     * Merchant paket Free bisa mengirim seribu produk lewat endpoint ini dan
+     * seluruhnya masuk.
+     *
+     * Baru terlihat saat impor menu lewat OCR dibangun: fitur yang menjanjikan
+     * "100 produk sekali unggah" akan menjadi jalan memutar mengelilingi
+     * seluruh paywall, dari tombol yang kami sediakan sendiri.
+     *
+     * Tanpa baris langganan dipakai batas darurat, bukan "tanpa batas" —
+     * merchant yang belum berlangganan bukan merchant dengan paket termahal.
+     */
+    const batasRes = await client.query(
+      `SELECT product_limit FROM contract.merchant_entitlements WHERE business_id = $1`,
+      [tenantId]
+    );
+    const batasProduk = batasRes.rows.length
+      ? Number(batasRes.rows[0].product_limit)
+      : ENTITLEMENT_DARURAT.productLimit;
+
+    const jumlahRes = await client.query(
+      `SELECT COUNT(*)::int AS n FROM pos.products WHERE business_id = $1`,
+      [tenantId]
+    );
+    let jumlahProduk = jumlahRes.rows[0].n as number;
+    const ditahan: string[] = [];
+
+    // 3. Upsert Products
     for (const p of prods) {
       if (!p.name) continue;
+
+      // Produk yang SUDAH ada selalu boleh diperbarui — menahan penyuntingan
+      // saat batas terlampaui berarti merchant tidak bisa memperbaiki harga
+      // yang salah, padahal itu justru yang paling mendesak.
+      const sudahAda = await client.query(
+        `SELECT 1 FROM pos.products WHERE id = legacy_uuid($1) AND business_id = $2`,
+        [p.id || `prod-${p.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`, tenantId]
+      );
+
+      if (!sudahAda.rows.length) {
+        if (batasProduk !== -1 && jumlahProduk >= batasProduk) {
+          ditahan.push(String(p.name));
+          continue;
+        }
+        jumlahProduk++;
+      }
+
       await client.query(
         `INSERT INTO pos.products (
           id, business_id, name, sku, price, cost_price, is_available, description
@@ -88,9 +160,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       ok: true,
-      synced: prods.length,
+      synced: prods.length - ditahan.length,
       tenantId,
-      message: 'Catalog synced successfully to Supabase',
+      productLimit: batasProduk,
+      productCount: jumlahProduk,
+      // Yang ditahan DISEBUT NAMANYA, bukan sekadar dihitung. Merchant yang
+      // mengimpor 100 produk dan menerima "80 tersimpan" tanpa tahu dua puluh
+      // mana yang hilang akan mengira sistemnya rusak.
+      held: ditahan,
+      message: ditahan.length
+        ? `${prods.length - ditahan.length} produk tersimpan. ${ditahan.length} ditahan karena batas paket (${batasProduk}).`
+        : 'Katalog tersinkronisasi.',
     });
   } catch (err: any) {
     await client.query('ROLLBACK');
