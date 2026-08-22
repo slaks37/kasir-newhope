@@ -163,6 +163,37 @@ pos.inventory_logs      : Audit mutasi riil per (outlet_id, transaction_id, type
 
 ---
 
+### 🧬 2.2 Multi-Level Recursive Bill of Materials (BOM) & Semi-Finished Items
+
+Sistem mendukung struktur pohon resep bertingkat (*Recursive Multi-Level BOM*) untuk mengelola bahan mentah, olahan antara (*prep/semi-finished*), dan produk jadi:
+
+```
+[Level 1: FINISHED GOOD]
+Es Kopi Latte (1 porsi)
+ ├── 60 ml Espresso Base Shot (SEMI_FINISHED) ──────────────┐
+ ├── 150 ml Susu Segar (RAW_MATERIAL)                       │
+ ├── 20 ml Simple Syrup Gula Aren (SEMI_FINISHED) ──┐       │
+ └── 1 pcs Paper Cup 12oz (PACKAGING)               │       │
+                                                    │       ▼
+                                                    │ [Level 2: SEMI_FINISHED]
+                                                    │ Batch Espresso 1000 ml
+                                                    │  ├── 250 gr Roasted Coffee Beans (SEMI_FINISHED) ──┐
+                                                    │  └── 1200 ml Air RO Terfiltrasi (RAW_MATERIAL)     │
+                                                    ▼                                                    │
+                                  [Level 2: SEMI_FINISHED]                                               │
+                                  Batch Simple Syrup 5000 ml                                             ▼
+                                   ├── 3 kg Gula Aren Batok (RAW_MATERIAL)             [Level 3: RAW MATERIAL]
+                                   └── 3000 ml Air Panas (RAW_MATERIAL)                Roasted Coffee Beans 1000 gr
+                                                                                        ├── 600 gr Green Bean Arabica
+                                                                                        └── 400 gr Green Bean Robusta
+```
+
+- **`pos.recipes`**: Menyimpan formula header untuk *Finished Goods* maupun *Semi-Finished Preps*.
+- **`pos.recipe_items`**: Menghubungkan input item (bahan mentah maupun olahan setengah jadi) secara rekursif.
+- **`contract.bom_explosion`**: PostgreSQL Recursive CTE yang otomatis mengurai kebutuhan bahan baku riil dari level teratas hingga bahan mentah dasar.
+
+---
+
 ## 3. Otentikasi vs Step-Up Otorisasi (Manager PIN)
 
 ```
