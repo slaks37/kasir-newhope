@@ -54,6 +54,39 @@ const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7ffffff
 const pickOne = <T>(a: readonly T[]): T => a[Math.floor(rnd() * a.length)];
 const between = (lo: number, hi: number) => lo + Math.floor(rnd() * (hi - lo + 1));
 
+/**
+ * Bobot jam buka per sektor, dalam WIB.
+ *
+ * Versi sebelumnya memakai `between(8, 21)` — sebaran RATA sepanjang hari.
+ * Akibatnya dua hal. Pertama, tidak ada jam sibuk sama sekali, jadi
+ * OPERATIONAL_PEAK dan SHIFT_PERFORMANCE tidak pernah menemukan apa pun untuk
+ * dilaporkan dan tidak pernah benar-benar teruji. Kedua, angkanya ditulis
+ * sebagai jam UTC padahal dimaksudkan WIB, sehingga kafe di data ini paling
+ * ramai jam 03.00 dini hari.
+ *
+ * Indeks = jam WIB 0-23. Angkanya bobot relatif, bukan persentase.
+ */
+const JAM_SIBUK: Record<string, number[]> = {
+  //          0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+  FNB:       [0, 0, 0, 0, 0, 0, 1, 3, 5, 4, 4, 6,12,10, 5, 4, 5, 7, 9,12, 8, 4, 2, 0],
+  RETAIL:    [0, 0, 0, 0, 0, 0, 0, 1, 3, 5, 6, 7, 8, 7, 6, 6, 7, 9,11,10, 7, 4, 1, 0],
+  LAUNDRY:   [0, 0, 0, 0, 0, 0, 0, 2, 7, 9, 8, 6, 4, 5, 6, 7, 8, 9, 7, 4, 1, 0, 0, 0],
+  CARWASH:   [0, 0, 0, 0, 0, 0, 0, 3, 8,10, 9, 7, 5, 6, 7, 8, 8, 7, 5, 2, 1, 0, 0, 0],
+  BARBERSHOP:[0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 5, 6, 6, 5, 5, 6, 7, 9,11,10, 6, 3, 1, 0],
+};
+
+/** Menarik satu jam WIB mengikuti bobot sektornya. */
+function jamWib(sector: string): number {
+  const bobot = JAM_SIBUK[sector] ?? JAM_SIBUK.RETAIL;
+  const total = bobot.reduce((a, b) => a + b, 0);
+  let n = rnd() * total;
+  for (let j = 0; j < bobot.length; j++) {
+    n -= bobot[j];
+    if (n <= 0) return j;
+  }
+  return 12;
+}
+
 // [nama, kategori, harga jual, harga modal, deskripsi]
 const CATALOG = {
   FNB: {
@@ -362,7 +395,14 @@ async function main() {
         const discount = rnd() < 0.18 ? Math.round(subtotal * 0.1) : 0;
         const tax = Math.round((subtotal - discount) * 0.11);
         const grand = subtotal - discount + tax;
-        const hour = between(8, 21);
+        // Jam ditarik dalam WIB lalu DISIMPAN sebagai UTC — sama seperti yang
+        // dikirim perangkat sungguhan. Menyimpan jam WIB apa adanya membuat
+        // setiap pembacaan yang benar (UTC + 7) menggeser data tujuh jam lagi.
+        const jam = jamWib(m.sector);
+        const hour = (jam - 7 + 24) % 24;
+        // Tanggalnya ikut mundur untuk jam 00-06 WIB, yang jatuh di hari
+        // sebelumnya dalam UTC.
+        const geserHari = jam < 7 ? 1 : 0;
         const minute = between(0, 59);
         const appModule = pickOne(cat.modules);
 
@@ -380,7 +420,7 @@ async function main() {
             pickOne(PAYMENTS), m.sector, businessId, appModule,
             pickOne(cat.orderTypes),
             `INV-${m.sector.slice(0, 3)}-${String(txnTotal + 1).padStart(6, '0')}`,
-            d, hour, minute,
+            d + geserHari, hour, minute,
           ]
         );
         const txnId: string = xRows[0].id;

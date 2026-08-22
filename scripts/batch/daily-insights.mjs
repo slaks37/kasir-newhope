@@ -324,6 +324,561 @@ export function computeMarketBasket(orders, opts = {}) {
 
 const idFor = (merchantId, date, category) => `ins-${merchantId}-${date}-${category}`;
 
+/* -------------------------------------------------------------------------- */
+/* ALGORITMA 4-9 — DIPISAH GLOBAL vs PER-SEKTOR                               */
+/* -------------------------------------------------------------------------- */
+/*
+ * Enam algoritma di bawah ini melengkapi daftar sembilan yang dideklarasikan
+ * di ai.algorithm_scope. Sebelumnya baru tiga yang benar-benar ditulis
+ * (INVENTORY_ALERT, CROSS_SELL_OPPORTUNITY, CRM_CHURN) sementara dokumentasi
+ * menyebut sembilan — selisih yang membuat merchant menunggu kartu insight
+ * yang tidak akan pernah muncul.
+ *
+ * Tiga di antaranya GLOBAL dan tiga PER-SEKTOR. Yang per-sektor tidak
+ * dijalankan di luar sektornya, bukan dijalankan lalu menghasilkan kartu
+ * kosong: perputaran meja tidak berarti apa-apa untuk toko kelontong, dan
+ * kartu kosong mengajari orang mengabaikan seluruh kolom insight.
+ *
+ * Semuanya adalah fungsi murni atas data yang sudah dimuat — bisa diuji tanpa
+ * database, sama seperti dua algoritma pertama.
+ */
+
+/** Jam operasional dibagi tiga shift. Batasnya mengikuti kebiasaan toko di Indonesia. */
+const SHIFT = [
+  { nama: 'Pagi',  dari: 6,  sampai: 12 },
+  { nama: 'Siang', dari: 12, sampai: 18 },
+  { nama: 'Malam', dari: 18, sampai: 24 },
+];
+
+const NAMA_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+const rupiah = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
+const persen = (n) => `${round(safe(n) * 100, 1)}%`;
+
+/** Transaksi yang benar-benar menghasilkan uang. Yang batal tidak boleh ikut dihitung. */
+const selesai = (orders) =>
+  orders.filter((o) => String(o.status || '').toUpperCase() === 'COMPLETED');
+
+/** Jam lokal transaksi. Waktu disimpan UTC; toko berpikir dalam waktu setempat. */
+function jamLokal(tanggal, offsetJam) {
+  const d = toDate(tanggal);
+  if (!d) return null;
+  return new Date(d.getTime() + offsetJam * 3600_000);
+}
+
+/* --- 4. FINANCIAL_PERFORMANCE (global) ------------------------------------ */
+
+/**
+ * Omzet dan MARGIN dibanding periode sebelumnya yang sama panjang.
+ *
+ * Yang dilaporkan margin, bukan omzet saja. Omzet naik sambil margin turun
+ * adalah keadaan yang paling sering luput: penjualan terasa ramai, uang di
+ * laci bertambah, dan toko justru sedang kehilangan uang per transaksi.
+ *
+ * Modal diambil dari unit_cost yang tersimpan DI BARIS STRUK, bukan dari harga
+ * pokok produk hari ini. Harga bahan berubah; margin bulan lalu harus dihitung
+ * dengan modal bulan lalu, kalau tidak angkanya berubah sendiri setiap kali
+ * supplier menaikkan harga.
+ */
+export function computeFinancialPerformance(orders, { windowDays = 30, now = new Date() } = {}) {
+  const batasKini = new Date(now.getTime() - windowDays * DAY_MS);
+  const batasLalu = new Date(now.getTime() - 2 * windowDays * DAY_MS);
+
+  const ringkas = (dari, sampai) => {
+    let omzet = 0, modal = 0, diskon = 0, jumlah = 0;
+    const hariBerdagang = new Set();
+    for (const o of selesai(orders)) {
+      const d = toDate(o.date);
+      if (!d || d < dari || d >= sampai) continue;
+      jumlah++;
+      hariBerdagang.add(d.toISOString().slice(0, 10));
+      omzet += Number(o.totalAmount ?? 0);
+      diskon += Number(o.discountAmount ?? 0);
+      for (const li of o.items || []) {
+        modal += Number(li.unitCost ?? li.unit_cost ?? 0) * Number(li.quantity ?? 0);
+      }
+    }
+    const laba = omzet - modal;
+    return {
+      omzet: round(omzet), modal: round(modal), laba: round(laba), diskon: round(diskon),
+      jumlah,
+      hariBerdagang: hariBerdagang.size,
+      margin: omzet > 0 ? safe(laba / omzet) : 0,
+      rataStruk: jumlah > 0 ? round(omzet / jumlah) : 0,
+    };
+  };
+
+  const kini = ringkas(batasKini, now);
+  const lalu = ringkas(batasLalu, batasKini);
+
+  if (kini.jumlah === 0) return null;
+
+  // PEMBANDINGNYA HARUS LAYAK DIBANDINGKAN.
+  //
+  // Toko yang baru berdagang 38 hari punya periode sebelumnya yang cuma terisi
+  // sebagian, dan pembagiannya menghasilkan "omzet naik 314%" — angka yang
+  // benar secara aritmetika dan menyesatkan sebagai kalimat. Merchant akan
+  // mengambil keputusan dari pertumbuhan yang tidak pernah terjadi.
+  //
+  // Syaratnya: periode sebelumnya terisi minimal 60% harinya. Di bawah itu
+  // angkanya tetap dilaporkan, tapi TANPA klaim pertumbuhan.
+  const layakDibanding = lalu.hariBerdagang >= Math.ceil(windowDays * 0.6);
+
+  const deltaOmzet =
+    layakDibanding && lalu.omzet > 0 ? safe((kini.omzet - lalu.omzet) / lalu.omzet) : null;
+  // Margin dibandingkan dalam POIN PERSENTASE, bukan persen relatif. "Margin
+  // turun 10%" ambigu — dari 40% ke 36%, atau dari 40% ke 30%?
+  const deltaMarginPp = layakDibanding ? round((kini.margin - lalu.margin) * 100, 1) : null;
+
+  return {
+    kini, lalu, windowDays, layakDibanding,
+    deltaOmzet: deltaOmzet === null ? null : round(deltaOmzet, 4),
+    deltaMarginPp,
+    hariPembanding: lalu.hariBerdagang,
+  };
+}
+
+export function buildFinancialRow(merchantId, date, f) {
+  if (!f) return null;
+  const { kini, deltaOmzet, deltaMarginPp, windowDays, layakDibanding } = f;
+
+  // Margin turun lebih dari 3 poin persentase adalah keadaan yang perlu
+  // ditindaklanjuti hari itu juga; sisanya laporan biasa.
+  const gawat = layakDibanding && deltaMarginPp <= -3;
+
+  const judul = gawat
+    ? `Margin turun ${Math.abs(deltaMarginPp)} poin dibanding periode lalu`
+    : layakDibanding
+      ? `Omzet ${windowDays} hari ${deltaOmzet >= 0 ? 'naik' : 'turun'} ${persen(Math.abs(deltaOmzet))}`
+      : `Omzet ${windowDays} hari ${rupiah(kini.omzet)}`;
+
+  const ekor = !layakDibanding
+    ? '. Belum ada periode sebelumnya yang cukup lengkap untuk dibandingkan.'
+    : deltaMarginPp === 0
+      ? '.'
+      : `, ${deltaMarginPp > 0 ? 'naik' : 'turun'} ${Math.abs(deltaMarginPp)} poin.`;
+
+  return {
+    id: idFor(merchantId, date, 'FINANCIAL_PERFORMANCE'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'FINANCIAL_PERFORMANCE',
+    priority: gawat ? 1 : 3,
+    title: judul,
+    summary:
+      `${windowDays} hari terakhir: omzet ${rupiah(kini.omzet)} dari ${kini.jumlah} struk ` +
+      `(rata-rata ${rupiah(kini.rataStruk)}), laba kotor ${rupiah(kini.laba)} — margin ${persen(kini.margin)}` +
+      ekor,
+    metric_label: `Margin ${persen(kini.margin)}`,
+    payload: { kind: 'FINANCIAL_PERFORMANCE', ...f },
+    actions: [{ label: 'Buka Laporan', kind: 'OPEN_REPORTS' }],
+  };
+}
+
+/* --- 5. OPERATIONAL_PEAK (global) ----------------------------------------- */
+
+/**
+ * Jam tersibuk, untuk menentukan kapan orang harus ada di tempat.
+ *
+ * Yang dihitung rata-rata PER HARI BUKA, bukan total per jam. Total membuat
+ * jam yang kebetulan jatuh pada hari ramai terlihat sibuk padahal biasanya
+ * sepi — dan jadwal yang dibuat dari situ menempatkan orang di jam yang salah.
+ */
+export function computeOperationalPeak(orders, { offsetJam = 7, now = new Date() } = {}) {
+  const perJam = new Map();      // jam -> { struk, omzet }
+  const hariAktifPerJam = new Map(); // jam -> Set(tanggal)
+
+  for (const o of selesai(orders)) {
+    const d = jamLokal(o.date, offsetJam);
+    if (!d) continue;
+    const jam = d.getUTCHours();
+    const hari = d.toISOString().slice(0, 10);
+    if (!perJam.has(jam)) perJam.set(jam, { struk: 0, omzet: 0 });
+    if (!hariAktifPerJam.has(jam)) hariAktifPerJam.set(jam, new Set());
+    const s = perJam.get(jam);
+    s.struk++;
+    s.omzet += Number(o.totalAmount ?? 0);
+    hariAktifPerJam.get(jam).add(hari);
+  }
+
+  if (perJam.size === 0) return null;
+
+  const hariBuka = new Set();
+  for (const o of selesai(orders)) {
+    const d = jamLokal(o.date, offsetJam);
+    if (d) hariBuka.add(d.toISOString().slice(0, 10));
+  }
+  const jumlahHari = Math.max(1, hariBuka.size);
+
+  const jam = [...perJam.entries()]
+    .map(([jam, s]) => ({
+      jam,
+      strukPerHari: round(s.struk / jumlahHari, 2),
+      omzetPerHari: round(s.omzet / jumlahHari),
+      totalStruk: s.struk,
+    }))
+    .sort((a, b) => b.strukPerHari - a.strukPerHari);
+
+  const rata = round(jam.reduce((n, j) => n + j.strukPerHari, 0) / jam.length, 2);
+  const puncak = jam[0];
+  const sepi = jam[jam.length - 1];
+
+  return {
+    jam,
+    puncak,
+    sepi,
+    rataPerJam: rata,
+    // Berapa kali lipat jam puncak dibanding jam rata-rata. Di bawah 1,5 kali
+    // sebaran bebannya cukup rata dan tidak ada yang perlu diubah.
+    rasioPuncak: rata > 0 ? round(puncak.strukPerHari / rata, 2) : 0,
+    hariDihitung: jumlahHari,
+  };
+}
+
+export function buildPeakRow(merchantId, date, p) {
+  if (!p || p.rasioPuncak < 1.5) return null;
+  const jj = (n) => `${String(n).padStart(2, '0')}.00`;
+
+  return {
+    id: idFor(merchantId, date, 'OPERATIONAL_PEAK'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'OPERATIONAL_PEAK',
+    priority: p.rasioPuncak >= 2.5 ? 2 : 3,
+    title: `Jam tersibuk ${jj(p.puncak.jam)}–${jj(p.puncak.jam + 1)}`,
+    summary:
+      `Rata-rata ${p.puncak.strukPerHari} struk per hari di jam itu — ${p.rasioPuncak}x jam biasa ` +
+      `(${p.rataPerJam} struk). Paling sepi jam ${jj(p.sepi.jam)}.`,
+    metric_label: `${p.rasioPuncak}x jam biasa`,
+    payload: { kind: 'OPERATIONAL_PEAK', ...p },
+    actions: [{ label: 'Buka Laporan', kind: 'OPEN_REPORTS' }],
+  };
+}
+
+/* --- 6. CALENDAR_BEHAVIOR (global) ---------------------------------------- */
+
+/**
+ * Hari terbaik dan terburuk dalam seminggu.
+ *
+ * Sama seperti jam: dibagi jumlah kemunculan hari itu, bukan dijumlahkan.
+ * Jendela 30 hari memuat lima hari Senin dan empat hari Selasa — menjumlahkan
+ * saja sudah cukup untuk membuat Senin selalu menang.
+ */
+export function computeCalendarBehavior(orders, { offsetJam = 7 } = {}) {
+  const perHari = new Map();   // 0-6 -> { omzet, struk, tanggal:Set }
+
+  for (const o of selesai(orders)) {
+    const d = jamLokal(o.date, offsetJam);
+    if (!d) continue;
+    const dow = d.getUTCDay();
+    if (!perHari.has(dow)) perHari.set(dow, { omzet: 0, struk: 0, tanggal: new Set() });
+    const s = perHari.get(dow);
+    s.omzet += Number(o.totalAmount ?? 0);
+    s.struk++;
+    s.tanggal.add(d.toISOString().slice(0, 10));
+  }
+
+  if (perHari.size < 3) return null;   // seminggu belum terwakili
+
+  const hari = [...perHari.entries()]
+    .map(([dow, s]) => ({
+      dow,
+      nama: NAMA_HARI[dow],
+      omzetPerHari: round(s.omzet / Math.max(1, s.tanggal.size)),
+      strukPerHari: round(s.struk / Math.max(1, s.tanggal.size), 2),
+      kemunculan: s.tanggal.size,
+    }))
+    .sort((a, b) => b.omzetPerHari - a.omzetPerHari);
+
+  const terbaik = hari[0];
+  const terburuk = hari[hari.length - 1];
+  const akhirPekan = hari.filter((h) => h.dow === 0 || h.dow === 6);
+  const hariKerja = hari.filter((h) => h.dow >= 1 && h.dow <= 5);
+
+  const rerata = (xs) => (xs.length ? round(xs.reduce((n, h) => n + h.omzetPerHari, 0) / xs.length) : 0);
+
+  return {
+    hari,
+    terbaik,
+    terburuk,
+    omzetAkhirPekan: rerata(akhirPekan),
+    omzetHariKerja: rerata(hariKerja),
+    // Berapa kali lipat hari terbaik dibanding terburuk.
+    rasio: terburuk.omzetPerHari > 0 ? round(terbaik.omzetPerHari / terburuk.omzetPerHari, 2) : 0,
+  };
+}
+
+export function buildCalendarRow(merchantId, date, c) {
+  if (!c || c.rasio < 1.4) return null;   // sebarannya rata, tidak ada yang perlu dikatakan
+
+  return {
+    id: idFor(merchantId, date, 'CALENDAR_BEHAVIOR'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'CALENDAR_BEHAVIOR',
+    priority: 3,
+    title: `${c.terbaik.nama} ${c.rasio}x lebih ramai dari ${c.terburuk.nama}`,
+    summary:
+      `${c.terbaik.nama} rata-rata ${rupiah(c.terbaik.omzetPerHari)} per hari, ` +
+      `${c.terburuk.nama} hanya ${rupiah(c.terburuk.omzetPerHari)}. ` +
+      `Akhir pekan ${rupiah(c.omzetAkhirPekan)} vs hari kerja ${rupiah(c.omzetHariKerja)}.`,
+    metric_label: `${c.terbaik.nama} tertinggi`,
+    payload: { kind: 'CALENDAR_BEHAVIOR', ...c },
+    actions: [{ label: 'Buat promo', kind: 'CREATE_PROMO' }],
+  };
+}
+
+/* --- 7. SHIFT_PERFORMANCE (FNB, RETAIL, CARWASH) -------------------------- */
+
+/**
+ * Perbandingan antar shift.
+ *
+ * Hanya untuk sektor yang benar-benar bergiliran. Barbershop dan laundry kecil
+ * sering dijaga satu orang sepanjang hari — "shift mana yang lebih baik"
+ * bukan pertanyaan yang bisa dijawab di sana, dan jawabannya hanya akan
+ * mengulang OPERATIONAL_PEAK dengan kata lain.
+ */
+export function computeShiftPerformance(orders, { offsetJam = 7 } = {}) {
+  const per = SHIFT.map((s) => ({ ...s, omzet: 0, struk: 0, tanggal: new Set() }));
+
+  for (const o of selesai(orders)) {
+    const d = jamLokal(o.date, offsetJam);
+    if (!d) continue;
+    const jam = d.getUTCHours();
+    const blok = per.find((s) => jam >= s.dari && jam < s.sampai);
+    if (!blok) continue;             // dini hari: di luar jam kerja mana pun
+    blok.omzet += Number(o.totalAmount ?? 0);
+    blok.struk++;
+    blok.tanggal.add(d.toISOString().slice(0, 10));
+  }
+
+  const aktif = per
+    .filter((s) => s.struk > 0)
+    .map((s) => ({
+      nama: s.nama,
+      dari: s.dari,
+      sampai: s.sampai,
+      omzetPerHari: round(s.omzet / Math.max(1, s.tanggal.size)),
+      strukPerHari: round(s.struk / Math.max(1, s.tanggal.size), 2),
+      rataStruk: s.struk > 0 ? round(s.omzet / s.struk) : 0,
+      hariBeroperasi: s.tanggal.size,
+    }))
+    .sort((a, b) => b.omzetPerHari - a.omzetPerHari);
+
+  if (aktif.length < 2) return null;   // satu shift saja: tidak ada pembanding
+
+  const terbaik = aktif[0];
+  const terlemah = aktif[aktif.length - 1];
+  return {
+    shift: aktif,
+    terbaik,
+    terlemah,
+    rasio: terlemah.omzetPerHari > 0 ? round(terbaik.omzetPerHari / terlemah.omzetPerHari, 2) : 0,
+  };
+}
+
+export function buildShiftRow(merchantId, date, s) {
+  if (!s || s.rasio < 1.5) return null;
+
+  return {
+    id: idFor(merchantId, date, 'SHIFT_PERFORMANCE'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'SHIFT_PERFORMANCE',
+    priority: s.rasio >= 3 ? 2 : 3,
+    title: `Shift ${s.terlemah.nama} tertinggal dari shift ${s.terbaik.nama}`,
+    summary:
+      `Shift ${s.terbaik.nama} rata-rata ${rupiah(s.terbaik.omzetPerHari)} per hari ` +
+      `(${s.terbaik.strukPerHari} struk), shift ${s.terlemah.nama} ${rupiah(s.terlemah.omzetPerHari)} ` +
+      `(${s.terlemah.strukPerHari} struk) — selisih ${s.rasio}x.`,
+    metric_label: `${s.rasio}x selisih shift`,
+    payload: { kind: 'SHIFT_PERFORMANCE', ...s },
+    actions: [{ label: 'Buka Laporan', kind: 'OPEN_REPORTS' }],
+  };
+}
+
+/* --- 8. LAYOUT_UTILISATION (FNB, LAUNDRY, BARBERSHOP) --------------------- */
+
+/**
+ * Tekanan pada TEMPAT: berapa banyak pelanggan yang dilayani di lokasi, dan
+ * kapan tekanannya memuncak.
+ *
+ * BATAS YANG JUJUR: sistem ini belum menyimpan meja, bay, atau kursi sebagai
+ * entitas, jadi perputaran meja yang sesungguhnya tidak bisa dihitung. Yang
+ * dihitung di sini adalah pesanan yang dilayani DI TEMPAT (order_type DINE_IN)
+ * per jam — pendekatan terdekat yang datanya benar-benar ada. Begitu meja
+ * menjadi entitas, algoritma ini yang diganti, bukan ditambah di sebelahnya.
+ *
+ * Bedanya dengan OPERATIONAL_PEAK: yang itu tentang berapa ORANG yang harus
+ * ada; yang ini tentang apakah TEMPATNYA cukup.
+ */
+export function computeLayoutUtilisation(orders, { offsetJam = 7 } = {}) {
+  const ditempat = [];
+  let totalSelesai = 0;
+
+  for (const o of selesai(orders)) {
+    totalSelesai++;
+    const jenis = String(o.orderType || o.order_type || '').toUpperCase();
+    if (jenis === 'DINE_IN') ditempat.push(o);
+  }
+
+  if (totalSelesai === 0 || ditempat.length === 0) return null;
+
+  const perJam = new Map();
+  const hari = new Set();
+  for (const o of ditempat) {
+    const d = jamLokal(o.date, offsetJam);
+    if (!d) continue;
+    const jam = d.getUTCHours();
+    perJam.set(jam, (perJam.get(jam) || 0) + 1);
+    hari.add(d.toISOString().slice(0, 10));
+  }
+  if (perJam.size === 0) return null;
+
+  const jumlahHari = Math.max(1, hari.size);
+  const jam = [...perJam.entries()]
+    .map(([jam, n]) => ({ jam, perHari: round(n / jumlahHari, 2) }))
+    .sort((a, b) => b.perHari - a.perHari);
+
+  const puncak = jam[0];
+  const rata = round(jam.reduce((n, j) => n + j.perHari, 0) / jam.length, 2);
+
+  return {
+    porsiDitempat: round(ditempat.length / totalSelesai, 4),
+    totalDitempat: ditempat.length,
+    totalTransaksi: totalSelesai,
+    jam,
+    puncak,
+    rataPerJam: rata,
+    tekananPuncak: rata > 0 ? round(puncak.perHari / rata, 2) : 0,
+    hariDihitung: jumlahHari,
+    // Dicatat di payload supaya pembacanya tahu ini pendekatan, bukan hitungan
+    // meja yang sesungguhnya.
+    basis: 'ORDER_TYPE_DINE_IN',
+  };
+}
+
+export function buildLayoutRow(merchantId, date, l) {
+  // Di bawah 30% dilayani di tempat, kapasitas ruang bukan kendalanya.
+  if (!l || l.porsiDitempat < 0.3) return null;
+  const jj = (n) => `${String(n).padStart(2, '0')}.00`;
+
+  return {
+    id: idFor(merchantId, date, 'LAYOUT_UTILISATION'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'LAYOUT_UTILISATION',
+    priority: l.tekananPuncak >= 2.5 ? 2 : 3,
+    title: `Tekanan tempat tertinggi jam ${jj(l.puncak.jam)}`,
+    summary:
+      `${persen(l.porsiDitempat)} pesanan dilayani di tempat. ` +
+      `Jam ${jj(l.puncak.jam)}–${jj(l.puncak.jam + 1)} rata-rata ${l.puncak.perHari} pelanggan di lokasi ` +
+      `— ${l.tekananPuncak}x jam biasa.`,
+    metric_label: `${persen(l.porsiDitempat)} di tempat`,
+    payload: { kind: 'LAYOUT_UTILISATION', ...l },
+    actions: [{ label: 'Buka Laporan', kind: 'OPEN_REPORTS' }],
+  };
+}
+
+/* --- 9. STAFF_BEHAVIOUR (FNB, RETAIL, BARBERSHOP) ------------------------- */
+
+/**
+ * Perbandingan antar kasir: rata-rata nilai struk dan seberapa sering memberi
+ * diskon.
+ *
+ * Butuh minimal dua kasir dengan cukup transaksi. Membandingkan orang dari
+ * lima struk menghasilkan tuduhan, bukan informasi — itu sebabnya ada ambang
+ * MIN_STRUK, dan itu sebabnya yang dilaporkan selisih, bukan peringkat.
+ *
+ * Diskon tinggi BUKAN otomatis kecurangan. Bisa saja satu orang memang
+ * ditugasi melayani pelanggan langganan. Karena itu kalimatnya mengajak
+ * memeriksa, bukan menyimpulkan.
+ */
+const MIN_STRUK_STAF = 20;
+
+export function computeStaffBehaviour(orders) {
+  const per = new Map();
+
+  for (const o of selesai(orders)) {
+    const kasir = o.cashierUserId || o.cashier_user_id;
+    if (!kasir) continue;
+    if (!per.has(kasir)) per.set(kasir, { kasir, nama: o.cashierName || o.cashier_name || null, struk: 0, omzet: 0, diskon: 0, strukBerdiskon: 0 });
+    const s = per.get(kasir);
+    s.struk++;
+    s.omzet += Number(o.totalAmount ?? 0);
+    const d = Number(o.discountAmount ?? 0);
+    s.diskon += d;
+    if (d > 0) s.strukBerdiskon++;
+  }
+
+  const staf = [...per.values()]
+    .filter((s) => s.struk >= MIN_STRUK_STAF)
+    .map((s) => ({
+      kasir: s.kasir,
+      nama: s.nama,
+      struk: s.struk,
+      omzet: round(s.omzet),
+      rataStruk: round(s.omzet / s.struk),
+      porsiBerdiskon: round(s.strukBerdiskon / s.struk, 4),
+      rataDiskon: s.strukBerdiskon > 0 ? round(s.diskon / s.strukBerdiskon) : 0,
+    }))
+    .sort((a, b) => b.rataStruk - a.rataStruk);
+
+  if (staf.length < 2) return null;
+
+  const tertinggi = staf[0];
+  const terendah = staf[staf.length - 1];
+  const rataDiskonTim = round(staf.reduce((n, s) => n + s.porsiBerdiskon, 0) / staf.length, 4);
+  // Yang paling sering memberi diskon, dan seberapa jauh dari kebiasaan timnya.
+  const palingSeringDiskon = [...staf].sort((a, b) => b.porsiBerdiskon - a.porsiBerdiskon)[0];
+
+  return {
+    staf,
+    tertinggi,
+    terendah,
+    rataDiskonTim,
+    palingSeringDiskon,
+    selisihRataStruk: terendah.rataStruk > 0 ? round(tertinggi.rataStruk / terendah.rataStruk, 2) : 0,
+  };
+}
+
+export function buildStaffRow(merchantId, date, s) {
+  if (!s) return null;
+
+  // Menonjol kalau diskonnya dua kali kebiasaan tim DAN setidaknya satu dari
+  // lima struknya berdiskon — dua syarat, supaya tim yang memang jarang
+  // berdiskon tidak menghasilkan tuduhan dari selisih yang sangat kecil.
+  const menonjol =
+    s.palingSeringDiskon.porsiBerdiskon >= 0.2 &&
+    s.rataDiskonTim > 0 &&
+    s.palingSeringDiskon.porsiBerdiskon >= 2 * s.rataDiskonTim;
+
+  if (!menonjol && s.selisihRataStruk < 1.4) return null;
+
+  const siapa = (x) => x.nama || `Kasir ${String(x.kasir).slice(0, 8)}`;
+
+  return {
+    id: idFor(merchantId, date, 'STAFF_BEHAVIOUR'),
+    business_id: merchantId,
+    insight_date: date,
+    category: 'STAFF_BEHAVIOUR',
+    priority: menonjol ? 2 : 3,
+    title: menonjol
+      ? `Pola diskon ${siapa(s.palingSeringDiskon)} berbeda dari tim`
+      : `Selisih nilai struk antar kasir ${s.selisihRataStruk}x`,
+    summary: menonjol
+      ? `${persen(s.palingSeringDiskon.porsiBerdiskon)} struk ${siapa(s.palingSeringDiskon)} memakai diskon ` +
+        `(rata-rata tim ${persen(s.rataDiskonTim)}), rata-rata ${rupiah(s.palingSeringDiskon.rataDiskon)} per struk. ` +
+        `Belum tentu keliru — periksa apakah memang ditugasi melayani pelanggan langganan.`
+      : `${siapa(s.tertinggi)} rata-rata ${rupiah(s.tertinggi.rataStruk)} per struk, ` +
+        `${siapa(s.terendah)} ${rupiah(s.terendah.rataStruk)} dari ${s.terendah.struk} struk.`,
+    metric_label: menonjol ? persen(s.palingSeringDiskon.porsiBerdiskon) : `${s.selisihRataStruk}x`,
+    payload: { kind: 'STAFF_BEHAVIOUR', ...s },
+    actions: [{ label: 'Buka Laporan', kind: 'OPEN_REPORTS' }],
+  };
+}
+
+
 /**
  * Member yang berhenti datang.
  *
@@ -365,15 +920,65 @@ export function buildChurnRow(merchantId, date, lapsedCustomers = []) {
   };
 }
 
-export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCustomers }) {
+/**
+ * Cakupan bawaan bila tabel ai.algorithm_scope tidak bisa dibaca — mode
+ * --dry-run, atau database yang belum menerapkan 0028.
+ *
+ * Nilainya SAMA dengan yang disisipkan migrasi itu. Kalau berbeda, dry-run
+ * akan menjanjikan kartu yang tidak muncul di produksi.
+ */
+export const CAKUPAN_BAWAAN = {
+  INVENTORY_ALERT: null,
+  CROSS_SELL_OPPORTUNITY: null,
+  CRM_CHURN: null,
+  FINANCIAL_PERFORMANCE: null,
+  OPERATIONAL_PEAK: null,
+  CALENDAR_BEHAVIOR: null,
+  SHIFT_PERFORMANCE: ['FNB', 'RETAIL', 'CARWASH'],
+  LAYOUT_UTILISATION: ['FNB', 'LAUNDRY', 'BARBERSHOP'],
+  STAFF_BEHAVIOUR: ['FNB', 'RETAIL', 'BARBERSHOP'],
+};
+
+/**
+ * Apakah kategori ini berlaku untuk sektor merchant tersebut.
+ *
+ * `null` berarti global. Daftarnya datang dari database supaya memindahkan
+ * sebuah algoritma antar sektor tidak menuntut deploy ulang — cakupan adalah
+ * keputusan produk, bukan keputusan kode.
+ */
+export function berlakuUntukSektor(category, sector, cakupan = CAKUPAN_BAWAAN) {
+  if (!(category in cakupan)) return false;
+  const sektor = cakupan[category];
+  if (sektor === null || sektor === undefined) return true;
+  return sektor.includes(String(sector || '').toUpperCase());
+}
+
+export function buildInsightRows(merchantId, date, data) {
+  const {
+    reorder, basket, lapsedCustomers,
+    orders = [],
+    // Tanpa pembanding terpisah, financial jatuh kembali ke jendela berjalan —
+    // hasilnya "tidak ada perbandingan", bukan angka yang salah.
+    ordersPembanding = orders,
+    sector = null,
+    cakupan = CAKUPAN_BAWAAN,
+    windowDays = 30,
+    now = new Date(),
+    offsetJam = 7,
+  } = data;
+
   const rows = [];
+  /** Kartu hanya ditambahkan bila kategorinya berlaku untuk sektor ini. */
+  const tambah = (category, row) => {
+    if (row && berlakuUntukSektor(category, sector, cakupan)) rows.push(row);
+  };
 
   const churn = buildChurnRow(merchantId, date, lapsedCustomers);
-  if (churn) rows.push(churn);
+  if (churn) tambah('CRM_CHURN', churn);
 
   if (reorder.length > 0) {
     const urgent = reorder.filter((r) => r.severity === 'OUT_OF_STOCK' || r.severity === 'CRITICAL');
-    rows.push({
+    tambah('INVENTORY_ALERT', {
       id: idFor(merchantId, date, 'INVENTORY_ALERT'),
       business_id: merchantId,
       insight_date: date,
@@ -392,7 +997,7 @@ export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCust
 
   if (basket.pairs.length > 0) {
     const top = basket.pairs[0];
-    rows.push({
+    tambah('CROSS_SELL_OPPORTUNITY', {
       id: idFor(merchantId, date, 'CROSS_SELL_OPPORTUNITY'),
       business_id: merchantId,
       insight_date: date,
@@ -405,6 +1010,22 @@ export function buildInsightRows(merchantId, date, { reorder, basket, lapsedCust
       actions: [{ label: 'Buat promo bundling', kind: 'CREATE_PROMO' }],
     });
   }
+
+  // Enam algoritma sisanya. Semuanya dihitung dari `orders` yang sudah dimuat,
+  // jadi tidak ada query tambahan per kategori — satu pemuatan data, sembilan
+  // kategori.
+  tambah('FINANCIAL_PERFORMANCE',
+    buildFinancialRow(merchantId, date, computeFinancialPerformance(ordersPembanding, { windowDays, now })));
+  tambah('OPERATIONAL_PEAK',
+    buildPeakRow(merchantId, date, computeOperationalPeak(orders, { offsetJam, now })));
+  tambah('CALENDAR_BEHAVIOR',
+    buildCalendarRow(merchantId, date, computeCalendarBehavior(orders, { offsetJam })));
+  tambah('SHIFT_PERFORMANCE',
+    buildShiftRow(merchantId, date, computeShiftPerformance(orders, { offsetJam })));
+  tambah('LAYOUT_UTILISATION',
+    buildLayoutRow(merchantId, date, computeLayoutUtilisation(orders, { offsetJam })));
+  tambah('STAFF_BEHAVIOUR',
+    buildStaffRow(merchantId, date, computeStaffBehaviour(orders)));
 
   return rows;
 }
@@ -454,8 +1075,42 @@ async function loadMerchantData(client, merchantId, windowDays) {
   // usang yang akan menjadi galat di pg@9.
   const products = await client.query('SELECT id, name, price, cost_price, 0 AS stock, 0 AS min_stock_alert FROM products WHERE business_id = $1', [merchantId]);
   const stockItems = await client.query('SELECT id, name, current_stock AS stock, min_stock_alert, unit, cost_price FROM ingredients WHERE business_id = $1', [merchantId]);
-  const orders = await client.query('SELECT id, created_at AS date, payment_status FROM transactions WHERE business_id = $1 AND created_at >= $2', [merchantId, since]);
-  const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price FROM transaction_items WHERE business_id = $1', [merchantId]);
+  // Dua kali jendela. FINANCIAL_PERFORMANCE membandingkan periode berjalan
+  // dengan periode SEBELUMNYA yang sama panjang; kalau yang dimuat hanya satu
+  // jendela, pembandingnya selalu kosong dan setiap merchant terlihat tumbuh
+  // tak terhingga di bulan pertamanya.
+  const sejakBanding = new Date(Date.now() - 2 * windowDays * DAY_MS).toISOString();
+  const orders = await client.query(
+    `SELECT id, created_at AS date, payment_status, total_amount, discount_amount,
+            order_type, cashier_user_id
+       FROM transactions WHERE business_id = $1 AND created_at >= $2`,
+    [merchantId, sejakBanding]);
+  const items = await client.query('SELECT transaction_id, product_id, product_name AS name, quantity, unit_price, unit_cost FROM transaction_items WHERE business_id = $1', [merchantId]);
+
+  // Nama kasir dibaca sekali, bukan di-join per transaksi. Insight staf
+  // menyebut nama; id UUID di kartu tidak menolong siapa pun.
+  const kasir = await client.query(
+    'SELECT id, name FROM users WHERE business_id = $1', [merchantId]);
+  const namaKasir = new Map(kasir.rows.map((u) => [u.id, u.name]));
+
+  // Sektor menentukan algoritma mana yang dijalankan.
+  const usaha = await client.query(
+    'SELECT business_sector FROM businesses WHERE id = $1', [merchantId]);
+  const sector = usaha.rows[0]?.business_sector ?? null;
+
+  // Cakupan dibaca dari tabel, bukan dipatok di kode. Kalau tabelnya belum ada
+  // (database yang belum menerapkan 0028), dipakai cakupan bawaan yang isinya
+  // sama — job tetap berjalan, tidak mati karena satu tabel.
+  let cakupan = CAKUPAN_BAWAAN;
+  try {
+    const scope = await client.query(
+      'SELECT category, sectors FROM ai.algorithm_scope WHERE is_active');
+    if (scope.rows.length) {
+      cakupan = Object.fromEntries(scope.rows.map((r) => [r.category, r.sectors]));
+    }
+  } catch {
+    log('WARN  ai.algorithm_scope tidak terbaca — memakai cakupan bawaan.');
+  }
   const logs = await client.query("SELECT ingredient_id AS \"productId\", quantity_changed AS quantity, created_at AS timestamp, 'SALE' AS type FROM inventory_logs WHERE business_id = $1 AND created_at >= $2", [merchantId, since]);
 
   // Member yang dulu datang lalu berhenti. Dibaca dari contract.customer_rfm —
@@ -478,16 +1133,36 @@ async function loadMerchantData(client, merchantId, windowDays) {
     itemsByTx.get(li.transaction_id).push(li);
   }
 
+  const semuaOrder = orders.rows.map((o) => ({
+    ...o,
+    status: o.payment_status === 'COMPLETED' ? 'COMPLETED' : o.payment_status,
+    totalAmount: Number(o.total_amount ?? 0),
+    discountAmount: Number(o.discount_amount ?? 0),
+    orderType: o.order_type,
+    cashierUserId: o.cashier_user_id,
+    cashierName: namaKasir.get(o.cashier_user_id) ?? null,
+    items: (itemsByTx.get(o.id) || []).map((li) => ({
+      ...li,
+      unitCost: Number(li.unit_cost ?? 0),
+    })),
+  }));
+
   return {
     lapsedCustomers: lapsed.rows,
     products: products.rows,
     stockItems: stockItems.rows,
     inventoryLogs: logs.rows,
-    orders: orders.rows.map((o) => ({
-      ...o,
-      status: o.payment_status === 'COMPLETED' ? 'COMPLETED' : o.payment_status,
-      items: itemsByTx.get(o.id) || [],
-    })),
+    sector,
+    cakupan,
+    // Jendela berjalan — dipakai delapan dari sembilan algoritma.
+    orders: semuaOrder.filter((o) => {
+      const d = toDate(o.date);
+      return d && d >= new Date(since);
+    }),
+    // Dua jendela penuh — HANYA untuk FINANCIAL_PERFORMANCE, yang memang perlu
+    // periode sebelumnya sebagai pembanding. Memberikannya ke algoritma lain
+    // akan diam-diam menggandakan jendela analisis mereka.
+    ordersPembanding: semuaOrder,
   };
 }
 
@@ -497,7 +1172,18 @@ async function loadMerchantData(client, merchantId, windowDays) {
 
 function demoData() {
   const day = (n) => new Date(Date.now() - n * DAY_MS).toISOString();
-  const line = (productId, name, quantity, unitPrice) => ({ productId, name, quantity, unitPrice });
+  /**
+   * Jam ditentukan supaya dry-run benar-benar menguji jam sibuk, shift, dan
+   * hari — bukan hanya menghasilkan angka nol untuk tiga algoritma itu.
+   * Waktu disimpan UTC dan toko berpikir WIB (UTC+7), jadi jam WIB dikurangi 7.
+   */
+  const jam = (n, jamWib) => {
+    const d = new Date(Date.now() - n * DAY_MS);
+    d.setUTCHours(jamWib - 7, 0, 0, 0);
+    return d.toISOString();
+  };
+  const line = (productId, name, quantity, unitPrice, unitCost) =>
+    ({ productId, name, quantity, unitPrice, unitCost });
   return {
     products: [
       { id: 'p1', name: 'Kopi Susu Gula Aren', stock: 12, minStockAlert: 10, unit: 'cup', price: 25000, costPrice: 8000 },
@@ -512,11 +1198,35 @@ function demoData() {
       { productId: 'i1', quantity: -90, timestamp: day(i), type: 'SALE' },
       { productId: 'i2', quantity: -450, timestamp: day(i), type: 'SALE' },
     ])).flat(),
-    orders: Array.from({ length: 14 }, (_, i) => ([
-      { id: `t${i}a`, date: day(i), status: 'COMPLETED', items: [line('p1', 'Kopi Susu Gula Aren', 3, 25000), line('p2', 'Butter Croissant', 2, 22000)] },
-      { id: `t${i}b`, date: day(i), status: 'COMPLETED', items: [line('p1', 'Kopi Susu Gula Aren', 2, 25000)] },
-      { id: `t${i}c`, date: day(i), status: 'COMPLETED', items: [line('p3', 'Nasi Goreng Spesial', 1, 35000), line('p1', 'Kopi Susu Gula Aren', 1, 25000)] },
-    ])).flat(),
+    sector: 'FNB',
+    // 60 hari: 30 berjalan + 30 pembanding, supaya FINANCIAL_PERFORMANCE punya
+    // periode sebelumnya untuk dibandingkan. Harga modal naik di paruh kedua,
+    // jadi dry-run menunjukkan margin yang menyusut — keadaan yang justru
+    // paling perlu terlihat.
+    orders: Array.from({ length: 60 }, (_, i) => {
+      const baru = i < 30;                       // 30 hari terakhir
+      const modalKopi = baru ? 10000 : 8000;     // supplier menaikkan harga
+      return [
+        { id: `t${i}a`, date: jam(i, 12), status: 'COMPLETED', orderType: 'DINE_IN',
+          cashierUserId: 'u1', cashierName: 'Andi',
+          totalAmount: 119000, discountAmount: 0,
+          items: [line('p1', 'Kopi Susu Gula Aren', 3, 25000, modalKopi),
+                  line('p2', 'Butter Croissant', 2, 22000, 7000)] },
+        { id: `t${i}b`, date: jam(i, 9), status: 'COMPLETED', orderType: 'TAKEAWAY',
+          cashierUserId: 'u1', cashierName: 'Andi',
+          totalAmount: 50000, discountAmount: 0,
+          items: [line('p1', 'Kopi Susu Gula Aren', 2, 25000, modalKopi)] },
+        { id: `t${i}c`, date: jam(i, 12), status: 'COMPLETED', orderType: 'DINE_IN',
+          cashierUserId: 'u2', cashierName: 'Sari',
+          totalAmount: 54000, discountAmount: 6000,
+          items: [line('p3', 'Nasi Goreng Spesial', 1, 35000, 14000),
+                  line('p1', 'Kopi Susu Gula Aren', 1, 25000, modalKopi)] },
+        { id: `t${i}d`, date: jam(i, 20), status: 'COMPLETED', orderType: 'DINE_IN',
+          cashierUserId: 'u2', cashierName: 'Sari',
+          totalAmount: 25000, discountAmount: 5000,
+          items: [line('p1', 'Kopi Susu Gula Aren', 1, 25000, modalKopi)] },
+      ];
+    }).flat(),
   };
 }
 
@@ -592,7 +1302,15 @@ async function main() {
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket, lapsedCustomers: data.lapsedCustomers });
+    const rows = buildInsightRows(args.merchantId, insightDate, {
+      reorder, basket,
+      lapsedCustomers: data.lapsedCustomers,
+      orders: data.orders,
+      ordersPembanding: data.ordersPembanding ?? data.orders,
+      sector: data.sector,
+      cakupan: data.cakupan,
+      windowDays: args.windowDays,
+    });
 
     console.log(JSON.stringify({ mode: 'DRY_RUN', insightDate, rows }, null, 2));
     log(`Done in ${Date.now() - startedAt} ms — ${rows.length} insight(s) computed, 0 written.`);
@@ -609,7 +1327,15 @@ async function main() {
 
     const reorder = computeDynamicReorderAlerts(data, opts);
     const basket = computeMarketBasket(data.orders, opts);
-    const rows = buildInsightRows(args.merchantId, insightDate, { reorder, basket, lapsedCustomers: data.lapsedCustomers });
+    const rows = buildInsightRows(args.merchantId, insightDate, {
+      reorder, basket,
+      lapsedCustomers: data.lapsedCustomers,
+      orders: data.orders,
+      ordersPembanding: data.ordersPembanding,
+      sector: data.sector,
+      cakupan: data.cakupan,
+      windowDays: args.windowDays,
+    });
 
     await client.query('BEGIN');
     const written = await upsertInsights(client, rows);
@@ -629,7 +1355,19 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  log('FATAL', err && err.stack ? err.stack : err);
-  process.exit(1);
-});
+/*
+ * HANYA berjalan bila berkas ini yang DIJALANKAN, bukan diimpor.
+ *
+ * Tanpa penjagaan ini, `import { computeOperationalPeak } from '...'` di berkas
+ * tes ikut menjalankan seluruh batch — termasuk process.exit(1) saat tidak ada
+ * DATABASE_URL, yang mematikan proses tes di tengah jalan.
+ */
+const dijalankanLangsung =
+  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+
+if (dijalankanLangsung) {
+  main().catch((err) => {
+    log('FATAL', err && err.stack ? err.stack : err);
+    process.exit(1);
+  });
+}
