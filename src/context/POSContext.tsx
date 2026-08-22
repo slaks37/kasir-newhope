@@ -228,6 +228,10 @@ interface POSContextType {
   
   // Inventory & Catalog CRUD
   saveProduct: (product: Product) => HasilSimpan;
+  /** Impor katalog sekaligus — dari OCR menu atau berkas CSV. */
+  imporProduk: (
+    masuk: Array<{ name: string; price: number; category?: string }>
+  ) => { disimpan: number; ditahan: string[] };
   deleteProduct: (productId: string) => void;
   saveCategory: (category: Category) => void;
   adjustStock: (productId: string, quantityChange: number, type: 'IN' | 'OUT' | 'ADJUSTMENT', reason: string) => void;
@@ -1738,6 +1742,85 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { ok: true };
   };
 
+  /**
+   * Impor katalog sekaligus.
+   *
+   * BUKAN saveProduct dalam perulangan. saveProduct membaca `products.length`
+   * dari closure-nya, dan React tidak memperbarui state itu di antara
+   * pemanggilan dalam satu putaran — seratus panggilan berturut-turut akan
+   * SEMUANYA lolos berdasarkan hitungan awal, dan batas paket dilewati tanpa
+   * satu pun peringatan.
+   *
+   * Karena itu batasnya diperiksa SEKALI terhadap jumlah yang masuk, dan
+   * sisanya dipotong. Yang dipotong dikembalikan sebagai nama, bukan angka:
+   * merchant yang mengimpor 100 dan menerima "80 tersimpan" tanpa tahu dua
+   * puluh mana yang hilang akan mengira sistemnya rusak.
+   */
+  const imporProduk = (
+    masuk: Array<{ name: string; price: number; category?: string }>
+  ): { disimpan: number; ditahan: string[] } => {
+    const bersih = masuk.filter((m) => m.name?.trim());
+    if (!bersih.length) return { disimpan: 0, ditahan: [] };
+
+    const muat =
+      entitlements.productLimit === -1
+        ? bersih.length
+        : Math.max(0, entitlements.productLimit - products.length);
+
+    const diterima = bersih.slice(0, muat);
+    const ditahan = bersih.slice(muat).map((m) => m.name);
+
+    // Kategori yang belum ada dibuat lebih dulu. Tanpa ini, produk impor
+    // mendarat di kategori yang tidak pernah muncul di menu kasir — ada di
+    // database, tidak terlihat saat berjualan.
+    const kategoriBaru = new Map<string, string>();
+    for (const m of diterima) {
+      const nama = m.category?.trim();
+      if (!nama) continue;
+      const ada = categories.find((c) => c.name.toLowerCase() === nama.toLowerCase());
+      if (ada) { kategoriBaru.set(nama, ada.id); continue; }
+      if (!kategoriBaru.has(nama)) kategoriBaru.set(nama, newId('cat'));
+    }
+    const perluDibuat = [...kategoriBaru.entries()].filter(
+      ([nama]) => !categories.some((c) => c.name.toLowerCase() === nama.toLowerCase())
+    );
+    if (perluDibuat.length) {
+      setCategories((prev) => [
+        ...prev,
+        ...perluDibuat.map(([nama, id]) => ({
+          id,
+          name: nama,
+          // Ikon dan warna netral. Menebaknya dari nama kategori ("Minuman" ->
+          // gelas) terasa pintar sampai salah, dan kategori berikon keliru
+          // lebih membingungkan daripada yang berikon polos.
+          icon: 'Package',
+          color: 'slate',
+          businessSector: settings.businessSector || 'FNB',
+        })),
+      ]);
+    }
+
+    const produkBaru: Product[] = diterima.map((m) => ({
+      id: newId('prod'),
+      sku: `SKU-${newId('x').slice(-8).toUpperCase()}`,
+      name: m.name.trim(),
+      categoryId: m.category ? (kategoriBaru.get(m.category.trim()) ?? '') : '',
+      price: Math.max(0, Math.round(m.price)),
+      // Modal TIDAK ditebak. Menaruh angka karangan di sini membuat laporan
+      // laba berbohong sejak hari pertama, dan tidak ada yang akan curiga
+      // karena angkanya terlihat wajar.
+      costPrice: 0,
+      stock: 0,
+      minStockAlert: 0,
+      unit: 'pcs',
+      isAvailable: true,
+      businessSector: settings.businessSector || 'FNB',
+    }));
+
+    setProducts((prev) => [...produkBaru, ...prev]);
+    return { disimpan: produkBaru.length, ditahan };
+  };
+
   const deleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
   };
@@ -2046,6 +2129,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateOrderLaundryStatus,
         sendLaundryWaNotification,
         saveProduct,
+        imporProduk,
         deleteProduct,
         saveCategory,
         adjustStock,

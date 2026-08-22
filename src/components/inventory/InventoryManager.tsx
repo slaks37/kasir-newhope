@@ -3,6 +3,7 @@ import { usePOS } from '../../context/POSContext';
 import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
+import { ImporMenu } from '../katalog/ImporMenu';
 import {
   Package,
   Plus,
@@ -28,6 +29,7 @@ import {
   DollarSign,
   TrendingUp,
   Info,
+  ScanLine,
 } from 'lucide-react';
 
 const DESCRIPTION_MAX = 300;
@@ -47,7 +49,13 @@ export const InventoryManager: React.FC = () => {
     bundles,
     saveBundle,
     deleteBundle,
+    imporProduk,
+    entitlements,
   } = usePOS();
+
+  // Layar impor menu (OCR foto / CSV).
+  const [showImpor, setShowImpor] = useState(false);
+  const [hasilImpor, setHasilImpor] = useState<{ disimpan: number; ditahan: string[] } | null>(null);
 
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'bundles' | 'stock' | 'recipes' | 'logs'>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
@@ -490,6 +498,21 @@ export const InventoryManager: React.FC = () => {
             >
               <Plus className="w-4 h-4" />
               <span>Tambah Produk Baru</span>
+            </button>
+          )}
+
+          {/* Mewujudkan janji di halaman depan: foto menu, produknya masuk.
+              Ditaruh bersebelahan dengan "Tambah Produk Baru" karena ke sinilah
+              orang datang saat katalognya masih kosong — bukan disembunyikan di
+              menu pengaturan yang baru ditemukan setelah mengetik lima puluh
+              produk satu per satu. */}
+          {activeSubTab === 'catalog' && (
+            <button
+              onClick={() => { setHasilImpor(null); setShowImpor(true); }}
+              className="bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+            >
+              <ScanLine className="w-4 h-4 text-emerald-500" />
+              <span>Impor dari Foto / CSV</span>
             </button>
           )}
 
@@ -1616,6 +1639,51 @@ export const InventoryManager: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* --- IMPOR MENU (OCR foto / CSV) --------------------------------- */}
+      {showImpor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6">
+            <ImporMenu
+              batasProduk={entitlements.productLimit}
+              produkSekarang={products.length}
+              onBatal={() => setShowImpor(false)}
+              onImpor={async (rows) => {
+                const hasil = imporProduk(rows);
+                setHasilImpor(hasil);
+                setShowImpor(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/*
+        * Hasil impor ditampilkan SETELAH modalnya tertutup, dan menyebutkan
+        * yang ditahan beserta namanya. Merchant yang mengimpor 100 produk lalu
+        * kembali ke daftar berisi 80 tanpa penjelasan akan mengira dua puluh
+        * lainnya hilang karena sistemnya rusak.
+        */}
+      {hasilImpor && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-white border border-slate-200 rounded-2xl shadow-2xl p-5 space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <p className="font-black text-sm text-slate-900 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              {hasilImpor.disimpan} produk masuk katalog
+            </p>
+            <button onClick={() => setHasilImpor(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {hasilImpor.ditahan.length > 0 && (
+            <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3 font-semibold">
+              {hasilImpor.ditahan.length} ditahan karena batas paket:{' '}
+              {hasilImpor.ditahan.slice(0, 5).join(', ')}
+              {hasilImpor.ditahan.length > 5 && `, dan ${hasilImpor.ditahan.length - 5} lainnya`}.
+            </div>
+          )}
         </div>
       )}
     </div>
