@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, Tags
+  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard,
+  Tags, BookOpen
 } from 'lucide-react';
 import { api, getToken, setToken, ROLE_LABEL, type Session } from './api';
 import { ErrorBox, Loading } from './ui';
@@ -13,8 +14,11 @@ import Audit from './pages/Audit';
 import UserManagement from './pages/UserManagement';
 import Subscriptions from './pages/Subscriptions';
 import Plans from './pages/Plans';
+import BlogManagement from './pages/BlogManagement';
 
-type PageId = 'overview' | 'merchants' | 'plans' | 'subscriptions' | 'transactions' | 'products' | 'activity' | 'audit' | 'users';
+type PageId =
+  | 'overview' | 'merchants' | 'plans' | 'subscriptions'
+  | 'transactions' | 'products' | 'activity' | 'audit' | 'users' | 'blog';
 
 /**
  * Setiap menu menyatakan capability yang dibutuhkannya. Menu yang tidak dimiliki
@@ -27,6 +31,13 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   { id: 'merchants', label: 'Merchant', icon: Store, cap: 'VIEW_MERCHANT_HEALTH' },
   { id: 'plans', label: 'Paket & Harga', icon: Tags, cap: 'MANAGE_SUBSCRIPTION' },
   { id: 'subscriptions', label: 'Langganan (SaaS)', icon: CreditCard, cap: 'VIEW_MERCHANT_HEALTH' },
+  // Blog memakai MANAGE_PUBLIC_CONTENT, bukan VIEW_SECTOR_ANALYTICS.
+  // Menerbitkan ke situs publik bukan kegiatan analitik, dan
+  // VIEW_SECTOR_ANALYTICS dipegang ROLE_INTERNAL_GROWTH — memakainya di sini
+  // memberi seluruh tim Growth tombol terbit ke halaman depan.
+  { id: 'blog', label: 'Blog Harapan Baru', icon: BookOpen, cap: 'MANAGE_PUBLIC_CONTENT' },
+  // MANAGE_INTERNAL_USERS, bukan VIEW_ACCESS_AUDIT: halaman ini MEMBUAT dan
+  // mengubah peran akun internal, bukan sekadar membacanya.
   { id: 'users', label: 'User Admin & Client', icon: ShieldCheck, cap: 'MANAGE_INTERNAL_USERS' },
   { id: 'transactions', label: 'Log Transaksi', icon: Receipt, cap: 'VIEW_TRANSACTION_LOG' },
   { id: 'products', label: 'Produk Terjual', icon: Package, cap: 'VIEW_PRODUCT_SALES' },
@@ -267,6 +278,7 @@ export default function AdminApp() {
         {page === 'plans' && <Plans />}
         {page === 'subscriptions' && <Subscriptions />}
         {page === 'users' && <UserManagement />}
+        {page === 'blog' && <BlogManagement />}
         {page === 'transactions' && <Transactions sector={sector} onSector={setSector} />}
         {page === 'products' && <Products sector={sector} onSector={setSector} />}
         {page === 'activity' && <ActivityPage sector={sector} onSector={setSector} />}

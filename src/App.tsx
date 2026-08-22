@@ -16,6 +16,7 @@ import { ShiftManagerModal } from './components/pos/ShiftManagerModal';
 import { ClockInModal } from './components/pos/ClockInModal';
 import { LoginPage } from './components/auth/LoginPage';
 import { HomePage } from './components/home/HomePage';
+import { BlogHarapanBaru } from './components/blog/BlogHarapanBaru';
 import { OverviewPage } from './components/overview/OverviewPage';
 import { TableManager } from './components/tables/TableManager';
 import { CustomerManager } from './components/customers/CustomerManager';
@@ -402,7 +403,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 export function App() {
   const { user, loading } = useAuth();
   /*
-   * MODE TAMU DIHAPUS.
+   * MODE TAMU TETAP DIHAPUS.
    *
    * Dulu siapa pun bisa menekan "Coba Demo Kasir" dan memakai aplikasi kasir
    * tanpa akun sama sekali. Tanpa akun berarti tanpa tenant, tanpa langganan,
@@ -411,11 +412,22 @@ export function App() {
    *
    * Penggantinya Free Trial 14 hari: tetap gratis dan tanpa kartu kredit, tapi
    * lewat pendaftaran, jadi ada merchant yang bisa dihitung batasnya.
+   *
+   * Halaman depan yang baru membawa simulator POS di dalam halamannya sendiri —
+   * itu peragaan, bukan aplikasi kasir sungguhan, dan tidak menyentuh data
+   * merchant mana pun. Yang tidak kembali adalah pintu masuk ke aplikasi penuh
+   * tanpa akun.
    */
-  const [authView, setAuthView] = useState<'home' | 'login' | 'register'>(() => {
+  const [authView, setAuthView] = useState<'home' | 'login' | 'register' | 'blog'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'login' || hash === 'register') return hash;
+    if (hash.startsWith('blog')) return 'blog';
     return 'home';
+  });
+  const [blogSlug, setBlogSlug] = useState<string | null>(() => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash.startsWith('blog/')) return hash.replace('blog/', '');
+    return null;
   });
 
   React.useEffect(() => {
@@ -423,8 +435,12 @@ export function App() {
       const hash = window.location.hash.replace('#', '');
       if (hash === 'login' || hash === 'register') {
         setAuthView(hash);
-      } else if (hash === '') {
+      } else if (hash.startsWith('blog')) {
+        setAuthView('blog');
+        setBlogSlug(hash.startsWith('blog/') ? hash.replace('blog/', '') : null);
+      } else if (hash === '' || hash === 'home') {
         setAuthView('home');
+        setBlogSlug(null);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
@@ -458,6 +474,22 @@ export function App() {
           onBackToLanding={() => { window.location.hash = ''; }}
           initialMode={authView}
         />
+      );
+    }
+    if (authView === 'blog') {
+      return (
+        <POSProvider>
+          <BlogHarapanBaru
+            initialSlug={blogSlug}
+            onBackToHome={() => { window.location.hash = ''; }}
+            onOpenPOS={() => {
+              // Sama seperti di halaman depan: mengajak mendaftar, bukan
+              // membuka aplikasi kasir untuk pengunjung tanpa akun.
+              window.location.hash = 'register';
+            }}
+            onOpenRegister={() => { window.location.hash = 'register'; }}
+          />
+        </POSProvider>
       );
     }
     return (

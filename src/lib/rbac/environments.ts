@@ -170,7 +170,12 @@ export type InternalCapability =
   // dan Growth tidak mendapatkannya.
   | 'VIEW_TRANSACTION_LOG'
   | 'VIEW_PRODUCT_SALES'
-  | 'VIEW_ACTIVITY_LOG';
+  | 'VIEW_ACTIVITY_LOG'
+  // Menulis dan menerbitkan artikel di situs publik. Bukan kemampuan analitik:
+  // yang memilikinya bisa mengubah apa yang dibaca calon pelanggan di halaman
+  // depan. Panel blog sempat digerbangi VIEW_SECTOR_ANALYTICS, yang berarti
+  // seluruh tim Growth memegang tombol terbit.
+  | 'MANAGE_PUBLIC_CONTENT';
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   ROLE_SUPERADMIN: [
@@ -188,6 +193,7 @@ const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
     'VIEW_TRANSACTION_LOG',
     'VIEW_PRODUCT_SALES',
     'VIEW_ACTIVITY_LOG',
+    'MANAGE_PUBLIC_CONTENT',
   ],
   // Growth works on cohorts and aggregates. Deliberately NOT given
   // VIEW_MERCHANT_DETAIL: analysing retention does not require reading one
@@ -232,6 +238,8 @@ export const AUDITED_CAPABILITIES: InternalCapability[] = [
   'VIEW_TRANSACTION_LOG',
   'VIEW_PRODUCT_SALES',
   'VIEW_ACTIVITY_LOG',
+  // Yang terbit di halaman depan harus punya nama di belakangnya.
+  'MANAGE_PUBLIC_CONTENT',
 ];
 
 export function requiresAudit(cap: InternalCapability): boolean {
