@@ -37,7 +37,7 @@ startService({
       if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
 
       const { rows } = await ctx.db.query(
-        `SELECT id, name, business_sector FROM pos.tenants WHERE external_ref = $1`,
+        `SELECT id, name, business_sector FROM internal.tenants WHERE external_ref = $1`,
         [businessId]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });

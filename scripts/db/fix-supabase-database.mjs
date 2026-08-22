@@ -63,10 +63,10 @@ async function fixSupabase() {
   `);
   console.log('✓ Paket SaaS billing.plans berhasil disinkronkan.');
 
-  console.log('4. Memastikan Akun Toko Resmi (Budi Santoso, Siti Aminah, Rian Ardiansyah) di pos.users & pos.tenants...');
+  console.log('4. Memastikan Akun Toko Resmi di internal.tenants, internal.users & internal.memberships...');
   await client.query(`
-    -- Tenant Utama Toko
-    INSERT INTO pos.tenants (id, name, business_sector, created_at)
+    -- 4a. Tenant Utama Toko Platform (internal.tenants)
+    INSERT INTO internal.tenants (id, name, business_sector, created_at)
     VALUES (
       legacy_uuid('usr-1_FNB'),
       'New Hope Resto & Cafe (Senayan Jakarta)',
@@ -77,19 +77,27 @@ async function fixSupabase() {
       name = EXCLUDED.name,
       business_sector = EXCLUDED.business_sector;
 
-    -- Pengguna Staf & Admin
-    INSERT INTO pos.users (id, tenant_id, name, username, role, pin)
+    -- 4b. Global Identity Users (internal.users)
+    INSERT INTO internal.users (id, email, full_name, is_active)
     VALUES
-      (legacy_uuid('usr-1'), legacy_uuid('usr-1_FNB'), 'Budi Santoso', 'budi.admin', 'ADMIN', '1234'),
-      (legacy_uuid('usr-2'), legacy_uuid('usr-1_FNB'), 'Siti Aminah', 'siti.manager', 'MANAGER', '5555'),
-      (legacy_uuid('usr-3'), legacy_uuid('usr-1_FNB'), 'Rian Ardiansyah', 'rian.kasir', 'CASHIER', '0000')
+      (legacy_uuid('usr-1'), 'budi.santoso@newhopepos.id', 'Budi Santoso', TRUE),
+      (legacy_uuid('usr-2'), 'siti.aminah@newhopepos.id', 'Siti Aminah', TRUE),
+      (legacy_uuid('usr-3'), 'rian.ardiansyah@newhopepos.id', 'Rian Ardiansyah', TRUE)
     ON CONFLICT (id) DO UPDATE SET
-      name = EXCLUDED.name,
-      username = EXCLUDED.username,
+      full_name = EXCLUDED.full_name,
+      email = EXCLUDED.email;
+
+    -- 4c. Multi-Tenant RBAC Memberships (internal.memberships)
+    INSERT INTO internal.memberships (id, user_id, tenant_id, role, pin)
+    VALUES
+      (legacy_uuid('mem-budi'), legacy_uuid('usr-1'), legacy_uuid('usr-1_FNB'), 'OWNER', '1234'),
+      (legacy_uuid('mem-siti'), legacy_uuid('usr-2'), legacy_uuid('usr-1_FNB'), 'MANAGER', '5555'),
+      (legacy_uuid('mem-rian'), legacy_uuid('usr-3'), legacy_uuid('usr-1_FNB'), 'CASHIER', '0000')
+    ON CONFLICT (tenant_id, user_id) DO UPDATE SET
       role = EXCLUDED.role,
       pin = EXCLUDED.pin;
 
-    -- Langganan Aktif untuk Toko Budi Santoso
+    -- 4d. Langganan Aktif untuk Toko Budi Santoso (billing.subscriptions)
     INSERT INTO billing.subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end)
     VALUES (
       legacy_uuid('sub-budi-pro'),
@@ -104,7 +112,7 @@ async function fixSupabase() {
       status = EXCLUDED.status,
       current_period_end = EXCLUDED.current_period_end;
 
-    -- AI Credits untuk Budi Santoso
+    -- 4e. AI Credits untuk Budi Santoso (ai.merchant_ai_credits)
     INSERT INTO ai.merchant_ai_credits (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
     VALUES (
       legacy_uuid('usr-1_FNB'),
@@ -118,7 +126,7 @@ async function fixSupabase() {
       balance = GREATEST(ai.merchant_ai_credits.balance, 100),
       monthly_grant = 100;
   `);
-  console.log('✓ Akun toko, langganan & kredit AI Budi Santoso berhasil disinkronkan.');
+  console.log('✓ Organisasi tenant, akun user, membership & langganan berhasil disinkronkan.');
 
   console.log('5. Memperbarui Views Kontrak & Sanitasi Public (Tanpa Bocoran PIN/Tabel Mentah)...');
   await client.query(`

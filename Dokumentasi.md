@@ -44,14 +44,13 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        POSTGRESQL DATABASE TIER                        │
 │                                                                        │
-│  [internal] (Identity)  [pos] (Operations)  [billing]       [ai]       │
-│  • users                • tenants           • plans         • credits  │
-│  • memberships          • products          • subscriptions • insights │
-│  • access_log           • ingredients       • invoices      • targets  │
-│  • health_logs          • recipes           • webhooks      • query_log│
-│  • feature_usage        • transactions                                 │
-│                         • trans_items                                  │
-│                         • inventory_logs                               │
+│  [internal] (Platform & Org)  [pos] (Operations)  [billing]  [ai]      │
+│  • tenants (Org Boundary)     • products          • plans    • credits │
+│  • users (Global Identity)    • ingredients       • subs     • insight │
+│  • memberships (Tenant RBAC)  • recipes           • invoices • targets │
+│  • access_log                 • transactions      • webhooks • query   │
+│  • health_logs                • trans_items                            │
+│  • feature_usage              • inventory_logs                         │
 │                                                                        │
 │  ────────────────────────────────────────────────────────────────────  │
 │  [contract] (Single Source of Truth Cross-Domain Read Surface)         │
@@ -66,11 +65,12 @@ Sistem New Hope POS menerapkan **Clean Multi-Schema Architecture** di atas Postg
 
 ---
 
-## 2. Canonical Domain Model: Identitas Global & Multi-Tenant Membership
+## 2. Canonical Domain Model: Platform Organization & Identity
 
-### User Bukan Milik Domain POS
-Pengguna sistem New Hope POS adalah entitas identitas global di bawah skema `internal`. Seorang pengguna dapat berinteraksi dengan modul POS, Billing, AI, maupun Backoffice.
+### Tenant & User Adalah Milik Tingkat Platform (Bukan POS)
+Organisasi toko (`tenants`) dan Pengguna (`users`) adalah entitas tingkat platform di bawah skema `internal`. Domain POS murni menangani operasional kasir (katalog, resep, transaksi, stok).
 
+- **`internal.tenants`**: Batas organisasi/toko resmi di tingkat platform (Sektor, Ref Bisnis, Status).
 - **`internal.users`**: Identitas tunggal manusia (Email, Nama, Avatar, Hak Platform).
 - **`internal.memberships`**: Hubungan multi-tenant (1 User dapat menjadi **Owner** di Toko A, **Manager** di Toko B, dan **Cashier** di Toko C tanpa duplikasi akun).
 - **Kiosk PIN**: PIN kasir terikat pada `membership` per toko untuk *fast terminal login* tanpa membocorkan kredensial global.
@@ -79,8 +79,8 @@ Pengguna sistem New Hope POS adalah entitas identitas global di bawah skema `int
 
 ```mermaid
 erDiagram
-    USERS ||--o{ MEMBERSHIPS : "memiliki akses toko"
     TENANTS ||--o{ MEMBERSHIPS : "memiliki anggota staf"
+    USERS ||--o{ MEMBERSHIPS : "memiliki penugasan toko"
     TENANTS ||--o{ PRODUCTS : "memiliki katalog"
     TENANTS ||--o{ INGREDIENTS : "memiliki stok bahan"
     TENANTS ||--o{ PRODUCT_RECIPES : "memiliki formulasi BOM"
@@ -106,10 +106,10 @@ erDiagram
 
 | Skema | Service Pemilik | Hak Akses Tulis (Write) | Hak Akses Baca (Read) | Deskripsi |
 |---|---|---|---|---|
-| `internal` | `backoffice-service` | `svc_internal` | `svc_internal` | Identitas global pengguna (`users`), keanggotaan tenant (`memberships`), audit log operator, dan metrik kesehatan merchant. |
-| `pos` | `pos-service` | `svc_pos` | `svc_pos` | Inti transaksi POS, katalog, resep BOM, dan mutasi stok fisik. |
-| `billing` | `billing-service` | `svc_billing` | `svc_billing` | Paket langganan SaaS, status tagihan, faktur, dan log webhook. |
-| `ai` | `ai-service` | `svc_ai` | `svc_ai` | Dompet kuota kredit AI, agregasi insight bisnis harian, log kueri LLM. |
+| `internal` | `backoffice-service` | `svc_internal`, `svc_pos` (tenant sync) | `svc_internal`, Semua Service | **Platform Organization & Identity**: Organisasi toko (`tenants`), identitas pengguna (`users`), keanggotaan tenant (`memberships`), audit log operator, dan metrik kesehatan merchant. |
+| `pos` | `pos-service` | `svc_pos` | `svc_pos` | **Store Operations**: Inti operasional kasir (katalog produk, resep BOM, transaksi penjualan, dan mutasi stok fisik). Mereferensikan `internal.tenants(id)`. |
+| `billing` | `billing-service` | `svc_billing` | `svc_billing` | **SaaS Monetization**: Paket langganan SaaS, status tagihan, faktur, dan log webhook. Mereferensikan `internal.tenants(id)`. |
+| `ai` | `ai-service` | `svc_ai` | `svc_ai` | **AI Intelligence**: Dompet kuota kredit AI, agregasi insight bisnis harian, log kueri LLM. Mereferensikan `internal.tenants(id)`. |
 | `contract` | *Shared Contract* | Tidak ada (Hanya View) | Semua Service (`svc_*`, `bi_readonly`) | **Satu-satunya antarmuka baca lintas-layanan**. Menjamin angka omzet, staf, dan stok selalu konsisten. |
 | `public` | *Platform Public* | `schema_migrations` | `anon`, `authenticated` | Hanya memuat view tersanitasi yang merujuk ke `contract.*` (tanpa kolom sensitif seperti hash PIN). |
 

@@ -120,7 +120,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         // TenantContext. Satu pemilik dengan kafe DAN laundry menghasilkan dua
         // baris tenants, yang memang benar: keduanya usaha terpisah.
         const t = await c.query(
-          `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref)
+          `INSERT INTO internal.tenants (id, name, business_sector, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
@@ -399,7 +399,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     try {
       const out = await db.tx(async (c) => {
         const t = await c.query(
-          `INSERT INTO pos.tenants (id, name, business_sector, external_ref, owner_user_ref)
+          `INSERT INTO internal.tenants (id, name, business_sector, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
@@ -488,7 +488,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(b.businessId, 96);
     if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
 
-    const t = await db.query(`SELECT id, business_sector FROM pos.tenants WHERE external_ref = $1`, [
+    const t = await db.query(`SELECT id, business_sector FROM internal.tenants WHERE external_ref = $1`, [
       businessId,
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: 'MERCHANT_NOT_SYNCED' });
@@ -522,7 +522,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               COUNT(x.id)::int              AS synced_transactions,
               COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
-         FROM pos.tenants t
+         FROM internal.tenants t
          LEFT JOIN pos.transactions x ON x.tenant_id = t.id
         WHERE t.external_ref = $1
         GROUP BY t.id, t.name, t.business_sector`,
