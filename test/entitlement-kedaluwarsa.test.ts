@@ -31,12 +31,15 @@ d('entitlement saat langganan mati', () => {
   /** Memasang langganan Pro yang berakhir `hariLalu` hari yang lalu. */
   const pasang = async (hariLalu: number) => {
     await db().query(
+      // Langganan menempel di MERCHANT sejak 0028, jadi unit usaha uji ini
+      // memasangnya lewat pemiliknya.
       `INSERT INTO billing.subscriptions
-         (id, business_id, plan_id, status, current_period_start, current_period_end)
-       VALUES (uuidv7(), $1, 'plan-pro-monthly', 'ACTIVE',
-               CURRENT_TIMESTAMP - ($2::int || ' days')::interval - INTERVAL '30 days',
-               CURRENT_TIMESTAMP - ($2::int || ' days')::interval)
-       ON CONFLICT (business_id) DO UPDATE SET
+         (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+       SELECT uuidv7(), b.merchant_id, 'plan-pro-monthly', 'ACTIVE',
+              CURRENT_TIMESTAMP - ($2::int || ' days')::interval - INTERVAL '30 days',
+              CURRENT_TIMESTAMP - ($2::int || ' days')::interval
+         FROM pos.businesses b WHERE b.id = $1
+       ON CONFLICT (merchant_id) DO UPDATE SET
          plan_id = 'plan-pro-monthly', status = 'ACTIVE',
          current_period_start = EXCLUDED.current_period_start,
          current_period_end   = EXCLUDED.current_period_end`,

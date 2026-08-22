@@ -75,7 +75,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Batas dibaca DI DALAM transaksi dan barisnya dikunci, supaya dua
     // perangkat yang sama-sama menambah cabang terakhir tidak lolos berdua.
-    await client.query('SELECT id FROM pos.businesses WHERE id = $1 FOR UPDATE', [tenantId]);
+    //
+    // Yang dikunci adalah MERCHANT-nya, bukan unit usahanya. Jatah outlet
+    // berlaku untuk seluruh unit usaha milik pemilik yang sama sejak 0028;
+    // mengunci per unit usaha berarti kafe dan laundry milik satu orang bisa
+    // mengambil outlet terakhir yang sama secara bersamaan.
+    const { rows: pemilik } = await client.query(
+      `SELECT m.id FROM pos.merchants m
+         JOIN pos.businesses b ON b.merchant_id = m.id
+        WHERE b.id = $1 FOR UPDATE OF m`,
+      [tenantId]
+    );
+    const merchantId = pemilik[0]?.id ?? null;
 
     const { rows: kuota } = await client.query(
       `SELECT max_outlets, outlet_aktif
@@ -104,10 +115,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
 
       if (!ada.length && aktif) {
+        // Dihitung SEMERCHANT. Menghitung per unit usaha membuat "Pro = 5
+        // outlet" bisa dilipatgandakan hanya dengan membuka unit usaha kedua.
         const { rows: hitung } = await client.query(
-          `SELECT COUNT(*)::int AS n FROM pos.outlets
-            WHERE business_id = $1 AND is_active`,
-          [tenantId]
+          `SELECT COUNT(o.id)::int AS n
+             FROM pos.outlets o
+             JOIN pos.businesses b ON b.id = o.business_id
+            WHERE b.merchant_id = $1 AND o.is_active`,
+          [merchantId]
         );
         if (hitung[0].n >= maksOutlet) {
           ditolak.push({

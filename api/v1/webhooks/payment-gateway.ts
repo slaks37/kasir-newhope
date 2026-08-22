@@ -147,13 +147,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // dijual. Tanpa penjagaan ini, kode paket salah ketik dari gateway
       // menghasilkan langganan yang tidak menunjuk paket mana pun, dan merchant
       // kehilangan seluruh entitlementnya justru setelah membayar.
+      // Kuncinya MERCHANT: yang membeli paket adalah pemiliknya, dan paket itu
+      // berlaku untuk seluruh unit usahanya. Mengunci per unit usaha membuat
+      // pemilik yang punya dua toko harus membayar dua kali.
       await client.query(
         `INSERT INTO billing.subscriptions
-           (id, business_id, plan_id, status, current_period_start, current_period_end)
-         VALUES (uuidv7(), $1,
-                 COALESCE((SELECT id FROM billing.plans WHERE id = $2 AND is_active), 'plan-free'),
-                 'ACTIVE', CURRENT_TIMESTAMP, $3::timestamptz)
-         ON CONFLICT (business_id) DO UPDATE SET
+           (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+         SELECT uuidv7(), b.merchant_id,
+                COALESCE((SELECT id FROM billing.plans WHERE id = $2 AND is_active), 'plan-free'),
+                'ACTIVE', CURRENT_TIMESTAMP, $3::timestamptz
+           FROM pos.businesses b WHERE b.id = $1
+         ON CONFLICT (merchant_id) DO UPDATE SET
            plan_id = COALESCE(
              (SELECT id FROM billing.plans WHERE id = $2 AND is_active),
              billing.subscriptions.plan_id

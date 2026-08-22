@@ -42,3 +42,22 @@ export async function resolveTenantId(
   );
   return rows[0]?.business_id ?? null;
 }
+
+/**
+ * Merchant (PEMILIK) dari sebuah business.
+ *
+ * Langganan menempel di sini, bukan di business. Pemilik yang punya kafe dan
+ * laundry membeli satu paket; batas outlet, kuota AI, dan modulnya berlaku
+ * untuk keduanya. Menagih per unit usaha berarti menagih orang yang sama dua
+ * kali untuk satu langganan.
+ */
+export async function resolveMerchantId(
+  db: pg.Pool,
+  businessId: string
+): Promise<string | null> {
+  const { rows } = await db.query(
+    `SELECT merchant_id FROM pos.businesses WHERE id = $1`,
+    [businessId]
+  );
+  return rows[0]?.merchant_id ?? null;
+}

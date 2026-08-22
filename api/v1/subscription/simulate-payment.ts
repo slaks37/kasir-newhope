@@ -1,7 +1,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
-import { resolveTenantId } from '../../_lib/tenant.js';
+import { resolveTenantId, resolveMerchantId } from '../../_lib/tenant.js';
 
 let pool: pg.Pool | null = null;
 
@@ -97,21 +97,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const akhir = new Date(Date.now() + 30 * 86_400_000);
 
-    // Satu langganan per merchant. Kunci uniknya business_id, bukan id sintetis —
-    // dua baris untuk satu merchant membuat "paket mana yang berlaku" tidak
-    // punya jawaban.
+    // Satu langganan per MERCHANT — pemiliknya, bukan salah satu unit usahanya.
+    // Dua baris untuk satu pemilik membuat "paket mana yang berlaku" tidak punya
+    // jawaban, dan batas outletnya terbelah antar unit usaha.
+    const merchantId = await resolveMerchantId(db, tenantId);
+    if (!merchantId) {
+      return res.status(409).json({
+        ok: false,
+        error: 'MERCHANT_BELUM_SINKRON',
+        detail: 'Toko ini belum punya pemilik terdaftar.',
+      });
+    }
+
     const { rows } = await db.query(
       `INSERT INTO billing.subscriptions
-         (id, business_id, plan_id, status, current_period_start, current_period_end)
+         (id, merchant_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, $2, 'ACTIVE', CURRENT_TIMESTAMP, $3::timestamptz)
-       ON CONFLICT (business_id) DO UPDATE SET
+       ON CONFLICT (merchant_id) DO UPDATE SET
          plan_id            = EXCLUDED.plan_id,
          status             = 'ACTIVE',
          current_period_start = CURRENT_TIMESTAMP,
          current_period_end = EXCLUDED.current_period_end,
          updated_at         = CURRENT_TIMESTAMP
        RETURNING id, plan_id, status, current_period_end`,
-      [tenantId, targetPlan, akhir.toISOString()]
+      [merchantId, targetPlan, akhir.toISOString()]
     );
 
     const sub = rows[0];

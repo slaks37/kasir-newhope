@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { ADA_DB, db, tutupDb } from './helper-db';
+import { ADA_DB, db, tutupDb, bersihkanPemilik } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
 
@@ -30,9 +30,26 @@ d('satu konsep, satu nama', () => {
   it('merchant_id hanya tersisa di tempat yang artinya PEMILIK', async () => {
     const { rows } = await db().query(
       `SELECT table_schema||'.'||table_name AS t FROM information_schema.columns
-        WHERE column_name = 'merchant_id' AND table_schema IN ('pos','ai','internal','billing')`
+        WHERE column_name = 'merchant_id' AND table_schema IN ('pos','ai','internal','billing')
+        ORDER BY 1`
     );
-    expect(rows.map((r: any) => r.t)).toEqual(['pos.businesses']);
+    // Dua tempat, dan keduanya benar-benar berarti PEMILIK: unit usaha menunjuk
+    // pemiliknya, dan langganan dimiliki pemiliknya (0028). Yang dijaga tes ini
+    // bukan "hanya satu tabel", melainkan bahwa merchant_id tidak pernah lagi
+    // dipakai sebagai nama lain untuk business_id — daftarnya ditulis tegas
+    // supaya kolom baru bernama merchant_id harus dibenarkan lebih dulu.
+    expect(rows.map((r: any) => r.t)).toEqual(['billing.subscriptions', 'pos.businesses']);
+  });
+
+  it('langganan dimiliki merchant, dan tidak punya jalan lain ke business', async () => {
+    const { rows } = await db().query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'billing' AND table_name = 'subscriptions'
+          AND column_name IN ('business_id', 'tenant_id')`
+    );
+    // Selama kolomnya masih ada, satu INSERT yang lupa mengisi merchant_id
+    // menghasilkan langganan kedua yang tidak terlihat entitlement mana pun.
+    expect(rows).toEqual([]);
   });
 
   it('client_key adalah kunci partisi klien, bukan identitas usaha', async () => {
@@ -84,7 +101,7 @@ d('bentuk hierarki', () => {
   });
 
   it('business yang lahir kemudian ikut tertaut lewat trigger', async () => {
-    await db().query(`DELETE FROM pos.businesses WHERE client_key = 'usr-hier_FNB'`);
+    await bersihkanPemilik('usr-hier_FNB');
     const { rows } = await db().query(
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Hierarki', 'FNB', 'usr-hier_FNB', 'usr-hier', true)
@@ -94,11 +111,18 @@ d('bentuk hierarki', () => {
   });
 
   it('outlet menempel pada business, terminal pada outlet', async () => {
-    const b = (await db().query(
-      `SELECT id FROM pos.businesses WHERE client_key IS NOT NULL LIMIT 1`)).rows[0].id;
-    const o = (await db().query(
-      `SELECT id FROM pos.outlets WHERE business_id = $1 LIMIT 1`, [b])).rows[0];
-    expect(o).toBeDefined();
+    // Diambil business yang MEMANG punya outlet. `LIMIT 1` tanpa syarat itu
+    // bisa mendarat pada unit usaha bikinan tes lain yang belum punya cabang,
+    // dan tesnya gagal karena datanya, bukan karena hierarkinya salah.
+    const { rows: pasangan } = await db().query(
+      `SELECT b.id AS business_id, o.id AS outlet_id
+         FROM pos.businesses b
+         JOIN pos.outlets o ON o.business_id = b.id
+        WHERE b.client_key IS NOT NULL
+        ORDER BY b.created_at LIMIT 1`);
+    expect(pasangan[0]).toBeDefined();
+    const b = pasangan[0].business_id;
+    const o = { id: pasangan[0].outlet_id };
 
     await db().query(
       `INSERT INTO pos.terminals (id, business_id, outlet_id, device_ref, name)

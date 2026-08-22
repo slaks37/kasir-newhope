@@ -66,7 +66,7 @@ d('webhook pembayaran', () => {
     // dibuktikan bukan "tidak ada langganan" melainkan "tidak naik ke paket
     // berbayar".
     const sub = await db().query(
-      'SELECT plan_id, status FROM billing.subscriptions WHERE business_id = $1', [tid]);
+      `SELECT plan_id, status FROM billing.subscriptions WHERE merchant_id = (SELECT merchant_id FROM pos.businesses WHERE id = $1)`, [tid]);
     expect(sub.rows[0]?.plan_id).not.toBe('plan-pro-monthly');
     expect(sub.rows[0]?.status).not.toBe('ACTIVE');
 
@@ -81,7 +81,8 @@ d('webhook pembayaran', () => {
     expect(r._body.replayed).toBe(false);
 
     const { rows } = await db().query(
-      `SELECT plan_id, status, current_period_end FROM billing.subscriptions WHERE business_id = $1`, [tid]);
+      `SELECT plan_id, status, current_period_end FROM billing.subscriptions
+        WHERE merchant_id = (SELECT merchant_id FROM pos.businesses WHERE id = $1)`, [tid]);
     expect(rows[0].plan_id).toBe('plan-pro-monthly');
     expect(rows[0].status).toBe('ACTIVE');
     const hari = Math.round((new Date(rows[0].current_period_end).getTime() - Date.now()) / 86_400_000);
@@ -102,7 +103,7 @@ d('webhook pembayaran', () => {
     const r = await kirim(bayar('uji-sah-2', 'plan-yang-tidak-pernah-ada'));
     expect(r._status).toBe(200);
     const { rows } = await db().query(
-      'SELECT plan_id FROM billing.subscriptions WHERE business_id = $1', [tid]);
+      `SELECT plan_id FROM billing.subscriptions WHERE merchant_id = (SELECT merchant_id FROM pos.businesses WHERE id = $1)`, [tid]);
     expect(rows[0].plan_id).toBe('plan-pro-monthly');
   });
 

@@ -462,7 +462,11 @@ export interface SaaSPlan {
 
 export interface SaaSSubscription {
   id: string;
+  /** Unit usaha yang sedang dilihat. Langganan menanggung SELURUH unit usaha
+   *  milik merchant yang sama, jadi nilai ini adalah konteks, bukan pemilik. */
   tenantId: string;
+  /** PEMILIK langganan. Satu baris langganan per merchant. */
+  merchantId?: string;
   planId: string;
   status: SubscriptionStatus;
   currentPeriodStart: string; // ISO Date String

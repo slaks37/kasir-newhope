@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkronTransaksi from '../api/v1/sync/transactions';
 import sinkronCabang from '../api/v1/sync/branches';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, bersihkanPemilik } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
 
@@ -20,7 +20,7 @@ d('batas produk di jalur sinkron', () => {
   let tid = '';
 
   beforeAll(async () => {
-    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [BID]);
+    await bersihkanPemilik(BID);
   });
   afterAll(tutupDb);
 

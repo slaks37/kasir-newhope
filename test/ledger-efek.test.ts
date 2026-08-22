@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkron from '../api/v1/sync/transactions';
-import { ADA_DB, db, tutupDb, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, resTiruan, bersihkanPemilik } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
 const BID = 'usr-ledger_FNB';
@@ -22,7 +22,7 @@ d('ORDER_PAID menurunkan efeknya ke ledger', () => {
   let idKopi = '', idNasgor = '', idPotong = '', idBeras = '';
 
   beforeAll(async () => {
-    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [BID]);
+    await bersihkanPemilik(BID);
     const b = await db().query(
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Ledger', 'FNB', $1, 'usr-ledger', true) RETURNING id`, [BID]);
@@ -130,7 +130,7 @@ d('ORDER_VOIDED membalik, bukan menghapus', () => {
   const BID2 = 'usr-ledger-void_FNB';
 
   beforeAll(async () => {
-    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [BID2]);
+    await bersihkanPemilik(BID2);
     const b = await db().query(
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Void', 'FNB', $1, 'usr-ledger-void', true) RETURNING id`, [BID2]);

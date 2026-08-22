@@ -60,11 +60,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
     if (!target.rows.length) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
+    // Langganan ditemukan lewat MERCHANT-nya. Yang diupgrade adalah paket
+    // pemilik, yang berlaku untuk seluruh unit usahanya sekaligus.
     const sekarang = await db.query(
       `SELECT p.id, p.name, p.price_idr, s.current_period_end
          FROM billing.subscriptions s
+         JOIN pos.businesses b ON b.merchant_id = s.merchant_id
          JOIN billing.plans p ON p.id = s.plan_id
-        WHERE s.business_id = $1`,
+        WHERE b.id = $1`,
       [tenantId]
     );
 

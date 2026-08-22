@@ -1,82 +1,124 @@
 #!/usr/bin/env node
+/**
+ * Pengingat tagihan H-3.
+ *
+ * Versi sebelumnya membaca `billing.saas_plans` dan tabel `settings` — keduanya
+ * tidak ada di skema ini — dan menempelkan SATU alamat email milik pengembang
+ * sebagai penerima untuk setiap merchant. Kalau RESEND_API_KEY pernah terisi,
+ * yang terjadi bukan pengingat terkirim, melainkan satu orang menerima tagihan
+ * seluruh pelanggan. Skrip ini tidak pernah bisa berhasil, jadi kegagalannya
+ * tidak pernah terlihat.
+ *
+ * Sekarang: langganan dibaca lewat MERCHANT (pemiliknya, yang membayar), dan
+ * alamat tujuannya diambil dari pos.merchants.email. Merchant tanpa email
+ * dilewati dan dilaporkan, bukan dikirimi ke alamat cadangan siapa pun.
+ *
+ *   npm run batch:billing
+ */
 import pg from 'pg';
 import { Resend } from 'resend';
 import { config } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-// Load .env
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: join(__dirname, '../../.env') });
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
+// Domain pengirim harus terverifikasi di Resend. Dibuat bisa diatur supaya
+// deployment yang memakai domain lain tidak perlu menyunting berkas ini.
+const DARI = process.env.BILLING_EMAIL_FROM || 'billing@newhopepos.id';
 
-if (!RESEND_API_KEY) {
-  console.error('RESEND_API_KEY missing in .env');
+if (!DATABASE_URL) {
+  console.error('DATABASE_URL belum diisi.');
   process.exit(1);
 }
-if (!DATABASE_URL) {
-  console.error('DATABASE_URL missing in .env');
+if (!RESEND_API_KEY) {
+  console.error('RESEND_API_KEY belum diisi.');
   process.exit(1);
 }
 
 const resend = new Resend(RESEND_API_KEY);
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
 async function run() {
-  console.log('[Billing Reminder] Memulai pengecekan langganan yang akan habis H-3...');
+  console.log('[tagihan] mencari langganan yang habis 3 hari lagi...');
+
+  let dikirim = 0;
+  let tanpaEmail = 0;
 
   try {
-    // Cari langganan aktif/trial yang akan kedaluwarsa 3 hari lagi.
-    // Interval 3 hari berarti: sisa waktu antara > 2 hari dan < 3 hari
-    const res = await pool.query(`
-      SELECT s.id, s.business_id, s.status, s.current_period_end, p.name as plan_name, m.email, m.merchant_name
-      FROM billing.subscriptions s
-      JOIN billing.saas_plans p ON s.plan_id = p.id
-      JOIN (
-        SELECT id, name as merchant_name, 'stefen.maxy.academy@gmail.com' as email -- Placeholder email untuk tenant (atau dapatkan dari tabel akun tenant)
-        FROM settings
-      ) m ON m.id = s.business_id
-      WHERE s.status IN ('ACTIVE', 'TRIAL')
-        AND s.current_period_end >= NOW() + INTERVAL '2 days'
-        AND s.current_period_end < NOW() + INTERVAL '3 days'
+    // Satu baris per MERCHANT, bukan per unit usaha: pemilik dengan kafe dan
+    // laundry hanya punya satu langganan dan tidak boleh menerima dua email
+    // tentang tagihan yang sama.
+    const { rows } = await pool.query(`
+      SELECT s.id,
+             s.merchant_id,
+             s.status,
+             s.current_period_end,
+             p.name       AS plan_name,
+             p.price_idr,
+             m.name       AS merchant_name,
+             m.email
+        FROM billing.subscriptions s
+        JOIN billing.plans p   ON p.id = s.plan_id
+        JOIN pos.merchants m   ON m.id = s.merchant_id
+       WHERE s.status IN ('ACTIVE', 'TRIAL')
+         AND m.is_active
+         AND s.current_period_end >= CURRENT_TIMESTAMP + INTERVAL '2 days'
+         AND s.current_period_end <  CURRENT_TIMESTAMP + INTERVAL '3 days'
     `);
 
-    const subscriptions = res.rows;
-    console.log(`[Billing Reminder] Ditemukan ${subscriptions.length} langganan yang jatuh tempo H-3.`);
+    console.log(`[tagihan] ${rows.length} langganan jatuh tempo H-3.`);
 
-    for (const sub of subscriptions) {
-      console.log(`-> Mengirim pengingat ke ${sub.business_id} (Paket: ${sub.plan_name})...`);
-      
-      const emailHtml = `
-        <div style="font-family: sans-serif; max-w-md; margin: 0 auto;">
-          <h2>Pemberitahuan Tagihan H-3</h2>
+    for (const sub of rows) {
+      if (!sub.email) {
+        tanpaEmail++;
+        console.warn(`   [lewat] ${sub.merchant_name} belum punya alamat email.`);
+        continue;
+      }
+
+      const tanggal = new Date(sub.current_period_end).toLocaleDateString('id-ID', {
+        day: 'numeric', month: 'long', year: 'numeric',
+      });
+
+      const html = `
+        <div style="font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto;">
+          <h2 style="margin-bottom: 4px;">Masa aktif paket Anda tinggal 3 hari</h2>
           <p>Halo ${sub.merchant_name},</p>
-          <p>Masa aktif paket <strong>${sub.plan_name}</strong> Anda (saat ini berstatus <strong>${sub.status}</strong>) akan berakhir pada <strong>${new Date(sub.current_period_end).toLocaleDateString('id-ID')}</strong>.</p>
-          <p>Silakan pastikan Anda telah menyelesaikan pembayaran pada dashboard untuk menghindari gangguan layanan sistem kasir Anda.</p>
-          <br/>
-          <p>Terima kasih,<br/>Tim New Hope POS</p>
+          <p>Paket <strong>${sub.plan_name}</strong> (${rupiah(sub.price_idr)}/bulan)
+             berakhir pada <strong>${tanggal}</strong>.</p>
+          <p>Setelah itu masih ada masa tenggang 3 hari. Lewat dari itu, batas
+             produk, outlet, dan kuota AI turun ke tingkat Free — data Anda tetap
+             utuh dan kembali begitu pembayaran masuk.</p>
+          <p>Perpanjang lewat menu <strong>Pengaturan &rsaquo; Langganan</strong> di aplikasi.</p>
+          <p style="margin-top: 24px;">Terima kasih,<br/>Tim New Hope POS</p>
         </div>
       `;
 
       try {
         await resend.emails.send({
-          from: 'billing@newhopepos.id', // Pastikan domain ini diverifikasi di Resend
+          from: DARI,
           to: sub.email,
-          subject: 'Pemberitahuan Tagihan H-3 New Hope POS',
-          html: emailHtml
+          subject: `Paket ${sub.plan_name} Anda berakhir ${tanggal}`,
+          html,
         });
-        console.log(`   [OK] Email berhasil dikirim ke ${sub.email}.`);
+        dikirim++;
+        console.log(`   [ok] ${sub.merchant_name}`);
       } catch (e) {
-        console.error(`   [ERROR] Gagal mengirim ke ${sub.email}:`, e);
+        console.error(`   [gagal] ${sub.merchant_name}:`, e?.message || e);
       }
     }
+
+    console.log(`[tagihan] selesai. terkirim=${dikirim} tanpa-email=${tanpaEmail}`);
   } catch (error) {
-    console.error('[Billing Reminder] Gagal menjalankan script:', error);
+    console.error('[tagihan] gagal:', error?.message || error);
+    process.exitCode = 1;
   } finally {
     await pool.end();
-    console.log('[Billing Reminder] Selesai.');
   }
 }
 

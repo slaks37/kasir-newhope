@@ -77,7 +77,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const subRes = await db.query(
-      `SELECT s.id, s.business_id AS "tenantId", s.plan_id AS "planId", s.status,
+      `SELECT s.id, b.id AS "tenantId", s.merchant_id AS "merchantId",
+              s.plan_id AS "planId", s.status,
               s.current_period_start AS "currentPeriodStart",
               s.current_period_end   AS "currentPeriodEnd",
               s.grace_period_end     AS "gracePeriodEnd",
@@ -113,10 +114,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               e.ai_quota_plan               AS "aiQuotaMonthlyPlan",
               e.dashboard_access_level_plan AS "dashboardAccessLevelPlan"
          FROM billing.subscriptions s
+         -- Langganan menempel di MERCHANT. Unit usaha ini menemukannya lewat
+         -- pemiliknya, bukan lewat baris langganannya sendiri — pemilik dengan
+         -- kafe dan laundry hanya punya satu.
+         JOIN pos.businesses b ON b.merchant_id = s.merchant_id
          LEFT JOIN billing.plans p ON p.id = s.plan_id
-         LEFT JOIN contract.merchant_entitlements e ON e.business_id = s.business_id
-        WHERE s.business_id = $1
-        ORDER BY s.created_at DESC
+         LEFT JOIN contract.merchant_entitlements e ON e.business_id = b.id
+        WHERE b.id = $1
         LIMIT 1`,
       [tenantId]
     );
@@ -183,7 +187,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          FROM billing.invoices i
          LEFT JOIN billing.subscriptions s ON s.id = i.subscription_id
          LEFT JOIN billing.plans p ON p.id = s.plan_id
-        WHERE i.business_id = $1
+         -- SELURUH riwayat tagihan pemiliknya, bukan hanya yang kebetulan
+         -- diterbitkan dari unit usaha yang sedang dibuka. Yang membayar satu
+         -- orang, jadi riwayatnya juga satu.
+         JOIN pos.businesses b ON b.id = i.business_id
+        WHERE b.merchant_id = (SELECT merchant_id FROM pos.businesses WHERE id = $1)
         ORDER BY i.created_at DESC
         LIMIT 24`,
       [tenantId]

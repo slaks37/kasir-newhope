@@ -173,7 +173,7 @@ async function wipe(db: Db) {
              inventory_logs, product_recipes, products, ingredients,
              merchant_health_logs, feature_usage_events, daily_merchant_insights,
              merchant_ai_credits, merchant_targets, ai_query_logs,
-             invoices, subscriptions, users, businesses
+             invoices, subscriptions, users, businesses, merchants
     RESTART IDENTITY CASCADE
   `);
 }
@@ -202,6 +202,9 @@ async function main() {
   let txnTotal = 0;
   let itemTotal = 0;
   let actTotal = 0;
+  // Berapa outlet yang sudah dipakai tiap PEMILIK — jatahnya semerchant, dan
+  // usr-budi punya dua unit usaha yang berbagi jatah itu.
+  const outletTerpakai = new Map<string, number>();
 
   for (const m of MERCHANTS) {
     const cat = CATALOG[m.sector];
@@ -233,8 +236,16 @@ async function main() {
       `SELECT max_outlets FROM plans ORDER BY tier_level DESC LIMIT 1`
     );
     const batasOutlet = Number(batasRows[0]?.max_outlets ?? 1);
-    const jumlahCabang =
-      m.owner === 'usr-budi' && m.sector === 'FNB' ? batasOutlet : m.days >= 60 ? 2 : 1;
+
+    // Jatah outlet berlaku SEMERCHANT sejak 0028, bukan per unit usaha. Tanpa
+    // pemotongan di bawah, usr-budi mendapat 5 outlet di kafenya DAN 2 lagi di
+    // laundrynya — 7 outlet dari satu langganan Pro yang menjanjikan 5, dan
+    // seed langsung melahirkan keadaan yang ditolak servernya sendiri.
+    const dipakaiPemilik = outletTerpakai.get(m.owner) ?? 0;
+    const diinginkan =
+      m.owner === 'usr-budi' && m.sector === 'FNB' ? batasOutlet - 1 : m.days >= 60 ? 2 : 1;
+    const jumlahCabang = Math.max(1, Math.min(diinginkan, batasOutlet - dipakaiPemilik));
+    outletTerpakai.set(m.owner, dipakaiPemilik + jumlahCabang);
     let cabangUtama: string | null = null;
     for (let i = 0; i < jumlahCabang; i++) {
       const { rows } = await db.query(
@@ -309,11 +320,15 @@ async function main() {
         // MENIMPA, bukan menyisipkan. Sejak 0024 setiap merchant baru langsung
         // mendapat langganan percobaan dari trigger, jadi barisnya sudah ada
         // sebelum baris ini dijalankan.
-        `INSERT INTO subscriptions (id, business_id, plan_id, status,
+        // Kuncinya MERCHANT sejak 0028 — langganan milik pemilik, bukan unit
+        // usaha. Seed memakai satu unit usaha per pemilik, jadi pemetaannya
+        // satu-ke-satu, tapi kuncinya tetap harus benar.
+        `INSERT INTO subscriptions (id, merchant_id, plan_id, status,
                                     current_period_start, current_period_end)
-         VALUES (uuidv7(), $1, $2, $3,
-                 CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')
-         ON CONFLICT (business_id) DO UPDATE SET
+         SELECT uuidv7(), b.merchant_id, $2, $3,
+                CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days'
+           FROM businesses b WHERE b.id = $1
+         ON CONFLICT (merchant_id) DO UPDATE SET
            plan_id              = EXCLUDED.plan_id,
            status               = EXCLUDED.status,
            current_period_start = EXCLUDED.current_period_start,

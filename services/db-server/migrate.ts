@@ -47,6 +47,7 @@ const MIGRATIONS = [
   'migrations/0025_hierarki_identitas.sql',
   'migrations/0026_event_dan_ledger.sql',
   'migrations/0027_kredit_ai_ledger.sql',
+  'migrations/0028_langganan_per_merchant.sql',
 ];
 
 async function main() {

@@ -3871,6 +3871,2321 @@ INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0018_bundles
   ON CONFLICT (filename) DO NOTHING;
 
 
+-- --------------------------------------------------------------------------
+-- BAGIAN 20: migrations/0019_drop_tenant_id_duplikat.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0019_drop_tenant_id_duplikat.sql
+--
+-- Membuang kolom `tenant_id` yang selama ini hanya menyalin `merchant_id`.
+--
+-- 0013 memasang CHECK (merchant_id IS NOT DISTINCT FROM tenant_id) sebagai
+-- penjaga sementara, dan menyisakan satu pertanyaan produk:
+--
+--     "Apakah satu akun boleh memiliki BEBERAPA merchant?"
+--
+-- Jawabannya: BOLEH. Dan ternyata skema ini sudah memodelkannya sejak awal —
+-- satu baris `pos.tenants` per unit usaha, dengan `owner_user_ref` sebagai
+-- pemiliknya. Pemilik yang punya kafe dan laundry sekarang punya DUA baris
+-- tenants dengan owner_user_ref yang sama, dan `business_id` (`userId_sector`)
+-- membedakan keduanya. Jadi `pos.tenants` MEMANG tabel merchant itu; tidak ada
+-- tabel baru yang perlu dibuat.
+--
+-- Artinya `merchant_id` dan `tenant_id` benar-benar sinonim selamanya, dan satu
+-- di antaranya harus pergi.
+--
+-- YANG DIBUANG ADALAH `tenant_id`, BUKAN `merchant_id` — kebalikan dari tebakan
+-- di catatan 0013. Alasannya baru terlihat setelah ketujuh tabel diperiksa satu
+-- per satu: di SEMUA tabel itu, `merchant_id` yang memikul beban.
+--
+--     ai.merchant_targets        merchant_id PRIMARY KEY
+--     ai.merchant_ai_credits     merchant_id PRIMARY KEY
+--     ai.daily_merchant_insights UNIQUE (merchant_id, insight_date, category)
+--     internal.merchant_health_logs  UNIQUE (merchant_id, log_date)
+--     ai.ai_query_logs           idx (merchant_id, asked_at DESC)
+--     internal.feature_usage_events  idx (merchant_id, occurred_at DESC)
+--     pos.merchant_activity_log  idx (merchant_id, occurred_at DESC)
+--
+-- `tenant_id` di tabel-tabel ini tidak pernah menjadi kunci apa pun; ia hanya
+-- ikut ditulis. Membuang `merchant_id` berarti membongkar setiap primary key,
+-- unique constraint, indeks, foreign key, dan fungsi `consume_ai_credit()` —
+-- pekerjaan besar yang menghasilkan skema yang persis sama bagusnya. Membuang
+-- `tenant_id` tidak menyentuh satu pun indeks.
+--
+-- Seluruh permukaan baca (`contract.*`) sudah menamainya `merchant_id`, jadi
+-- tidak ada satu pun pemanggil di luar yang berubah.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0019_drop_tenant_id_duplikat.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. VIEW YANG IKUT MENAMPILKAN KOLOMNYA -------------------------------------
+--
+-- Postgres menolak DROP COLUMN selama ada view yang menyebutnya. View di bawah
+-- dibangun ulang tanpa `tenant_id`; kolomnya toh selalu berisi nilai yang sama
+-- dengan `merchant_id` di sebelahnya, jadi tidak ada informasi yang hilang.
+
+DROP VIEW IF EXISTS contract.merchant_health_latest CASCADE;
+DROP VIEW IF EXISTS public.v_merchant_health_latest CASCADE;
+
+
+-- 2. BUANG KOLOMNYA -----------------------------------------------------------
+--
+-- CHECK dari 0013 dan foreign key dari 0006 yang menempel pada kolom ini ikut
+-- terhapus sendiri bersama kolomnya — itu perilaku DROP COLUMN, bukan kelalaian.
+-- Penjagaan 0013 memang sudah tidak diperlukan begitu kolom keduanya tidak ada:
+-- satu kolom tidak bisa menyimpang dari dirinya sendiri.
+
+DO $$
+DECLARE
+    specs TEXT[][] := ARRAY[
+        ['ai',       'daily_merchant_insights'],
+        ['ai',       'merchant_targets'],
+        ['ai',       'merchant_ai_credits'],
+        ['ai',       'ai_query_logs'],
+        ['internal', 'feature_usage_events'],
+        ['internal', 'merchant_health_logs'],
+        ['pos',      'merchant_activity_log']
+    ];
+    s   TEXT[];
+    sch TEXT;
+    tbl TEXT;
+    menyimpang BOOLEAN;
+BEGIN
+    FOREACH s SLICE 1 IN ARRAY specs LOOP
+        sch := s[1]; tbl := s[2];
+
+        CONTINUE WHEN to_regclass(sch || '.' || tbl) IS NULL;
+
+        -- Pemeriksaan terakhir sebelum kolomnya hilang untuk selamanya. Kalau
+        -- ternyata ada baris yang MENYIMPANG, migrasi ini berhenti — baris itu
+        -- adalah merchant dengan dua identitas, dan membuang kolomnya diam-diam
+        -- akan mengubur buktinya. 0013 memasang CHECK-nya sebagai NOT VALID,
+        -- jadi baris lama memang belum pernah diperiksa siapa pun.
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema = sch AND table_name = tbl AND column_name = 'tenant_id'
+        ) THEN
+            EXECUTE format(
+                'SELECT EXISTS (SELECT 1 FROM %I.%I WHERE merchant_id IS DISTINCT FROM tenant_id)',
+                sch, tbl
+            ) INTO menyimpang;
+
+            IF menyimpang THEN
+                RAISE EXCEPTION
+                    '0019: %.% punya baris dengan merchant_id <> tenant_id. Rekonsiliasi dulu sebelum kolomnya dibuang.',
+                    sch, tbl;
+            END IF;
+
+            EXECUTE format('ALTER TABLE %I.%I DROP COLUMN tenant_id', sch, tbl);
+        END IF;
+        RAISE NOTICE '0019: %.%.tenant_id dibuang', sch, tbl;
+    END LOOP;
+END $$;
+
+
+-- 3. BANGUN ULANG VIEW --------------------------------------------------------
+
+CREATE VIEW contract.merchant_health_latest AS
+SELECT DISTINCT ON (h.merchant_id)
+       h.merchant_id, h.log_date, h.daily_revenue,
+       h.days_since_last_txn, h.active_days_last_7, h.revenue_trend_pct,
+       h.distinct_features_used, h.support_tickets_count,
+       h.subscription_status, h.mrr_idr, h.contract_mrr_idr,
+       h.churn_risk_score, h.churn_risk_reasons
+  FROM internal.merchant_health_logs h
+ ORDER BY h.merchant_id, h.log_date DESC;
+
+COMMENT ON VIEW contract.merchant_health_latest IS
+    'Skor kesehatan terbaru per merchant. `tenant_id` dibuang di 0019 — ia selalu sama dengan merchant_id.';
+
+
+-- 4. CATATAN PADA KOLOM YANG TERSISA ------------------------------------------
+--
+-- Komentar dari 0013 yang menjanjikan pembuangan ini diganti dengan yang
+-- menyatakan hasilnya.
+
+COMMENT ON COLUMN ai.merchant_ai_credits.merchant_id IS
+    'pos.tenants.id. Satu merchant = satu unit usaha; pemilik dengan beberapa usaha punya beberapa baris tenants dengan owner_user_ref yang sama. Kolom tenant_id yang menyalinnya dibuang di 0019.';
+
+COMMENT ON COLUMN pos.merchant_activity_log.merchant_id IS
+    'pos.tenants.id. Sinonim tenant_id; kolom duplikatnya dibuang di 0019.';
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0019_drop_tenant_id_duplikat.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 21: migrations/0020_branches.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0020_branches.sql
+--
+-- Memindahkan cabang dari localStorage ke database, supaya batas outlet paket
+-- bisa benar-benar ditegakkan.
+--
+-- KENAPA INI PERLU. `max_outlets` sudah ada di billing.plans sejak 0014, sudah
+-- bisa disunting admin, dan sudah ditolak aplikasi kasir lewat
+-- bolehTambahOutlet(). Tapi cabang tidak pernah meninggalkan browser: seluruh
+-- daftarnya hidup di StoreSettings.branches di localStorage. Akibatnya
+-- penegakannya persis sekuat tombol Simpan di layar Pengaturan — siapa pun yang
+-- menyunting localStorage, atau memakai perangkat kedua yang salinannya belum
+-- pernah melihat cabang pertama, melewatinya tanpa hambatan.
+--
+-- Ini masalah yang sama dengan batas produk yang baru ditutup di jalur sinkron,
+-- dan penutupannya menuntut satu hal yang belum ada: tempat di server untuk
+-- menghitung cabang.
+--
+-- Tiga akibat lain yang ikut selesai:
+--
+--   1. Ganti perangkat, daftar cabang hilang. Tidak ada salinan di mana pun.
+--   2. Panel admin tidak bisa menjawab "merchant ini punya berapa outlet"
+--      selain dengan menebak.
+--   3. Geofence absensi staf memakai koordinat yang hanya diketahui satu
+--      browser. Dua perangkat bisa punya radius berbeda untuk cabang yang sama.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0020_branches.sql
+--
+-- HARUS dijalankan SESUDAH 0009_service_schemas.sql.
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. TABEL CABANG -------------------------------------------------------------
+--
+-- external_ref adalah id sisi klien (`branch-...`), pola yang sama dengan
+-- products, users, dan customers: server tidak menebak identitas dari nama, dan
+-- kiriman ulang dari perangkat yang sama selalu mengenai baris yang sama.
+
+CREATE TABLE IF NOT EXISTS pos.branches (
+    id                    UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id             UUID NOT NULL REFERENCES pos.tenants(id) ON DELETE CASCADE,
+    external_ref          VARCHAR(96),
+
+    name                  VARCHAR(120) NOT NULL,
+    address               VARCHAR(300) NOT NULL DEFAULT '',
+
+    -- Koordinat geofence absensi. NUMERIC, bukan FLOAT: selisih pembulatan
+    -- pada derajat ke-6 sudah bernilai belasan sentimeter, dan radius yang
+    -- dipakai di sini bisa serapat 50 meter.
+    latitude              NUMERIC(10, 7),
+    longitude             NUMERIC(10, 7),
+    allowed_radius_meters INT NOT NULL DEFAULT 200
+                          CHECK (allowed_radius_meters BETWEEN 10 AND 50000),
+
+    business_sector       VARCHAR(16),
+    is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+    notes                 TEXT,
+
+    created_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Kunci idempotensi sinkron. Parsial karena external_ref boleh NULL untuk
+-- cabang yang kelak dibuat langsung di server.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_external
+    ON pos.branches (tenant_id, external_ref)
+ WHERE external_ref IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_branches_tenant
+    ON pos.branches (tenant_id, is_active);
+
+COMMENT ON TABLE pos.branches IS
+    'Cabang/outlet milik merchant. Jumlah baris AKTIF di sini yang dibatasi billing.plans.max_outlets.';
+COMMENT ON COLUMN pos.branches.is_active IS
+    'Cabang nonaktif TIDAK dihitung terhadap batas paket. Menutup cabang harus membebaskan kuotanya, kalau tidak merchant terkunci oleh cabang yang sudah tidak dipakai.';
+
+
+-- 2. CABANG YANG SEDANG DIPAKAI -----------------------------------------------
+--
+-- Disimpan pada tenants, bukan pada branches, karena "sedang dipakai" adalah
+-- satu nilai per merchant. Menyimpannya sebagai boolean di tiap baris cabang
+-- memungkinkan dua cabang sama-sama aktif, dan tidak ada jawaban benar saat
+-- itu terjadi.
+
+ALTER TABLE pos.tenants
+    ADD COLUMN IF NOT EXISTS active_branch_id UUID
+    REFERENCES pos.branches(id) ON DELETE SET NULL;
+
+
+-- 3. PERMUKAAN BACA -----------------------------------------------------------
+--
+-- Dinamai merchant_id seperti seluruh permukaan kontrak yang lain.
+
+DROP VIEW IF EXISTS contract.branches CASCADE;
+CREATE VIEW contract.branches AS
+SELECT b.tenant_id                    AS merchant_id,
+       b.id                           AS branch_id,
+       b.external_ref,
+       b.name,
+       b.address,
+       b.latitude,
+       b.longitude,
+       b.allowed_radius_meters,
+       b.business_sector,
+       b.is_active,
+       (t.active_branch_id = b.id)    AS sedang_dipakai,
+       b.created_at,
+       b.updated_at
+  FROM pos.branches b
+  JOIN pos.tenants  t ON t.id = b.tenant_id;
+
+COMMENT ON VIEW contract.branches IS
+    'Cabang per merchant untuk panel admin dan laporan. Hanya baca.';
+
+
+-- 4. PEMAKAIAN OUTLET TERHADAP BATAS PAKET ------------------------------------
+--
+-- Jawaban satu baris untuk "merchant ini sudah pakai berapa dari jatahnya",
+-- supaya panel admin dan endpoint sinkron membaca angka yang sama.
+
+DROP VIEW IF EXISTS contract.merchant_outlet_usage CASCADE;
+CREATE VIEW contract.merchant_outlet_usage AS
+SELECT t.id                                             AS merchant_id,
+       COALESCE(e.max_outlets, 1)                       AS max_outlets,
+       COUNT(b.id) FILTER (WHERE b.is_active)::int      AS outlet_aktif,
+       GREATEST(
+           COALESCE(e.max_outlets, 1)
+           - COUNT(b.id) FILTER (WHERE b.is_active)::int,
+           0
+       )                                                AS sisa_kuota
+  FROM pos.tenants t
+  LEFT JOIN contract.merchant_entitlements e ON e.merchant_id = t.id
+  LEFT JOIN pos.branches b                   ON b.tenant_id  = t.id
+ GROUP BY t.id, e.max_outlets;
+
+COMMENT ON VIEW contract.merchant_outlet_usage IS
+    'Pemakaian outlet terhadap batas paket. Tanpa langganan, batasnya 1 — merchant yang belum berlangganan bukan merchant dengan paket termahal.';
+
+
+-- 5. HAK AKSES ----------------------------------------------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON pos.branches TO svc_pos;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.branches TO svc_backoffice;
+        GRANT SELECT ON contract.merchant_outlet_usage TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0020_branches.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 22: migrations/0021_doku_pembayaran.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0021_doku_pembayaran.sql
+--
+-- Menyiapkan billing.invoices untuk pembayaran lewat DOKU Checkout.
+--
+-- KENAPA INI PERLU. Aktivasi langganan dipicu notifikasi dari DOKU, dan
+-- notifikasi itu hanya membawa satu hal yang menghubungkannya kembali ke kita:
+-- `invoice_number`. Tanpa kolom itu, satu-satunya cara mencocokkan pembayaran
+-- dengan merchant adalah mempercayai `tenantId` yang ikut di badan notifikasi —
+-- artinya mempercayai pihak luar untuk memberi tahu siapa yang harus
+-- diaktifkan.
+--
+-- Yang benar sebaliknya: KITA yang menerbitkan invoice_number sebelum
+-- memanggil DOKU, dan notifikasi hanya dipakai untuk MENEMUKAN baris yang sudah
+-- kita tulis sendiri. Tanda tangan menjamin pesannya asli; baris ini yang
+-- menjamin uangnya mendarat di merchant yang benar.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0021_doku_pembayaran.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. NOMOR FAKTUR -------------------------------------------------------------
+--
+-- UNIK per merchant, bukan global: dua merchant boleh punya INV-0001 masing-
+-- masing. Yang dikirim ke DOKU diberi awalan yang membuatnya unik global (lihat
+-- api/_lib/doku.ts), tapi keunikan di sini yang menjaga kita dari mencocokkan
+-- notifikasi ke faktur milik orang lain.
+
+ALTER TABLE billing.invoices
+    ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(64);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_number
+    ON billing.invoices (invoice_number)
+ WHERE invoice_number IS NOT NULL;
+
+COMMENT ON COLUMN billing.invoices.invoice_number IS
+    'Nomor yang dikirim ke payment gateway dan dikembalikan lagi lewat notifikasi. Satu-satunya kunci yang menghubungkan pembayaran ke faktur — jangan pernah mencocokkan lewat tenant_id dari badan notifikasi.';
+
+
+-- 2. PAKET YANG DIBELI FAKTUR INI ---------------------------------------------
+--
+-- TIDAK bisa disimpulkan dari subscription_id. Saat merchant meng-upgrade,
+-- langganannya masih menunjuk paket LAMA sampai pembayarannya lunas — dan itu
+-- memang benar, karena paket baru belum dibayar. Tanpa kolom ini, notifikasi
+-- yang masuk tidak tahu paket mana yang harus diaktifkan, dan merchant membayar
+-- Pro tapi mendapat perpanjangan Free.
+
+ALTER TABLE billing.invoices
+    ADD COLUMN IF NOT EXISTS plan_id VARCHAR(64) REFERENCES billing.plans(id);
+
+ALTER TABLE billing.invoices
+    ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(10) NOT NULL DEFAULT 'MONTHLY';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_invoices_cycle') THEN
+        ALTER TABLE billing.invoices ADD CONSTRAINT ck_invoices_cycle
+            CHECK (billing_cycle IN ('MONTHLY', 'YEARLY'));
+    END IF;
+END $$;
+
+
+-- 3. KEDALUWARSA SESI PEMBAYARAN ----------------------------------------------
+--
+-- QR dari DOKU punya masa berlaku. Menyimpannya membuat layar langganan bisa
+-- menjawab "QR ini masih bisa dipakai atau harus dibuat ulang" tanpa memanggil
+-- DOKU lagi — dan membuat faktur menggantung bisa dibersihkan tanpa menebak.
+
+ALTER TABLE billing.invoices
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE;
+
+ALTER TABLE billing.invoices
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+
+-- 3b. STATUS "KEDALUWARSA" ----------------------------------------------------
+--
+-- QR yang habis masa berlakunya BUKAN pembayaran yang gagal. Yang pertama
+-- berarti merchant belum sempat membayar dan tinggal membuat QR baru; yang
+-- kedua berarti pembayarannya ditolak dan perlu ditelusuri. Menyamakan
+-- keduanya membuat staf support tidak bisa membedakan tanpa membuka log
+-- gateway.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+         WHERE t.typname = 'payment_status_enum' AND e.enumlabel = 'EXPIRED'
+    ) THEN
+        ALTER TYPE payment_status_enum ADD VALUE 'EXPIRED';
+    END IF;
+END $$;
+
+
+-- 4. FOREIGN KEY GANDA --------------------------------------------------------
+--
+-- Tabel ini punya DUA foreign key yang identik ke tenants: fk_invoices_tenant
+-- dan fk_invoices_tenant_id, keduanya (tenant_id) -> tenants(id) ON DELETE
+-- CASCADE. Peninggalan dua migrasi yang menambahkannya dengan nama berbeda.
+-- Tidak berbahaya, tapi setiap penulisan diperiksa dua kali untuk aturan yang
+-- sama persis.
+
+ALTER TABLE billing.invoices DROP CONSTRAINT IF EXISTS fk_invoices_tenant_id;
+
+
+-- 5. NOTIFIKASI DOKU YANG SUDAH DIPROSES --------------------------------------
+--
+-- billing.webhook_logs sudah menjaga idempotensi lewat event_id. DOKU tidak
+-- mengirim event_id; yang unik per notifikasi adalah header Request-Id. Kolom
+-- ini menegaskan asalnya supaya dua gateway yang kelak dipakai bersamaan tidak
+-- saling menimpa idempotensinya.
+
+ALTER TABLE billing.webhook_logs
+    ADD COLUMN IF NOT EXISTS provider VARCHAR(24) NOT NULL DEFAULT 'UNKNOWN';
+
+CREATE INDEX IF NOT EXISTS idx_webhook_logs_provider
+    ON billing.webhook_logs (provider, processed_at DESC);
+
+
+-- 6. PERMUKAAN BACA -----------------------------------------------------------
+
+DROP VIEW IF EXISTS contract.merchant_invoices CASCADE;
+CREATE VIEW contract.merchant_invoices AS
+SELECT i.tenant_id            AS merchant_id,
+       t.name                 AS merchant_name,
+       i.id                   AS invoice_id,
+       i.invoice_number,
+       i.plan_id,
+       COALESCE(p.name, '-')  AS plan_name,
+       i.billing_cycle,
+       i.amount,
+       i.currency,
+       i.payment_status,
+       i.payment_gateway_ref,
+       i.paid_at,
+       i.due_date,
+       i.expires_at,
+       i.created_at
+  FROM billing.invoices i
+  JOIN pos.tenants  t ON t.id = i.tenant_id
+  LEFT JOIN billing.plans p ON p.id = i.plan_id;
+
+COMMENT ON VIEW contract.merchant_invoices IS
+    'Faktur langganan per merchant untuk panel admin. Hanya baca.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.merchant_invoices TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0021_doku_pembayaran.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 23: migrations/0022_empat_tier.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0022_empat_tier.sql
+--
+-- Menata ulang katalog menjadi empat tingkatan: Free Trial, Free, Plus, Pro.
+--
+-- YANG BERUBAH:
+--
+--   nama    "Free Tier" -> "Free", "Tier Plus" -> "Plus", "Tier Pro" -> "Pro".
+--           Kata "Tier" di depan nama tingkatan menjadi mubazir begitu kolomnya
+--           sendiri bernama tier_level.
+--
+--   Pro     4 -> 5 outlet.
+--   Plus    tetap 2 outlet.
+--
+--   baru    plan-free-trial, dan kolom trial_days pada billing.plans.
+--
+-- ISI FREE TRIAL, dan alasannya.
+--
+-- Trial diberi entitlement SETARA PLUS, berlaku 14 hari. Dua kemungkinan lain
+-- sengaja tidak dipilih:
+--
+--   - Setara Free. Itu bukan masa percobaan, itu paket Free dengan nama lain;
+--     tidak ada yang dicoba dan tidak ada alasan untuk berlangganan sesudahnya.
+--
+--   - Setara Pro. Menggiurkan, tapi membuat "tingkat yang lebih tinggi tidak
+--     pernah memberi lebih sedikit" berhenti berlaku di katalog — trial di
+--     urutan bawah memberi lebih banyak daripada Plus di atasnya. Aturan itu
+--     yang menjaga panel admin dari membuat paket yang menghukum orang karena
+--     meng-upgrade, jadi ia tidak dilanggar demi satu baris.
+--
+-- Kalau kelak trial memang ingin setara Pro, cukup ubah entitlement-nya di
+-- panel admin — tapi ketahuilah bahwa saat itu urutan katalognya tidak lagi
+-- monoton, dan tes katalog akan mengatakannya.
+--
+-- URUTAN tier_level: Free 1, Free Trial 2, Plus 3, Pro 4. Diurut menurut apa
+-- yang DIDAPAT, bukan menurut urutan orang menyebutnya.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0022_empat_tier.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. BERAPA LAMA MASA PERCOBAAN -----------------------------------------------
+--
+-- Paket percobaan tanpa durasi tidak berarti apa-apa, dan durasinya harus bisa
+-- diubah admin tanpa deploy. 0 = bukan paket percobaan.
+
+ALTER TABLE billing.plans
+    ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 0;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_plans_trial_days') THEN
+        ALTER TABLE billing.plans ADD CONSTRAINT ck_plans_trial_days
+            CHECK (trial_days >= 0 AND trial_days <= 365);
+    END IF;
+END $$;
+
+COMMENT ON COLUMN billing.plans.trial_days IS
+    'Lama masa percobaan dalam hari. 0 berarti paket biasa. Paket dengan trial_days > 0 tidak boleh berbayar.';
+
+-- Paket percobaan yang berbayar adalah kontradiksi yang hanya akan ketahuan
+-- setelah ada yang ditagih.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_plans_trial_gratis') THEN
+        ALTER TABLE billing.plans ADD CONSTRAINT ck_plans_trial_gratis
+            CHECK (trial_days = 0 OR price_idr = 0);
+    END IF;
+END $$;
+
+
+-- 2. TINGKATAN BARU DAN PENAMAAN ----------------------------------------------
+--
+-- Nama, urutan, dan batas outlet diterapkan TANPA syarat updated_by IS NULL
+-- yang dipakai 0014. Ini bukan seed yang tidak boleh menimpa suntingan admin,
+-- melainkan penataan katalog yang diminta pemilik sistem. Harga sengaja TIDAK
+-- ikut disentuh — itu memang wilayah panel admin.
+
+UPDATE billing.plans SET name = 'Free',  tier_level = 1, sort_order = 1 WHERE id = 'plan-free';
+UPDATE billing.plans SET name = 'Plus',  tier_level = 3, sort_order = 3, max_outlets = 2 WHERE id = 'plan-plus-monthly';
+UPDATE billing.plans SET name = 'Pro',   tier_level = 4, sort_order = 4, max_outlets = 5 WHERE id = 'plan-pro-monthly';
+
+UPDATE billing.plans
+   SET features = '["Full POS & Transaksi Lanjutan","Manajemen Stok Lanjut & Bahan Baku","Multi-Outlet Analytics & Laporan Lengkap","Produk Tidak Terbatas (Unlimited)","Sampai 5 Outlet Terdaftar","AI Analyst (90x / bulan)"]'::jsonb
+ WHERE id = 'plan-pro-monthly';
+
+
+-- 3. PAKET PERCOBAAN ----------------------------------------------------------
+--
+-- Entitlement-nya sengaja disalin dari Plus dan bukan ditulis ulang sebagai
+-- angka baru: dua daftar yang "kebetulan sama" akan berbeda pada suntingan
+-- berikutnya, dan trial yang diam-diam lebih kecil dari Plus adalah janji yang
+-- tidak ditepati.
+
+INSERT INTO billing.plans
+    (id, name, tier_level, billing_cycle, price_idr, price_yearly_idr, currency,
+     features, is_active, product_limit, max_outlets, ai_quota_monthly,
+     dashboard_access_level, extra_outlet_price_idr, module_access, sort_order, trial_days)
+SELECT
+    'plan-free-trial', 'Free Trial', 2, 'MONTHLY', 0, NULL, 'IDR',
+    '["Coba semua fitur Plus selama 14 hari","Full POS & Transaksi Kasir","Manajemen Inventori Dasar","Laporan & Dashboard Analytics","Maksimal 100 Produk per Outlet","Sampai 2 Outlet Terdaftar","AI Analyst (30x / bulan)","Tanpa kartu kredit"]'::jsonb,
+    TRUE, p.product_limit, p.max_outlets, p.ai_quota_monthly,
+    p.dashboard_access_level, NULL, p.module_access, 2, 14
+  FROM billing.plans p
+ WHERE p.id = 'plan-plus-monthly'
+ON CONFLICT (id) DO UPDATE SET
+    name        = EXCLUDED.name,
+    tier_level  = EXCLUDED.tier_level,
+    sort_order  = EXCLUDED.sort_order,
+    trial_days  = EXCLUDED.trial_days;
+
+
+-- 4. VIEW KONTRAK IKUT MEMBAWA trial_days -------------------------------------
+
+DROP VIEW IF EXISTS contract.plan_catalog CASCADE;
+CREATE VIEW contract.plan_catalog AS
+SELECT p.id, p.name, p.tier_level, p.billing_cycle, p.price_idr, p.price_yearly_idr,
+       p.extra_outlet_price_idr, p.currency, p.features, p.product_limit, p.max_outlets,
+       p.ai_quota_monthly, p.dashboard_access_level, p.module_access, p.sort_order,
+       p.trial_days, p.is_active
+  FROM billing.plans p;
+
+COMMENT ON VIEW contract.plan_catalog IS
+    'Katalog paket untuk aplikasi kasir dan ai-service. Hanya baca.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT ON contract.plan_catalog TO svc_pos;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT ON contract.plan_catalog TO svc_ai;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.plan_catalog TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0022_empat_tier.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 24: migrations/0023_entitlement_kedaluwarsa.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0023_entitlement_kedaluwarsa.sql
+--
+-- Menurunkan entitlement merchant yang langganannya mati ke tingkat Free.
+--
+-- KEADAAN SEBELUM INI, dan bagaimana ketahuannya. Sebuah merchant paket Pro
+-- yang periodenya lewat 30 hari — jauh di luar masa tenggang — diuji lewat
+-- /api/v1/subscription/status. Yang kembali:
+--
+--     status efektif : EXPIRED
+--     isActive       : false
+--     batas produk   : -1  (tanpa batas)
+--     batas outlet   : 5
+--     dashboard      : ADVANCED
+--     modul          : 13 modul terbuka
+--
+-- Statusnya benar, tapi tidak ada satu pun batas yang ikut turun. Hal yang
+-- sama berlaku di contract.merchant_entitlements, yang dibaca penegakan sisi
+-- server: hanya ai_quota_effective yang menjadi nol, sementara product_limit,
+-- max_outlets, dashboard_access_level, dan module_access diteruskan apa adanya
+-- dari paket. Merchant yang berhenti membayar tetap memegang seluruh isi paket
+-- termahal.
+--
+-- YANG DITURUNKAN, DAN KE MANA. Ke tingkat Free, bukan ke nol. Paket Free ada
+-- justru untuk keadaan ini; mengunci total berarti Free tidak berarti apa-apa,
+-- dan sebuah aplikasi kasir yang mati di tengah pelayanan adalah kerugian yang
+-- jauh melampaui tagihan yang belum dibayar.
+--
+-- MASA TENGGANG TIDAK IKUT TURUN. PAST_DUE adalah merchant yang terlambat, bukan
+-- merchant yang berhenti — dan menghukum keterlambatan tiga hari dengan
+-- mencabut outletnya akan mematikan toko yang sebenarnya berniat membayar.
+--
+-- Nilai paketnya tetap dibawa terpisah (kolom *_plan) supaya layar langganan
+-- bisa berkata "paket Anda 5 outlet, aktifkan kembali untuk memakainya".
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0023_entitlement_kedaluwarsa.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+DROP VIEW IF EXISTS contract.merchant_entitlements CASCADE;
+
+CREATE VIEW contract.merchant_entitlements AS
+WITH efektif AS (
+    SELECT
+        s.tenant_id,
+        s.plan_id,
+        s.current_period_end,
+        CASE
+            WHEN s.status = 'CANCELED' THEN 'CANCELED'
+            WHEN CURRENT_TIMESTAMP <= s.current_period_end THEN s.status::text
+            WHEN CURRENT_TIMESTAMP <= s.current_period_end + INTERVAL '3 days' THEN 'PAST_DUE'
+            ELSE 'EXPIRED'
+        END AS status_efektif,
+        ROW_NUMBER() OVER (PARTITION BY s.tenant_id ORDER BY s.created_at DESC) AS urutan
+      FROM billing.subscriptions s
+),
+-- Tingkat dasar diambil dari baris Free yang sesungguhnya, bukan dari angka
+-- yang ditulis ulang di sini. Admin yang menaikkan batas Free menaikkan pula
+-- apa yang didapat merchant kedaluwarsa — itu memang satu keputusan yang sama.
+dasar AS (
+    SELECT product_limit, max_outlets, dashboard_access_level, module_access
+      FROM billing.plans WHERE id = 'plan-free'
+)
+SELECT
+    e.tenant_id                AS merchant_id,
+    e.plan_id,
+    p.name                     AS plan_name,
+    p.tier_level,
+    e.status_efektif           AS status,
+    e.current_period_end,
+    (e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')) AS berlaku,
+
+    -- YANG BERLAKU SEKARANG.
+    CASE WHEN e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+         THEN p.ai_quota_monthly ELSE 0 END                    AS ai_quota_effective,
+    CASE WHEN e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+         THEN p.product_limit ELSE d.product_limit END         AS product_limit,
+    CASE WHEN e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+         THEN p.max_outlets ELSE d.max_outlets END             AS max_outlets,
+    CASE WHEN e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+         THEN p.dashboard_access_level
+         ELSE d.dashboard_access_level END                     AS dashboard_access_level,
+    CASE WHEN e.status_efektif IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+         THEN p.module_access ELSE d.module_access END         AS module_access,
+
+    -- YANG TERTULIS DI PAKET, untuk ditampilkan saat mengajak memperpanjang.
+    p.ai_quota_monthly         AS ai_quota_plan,
+    p.product_limit            AS product_limit_plan,
+    p.max_outlets              AS max_outlets_plan,
+    p.dashboard_access_level   AS dashboard_access_level_plan,
+    p.module_access            AS module_access_plan
+  FROM efektif e
+  JOIN billing.plans p ON p.id = e.plan_id
+  CROSS JOIN dasar d
+ WHERE e.urutan = 1;
+
+COMMENT ON VIEW contract.merchant_entitlements IS
+    'Entitlement yang BERLAKU sekarang. Langganan mati turun ke tingkat Free, bukan ke nol — paket Free ada justru untuk keadaan ini. Masa tenggang TIDAK diturunkan. Nilai paket dibawa terpisah sebagai *_plan.';
+
+-- BANGUN ULANG VIEW YANG BERGANTUNG PADANYA.
+--
+-- DROP ... CASCADE di atas ikut menjatuhkan contract.merchant_outlet_usage —
+-- dan itulah view yang dibaca penegakan batas outlet di jalur sinkron cabang.
+-- Tanpa membangunnya kembali, endpoint itu gagal total dan tidak ada satu pun
+-- cabang yang bisa disimpan. Ketahuan karena jumlah view kontrak turun dari 22
+-- ke 21 setelah migrasi ini dijalankan.
+--
+-- Sekarang ia otomatis ikut menurun saat langganan mati, karena max_outlets
+-- yang dibacanya sudah yang berlaku.
+
+DROP VIEW IF EXISTS contract.merchant_outlet_usage CASCADE;
+CREATE VIEW contract.merchant_outlet_usage AS
+SELECT t.id                                             AS merchant_id,
+       COALESCE(e.max_outlets, 1)                       AS max_outlets,
+       COUNT(b.id) FILTER (WHERE b.is_active)::int      AS outlet_aktif,
+       GREATEST(
+           COALESCE(e.max_outlets, 1)
+           - COUNT(b.id) FILTER (WHERE b.is_active)::int,
+           0
+       )                                                AS sisa_kuota
+  FROM pos.tenants t
+  LEFT JOIN contract.merchant_entitlements e ON e.merchant_id = t.id
+  LEFT JOIN pos.branches b                   ON b.tenant_id  = t.id
+ GROUP BY t.id, e.max_outlets;
+
+COMMENT ON VIEW contract.merchant_outlet_usage IS
+    'Pemakaian outlet terhadap batas yang BERLAKU. Tanpa langganan, batasnya 1. Langganan mati ikut turun ke batas Free.';
+
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT ON contract.merchant_entitlements TO svc_pos;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT ON contract.merchant_entitlements TO svc_ai;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.merchant_entitlements TO svc_backoffice;
+        GRANT SELECT ON contract.merchant_outlet_usage TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0023_entitlement_kedaluwarsa.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 25: migrations/0024_trial_otomatis.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0024_trial_otomatis.sql
+--
+-- Merchant baru langsung mendapat Free Trial.
+--
+-- KENAPA DI DATABASE, BUKAN DI ENDPOINT PENDAFTARAN. Tidak ada satu endpoint
+-- pendaftaran pun: akun dibuat lewat Supabase Auth di sisi klien, sementara
+-- baris merchant lahir belakangan dan dari beberapa tempat — jalur sinkron
+-- transaksi, jalur sinkron katalog, seed, dan panel admin. Menaruh aturannya di
+-- salah satu dari mereka berarti jalur lain melewatkannya, dan merchant yang
+-- lahir lewat jalur itu tidak pernah punya masa percobaan tanpa ada yang tahu.
+--
+-- Trigger pada pos.tenants menjadikannya satu aturan yang tidak bisa dilewati:
+-- dari mana pun merchant itu dibuat, langganan percobaannya ikut lahir.
+--
+-- PAKETNYA DICARI, TIDAK DIPATOK. Yang dipilih adalah paket bertrial_days > 0
+-- dengan tier terendah. Mengganti nama atau id paket percobaan di panel admin
+-- tidak boleh mematikan pemberian trial — dan mematoknya pada 'plan-free-trial'
+-- persis akan begitu.
+--
+-- TIDAK MENIMPA yang sudah ada. ON CONFLICT DO NOTHING: merchant yang dibuat
+-- bersamaan dengan langganannya (seed, migrasi data) tetap memakai miliknya.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0024_trial_otomatis.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION billing.beri_trial_merchant_baru()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    paket RECORD;
+BEGIN
+    SELECT id, trial_days INTO paket
+      FROM billing.plans
+     WHERE trial_days > 0 AND is_active
+     ORDER BY tier_level
+     LIMIT 1;
+
+    -- Tidak ada paket percobaan yang dijual: merchant lahir tanpa langganan,
+    -- persis seperti sebelumnya. Bukan galat — katalog tanpa trial adalah
+    -- pilihan yang sah.
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO billing.subscriptions
+        (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+    VALUES
+        (uuidv7(), NEW.id, paket.id, 'TRIAL',
+         CURRENT_TIMESTAMP,
+         CURRENT_TIMESTAMP + (paket.trial_days || ' days')::interval)
+    ON CONFLICT (tenant_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION billing.beri_trial_merchant_baru() IS
+    'Memberi langganan percobaan kepada merchant yang baru lahir. Paketnya dicari dari katalog, tidak dipatok pada satu id.';
+
+DROP TRIGGER IF EXISTS trg_trial_merchant_baru ON pos.tenants;
+CREATE TRIGGER trg_trial_merchant_baru
+    AFTER INSERT ON pos.tenants
+    FOR EACH ROW
+    EXECUTE FUNCTION billing.beri_trial_merchant_baru();
+
+
+-- MERCHANT YANG SUDAH TERLANJUR LAHIR TANPA LANGGANAN -------------------------
+--
+-- Diberi trial yang sama. Tanpa ini, siapa pun yang mendaftar sebelum migrasi
+-- ini dijalankan berada dalam keadaan yang paling membingungkan: tidak punya
+-- langganan sama sekali, sehingga status.ts menjawab BELUM_BERLANGGANAN dan
+-- aplikasinya jatuh ke entitlement darurat — lebih sempit daripada Free.
+
+INSERT INTO billing.subscriptions
+    (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+SELECT uuidv7(), t.id, p.id, 'TRIAL',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + (p.trial_days || ' days')::interval
+  FROM pos.tenants t
+ CROSS JOIN LATERAL (
+     SELECT id, trial_days FROM billing.plans
+      WHERE trial_days > 0 AND is_active ORDER BY tier_level LIMIT 1
+ ) p
+ WHERE NOT EXISTS (SELECT 1 FROM billing.subscriptions s WHERE s.tenant_id = t.id)
+ON CONFLICT (tenant_id) DO NOTHING;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0024_trial_otomatis.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 26: migrations/0025_hierarki_identitas.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0025_hierarki_identitas.sql
+--
+-- Menegakkan satu kosakata identitas: Merchant -> Business -> Outlet -> Terminal.
+--
+-- MASALAH YANG DIPERBAIKI. Satu konsep yang sama dipanggil dengan TIGA nama
+-- berbeda tergantung skema mana yang menyimpannya:
+--
+--     pos.*, billing.*      -> tenant_id
+--     ai.*, internal.*      -> merchant_id
+--     contract.*            -> merchant_id
+--
+-- Sementara nama `business_id` justru dipakai untuk hal yang sama sekali lain:
+-- kunci partisi penyimpanan di sisi klien (`usr-1_FNB`).
+--
+-- Selama satu tabel hanya memakai satu kolom, ini "hanya" membingungkan. Tapi
+-- setiap kueri lintas skema harus mengingat nama mana yang berlaku di mana, dan
+-- satu kekeliruan menghasilkan JOIN yang diam-diam kosong — bukan galat.
+--
+-- SESUDAH MIGRASI INI:
+--
+--     business_id (lama, userId_sector)  -> client_key
+--     tenant_id                          -> business_id
+--     merchant_id                        -> business_id
+--     pos.tenants                        -> pos.businesses
+--     pos.branches                       -> pos.outlets
+--     (baru)                             -> pos.merchants   (di atas businesses)
+--     (baru)                             -> pos.terminals   (di bawah outlets)
+--
+-- ALTER ... RENAME dipakai, BUKAN membuat kolom baru lalu menyalin. Postgres
+-- ikut memperbarui foreign key, indeks, constraint, dan definisi view secara
+-- otomatis — sehingga tidak ada jendela waktu ketika dua kolom hidup bersamaan
+-- dan bisa menyimpang.
+--
+-- `sector` TETAP kolom biasa, bukan bagian identitas. Ia klasifikasi: sebuah
+-- usaha bisa berganti sektor tanpa menjadi usaha yang berbeda.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0025_hierarki_identitas.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. business_id LAMA -> client_key -------------------------------------------
+--
+-- Didahulukan supaya namanya kosong sebelum tenant_id pindah ke sana.
+-- Nilainya `usr-1_FNB`: kunci tempat aplikasi kasir menyimpan datanya di
+-- localStorage, dan kunci yang dipakai perangkat untuk mengenali dirinya saat
+-- sinkron. Itu memang berguna — yang keliru hanya namanya, yang membuatnya
+-- tampak seperti identitas usaha.
+
+DO $$
+DECLARE t RECORD;
+BEGIN
+    FOR t IN
+        SELECT table_schema AS s, table_name AS n
+          FROM information_schema.columns
+         WHERE column_name = 'business_id'
+           AND table_schema IN ('pos', 'ai', 'internal', 'billing')
+    LOOP
+        EXECUTE format('ALTER TABLE %I.%I RENAME COLUMN business_id TO client_key', t.s, t.n);
+        RAISE NOTICE '0025: %.%.business_id -> client_key', t.s, t.n;
+    END LOOP;
+END $$;
+
+
+-- 2. tenant_id DAN merchant_id -> business_id ---------------------------------
+--
+-- Keduanya selalu menunjuk hal yang sama: satu unit usaha. 0019 sudah
+-- memastikan tidak ada tabel yang memegang keduanya sekaligus, jadi keduanya
+-- bisa mendarat pada satu nama tanpa tabrakan.
+
+DO $$
+DECLARE t RECORD;
+BEGIN
+    FOR t IN
+        SELECT table_schema AS s, table_name AS n, column_name AS c
+          FROM information_schema.columns
+         WHERE column_name IN ('tenant_id', 'merchant_id')
+           AND table_schema IN ('pos', 'ai', 'internal', 'billing')
+    LOOP
+        EXECUTE format('ALTER TABLE %I.%I RENAME COLUMN %I TO business_id', t.s, t.n, t.c);
+        RAISE NOTICE '0025: %.%.% -> business_id', t.s, t.n, t.c;
+    END LOOP;
+END $$;
+
+
+-- 2b. external_ref PADA BUSINESS -> client_key ---------------------------------
+--
+-- Nilainya persis sama dengan kolom business_id lama di tabel lain
+-- (`usr-1_FNB`), jadi namanya harus sama juga. Dua nama untuk satu nilai adalah
+-- awal dari dua nilai yang berbeda.
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='pos' AND table_name='tenants'
+                  AND column_name='external_ref') THEN
+        ALTER TABLE pos.tenants RENAME COLUMN external_ref TO client_key;
+    END IF;
+END $$;
+
+
+-- 3. TABEL -> nama kanonik ----------------------------------------------------
+
+DO $$
+BEGIN
+    IF to_regclass('pos.tenants') IS NOT NULL AND to_regclass('pos.businesses') IS NULL THEN
+        ALTER TABLE pos.tenants RENAME TO businesses;
+    END IF;
+
+    IF to_regclass('pos.branches') IS NOT NULL AND to_regclass('pos.outlets') IS NULL THEN
+        ALTER TABLE pos.branches RENAME TO outlets;
+    END IF;
+END $$;
+
+-- Kolom penunjuk outlet aktif ikut menyesuaikan namanya.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='pos' AND table_name='businesses'
+                  AND column_name='active_branch_id') THEN
+        ALTER TABLE pos.businesses RENAME COLUMN active_branch_id TO active_outlet_id;
+    END IF;
+END $$;
+
+
+-- 4. MERCHANT — pemilik akun, di ATAS business --------------------------------
+--
+-- Inilah lapisan yang selama ini tidak punya tabel: pemilik yang memiliki kafe
+-- DAN laundry. Sebelumnya keduanya hanya terhubung lewat `owner_user_ref` yang
+-- sama — sebuah string, tanpa baris, tanpa foreign key, dan tanpa tempat untuk
+-- menyimpan apa pun yang berlaku bagi pemiliknya (langganan bersama, penagihan
+-- terpusat, kontak resmi).
+
+CREATE TABLE IF NOT EXISTS pos.merchants (
+    id              UUID PRIMARY KEY DEFAULT uuidv7(),
+    -- Akun pemilik dari penyedia autentikasi. Satu akun = satu merchant.
+    owner_user_ref  VARCHAR(64) NOT NULL,
+    name            VARCHAR(120) NOT NULL,
+    email           VARCHAR(160),
+    phone           VARCHAR(32),
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_merchants_owner
+    ON pos.merchants (owner_user_ref);
+
+COMMENT ON TABLE pos.merchants IS
+    'Pemilik akun. Satu merchant boleh memiliki beberapa business (kafe + laundry).';
+
+ALTER TABLE pos.businesses
+    ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES pos.merchants(id) ON DELETE CASCADE;
+
+COMMENT ON COLUMN pos.businesses.merchant_id IS
+    'Pemilik usaha ini. Nama merchant_id di sini berarti PEMILIK — berbeda dari pemakaian lama sebelum 0019, ketika ia hanya salinan tenant_id.';
+
+-- Backfill: tiap owner_user_ref yang sudah ada menjadi satu merchant.
+INSERT INTO pos.merchants (id, owner_user_ref, name)
+SELECT uuidv7(), b.owner_user_ref,
+       -- Nama merchant belum pernah ditanyakan ke siapa pun. Memakai nama usaha
+       -- pertamanya lebih jujur daripada mengarang "Merchant #4".
+       MIN(b.name)
+  FROM pos.businesses b
+ WHERE b.owner_user_ref IS NOT NULL
+ GROUP BY b.owner_user_ref
+ON CONFLICT (owner_user_ref) DO NOTHING;
+
+UPDATE pos.businesses b
+   SET merchant_id = m.id
+  FROM pos.merchants m
+ WHERE m.owner_user_ref = b.owner_user_ref
+   AND b.merchant_id IS DISTINCT FROM m.id;
+
+CREATE INDEX IF NOT EXISTS idx_businesses_merchant ON pos.businesses (merchant_id);
+
+
+-- 5. TERMINAL — perangkat kasir di sebuah outlet ------------------------------
+--
+-- Aplikasi sudah mengirim `x-device-id` pada beberapa permintaan, tapi tidak
+-- ada tempat untuk menyimpannya. Akibatnya "kasir mana yang mencetak struk ini"
+-- hanya bisa dijawab lewat nama orang, bukan perangkat — padahal saat kas tidak
+-- cocok, yang perlu ditelusuri justru perangkatnya.
+
+CREATE TABLE IF NOT EXISTS pos.terminals (
+    id            UUID PRIMARY KEY DEFAULT uuidv7(),
+    business_id   UUID NOT NULL REFERENCES pos.businesses(id) ON DELETE CASCADE,
+    outlet_id     UUID REFERENCES pos.outlets(id) ON DELETE SET NULL,
+    -- Nilai x-device-id yang dikirim aplikasi kasir.
+    device_ref    VARCHAR(128) NOT NULL,
+    name          VARCHAR(120) NOT NULL DEFAULT 'Kasir',
+    last_seen_at  TIMESTAMP WITH TIME ZONE,
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_terminals_device
+    ON pos.terminals (business_id, device_ref);
+
+CREATE INDEX IF NOT EXISTS idx_terminals_outlet ON pos.terminals (outlet_id);
+
+COMMENT ON TABLE pos.terminals IS
+    'Perangkat kasir. device_ref adalah x-device-id yang sudah dikirim aplikasi.';
+
+
+-- 6. PERMUKAAN BACA HIERARKI --------------------------------------------------
+
+DROP VIEW IF EXISTS contract.business_hierarchy CASCADE;
+CREATE VIEW contract.business_hierarchy AS
+SELECT m.id            AS merchant_id,
+       m.owner_user_ref,
+       m.name          AS merchant_name,
+       b.id            AS business_id,
+       b.name          AS business_name,
+       b.business_sector,
+       b.client_key,
+       o.id            AS outlet_id,
+       o.name          AS outlet_name,
+       o.is_active     AS outlet_active,
+       t.id            AS terminal_id,
+       t.name          AS terminal_name,
+       t.device_ref
+  FROM pos.merchants  m
+  JOIN pos.businesses b ON b.merchant_id = m.id
+  LEFT JOIN pos.outlets   o ON o.business_id = b.id
+  LEFT JOIN pos.terminals t ON t.outlet_id   = o.id;
+
+COMMENT ON VIEW contract.business_hierarchy IS
+    'Merchant -> Business -> Outlet -> Terminal dalam satu baris. Hanya baca.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.business_hierarchy TO svc_backoffice;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT, INSERT, UPDATE ON pos.merchants, pos.terminals TO svc_pos;
+    END IF;
+END $$;
+
+
+-- 6b. KOLOM KELUARAN VIEW KONTRAK ---------------------------------------------
+--
+-- ALTER TABLE ... RENAME memperbarui referensi DI DALAM view, tapi TIDAK nama
+-- kolom yang view itu KELUARKAN — alias tetap seperti saat view dibuat. Jadi
+-- tabelnya sudah memakai business_id sementara contract.* masih menyajikan
+-- merchant_id, dan setiap pemanggil lintas service memilih nama yang salah.
+--
+-- contract.business_hierarchy dikecualikan: di sana merchant_id memang berarti
+-- PEMILIK, dan itu memang kolom yang berbeda.
+
+-- Urutannya sama seperti pada tabel: business_id LAMA (kunci partisi klien)
+-- harus menyingkir lebih dulu, atau rename kedua menabrak nama yang terpakai.
+DO $$
+DECLARE v RECORD;
+BEGIN
+    FOR v IN
+        SELECT table_name AS n
+          FROM information_schema.columns
+         WHERE table_schema = 'contract'
+           AND column_name = 'business_id'
+           AND table_name <> 'business_hierarchy'
+    LOOP
+        EXECUTE format('ALTER VIEW contract.%I RENAME COLUMN business_id TO client_key', v.n);
+    END LOOP;
+
+    FOR v IN
+        SELECT table_name AS n
+          FROM information_schema.columns
+         WHERE table_schema = 'contract'
+           AND column_name = 'merchant_id'
+           AND table_name <> 'business_hierarchy'
+    LOOP
+        EXECUTE format('ALTER VIEW contract.%I RENAME COLUMN merchant_id TO business_id', v.n);
+        RAISE NOTICE '0025: contract.%.merchant_id -> business_id', v.n;
+    END LOOP;
+END $$;
+
+
+-- 7. BADAN FUNGSI TIDAK IKUT DI-RENAME ----------------------------------------
+--
+-- ALTER ... RENAME memperbarui foreign key, indeks, dan view, tapi TIDAK badan
+-- fungsi PL/pgSQL — bagi Postgres itu hanya teks. Fungsi yang masih menyebut
+-- tenant_id/merchant_id akan gagal saat dipanggil, bukan saat migrasi
+-- dijalankan, sehingga kerusakannya baru muncul di produksi.
+
+CREATE OR REPLACE FUNCTION billing.beri_trial_merchant_baru()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    paket RECORD;
+BEGIN
+    SELECT id, trial_days INTO paket
+      FROM billing.plans
+     WHERE trial_days > 0 AND is_active
+     ORDER BY tier_level
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO billing.subscriptions
+        (id, business_id, plan_id, status, current_period_start, current_period_end)
+    VALUES
+        (uuidv7(), NEW.id, paket.id, 'TRIAL',
+         CURRENT_TIMESTAMP,
+         CURRENT_TIMESTAMP + (paket.trial_days || ' days')::interval)
+    ON CONFLICT (business_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_trial_merchant_baru ON pos.businesses;
+CREATE TRIGGER trg_trial_merchant_baru
+    AFTER INSERT ON pos.businesses
+    FOR EACH ROW
+    EXECUTE FUNCTION billing.beri_trial_merchant_baru();
+
+
+-- Nama parameter tidak bisa diubah lewat CREATE OR REPLACE; fungsinya harus
+-- dibuang lebih dulu. Tipe parameter juga naik dari VARCHAR(64) ke UUID —
+-- kolomnya sudah UUID sejak 0010, dan tanda tangan lama memaksa Postgres
+-- melakukan cast implisit pada setiap panggilan.
+DROP FUNCTION IF EXISTS consume_ai_credit(VARCHAR);
+DROP FUNCTION IF EXISTS consume_ai_credit(UUID);
+DROP FUNCTION IF EXISTS refund_ai_credit(VARCHAR);
+DROP FUNCTION IF EXISTS refund_ai_credit(UUID);
+
+CREATE OR REPLACE FUNCTION consume_ai_credit(p_business_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sisa INT;
+BEGIN
+    -- Satu UPDATE atomik. Membaca saldo lalu menulisnya di pernyataan terpisah
+    -- membuka jendela ketika dua permintaan sama-sama melihat saldo 1 dan
+    -- keduanya lolos: merchant membayar satu kredit dan mendapat dua panggilan.
+    UPDATE ai.merchant_ai_credits
+       SET balance         = balance - 1,
+           used_this_month = used_this_month + 1,
+           updated_at      = CURRENT_TIMESTAMP
+     WHERE business_id = p_business_id
+       AND balance > 0
+    RETURNING balance INTO sisa;
+
+    RETURN FOUND;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION refund_ai_credit(p_business_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE ai.merchant_ai_credits
+       SET balance         = balance + 1,
+           used_this_month = GREATEST(0, used_this_month - 1),
+           updated_at      = CURRENT_TIMESTAMP
+     WHERE business_id = p_business_id;
+
+    RETURN FOUND;
+END;
+$$;
+
+
+-- 8. MERCHANT UNTUK BUSINESS YANG LAHIR KEMUDIAN ------------------------------
+--
+-- Backfill di bagian 4 hanya menjangkau business yang sudah ada saat migrasi
+-- dijalankan. Business lahir dari beberapa jalur — sinkron transaksi, sinkron
+-- katalog, seed, panel admin — dan menaruh penautan merchant di salah satunya
+-- berarti jalur lain menghasilkan business yatim: punya pemilik menurut
+-- owner_user_ref, tapi tidak muncul di hierarki mana pun.
+--
+-- Alasannya sama dengan trigger trial di 0024, dan obatnya sama.
+
+CREATE OR REPLACE FUNCTION pos.tautkan_merchant()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    id_merchant UUID;
+BEGIN
+    IF NEW.owner_user_ref IS NULL OR NEW.merchant_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO pos.merchants (id, owner_user_ref, name)
+    VALUES (uuidv7(), NEW.owner_user_ref, NEW.name)
+    ON CONFLICT (owner_user_ref) DO UPDATE
+        -- DO UPDATE, bukan DO NOTHING: RETURNING tidak mengembalikan baris pada
+        -- DO NOTHING, dan tanpa id-nya business ini tetap yatim.
+        SET updated_at = CURRENT_TIMESTAMP
+    RETURNING id INTO id_merchant;
+
+    NEW.merchant_id := id_merchant;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_tautkan_merchant ON pos.businesses;
+CREATE TRIGGER trg_tautkan_merchant
+    BEFORE INSERT ON pos.businesses
+    FOR EACH ROW
+    EXECUTE FUNCTION pos.tautkan_merchant();
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0025_hierarki_identitas.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 27: migrations/0026_event_dan_ledger.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0026_event_dan_ledger.sql
+--
+-- Efek transaksi menjadi CATATAN, bukan hasil menimpa angka.
+--
+-- MASALAH YANG DIPERBAIKI. Penjualan sekarang mengubah empat hal sekaligus,
+-- semuanya dengan menimpa nilai yang ada:
+--
+--     products.stock      -= qty
+--     ingredients.stock   -= resep x qty
+--     customers.points    += ...
+--     customers.total_spent += ...
+--
+-- Menimpa berarti tidak ada jawaban untuk "kenapa angkanya segini". Saat stok
+-- di layar berbeda dari stok di rak, atau member protes poinnya berkurang,
+-- satu-satunya yang tersimpan adalah nilai TERAKHIR — bukan urutan kejadian
+-- yang menghasilkannya. Pembatalan pun jadi tebakan: mengembalikan sebanyak
+-- yang SEHARUSNYA, bukan sebanyak yang dulu benar-benar diambil.
+--
+-- Ledger membalik arahnya: yang disimpan adalah PERISTIWA, dan saldo dihitung
+-- darinya. Void tidak menghapus apa pun — ia menambahkan baris kebalikan, dan
+-- riwayatnya tetap bisa dibaca.
+--
+-- CATATAN TENTANG OTORITAS. Ledger ini TIDAK memindahkan otoritas ke server
+-- begitu saja. Kasir yang menjual saat internet mati tetap otoritas pada saat
+-- itu — menunggu server berarti antrean berhenti. Yang berubah: perangkat
+-- mengirim PERISTIWA, server menyusunnya menjadi saldo, dan saldo server itulah
+-- yang menjadi rujukan saat dua perangkat berbeda pendapat. Optimistik di
+-- perangkat, otoritatif di server, dan keduanya kini bisa dibandingkan.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0026_event_dan_ledger.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. MODE INVENTORI PADA PRODUK -----------------------------------------------
+--
+-- `products.stock -= qty` hanya benar kalau produknya memang barang jadi yang
+-- dihitung. Untuk Nasi Goreng, stok produknya tidak berarti apa-apa — yang
+-- berkurang beras, telur, dan minyak. Untuk potong rambut, tidak ada yang
+-- berkurang sama sekali.
+--
+-- Tanpa pembedaan ini, sistem berpotensi mengurangi DUA KALI: satu dari stok
+-- produk yang sebenarnya tidak dilacak, satu lagi dari bahan bakunya.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'inventory_mode_enum') THEN
+        CREATE TYPE inventory_mode_enum AS ENUM ('NONE', 'STOCK', 'RECIPE');
+    END IF;
+END $$;
+
+ALTER TABLE pos.products
+    ADD COLUMN IF NOT EXISTS inventory_mode inventory_mode_enum NOT NULL DEFAULT 'STOCK';
+
+COMMENT ON COLUMN pos.products.inventory_mode IS
+    'NONE: jasa, tidak ada yang berkurang. STOCK: barang jadi, kurangi products.stock. RECIPE: kurangi bahan baku lewat resep, stok produk diabaikan.';
+
+-- Produk yang PUNYA resep jelas berbasis resep. Sisanya biarkan STOCK —
+-- menebak NONE untuk mereka akan mematikan pelacakan stok yang sudah berjalan.
+UPDATE pos.products p
+   SET inventory_mode = 'RECIPE'
+ WHERE inventory_mode = 'STOCK'
+   AND EXISTS (SELECT 1 FROM pos.product_recipes r WHERE r.product_id = p.id);
+
+
+-- 2. PERISTIWA DOMAIN ---------------------------------------------------------
+--
+-- Satu baris per kejadian yang punya akibat. Inilah yang menggantikan rantai
+-- FinalizeOrder -> MutateStock -> UpdateShift -> UpdateCustomer: transaksi
+-- menerbitkan peristiwa, dan efeknya diturunkan dari sana.
+
+CREATE TABLE IF NOT EXISTS pos.domain_events (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    business_id    UUID NOT NULL REFERENCES pos.businesses(id) ON DELETE CASCADE,
+    event_type     VARCHAR(40) NOT NULL,
+    -- Transaksi yang menjadi sumber peristiwa, bila ada.
+    transaction_id UUID REFERENCES pos.transactions(id) ON DELETE SET NULL,
+    occurred_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Perangkat yang menerbitkannya. Saat dua perangkat berbeda pendapat,
+    -- inilah yang menjawab siapa mencatat apa.
+    device_ref     VARCHAR(128),
+    -- Kunci idempotensi dari sisi klien. Kiriman ulang tidak boleh
+    -- menghasilkan efek kedua.
+    idempotency_key VARCHAR(128) NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_events_idem
+    ON pos.domain_events (business_id, idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_domain_events_business_time
+    ON pos.domain_events (business_id, occurred_at DESC);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_domain_event_type') THEN
+        ALTER TABLE pos.domain_events ADD CONSTRAINT ck_domain_event_type
+            CHECK (event_type IN ('ORDER_PAID', 'ORDER_VOIDED', 'STOCK_ADJUSTED', 'STOCK_RECEIVED'));
+    END IF;
+END $$;
+
+COMMENT ON TABLE pos.domain_events IS
+    'Append-only. Peristiwa yang punya akibat; efeknya diturunkan menjadi baris ledger.';
+
+
+-- 3. LEDGER PERSEDIAAN --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.inventory_ledger (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    business_id    UUID NOT NULL REFERENCES pos.businesses(id) ON DELETE CASCADE,
+    event_id       UUID REFERENCES pos.domain_events(id) ON DELETE SET NULL,
+
+    -- Produk jadi dan bahan baku hidup di dua tabel berbeda, jadi jenisnya
+    -- ikut disimpan. Tanpa itu, id yang sama di dua tabel akan tertukar.
+    item_type      VARCHAR(16) NOT NULL,
+    item_id        UUID NOT NULL,
+    item_name      VARCHAR(160) NOT NULL,
+
+    -- NEGATIF untuk yang keluar, POSITIF untuk yang masuk. Tidak ada kolom
+    -- "arah" terpisah: satu angka bertanda tidak bisa bertentangan dengan
+    -- dirinya sendiri.
+    delta          NUMERIC(14, 3) NOT NULL,
+    unit           VARCHAR(24),
+
+    reason         VARCHAR(24) NOT NULL,
+    transaction_id UUID REFERENCES pos.transactions(id) ON DELETE SET NULL,
+    note           TEXT,
+    occurred_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_inv_ledger_item_type') THEN
+        ALTER TABLE pos.inventory_ledger ADD CONSTRAINT ck_inv_ledger_item_type
+            CHECK (item_type IN ('PRODUCT', 'INGREDIENT'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_inv_ledger_reason') THEN
+        ALTER TABLE pos.inventory_ledger ADD CONSTRAINT ck_inv_ledger_reason
+            CHECK (reason IN ('SALE', 'RECIPE_CONSUMPTION', 'VOID_REVERSAL',
+                              'ADJUSTMENT', 'RESTOCK', 'OPENING_BALANCE'));
+    END IF;
+    -- Delta nol adalah baris yang tidak mengubah apa pun. Membiarkannya masuk
+    -- hanya membuat riwayat lebih panjang tanpa menambah keterangan.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_inv_ledger_delta') THEN
+        ALTER TABLE pos.inventory_ledger ADD CONSTRAINT ck_inv_ledger_delta
+            CHECK (delta <> 0);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_inv_ledger_item
+    ON pos.inventory_ledger (business_id, item_type, item_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inv_ledger_txn
+    ON pos.inventory_ledger (transaction_id);
+
+COMMENT ON TABLE pos.inventory_ledger IS
+    'Append-only. Saldo stok adalah jumlah delta di sini, bukan angka yang ditimpa.';
+
+
+-- 4. LEDGER LOYALITAS ---------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS pos.loyalty_ledger (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    business_id    UUID NOT NULL REFERENCES pos.businesses(id) ON DELETE CASCADE,
+    customer_id    UUID NOT NULL REFERENCES pos.customers(id) ON DELETE CASCADE,
+    event_id       UUID REFERENCES pos.domain_events(id) ON DELETE SET NULL,
+
+    delta_points   INT NOT NULL DEFAULT 0,
+    delta_spent    NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    delta_visits   INT NOT NULL DEFAULT 0,
+
+    reason         VARCHAR(24) NOT NULL,
+    transaction_id UUID REFERENCES pos.transactions(id) ON DELETE SET NULL,
+    note           TEXT,
+    occurred_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_loy_ledger_reason') THEN
+        ALTER TABLE pos.loyalty_ledger ADD CONSTRAINT ck_loy_ledger_reason
+            CHECK (reason IN ('EARN', 'REDEEM', 'VOID_REVERSAL',
+                              'ADJUSTMENT', 'EXPIRY', 'OPENING_BALANCE'));
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_loy_ledger_customer
+    ON pos.loyalty_ledger (business_id, customer_id, occurred_at DESC);
+
+COMMENT ON TABLE pos.loyalty_ledger IS
+    'Append-only. Menjawab "kenapa poin saya segini" — pertanyaan yang tidak bisa dijawab angka yang ditimpa.';
+
+
+-- 5. SALDO SEBAGAI TURUNAN ----------------------------------------------------
+--
+-- View, bukan tabel. Saldo yang disimpan sebagai kolom akan menyimpang dari
+-- ledgernya cepat atau lambat, dan begitu itu terjadi tidak ada cara memilih
+-- mana yang benar.
+
+DROP VIEW IF EXISTS contract.stock_balance CASCADE;
+CREATE VIEW contract.stock_balance AS
+SELECT l.business_id,
+       l.item_type,
+       l.item_id,
+       MAX(l.item_name)          AS item_name,
+       MAX(l.unit)               AS unit,
+       SUM(l.delta)              AS saldo,
+       MAX(l.occurred_at)        AS terakhir_bergerak,
+       COUNT(*)::int             AS jumlah_mutasi
+  FROM pos.inventory_ledger l
+ GROUP BY l.business_id, l.item_type, l.item_id;
+
+COMMENT ON VIEW contract.stock_balance IS
+    'Saldo stok menurut server: jumlah seluruh mutasi. Ini rujukan saat dua perangkat berbeda pendapat.';
+
+DROP VIEW IF EXISTS contract.loyalty_balance CASCADE;
+CREATE VIEW contract.loyalty_balance AS
+SELECT l.business_id,
+       l.customer_id,
+       c.name                    AS customer_name,
+       SUM(l.delta_points)::int  AS poin,
+       SUM(l.delta_spent)        AS total_belanja,
+       SUM(l.delta_visits)::int  AS kunjungan,
+       MAX(l.occurred_at)        AS terakhir_bergerak
+  FROM pos.loyalty_ledger l
+  JOIN pos.customers c ON c.id = l.customer_id
+ GROUP BY l.business_id, l.customer_id, c.name;
+
+COMMENT ON VIEW contract.loyalty_balance IS
+    'Saldo poin menurut server, dihitung dari ledger.';
+
+
+-- 6. SELISIH PERANGKAT vs SERVER ----------------------------------------------
+--
+-- Inilah yang membuat "optimistik di perangkat, otoritatif di server" bisa
+-- ditegakkan tanpa menghentikan kasir: keduanya dicatat, dan selisihnya bisa
+-- dilihat. Tanpa view ini, penyimpangan multi-perangkat hanya ketahuan saat
+-- ada yang mengeluh.
+
+DROP VIEW IF EXISTS contract.stock_drift CASCADE;
+CREATE VIEW contract.stock_drift AS
+SELECT p.business_id,
+       'PRODUCT'::varchar          AS item_type,
+       p.id                        AS item_id,
+       p.name                      AS item_name,
+       p.stock                     AS saldo_perangkat,
+       COALESCE(b.saldo, 0)        AS saldo_server,
+       p.stock - COALESCE(b.saldo, 0) AS selisih
+  FROM pos.products p
+  LEFT JOIN contract.stock_balance b
+         ON b.item_id = p.id AND b.item_type = 'PRODUCT'
+ WHERE p.inventory_mode = 'STOCK';
+
+COMMENT ON VIEW contract.stock_drift IS
+    'Selisih antara stok yang diyakini perangkat dan saldo menurut ledger server. Selisih bukan galat — ia antrian yang belum terkirim, atau perangkat yang perlu direkonsiliasi.';
+
+
+-- 7. HAK AKSES ----------------------------------------------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT, INSERT ON pos.domain_events, pos.inventory_ledger, pos.loyalty_ledger TO svc_pos;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.stock_balance, contract.loyalty_balance, contract.stock_drift TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0026_event_dan_ledger.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 28: migrations/0027_kredit_ai_ledger.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0027_kredit_ai_ledger.sql
+--
+-- Kredit AI: mesin keadaan + ledger, menggantikan `balance -= 1` / `balance += 1`.
+--
+-- MASALAH YANG DIPERBAIKI. Alurnya sekarang dua perintah terpisah:
+--
+--     consume_ai_credit()  ->  panggil LLM  ->  gagal  ->  refund_ai_credit()
+--
+-- Kalau proses mati SETELAH LLM menjawab tapi SEBELUM jawabannya tercatat,
+-- yang tersisa adalah kredit terpotong, jawaban hilang, dan tidak ada apa pun
+-- yang menandai bahwa keduanya berhubungan. Merchant membayar untuk sesuatu
+-- yang tidak pernah ia terima, dan tidak ada cara menemukannya kembali karena
+-- pemotongan tidak menyimpan alasannya.
+--
+-- Kiriman ulang memperburuknya: pertanyaan yang sama dikirim dua kali memotong
+-- dua kredit, karena tidak ada kunci yang menghubungkan percobaan kedua dengan
+-- yang pertama.
+--
+-- SESUDAH MIGRASI INI:
+--
+--     RESERVED  --commit-->  SUCCEEDED
+--        |
+--        +-----refund---->  REFUNDED
+--
+-- Setiap perpindahan meninggalkan baris ledger. Saldo dihitung darinya, dan
+-- cadangan yang menggantung bisa ditemukan serta dikembalikan tanpa menebak.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0027_kredit_ai_ledger.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. KEADAAN SEBUAH PERTANYAAN ------------------------------------------------
+
+ALTER TABLE ai.ai_query_logs
+    ADD COLUMN IF NOT EXISTS state VARCHAR(16) NOT NULL DEFAULT 'SUCCEEDED';
+
+ALTER TABLE ai.ai_query_logs
+    ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+
+ALTER TABLE ai.ai_query_logs
+    ADD COLUMN IF NOT EXISTS settled_at TIMESTAMP WITH TIME ZONE;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_ai_query_state') THEN
+        ALTER TABLE ai.ai_query_logs ADD CONSTRAINT ck_ai_query_state
+            CHECK (state IN ('RESERVED', 'SUCCEEDED', 'FAILED', 'REFUNDED'));
+    END IF;
+END $$;
+
+-- Kunci idempotensi: percobaan kedua atas pertanyaan yang sama harus mengenai
+-- baris yang sama, bukan membuat cadangan baru.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_query_idem
+    ON ai.ai_query_logs (business_id, idempotency_key)
+ WHERE idempotency_key IS NOT NULL;
+
+-- Cadangan yang menggantung dicari lewat indeks ini, bukan dengan memindai
+-- seluruh riwayat pertanyaan.
+CREATE INDEX IF NOT EXISTS idx_ai_query_reserved
+    ON ai.ai_query_logs (state, asked_at)
+ WHERE state = 'RESERVED';
+
+COMMENT ON COLUMN ai.ai_query_logs.state IS
+    'RESERVED: kredit sudah dipotong, jawaban belum pasti. SUCCEEDED: selesai. REFUNDED: dikembalikan.';
+
+
+-- 2. LEDGER KREDIT ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS ai.credit_ledger (
+    id           UUID PRIMARY KEY DEFAULT uuidv7(),
+    business_id  UUID NOT NULL REFERENCES pos.businesses(id) ON DELETE CASCADE,
+    -- NEGATIF saat kredit dipakai, POSITIF saat diberikan atau dikembalikan.
+    delta        INT NOT NULL,
+    reason       VARCHAR(24) NOT NULL,
+    query_id     UUID REFERENCES ai.ai_query_logs(id) ON DELETE SET NULL,
+    note         TEXT,
+    occurred_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_credit_ledger_reason') THEN
+        ALTER TABLE ai.credit_ledger ADD CONSTRAINT ck_credit_ledger_reason
+            CHECK (reason IN ('MONTHLY_GRANT', 'RESERVE', 'REFUND', 'TOPUP',
+                              'EXPIRY', 'ADJUSTMENT', 'OPENING_BALANCE'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_credit_ledger_delta') THEN
+        ALTER TABLE ai.credit_ledger ADD CONSTRAINT ck_credit_ledger_delta
+            CHECK (delta <> 0);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_credit_ledger_business
+    ON ai.credit_ledger (business_id, occurred_at DESC);
+
+COMMENT ON TABLE ai.credit_ledger IS
+    'Append-only. Menjawab "kenapa kredit saya berkurang" — pertanyaan yang tidak bisa dijawab saldo yang ditimpa.';
+
+
+-- 3. CADANGKAN KREDIT ---------------------------------------------------------
+--
+-- Satu pernyataan atomik: memotong saldo DAN mencatat alasannya. Memisahkan
+-- keduanya membuka jendela ketika kredit sudah hilang tapi belum ada yang tahu
+-- untuk apa.
+
+CREATE OR REPLACE FUNCTION ai.cadangkan_kredit(
+    p_business_id UUID,
+    p_query_id    UUID,
+    p_idem_key    VARCHAR(128)
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sudah_dicadangkan BOOLEAN;
+BEGIN
+    -- Percobaan ulang atas pertanyaan yang sama TIDAK memotong lagi.
+    --
+    -- Yang diperiksa adalah LEDGER, bukan ai_query_logs. Pemanggil menyisipkan
+    -- baris pertanyaannya lebih dulu, jadi memeriksa tabel itu berarti selalu
+    -- menemukan barisnya sendiri dan keluar tanpa memotong apa pun — kredit
+    -- tidak pernah berkurang, dan seluruh kuota menjadi tak terbatas.
+    --
+    -- Ledger hanya berisi apa yang benar-benar terjadi, jadi ia jawaban yang
+    -- benar untuk "apakah ini sudah pernah dipotong".
+    SELECT EXISTS (
+        SELECT 1 FROM ai.credit_ledger
+         WHERE query_id = p_query_id AND reason = 'RESERVE'
+    ) INTO sudah_dicadangkan;
+
+    IF sudah_dicadangkan THEN
+        RETURN TRUE;
+    END IF;
+
+    UPDATE ai.merchant_ai_credits
+       SET balance         = balance - 1,
+           used_this_month = used_this_month + 1,
+           updated_at      = CURRENT_TIMESTAMP
+     WHERE business_id = p_business_id
+       AND balance > 0;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+
+    INSERT INTO ai.credit_ledger (id, business_id, delta, reason, query_id, note)
+    VALUES (uuidv7(), p_business_id, -1, 'RESERVE', p_query_id,
+            'Dicadangkan sebelum memanggil model');
+
+    RETURN TRUE;
+END;
+$$;
+
+
+-- 4. SELESAIKAN ATAU KEMBALIKAN ------------------------------------------------
+
+CREATE OR REPLACE FUNCTION ai.selesaikan_kredit(p_query_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE ai.ai_query_logs
+       SET state = 'SUCCEEDED', settled_at = CURRENT_TIMESTAMP
+     WHERE id = p_query_id AND state = 'RESERVED';
+
+    RETURN FOUND;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ai.kembalikan_kredit(p_query_id UUID, p_alasan TEXT DEFAULT NULL)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    r RECORD;
+BEGIN
+    -- HANYA dari RESERVED. Mengembalikan kredit untuk pertanyaan yang sudah
+    -- SUCCEEDED berarti merchant mendapat jawaban gratis; mengembalikannya dua
+    -- kali berarti saldo bertambah dari udara.
+    UPDATE ai.ai_query_logs
+       SET state = 'REFUNDED', settled_at = CURRENT_TIMESTAMP
+     WHERE id = p_query_id AND state = 'RESERVED'
+    RETURNING business_id INTO r;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+
+    UPDATE ai.merchant_ai_credits
+       SET balance         = balance + 1,
+           used_this_month = GREATEST(0, used_this_month - 1),
+           updated_at      = CURRENT_TIMESTAMP
+     WHERE business_id = r.business_id;
+
+    INSERT INTO ai.credit_ledger (id, business_id, delta, reason, query_id, note)
+    VALUES (uuidv7(), r.business_id, 1, 'REFUND', p_query_id,
+            COALESCE(p_alasan, 'Panggilan model gagal'));
+
+    RETURN TRUE;
+END;
+$$;
+
+
+-- 5. CADANGAN YANG MENGGANTUNG ------------------------------------------------
+--
+-- Proses yang mati di tengah meninggalkan RESERVED selamanya. Inilah yang
+-- menemukannya — dan tanpa ini, satu-satunya cara mengetahuinya adalah menunggu
+-- merchant mengeluh saldonya berkurang tanpa jawaban.
+
+CREATE OR REPLACE FUNCTION ai.bersihkan_cadangan_menggantung(p_menit INT DEFAULT 15)
+RETURNS INT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    n INT := 0;
+    q RECORD;
+BEGIN
+    FOR q IN
+        SELECT id FROM ai.ai_query_logs
+         WHERE state = 'RESERVED'
+           AND asked_at < CURRENT_TIMESTAMP - (p_menit || ' minutes')::interval
+    LOOP
+        IF ai.kembalikan_kredit(q.id, 'Cadangan menggantung, dikembalikan otomatis') THEN
+            n := n + 1;
+        END IF;
+    END LOOP;
+
+    RETURN n;
+END;
+$$;
+
+COMMENT ON FUNCTION ai.bersihkan_cadangan_menggantung IS
+    'Mengembalikan kredit yang tercadang tapi tidak pernah selesai. Jalankan berkala.';
+
+
+-- 6. PERMUKAAN BACA -----------------------------------------------------------
+
+DROP VIEW IF EXISTS contract.ai_credit_ledger CASCADE;
+CREATE VIEW contract.ai_credit_ledger AS
+SELECT l.business_id,
+       SUM(l.delta)::int                                        AS saldo_ledger,
+       SUM(l.delta) FILTER (WHERE l.reason = 'RESERVE')::int     AS terpakai,
+       SUM(l.delta) FILTER (WHERE l.reason = 'REFUND')::int      AS dikembalikan,
+       MAX(l.occurred_at)                                        AS terakhir_bergerak
+  FROM ai.credit_ledger l
+ GROUP BY l.business_id;
+
+DROP VIEW IF EXISTS contract.ai_credit_drift CASCADE;
+CREATE VIEW contract.ai_credit_drift AS
+SELECT c.business_id,
+       c.balance                       AS saldo_tersimpan,
+       COALESCE(l.saldo_ledger, 0)
+         + c.monthly_grant             AS saldo_menurut_ledger,
+       (SELECT COUNT(*)::int FROM ai.ai_query_logs q
+         WHERE q.business_id = c.business_id AND q.state = 'RESERVED') AS menggantung
+  FROM ai.merchant_ai_credits c
+  LEFT JOIN contract.ai_credit_ledger l ON l.business_id = c.business_id;
+
+COMMENT ON VIEW contract.ai_credit_drift IS
+    'Selisih saldo tersimpan vs ledger, dan jumlah cadangan yang menggantung. Selisih berarti ada yang tidak tercatat.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT, INSERT ON ai.credit_ledger TO svc_ai;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.ai_credit_ledger, contract.ai_credit_drift TO svc_backoffice;
+    END IF;
+END $$;
+
+
+-- 7. KESEGARAN DATA PADA INSIGHT ----------------------------------------------
+--
+-- contract.merchant_revenue dihitung saat ditanya — selalu terkini. Sementara
+-- daily_merchant_insights dihasilkan batch pukul 01:00, jadi isinya berumur
+-- sampai 24 jam.
+--
+-- Tanpa menandai bedanya, asisten bisa menjawab "omzet Anda hari ini turun 20%"
+-- memakai angka SEMALAM, dan merchant mengambil keputusan atas dasar itu.
+-- Kesalahan seperti ini tidak pernah terlihat sebagai galat — angkanya nyata,
+-- hanya saja bukan angka hari ini.
+
+DROP VIEW IF EXISTS contract.insight_freshness CASCADE;
+CREATE VIEW contract.insight_freshness AS
+SELECT i.business_id,
+       i.category,
+       i.insight_date,
+       i.updated_at,
+       EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - i.updated_at)) / 3600 AS umur_jam,
+       -- Batasnya 26 jam, bukan 24: batch berjalan sekali sehari, dan yang
+       -- terlambat sejam belum tentu basi. Yang lewat dari itu sudah pasti
+       -- melewatkan satu putaran.
+       (CURRENT_TIMESTAMP - i.updated_at) > INTERVAL '26 hours' AS basi,
+       'BATCH'::varchar AS sumber
+  FROM ai.daily_merchant_insights i
+ WHERE i.status = 'ACTIVE';
+
+COMMENT ON VIEW contract.insight_freshness IS
+    'Umur tiap insight. Yang basi tidak boleh disajikan sebagai keadaan hari ini — angkanya nyata, tapi bukan angka sekarang.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT ON contract.insight_freshness TO svc_ai;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0027_kredit_ai_ledger.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
+-- --------------------------------------------------------------------------
+-- BAGIAN 29: migrations/0028_langganan_per_merchant.sql
+-- --------------------------------------------------------------------------
+
+-- =============================================================================
+-- 0028_langganan_per_merchant.sql
+--
+-- Langganan pindah dari Business ke MERCHANT, dan analitik dipisah menjadi
+-- global vs per-sektor.
+--
+-- MASALAH 1: SATU PEMILIK MEMBAYAR DUA KALI.
+--
+-- billing.subscriptions dikunci UNIQUE(business_id) — satu langganan per unit
+-- usaha. Sejak 0025 ada lapisan Merchant di atasnya, dan pemilik yang punya
+-- kafe DAN laundry karena itu menanggung DUA langganan untuk satu bisnis yang
+-- sama. Batas outletnya pun terpisah: 2 outlet di kafe dan 2 di laundry,
+-- padahal yang dia beli satu paket.
+--
+-- Itu bukan model yang lazim untuk SaaS POS. Yang lazim:
+--
+--     Merchant -> Subscription -> Plan
+--     Merchant -> Business -> Outlet
+--
+-- Seluruh business dan outlet berada di bawah satu langganan.
+--
+-- MASALAH 2: ALGORITMA YANG TIDAK COCOK UNTUK SEKTORNYA.
+--
+-- LAYOUT_UTILISATION menghitung perputaran meja/bay/kursi. Itu berarti untuk
+-- kafe, laundry, dan barbershop — dan tidak berarti apa-apa untuk toko
+-- kelontong yang tidak punya meja. Menjalankannya untuk semua sektor
+-- menghasilkan insight kosong yang menempati ruang di layar dan membuat
+-- merchant belajar mengabaikan kartu insight.
+--
+--   psql "$DATABASE_URL" --single-transaction -f migrations/0028_langganan_per_merchant.sql
+--
+-- Idempoten, aman diulang.
+-- =============================================================================
+
+
+-- 1. LANGGANAN MENUNJUK MERCHANT ----------------------------------------------
+
+ALTER TABLE billing.subscriptions
+    ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES pos.merchants(id) ON DELETE CASCADE;
+
+-- Dijalankan hanya selama kolom lamanya masih ada. Bagian 4 membuangnya, jadi
+-- pada pengulangan kedua backfill ini sudah tidak punya sumber — dan tidak
+-- perlu, karena semuanya sudah terisi.
+DO $backfill$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'billing' AND table_name = 'subscriptions'
+           AND column_name = 'business_id'
+    ) THEN
+        UPDATE billing.subscriptions s
+           SET merchant_id = b.merchant_id
+          FROM pos.businesses b
+         WHERE b.id = s.business_id
+           AND s.merchant_id IS DISTINCT FROM b.merchant_id;
+    END IF;
+END $backfill$;
+
+-- Pemilik dengan beberapa usaha bisa terlanjur punya beberapa langganan.
+-- Yang dipertahankan adalah yang paketnya PALING TINGGI — menurunkan orang ke
+-- paket termurah karena kebetulan itu yang tersimpan belakangan adalah cara
+-- kehilangan pelanggan.
+DELETE FROM billing.subscriptions s
+ WHERE s.merchant_id IS NOT NULL
+   AND s.id <> (
+       SELECT s2.id FROM billing.subscriptions s2
+         JOIN billing.plans p ON p.id = s2.plan_id
+        WHERE s2.merchant_id = s.merchant_id
+        ORDER BY p.tier_level DESC, s2.created_at DESC
+        LIMIT 1
+   );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriptions_merchant
+    ON billing.subscriptions (merchant_id)
+ WHERE merchant_id IS NOT NULL;
+
+COMMENT ON COLUMN billing.subscriptions.merchant_id IS
+    'Pemilik yang berlangganan. SATU langganan menanggung SELURUH business dan outlet miliknya.';
+
+
+-- 2. ENTITLEMENT MENGIKUTI MERCHANT -------------------------------------------
+--
+-- Dibangun ulang supaya tiap business menemukan langganan lewat merchantnya,
+-- bukan lewat baris langganannya sendiri yang mungkin sudah tidak ada.
+
+DROP VIEW IF EXISTS contract.merchant_entitlements CASCADE;
+CREATE VIEW contract.merchant_entitlements AS
+WITH efektif AS (
+    SELECT b.id                       AS business_id,
+           b.merchant_id,
+           s.plan_id,
+           s.current_period_end,
+           CASE
+               WHEN s.status = 'CANCELED' THEN 'CANCELED'
+               WHEN s.current_period_end IS NULL THEN s.status::text
+               WHEN CURRENT_TIMESTAMP <= s.current_period_end THEN s.status::text
+               WHEN CURRENT_TIMESTAMP <= s.current_period_end + INTERVAL '3 days' THEN 'PAST_DUE'
+               ELSE 'EXPIRED'
+           END AS status_efektif
+      FROM pos.businesses b
+      LEFT JOIN billing.subscriptions s ON s.merchant_id = b.merchant_id
+)
+SELECT e.business_id,
+       e.merchant_id,
+       COALESCE(e.plan_id, 'plan-free')                       AS plan_id,
+       COALESCE(p.name, f.name)                               AS plan_name,
+       COALESCE(p.tier_level, f.tier_level)                    AS tier_level,
+       COALESCE(e.status_efektif, 'NONE')                      AS status,
+       e.current_period_end,
+       (COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')) AS berlaku,
+       -- Kuota AI hangus saat langganan mati, tapi TIDAK saat masa tenggang:
+       -- merchant yang terlambat bayar sehari belum kehilangan haknya.
+       CASE WHEN COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+            THEN COALESCE(p.ai_quota_monthly, 0) ELSE 0 END    AS ai_quota_effective,
+       COALESCE(p.ai_quota_monthly, f.ai_quota_monthly)        AS ai_quota_plan,
+       CASE WHEN COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+            THEN COALESCE(p.product_limit, f.product_limit) ELSE f.product_limit END AS product_limit,
+       CASE WHEN COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+            THEN COALESCE(p.max_outlets, f.max_outlets) ELSE f.max_outlets END       AS max_outlets,
+       CASE WHEN COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+            THEN COALESCE(p.dashboard_access_level, f.dashboard_access_level)
+            ELSE f.dashboard_access_level END                  AS dashboard_access_level,
+       CASE WHEN COALESCE(e.status_efektif, 'NONE') IN ('ACTIVE', 'TRIAL', 'PAST_DUE')
+            THEN COALESCE(p.module_access, f.module_access)
+            ELSE f.module_access END                           AS module_access,
+
+       -- YANG TERTULIS DI PAKET, untuk ditampilkan saat mengajak memperpanjang:
+       -- "paket Anda 5 outlet, aktifkan kembali untuk memakainya". Dibaca oleh
+       -- layar langganan; menghilangkannya membuat layar itu gagal memuat.
+       COALESCE(p.product_limit, f.product_limit)              AS product_limit_plan,
+       COALESCE(p.max_outlets, f.max_outlets)                  AS max_outlets_plan,
+       COALESCE(p.dashboard_access_level, f.dashboard_access_level)
+                                                               AS dashboard_access_level_plan,
+       COALESCE(p.module_access, f.module_access)              AS module_access_plan
+  FROM efektif e
+  LEFT JOIN billing.plans p ON p.id = e.plan_id
+  CROSS JOIN LATERAL (SELECT * FROM billing.plans WHERE id = 'plan-free') f;
+
+COMMENT ON VIEW contract.merchant_entitlements IS
+    'Entitlement yang BERLAKU per business, diturunkan dari langganan MERCHANT-nya. Satu langganan menanggung seluruh business milik pemilik yang sama.';
+
+
+-- 3. ALGORITMA GLOBAL vs PER-SEKTOR -------------------------------------------
+--
+-- Daftar ini yang menentukan algoritma mana dijalankan untuk sektor mana.
+-- Disimpan sebagai tabel, bukan ditulis di kode batch: menambah sektor baru
+-- atau memindahkan sebuah algoritma tidak boleh menuntut deploy ulang.
+
+CREATE TABLE IF NOT EXISTS ai.algorithm_scope (
+    category    VARCHAR(40) PRIMARY KEY,
+    -- NULL = berlaku untuk SEMUA sektor.
+    sectors     TEXT[],
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Sudah ditulis di batch, atau baru dideklarasikan?
+    implemented BOOLEAN NOT NULL DEFAULT FALSE,
+    note        TEXT
+);
+
+INSERT INTO ai.algorithm_scope (category, sectors, implemented, note) VALUES
+    ('INVENTORY_ALERT',        NULL, TRUE,
+     'Global. Semua sektor punya sesuatu yang bisa habis.'),
+    ('CROSS_SELL_OPPORTUNITY', NULL, TRUE,
+     'Global. Analisis keranjang berlaku di mana pun ada lebih dari satu item per struk.'),
+    ('CRM_CHURN',              NULL, TRUE,
+     'Global. Semua sektor punya pelanggan berulang.'),
+    ('FINANCIAL_PERFORMANCE',  NULL, FALSE,
+     'Global. Belum ditulis.'),
+    ('OPERATIONAL_PEAK',       NULL, FALSE,
+     'Global. Belum ditulis.'),
+    ('CALENDAR_BEHAVIOR',      NULL, FALSE,
+     'Global. Belum ditulis.'),
+    ('SHIFT_PERFORMANCE',      ARRAY['FNB','RETAIL','CARWASH'], FALSE,
+     'Butuh shift bergantian. Barbershop dan laundry kecil sering satu orang sepanjang hari.'),
+    ('LAYOUT_UTILISATION',     ARRAY['FNB','LAUNDRY','BARBERSHOP'], FALSE,
+     'Perputaran meja/bay/kursi. Tidak berarti untuk toko yang tidak punya tempat duduk.'),
+    ('STAFF_BEHAVIOUR',        ARRAY['FNB','RETAIL','BARBERSHOP'], FALSE,
+     'Butuh beberapa staf yang bisa dibandingkan.')
+ON CONFLICT (category) DO UPDATE SET
+    sectors = EXCLUDED.sectors,
+    implemented = EXCLUDED.implemented,
+    note = EXCLUDED.note;
+
+COMMENT ON TABLE ai.algorithm_scope IS
+    'Algoritma mana berlaku untuk sektor mana, dan mana yang benar-benar sudah ditulis. implemented=false berarti kategorinya dideklarasikan tapi batch belum menghasilkannya.';
+
+DROP VIEW IF EXISTS contract.algorithm_coverage CASCADE;
+CREATE VIEW contract.algorithm_coverage AS
+SELECT b.id                                  AS business_id,
+       b.business_sector,
+       a.category,
+       a.implemented,
+       (a.sectors IS NULL OR b.business_sector = ANY(a.sectors)) AS berlaku_untuk_sektor
+  FROM pos.businesses b
+ CROSS JOIN ai.algorithm_scope a
+ WHERE a.is_active;
+
+COMMENT ON VIEW contract.algorithm_coverage IS
+    'Menjawab dengan jujur: insight apa yang SEHARUSNYA muncul untuk sebuah merchant, dan mana yang belum ditulis.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT ON ai.algorithm_scope, contract.algorithm_coverage TO svc_ai;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.algorithm_coverage TO svc_backoffice;
+    END IF;
+END $$;
+
+
+-- 4. business_id DIBUANG DARI LANGGANAN ---------------------------------------
+--
+-- Selama kolomnya masih ada — apalagi dengan UNIQUE(business_id) — model
+-- lamanya masih bisa dipakai tanpa disadari. Satu INSERT yang lupa mengisi
+-- merchant_id menghasilkan langganan kedua yang tidak terlihat oleh
+-- contract.merchant_entitlements, dan merchant yang baru membayar tetap
+-- terkunci. Menghapus kolomnya membuat jalan itu tidak ada lagi.
+--
+-- Yang hilang tidak ada: siapa yang membayar = merchant, dan apa yang ditagih
+-- per unit usaha tetap tercatat di billing.invoices.business_id.
+
+-- Baris tanpa merchant tidak bisa dipakai model baru dan tidak bisa dibaca
+-- entitlement mana pun. Tidak seharusnya ada (FK ke businesses + backfill di
+-- atas), tapi kalau ada, ia hanya akan menghalangi NOT NULL.
+DELETE FROM billing.subscriptions WHERE merchant_id IS NULL;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'billing' AND table_name = 'subscriptions'
+           AND column_name = 'business_id'
+    ) THEN
+        -- Dibangun ulang lebih dulu: view ini membaca s.business_id.
+        DROP VIEW IF EXISTS contract.subscription_status CASCADE;
+        ALTER TABLE billing.subscriptions DROP COLUMN business_id CASCADE;
+    END IF;
+END $$;
+
+ALTER TABLE billing.subscriptions ALTER COLUMN merchant_id SET NOT NULL;
+
+-- Indeks parsial di bagian 1 dinaikkan menjadi CONSTRAINT penuh: merchant_id
+-- sudah NOT NULL, jadi klausa WHERE-nya tidak berguna lagi, dan ON CONFLICT
+-- (merchant_id) hanya mau memakai indeks unik tanpa predikat.
+--
+-- Constraint memiliki indeks bernama sama, jadi DROP INDEX ditolak setelah
+-- pengulangan pertama. Constraint dibuang lebih dulu; kalau yang ada masih
+-- indeks lepas, DROP INDEX-lah yang mengurusnya.
+ALTER TABLE billing.subscriptions
+    DROP CONSTRAINT IF EXISTS uq_subscriptions_merchant;
+DROP INDEX IF EXISTS billing.uq_subscriptions_merchant;
+ALTER TABLE billing.subscriptions
+    ADD CONSTRAINT uq_subscriptions_merchant UNIQUE (merchant_id);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_merchant_status
+    ON billing.subscriptions (merchant_id, status);
+
+-- Dilaporkan per BUSINESS supaya laporan pendapatan lama tetap bisa dibaca,
+-- tapi MRR-nya tidak digandakan: pemilik dengan tiga unit usaha membayar satu
+-- langganan, jadi hanya SATU barisnya yang membawa nominal.
+DROP VIEW IF EXISTS contract.subscription_status CASCADE;
+CREATE VIEW contract.subscription_status AS
+SELECT b.id                AS business_id,
+       s.merchant_id,
+       s.status,
+       s.current_period_end,
+       p.id                AS plan_code,
+       p.name              AS plan_name,
+       (b.id = (SELECT b2.id FROM pos.businesses b2
+                 WHERE b2.merchant_id = s.merchant_id
+                 ORDER BY b2.created_at, b2.id LIMIT 1)) AS unit_penagihan,
+       CASE WHEN b.id = (SELECT b2.id FROM pos.businesses b2
+                          WHERE b2.merchant_id = s.merchant_id
+                          ORDER BY b2.created_at, b2.id LIMIT 1)
+            THEN p.price_idr ELSE 0::numeric END         AS contract_mrr_idr,
+       CASE WHEN s.status = 'ACTIVE'
+             AND b.id = (SELECT b2.id FROM pos.businesses b2
+                          WHERE b2.merchant_id = s.merchant_id
+                          ORDER BY b2.created_at, b2.id LIMIT 1)
+            THEN p.price_idr ELSE 0::numeric END         AS recognised_mrr_idr
+  FROM billing.subscriptions s
+  JOIN billing.plans p ON p.id = s.plan_id
+  JOIN pos.businesses b ON b.merchant_id = s.merchant_id;
+
+COMMENT ON VIEW contract.subscription_status IS
+    'Langganan per business. MRR hanya dihitung sekali per merchant (unit_penagihan = true) — satu pemilik dengan beberapa unit usaha membayar satu kali.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.subscription_status TO svc_backoffice;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_billing') THEN
+        GRANT SELECT ON contract.subscription_status TO svc_billing;
+    END IF;
+END $$;
+
+
+-- 5. TRIAL OTOMATIS MENGIKUTI MERCHANT ----------------------------------------
+--
+-- Trigger dari 0024/0025 menyisipkan langganan dengan business_id. Kolom itu
+-- baru saja dibuang, jadi tanpa penulisan ulang di sini SETIAP pendaftaran
+-- merchant baru akan gagal — dan gagalnya di trigger, artinya INSERT ke
+-- pos.businesses ikut dibatalkan. Orang tidak akan bisa mendaftar sama sekali.
+--
+-- Perubahan perilakunya disengaja: trial diberikan sekali per PEMILIK. Unit
+-- usaha kedua milik orang yang sama masuk ke langganan yang sudah ada, bukan
+-- memulai masa percobaan baru — kalau tidak, trial 45 hari bisa diperpanjang
+-- tanpa batas hanya dengan membuat unit usaha baru.
+
+CREATE OR REPLACE FUNCTION billing.beri_trial_merchant_baru()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    paket RECORD;
+BEGIN
+    IF NEW.merchant_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT id, trial_days INTO paket
+      FROM billing.plans
+     WHERE trial_days > 0 AND is_active
+     ORDER BY tier_level
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO billing.subscriptions
+        (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+    VALUES
+        (uuidv7(), NEW.merchant_id, paket.id, 'TRIAL',
+         CURRENT_TIMESTAMP,
+         CURRENT_TIMESTAMP + (paket.trial_days || ' days')::interval)
+    ON CONFLICT (merchant_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION billing.beri_trial_merchant_baru() IS
+    'Memberi masa percobaan sekali per MERCHANT. Unit usaha kedua milik pemilik yang sama ikut langganan yang ada, bukan memulai trial baru.';
+
+-- Trigger merchant (0025) berjalan BEFORE INSERT dan mengisi NEW.merchant_id;
+-- trigger ini AFTER INSERT, jadi kolom itu pasti sudah terisi saat dibaca.
+DROP TRIGGER IF EXISTS trg_trial_merchant_baru ON pos.businesses;
+CREATE TRIGGER trg_trial_merchant_baru
+    AFTER INSERT ON pos.businesses
+    FOR EACH ROW
+    EXECUTE FUNCTION billing.beri_trial_merchant_baru();
+
+-- Pemilik yang sudah ada tapi belum punya langganan sama sekali.
+INSERT INTO billing.subscriptions
+    (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+SELECT uuidv7(), m.id, p.id, 'TRIAL',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + (p.trial_days || ' days')::interval
+  FROM pos.merchants m
+ CROSS JOIN LATERAL (
+     SELECT id, trial_days FROM billing.plans
+      WHERE trial_days > 0 AND is_active ORDER BY tier_level LIMIT 1
+ ) p
+ WHERE NOT EXISTS (SELECT 1 FROM billing.subscriptions s WHERE s.merchant_id = m.id)
+ON CONFLICT (merchant_id) DO NOTHING;
+
+
+-- 6. KUOTA OUTLET DIHITUNG SEMERCHANT -----------------------------------------
+--
+-- DUA HAL SEKALIGUS DI SINI.
+--
+-- Pertama, perbaikan: DROP ... CASCADE pada contract.merchant_entitlements di
+-- bagian 2 ikut menjatuhkan view ini, dan view inilah yang dibaca penegakan
+-- batas outlet di jalur sinkron cabang. Tanpa dibangun kembali, endpoint itu
+-- gagal total dan TIDAK SATU PUN cabang bisa disimpan. Pola yang sama pernah
+-- terjadi di 0023 dan tercatat di sana; kali ini ketahuan karena view kontrak
+-- yang membacanya hilang dari daftar.
+--
+-- Kedua, perubahan yang memang dimaksud: outlet dihitung untuk SELURUH unit
+-- usaha milik merchant, bukan per unit usaha. Kalau tidak, "Pro = 5 outlet"
+-- bisa dilipatgandakan hanya dengan membuka unit usaha kedua — pemilik dengan
+-- kafe dan laundry akan mendapat 10 outlet dari satu langganan.
+--
+-- Bentuk kolomnya sengaja dipertahankan (business_id, max_outlets,
+-- outlet_aktif, sisa_kuota) supaya pemanggilnya tidak perlu berubah; yang
+-- berubah hanya cakupan hitungannya.
+
+DROP VIEW IF EXISTS contract.merchant_outlet_usage CASCADE;
+CREATE VIEW contract.merchant_outlet_usage AS
+WITH per_merchant AS (
+    SELECT b.merchant_id,
+           COUNT(o.id) FILTER (WHERE o.is_active)::int AS outlet_aktif
+      FROM pos.businesses b
+      LEFT JOIN pos.outlets o ON o.business_id = b.id
+     GROUP BY b.merchant_id
+)
+SELECT b.id                                   AS business_id,
+       b.merchant_id,
+       COALESCE(e.max_outlets, 1)             AS max_outlets,
+       COALESCE(pm.outlet_aktif, 0)           AS outlet_aktif,
+       GREATEST(COALESCE(e.max_outlets, 1) - COALESCE(pm.outlet_aktif, 0), 0) AS sisa_kuota
+  FROM pos.businesses b
+  LEFT JOIN contract.merchant_entitlements e ON e.business_id = b.id
+  LEFT JOIN per_merchant pm                  ON pm.merchant_id = b.merchant_id;
+
+COMMENT ON VIEW contract.merchant_outlet_usage IS
+    'Pemakaian outlet terhadap batas yang BERLAKU. Dihitung untuk SELURUH unit usaha milik merchant yang sama — satu langganan, satu jatah outlet. Tanpa langganan, batasnya 1.';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_pos') THEN
+        GRANT SELECT ON contract.merchant_entitlements, contract.merchant_outlet_usage TO svc_pos;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_ai') THEN
+        GRANT SELECT ON contract.merchant_entitlements TO svc_ai;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svc_backoffice') THEN
+        GRANT SELECT ON contract.merchant_entitlements, contract.merchant_outlet_usage TO svc_backoffice;
+    END IF;
+END $$;
+
+INSERT INTO public.schema_migrations (filename) VALUES ('migrations/0028_langganan_per_merchant.sql')
+  ON CONFLICT (filename) DO NOTHING;
+
+
 -- ==========================================================================
 -- SELESAI. Verifikasi dengan:
 --

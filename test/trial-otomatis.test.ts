@@ -10,19 +10,29 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { ADA_DB, db, tutupDb } from './helper-db';
+import { ADA_DB, db, tutupDb, bersihkanPemilik } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
 
 d('trial otomatis untuk merchant baru', () => {
   afterAll(tutupDb);
 
+  /**
+   * Melahirkan merchant yang benar-benar BARU.
+   *
+   * Pemiliknya diturunkan dari ref, tidak lagi dipatok 'usr-x' untuk semua tes.
+   * Sejak 0028 trial diberikan sekali per PEMILIK: kalau semua tes berbagi satu
+   * pemilik, hanya yang pertama yang benar-benar menguji "merchant baru dapat
+   * trial" — sisanya cuma membaca ulang langganan tes sebelumnya, termasuk sisa
+   * dari sesi `npm test` yang lalu.
+   */
   const lahirkan = async (ref: string) => {
-    await db().query('DELETE FROM pos.businesses WHERE client_key = $1', [ref]);
+    const owner = ref.split('_')[0];
+    await bersihkanPemilik(ref);
     const { rows } = await db().query(
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
-       VALUES (uuidv7(), $1, 'FNB', $2, 'usr-x', true) RETURNING id`,
-      [`Toko ${ref}`, ref]
+       VALUES (uuidv7(), $1, 'FNB', $2, $3, true) RETURNING id`,
+      [`Toko ${ref}`, ref, owner]
     );
     return rows[0].id;
   };
@@ -70,10 +80,11 @@ d('trial otomatis untuk merchant baru', () => {
     const tid = await lahirkan('uji-trial-5_FNB');
     await db().query(
       `INSERT INTO billing.subscriptions
-         (id, business_id, plan_id, status, current_period_start, current_period_end)
-       VALUES (uuidv7(), $1, 'plan-pro-monthly', 'ACTIVE',
-               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
-       ON CONFLICT (business_id) DO UPDATE SET plan_id = 'plan-pro-monthly', status = 'ACTIVE'`,
+         (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+       SELECT uuidv7(), b.merchant_id, 'plan-pro-monthly', 'ACTIVE',
+              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days'
+         FROM pos.businesses b WHERE b.id = $1
+       ON CONFLICT (merchant_id) DO UPDATE SET plan_id = 'plan-pro-monthly', status = 'ACTIVE'`,
       [tid]
     );
     const e = await entitlement(tid);
@@ -84,7 +95,8 @@ d('trial otomatis untuk merchant baru', () => {
   it('tidak ada merchant yang tertinggal tanpa langganan', async () => {
     const { rows } = await db().query(
       `SELECT COUNT(*)::int n FROM pos.businesses t
-        WHERE NOT EXISTS (SELECT 1 FROM billing.subscriptions s WHERE s.business_id = t.id)`);
+        WHERE NOT EXISTS (
+                SELECT 1 FROM billing.subscriptions s WHERE s.merchant_id = t.merchant_id)`);
     expect(rows[0].n).toBe(0);
   });
 });

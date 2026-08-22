@@ -31,9 +31,10 @@ d('notifikasi pembayaran DOKU', () => {
     tid = await merchantUji('usr-doku_FNB', 'Toko DOKU');
     const { rows } = await db().query(
       `INSERT INTO billing.subscriptions
-         (id, business_id, plan_id, status, current_period_start, current_period_end)
-       VALUES (uuidv7(), $1, 'plan-free', 'TRIAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       ON CONFLICT (business_id) DO UPDATE SET plan_id = 'plan-free' RETURNING id`, [tid]);
+         (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+       SELECT uuidv7(), b.merchant_id, 'plan-free', 'TRIAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+         FROM pos.businesses b WHERE b.id = $1
+       ON CONFLICT (merchant_id) DO UPDATE SET plan_id = 'plan-free' RETURNING id`, [tid]);
     subId = rows[0].id;
     await db().query(`DELETE FROM billing.webhook_logs WHERE event_id LIKE 'DOKU:uji-%'`);
   });

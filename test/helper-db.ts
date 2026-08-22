@@ -35,10 +35,34 @@ export async function tutupDb(): Promise<void> {
   }
 }
 
-/** Membuat merchant uji yang bersih, membuang sisa percobaan sebelumnya. */
+/**
+ * Membuang seluruh jejak seorang pemilik uji: merchant, unit usahanya, dan
+ * langganannya.
+ *
+ * Menghapus business saja tidak cukup sejak 0028. Langganan menempel di
+ * merchant, jadi sisa dari percobaan sebelumnya tetap hidup dan unit usaha
+ * berikutnya mewarisi paketnya — tes pertama yang mengharapkan TRIAL malah
+ * menemukan ACTIVE, tergantung urutan menjalankan.
+ */
+export async function bersihkanPemilik(clientKey: string): Promise<void> {
+  const d = db();
+  const owner = clientKey.split('_')[0];
+  await d.query('DELETE FROM pos.merchants WHERE owner_user_ref = $1', [owner]);
+  await d.query('DELETE FROM pos.businesses WHERE client_key = $1', [clientKey]);
+}
+
+/**
+ * Membuat merchant uji yang bersih, membuang sisa percobaan sebelumnya.
+ *
+ * Yang dihapus adalah PEMILIKNYA, bukan hanya unit usahanya. Sejak 0028
+ * langganan menempel di merchant: menghapus business saja meninggalkan
+ * langganan pemiliknya hidup, dan unit usaha berikutnya mewarisi paket dari
+ * percobaan sebelumnya alih-alih memulai dari trial. Tes yang hasilnya
+ * bergantung pada urutan menjalankan adalah tes yang tidak membuktikan apa pun.
+ */
 export async function merchantUji(businessId: string, nama = 'Toko Uji'): Promise<string> {
   const d = db();
-  await d.query('DELETE FROM pos.businesses WHERE client_key = $1', [businessId]);
+  await bersihkanPemilik(businessId);
   const { rows } = await d.query(
     `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
      VALUES (uuidv7(), $1, 'FNB', $2, $3, true) RETURNING id`,
@@ -47,16 +71,36 @@ export async function merchantUji(businessId: string, nama = 'Toko Uji'): Promis
   return rows[0].id;
 }
 
+/**
+ * Memasang paket pada PEMILIK unit usaha ini.
+ *
+ * Sejak 0028 langganan menempel di merchant, bukan di business. Argumennya
+ * tetap business_id supaya tes tidak perlu tahu soal itu — resolusinya
+ * dikerjakan di sini, sama seperti yang dilakukan endpoint sungguhan.
+ */
 export async function pasangPaket(tenantId: string, planId: string): Promise<void> {
   await db().query(
     `INSERT INTO billing.subscriptions
-       (id, business_id, plan_id, status, current_period_start, current_period_end)
-     VALUES (uuidv7(), $1, $2, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
-     ON CONFLICT (business_id) DO UPDATE SET
+       (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+     SELECT uuidv7(), b.merchant_id, $2, 'ACTIVE',
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days'
+       FROM pos.businesses b WHERE b.id = $1
+     ON CONFLICT (merchant_id) DO UPDATE SET
        plan_id = $2, status = 'ACTIVE',
        current_period_end = CURRENT_TIMESTAMP + INTERVAL '30 days'`,
     [tenantId, planId]
   );
+}
+
+/** Langganan yang BERLAKU untuk sebuah unit usaha, lewat merchantnya. */
+export async function langgananUntuk(tenantId: string): Promise<any | null> {
+  const { rows } = await db().query(
+    `SELECT s.* FROM billing.subscriptions s
+       JOIN pos.businesses b ON b.merchant_id = s.merchant_id
+      WHERE b.id = $1 LIMIT 1`,
+    [tenantId]
+  );
+  return rows[0] ?? null;
 }
 
 /** Res tiruan yang menangkap status dan badan balasan handler serverless. */

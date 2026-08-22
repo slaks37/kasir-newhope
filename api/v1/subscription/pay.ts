@@ -13,7 +13,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
-import { resolveTenantId } from '../../_lib/tenant.js';
+import { resolveTenantId, resolveMerchantId } from '../../_lib/tenant.js';
 import { konfigurasi, buatPembayaran } from '../../_lib/doku.js';
 
 let pool: pg.Pool | null = null;
@@ -86,6 +86,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    const merchantId = await resolveMerchantId(db, tenantId);
+    if (!merchantId) {
+      return res.status(409).json({
+        ok: false, error: 'MERCHANT_BELUM_SINKRON',
+        detail: 'Toko ini belum punya pemilik terdaftar, jadi belum ada yang bisa ditagih.',
+      });
+    }
+
     // HARGA DIBACA DARI DATABASE, tidak pernah dari permintaan. Menerima nominal
     // dari klien berarti siapa pun bisa membeli paket termahal seharga Rp 1.
     const { rows: paket } = await client.query(
@@ -114,13 +122,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Langganan harus ada supaya faktur punya induk. Statusnya TIDAK diubah di
     // sini — merchant baru mendapat baris langganan, bukan paket aktif.
+    //
+    // Kuncinya MERCHANT, bukan business. Pemilik yang punya kafe dan laundry
+    // membeli satu paket untuk keduanya; menagih per unit usaha berarti menagih
+    // orang yang sama dua kali.
     const { rows: sub } = await client.query(
       `INSERT INTO billing.subscriptions
-         (id, business_id, plan_id, status, current_period_start, current_period_end)
+         (id, merchant_id, plan_id, status, current_period_start, current_period_end)
        VALUES (uuidv7(), $1, 'plan-free', 'TRIAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       ON CONFLICT (business_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+       ON CONFLICT (merchant_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
        RETURNING id`,
-      [tenantId]
+      [merchantId]
     );
 
     const { rows: merchant } = await client.query(

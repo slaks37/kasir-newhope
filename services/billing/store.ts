@@ -24,7 +24,10 @@ import type { SaaSSubscription, SaaSInvoice, SubscriptionStatus } from '../../sr
 function keLangganan(r: any): SaaSSubscription {
   return {
     id: r.id,
+    // Langganan tidak lagi menyimpan business_id — ia milik MERCHANT. Query di
+    // bawah membawa business_id yang sedang ditanyakan sebagai kolom tambahan.
     tenantId: r.business_id,
+    merchantId: r.merchant_id,
     planId: r.plan_id,
     status: r.status as SubscriptionStatus,
     currentPeriodStart: new Date(r.current_period_start).toISOString(),
@@ -138,9 +141,14 @@ export async function ambilAtauBuatLangganan(
   const { uuid: tenantId, terdaftar } = await keTenant(db, tenantIdMentah);
   if (!terdaftar) return null;
 
+  // Langganan dicari lewat MERCHANT pemilik unit usaha ini. Pemilik yang punya
+  // kafe dan laundry hanya berlangganan sekali, dan membuat baris kedua untuk
+  // unit usaha keduanya berarti menagihnya dua kali.
   const ada = await db.query(
-    `SELECT * FROM billing.subscriptions WHERE business_id = $1
-      ORDER BY created_at DESC LIMIT 1`,
+    `SELECT s.*, b.id AS business_id
+       FROM billing.subscriptions s
+       JOIN pos.businesses b ON b.merchant_id = s.merchant_id
+      WHERE b.id = $1 LIMIT 1`,
     [tenantId]
   );
   if (ada.rows.length) return keLangganan(ada.rows[0]);
@@ -165,19 +173,24 @@ export async function ambilAtauBuatLangganan(
 
   const { rows } = await db.query(
     `INSERT INTO billing.subscriptions
-       (id, business_id, plan_id, status, current_period_start, current_period_end)
-     VALUES (uuidv7(), $1, $2, $4,
-             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + ($3::int || ' days')::interval)
-     RETURNING *`,
+       (id, merchant_id, plan_id, status, current_period_start, current_period_end)
+     SELECT uuidv7(), b.merchant_id, $2, $4,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + ($3::int || ' days')::interval
+       FROM pos.businesses b WHERE b.id = $1
+     ON CONFLICT (merchant_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+     RETURNING *, $1::uuid AS business_id`,
     [tenantId, planTrial, hariTrial, statusLangganan]
   );
-  return keLangganan(rows[0]);
+  return rows.length ? keLangganan(rows[0]) : null;
 }
 
 export async function ambilLangganan(db: Db, tenantIdMentah: string): Promise<SaaSSubscription | null> {
   const { uuid: tenantId } = await keTenant(db, tenantIdMentah);
   const { rows } = await db.query(
-    `SELECT * FROM billing.subscriptions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    `SELECT s.*, b.id AS business_id
+       FROM billing.subscriptions s
+       JOIN pos.businesses b ON b.merchant_id = s.merchant_id
+      WHERE b.id = $1 LIMIT 1`,
     [tenantId]
   );
   return rows.length ? keLangganan(rows[0]) : null;
@@ -190,12 +203,18 @@ export async function ubahStatusLangganan(
   periodeBaru?: { mulai: string; selesai: string }
 ): Promise<SaaSSubscription | null> {
   const { rows } = await db.query(
-    `UPDATE billing.subscriptions
-        SET status = $2,
-            current_period_start = COALESCE($3::timestamptz, current_period_start),
-            current_period_end   = COALESCE($4::timestamptz, current_period_end),
-            updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1 RETURNING *`,
+    `WITH ubah AS (
+       UPDATE billing.subscriptions
+          SET status = $2,
+              current_period_start = COALESCE($3::timestamptz, current_period_start),
+              current_period_end   = COALESCE($4::timestamptz, current_period_end),
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 RETURNING *
+     )
+     SELECT u.*, (SELECT b.id FROM pos.businesses b
+                   WHERE b.merchant_id = u.merchant_id
+                   ORDER BY b.created_at, b.id LIMIT 1) AS business_id
+       FROM ubah u`,
     [id, status, periodeBaru?.mulai ?? null, periodeBaru?.selesai ?? null]
   );
   return rows.length ? keLangganan(rows[0]) : null;
@@ -203,9 +222,15 @@ export async function ubahStatusLangganan(
 
 export async function gantiPaket(db: Db, id: string, planId: string): Promise<SaaSSubscription | null> {
   const { rows } = await db.query(
-    `UPDATE billing.subscriptions
-        SET plan_id = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1 RETURNING *`,
+    `WITH ubah AS (
+       UPDATE billing.subscriptions
+          SET plan_id = $2, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 RETURNING *
+     )
+     SELECT u.*, (SELECT b.id FROM pos.businesses b
+                   WHERE b.merchant_id = u.merchant_id
+                   ORDER BY b.created_at, b.id LIMIT 1) AS business_id
+       FROM ubah u`,
     [id, planId]
   );
   return rows.length ? keLangganan(rows[0]) : null;
