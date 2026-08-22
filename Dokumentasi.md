@@ -194,6 +194,29 @@ Es Kopi Latte (1 porsi)
 
 ---
 
+### ☕ 2.3 Varian Produk, Modifier BOM, & Snapshot Transaksi Historis
+
+Sistem menjamin integritas finansial dan pemotongan stok bahan baku melalui snapshot data pesanan:
+
+```
+[TRANSAKSI PENJUALAN]
+Item: Latte (Variant: Large, Rp 32.000)
+ ├── Base Product Snapshot   : product_name = "Latte", unit_price = 28000, unit_cost = 6500
+ ├── Variant Snapshot        : variant_name = "Large", price_adj = +4000, cost_adj = +1200
+ └── Selected Modifiers BOM  :
+      ├── Extra Shot (+Rp 5.000, HPP: Rp 1.500) ➔ Potong 8g Biji Kopi di pos.inventory_balances
+      └── Oat Milk Swap (+Rp 6.000, HPP: Rp 2.200) ➔ Potong 150ml Susu Oat di pos.inventory_balances
+```
+
+- **Modifier BOM (`pos.modifier_recipes`)**: Menghubungkan setiap add-on/opsi ke bahan baku mentah terkait, sehingga saat *Extra Shot* terjual, stok biji kopi otomatis terpotong.
+- **Immutable Price & Cost Snapshots (`pos.transaction_items`)**:
+  - Menyimpan permanen `product_name_snapshot`, `variant_name_snapshot`, `unit_price`, `unit_cost`, dan `modifier_snapshot`.
+  - Jika harga menu dinaikkan di masa depan, laporan keuangan transaksi lampau tetap akurat dan tidak berubah.
+- **Kontrak Detail Transaksi (`contract.transaction_items_detailed`)**:
+  - Menyediakan single source of truth untuk analisis laba kotor riil per varian dan modifier.
+
+---
+
 ## 3. Otentikasi vs Step-Up Otorisasi (Manager PIN)
 
 ```
