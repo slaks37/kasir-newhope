@@ -14,8 +14,6 @@ import {
   CheckCircle2,
   Zap,
   TrendingUp,
-  AlertTriangle,
-  Layers,
   Store,
   Settings,
   ShoppingCart,
@@ -52,12 +50,6 @@ import {
   Shield,
   Smartphone,
   BookOpen,
-  ShieldAlert,
-  AlertOctagon,
-  FileSpreadsheet,
-  Cpu,
-  Lock,
-  RefreshCw,
   Monitor,
   Tablet,
   Sliders,
@@ -67,6 +59,10 @@ import {
   Trash2,
   Plus,
   Minus,
+  Sparkle,
+  Radio,
+  Layers,
+  Laptop,
 } from 'lucide-react';
 
 interface HomePageProps {
@@ -117,61 +113,57 @@ export const HomePage: React.FC<HomePageProps> = ({
   // FAQ Accordion State
   const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(0);
 
-  // Problem-Solution-Impact Active Tab
-  const [activeProblemIdx, setActiveProblemIdx] = useState<number>(0);
+  // Active Feature Tab
+  const [activeFeatureTab, setActiveFeatureTab] = useState<number>(0);
 
-  // Hardware Tab State (Moka / Majoo style)
-  const [activeHardwareTab, setActiveHardwareTab] = useState<'all' | 'tablet' | 'phone' | 'pos-device' | 'printer'>('tablet');
-
-  // Registration Modal State
+  // Registration Toast State
   const [registerSuccessMsg, setRegisterSuccessMsg] = useState<string | null>(null);
 
-  // 🧮 Interactive ROI Calculator State (Spot On style)
+  // 🧮 Interactive ROI & Growth Calculator State (Spot On & Majoo style)
   const [monthlyRevenue, setMonthlyRevenue] = useState<number>(35000000); // 35 Juta default
   const [dailyTransactions, setDailyTransactions] = useState<number>(65);
   const [staffCount, setStaffCount] = useState<number>(3);
 
-  // 🎮 Hero Live POS Terminal Interactive Simulator State (Spot On / Moka style)
+  // 🎮 Hero Live POS Terminal Interactive Simulator State (Spot On & Moka style)
   const [simSector, setSimSector] = useState<BusinessSector>('FNB');
   const [simCart, setSimCart] = useState<SimulatorCartItem[]>([
     { id: 'sim-1', name: 'Es Kopi Gula Aren', price: 18000, qty: 2, sector: 'FNB' },
     { id: 'sim-2', name: 'Croissant Butter', price: 22000, qty: 1, sector: 'FNB' },
   ]);
   const [showSimPaymentModal, setShowSimPaymentModal] = useState<boolean>(false);
-  const [simPaymentMethod, setSimPaymentMethod] = useState<'QRIS' | 'CASH' | 'DEBIT'>('QRIS');
   const [simPaymentDone, setSimPaymentDone] = useState<boolean>(false);
 
-  // 🔔 Live Social Proof Floating Toast Ticker
+  // 🔔 Live Social Proof Floating Toast Ticker (Spot On style)
   const [currentToastIdx, setCurrentToastIdx] = useState<number>(0);
   const [showLiveToast, setShowLiveToast] = useState<boolean>(true);
 
   const liveSocialProofs = [
     {
       title: 'Kopi Senayan Jakarta',
-      action: 'menerima 1 pembayaran QRIS Dinamis Rp 48.000',
+      action: 'berhasil memproses pembayaran QRIS Dinamis Rp 48.000',
       time: 'Baru saja (2 detik lalu)',
-      tag: '0% Selisih Kasir',
+      tag: 'QRIS Otomatis',
       color: 'text-amber-400',
     },
     {
-      title: 'Dago Express Laundry',
-      action: 'mengirim 1 nota otomatis via WhatsApp ke pelanggan',
-      time: '15 detik lalu',
-      tag: 'Zero Komplain',
+      title: 'Dago Express Laundry Bandung',
+      action: 'mengirim nota digital otomatis via WhatsApp ke pelanggan',
+      time: '18 detik lalu',
+      tag: 'Nota WhatsApp',
       color: 'text-blue-400',
     },
     {
-      title: 'Toko Berkah Surabaya',
-      action: 'mendeteksi peringatan stok kritis susu & kopi via AI Copilot',
-      time: '42 detik lalu',
-      tag: 'Restock Tepat Waktu',
+      title: 'Toko Berkah Sentosa Surabaya',
+      action: 'menerima rekomendasi restock bahan baku dari AI Copilot',
+      time: '45 detik lalu',
+      tag: 'Smart Restock',
       color: 'text-emerald-400',
     },
     {
-      title: 'The Gentleman Barber Medan',
-      action: 'mencatat komisi otomatis 2 pengerjaan potong rambut',
+      title: 'The Gentleman Barbershop Medan',
+      action: 'mencatat komisi layanan kapster otomatis dalam 1 klik',
       time: '1 menit lalu',
-      tag: 'Komisi 1-Klik',
+      tag: 'Komisi Otomatis',
       color: 'text-purple-400',
     },
   ];
@@ -253,7 +245,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const handleExecuteSimSuccess = () => {
     setSimPaymentDone(true);
     confetti({
-      particleCount: 80,
+      particleCount: 75,
       spread: 70,
       origin: { y: 0.6 },
       colors: ['#f59e0b', '#10b981', '#6366f1'],
@@ -265,20 +257,19 @@ export const HomePage: React.FC<HomePageProps> = ({
     }, 3500);
   };
 
-  // ROI Calculations
-  // Estimated cash/inventory leak in traditional operations: ~5.5% of revenue
+  // ROI & Growth Calculations (Spot On style)
   const calculatedSavingsMonthly = Math.round(monthlyRevenue * 0.065);
   const calculatedTimeSavedHours = Math.round(dailyTransactions * 0.05 * 30 + staffCount * 4);
   const calculatedYearlyExtraProfit = calculatedSavingsMonthly * 12;
-  const subscriptionCostYearly = 948000; // Tier plus
-  const roiMultiplier = Math.round(calculatedYearlyExtraProfit / subscriptionCostYearly);
+  const subscriptionCostYearly = 948000; // Tier Plus (Annual)
+  const roiMultiplier = Math.max(1, Math.round(calculatedYearlyExtraProfit / subscriptionCostYearly));
 
   const selectedPreviewPreset = BUSINESS_PRESETS[selectedPresetSector];
 
   const handleApplySector = (sector: BusinessSector, customName?: string) => {
     activateBusinessSector(sector, customName);
     setRegisterSuccessMsg(
-      `Mode bisnis "${BUSINESS_PRESETS[sector].name}" berhasil diaktifkan! Katalog & produk contoh telah diperbarui.`
+      `Mode bisnis "${BUSINESS_PRESETS[sector].name}" berhasil diaktifkan! Katalog & produk contoh siap digunakan.`
     );
     setTimeout(() => setRegisterSuccessMsg(null), 6000);
   };
@@ -299,126 +290,110 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
   };
 
-  // 4 Core Pain Points (Problem -> Solution -> Impact)
-  const problemSolutionMatrix = [
+  // 4 Core Solution Pillars (Moka, Majoo & Spot On style)
+  const solutionPillars = [
     {
-      id: 'cash-leak',
-      icon: ShieldAlert,
-      badge: 'Kebocoran Kasir & Fraud',
-      problemTitle: 'Uang Kasir Selalu Selisih & Nota Manual Rawan Dimanipulasi',
-      problemDesc:
-        'Toko ramai dari pagi sampai malam, tapi saat hitung uang kasir di akhir shift selalu ada selisih ratusan ribu. Karyawan bisa membatalkan nota tanpa izin atau salah ketik nominal saat terima pembayaran tunai/transfer.',
-      solutionTitle: 'Sistem Kasir Terkunci dengan Otorisasi PIN Manager & QRIS Dinamis',
-      solutionDesc:
-        'Setiap pembatalan pesanan (void) dan diskon wajib otorisasi PIN Manager. Pembayaran non-tunai langsung memunculkan QRIS Dinamis dengan nominal pas hingga rupiah terkecil yang otomatis diverifikasi tanpa bukti transfer palsu.',
-      impactMetric: '0%',
-      impactLabel: 'Toleransi Selisih Kasir',
-      impactOutcome: 'Uang masuk 100% cocok dengan laporan sistem. Tidak ada celah kecurangan karyawan.',
-      color: 'from-rose-500 to-red-700',
-      accentColor: 'text-rose-400',
-      bgColor: 'bg-rose-500/10 border-rose-500/30',
-    },
-    {
-      id: 'stock-leak',
-      icon: Package,
-      badge: 'Bahan Baku & HPP',
-      problemTitle: 'Bahan Baku Kerap Habis Siluman & Margin Laba Kotor Tidak Jelas',
-      problemDesc:
-        'Biji kopi, susu, deterjen, atau daging sering habis sebelum waktunya. Anda tidak tahu pasti berapa biaya modal (HPP) satu porsi jualan, sehingga harga jual ternyata tidak menutup kenaikan harga bahan baku di pasar.',
-      solutionTitle: '3-Level Inventory BOM: Stok Bahan Baku Terpotong Otomatis per Gramatur',
-      solutionDesc:
-        'Setiap 1 item terjual di kasir, sistem otomatis memotong stok bahan baku mentah dan setengah jadi sesuai resep gramatur. Sistem memberi alarm dini saat stok mendekati batas kritis sebelum toko kehabisan bahan.',
-      impactMetric: '35%+',
-      impactLabel: 'Pengurangan Food Waste & Pemborosan',
-      impactOutcome: 'HPP terhitung presisi per porsi, margin laba kotor terkunci aman, dan restock selalu tepat waktu.',
+      id: 'pillar-checkout',
+      icon: QrCode,
+      badge: 'Kasir Kilat & QRIS Otomatis',
+      title: 'Transaksi Cepat & Pembayaran Non-Tunai Otomatis',
+      desc: 'Layani pelanggan dalam hitungan detik. Generate QRIS Dinamis dengan nominal pas hingga rupiah terkecil, terima konfirmasi otomatis tanpa cek mutasi manual, dan kirim struk digital langsung ke WhatsApp pelanggan.',
+      benefit: 'Pelayanan 2x lebih cepat, bebas salah ketik nominal, dan antrean kasir selalu lancar.',
+      metric: '< 3 Detik',
+      metricLabel: 'Waktu Proses Checkout',
       color: 'from-amber-500 to-amber-700',
       accentColor: 'text-amber-400',
       bgColor: 'bg-amber-500/10 border-amber-500/30',
     },
     {
-      id: 'time-waste',
-      icon: Clock,
-      badge: 'Efisiensi Waktu Owner',
-      problemTitle: 'Owner Begadang Berjam-jam Setiap Malam Hanya untuk Rekap Buku',
-      problemDesc:
-        'Harus menghitung tumpukan struk kertas, bagi hasil komisi kapster/kru cuci mobil, dan input angka ke Excel sampai larut malam. Anda lelah mengurus operasional dan tidak punya waktu memikirkan strategi ekspansi cabang.',
-      solutionTitle: 'Laporan Laba Rugi Real-Time & Kalkulasi Komisi Staf Otomatis 1-Klik',
-      solutionDesc:
-        'Laporan penjualan harian, laba kotor, item terlaris, dan rekap komisi karyawan langsung tersaji otomatis secara real-time. Bisa dipantau dari HP kapan saja tanpa harus hadir fisik di kasir.',
-      impactMetric: '3-5 Jam',
-      impactLabel: 'Waktu Hemat Tiap Hari',
-      impactOutcome: 'Tutup buku kasir beres dalam 2 menit. Bisnis berjalan autopilot dan owner bisa fokus buka cabang baru.',
+      id: 'pillar-inventory',
+      icon: Package,
+      badge: 'Manajemen Stok & Resep',
+      title: 'Kontrol Persediaan & Perhitungan HPP Otomatis',
+      desc: 'Pantau stok bahan baku mentah, bahan setengah jadi, hingga menu siap saji dengan sistem Bill of Materials (BOM). Setiap penjualan otomatis memotong stok sesuai resep gramatur dengan notifikasi cerdas saat bahan menipis.',
+      benefit: 'HPP terhitung presisi, pantau margin laba per menu, dan restock selalu tepat waktu.',
+      metric: '100% Akurat',
+      metricLabel: 'Potong Stok Gramatur',
       color: 'from-emerald-500 to-teal-700',
       accentColor: 'text-emerald-400',
       bgColor: 'bg-emerald-500/10 border-emerald-500/30',
     },
     {
-      id: 'slow-system',
-      icon: Zap,
-      badge: 'Kecepatan & Keandalan',
-      problemTitle: 'Aplikasi Kasir Lemot & Mati Total Saat Internet Terputus (Offline)',
-      problemDesc:
-        'Saat jam makan siang atau weekend toko sedang penuh, aplikasi kasir cloud biasa mendadak loading lama atau error karena sinyal WiFi drop. Antrean kasir mengular, pelanggan kesal dan batal belanja.',
-      solutionTitle: 'Arsitektur Offline-First Hybrid: Tetap Transaksi Lancar Tanpa Internet',
-      solutionDesc:
-        'New Hope POS dirancang dengan teknologi Offline-First. Kasir tetap bisa input pesanan, buka laci kasir (cash drawer), dan cetak struk tanpa internet. Data otomatis tersinkronisasi ke cloud begitu koneksi kembali.',
-      impactMetric: '99.99%',
-      impactLabel: 'Uptime & Zero Jam Antrean',
-      impactOutcome: 'Kasir melayani transaksi dalam < 3 detik per pelanggan, tanpa pernah terhenti kendala koneksi.',
+      id: 'pillar-analytics',
+      icon: TrendingUp,
+      badge: 'Laporan Finansial Real-Time',
+      title: 'Pantau Omset, Profit & Karyawan dari Mana Saja',
+      desc: 'Dapatkan visualisasi lengkap performa bisnis Anda secara langsung dari smartphone. Pantau tren omset harian, produk terlaris, laba kotor, hingga perhitungan komisi staf dan laporan absensi tanpa perlu rumus manual.',
+      benefit: 'Tutup buku harian selesai dalam 1 menit, bisnis berjalan autopilot dengan kendali penuh.',
+      metric: 'Real-Time',
+      metricLabel: 'Dashboard & Laporan Usaha',
       color: 'from-blue-500 to-indigo-700',
       accentColor: 'text-blue-400',
       bgColor: 'bg-blue-500/10 border-blue-500/30',
+    },
+    {
+      id: 'pillar-offline',
+      icon: Zap,
+      badge: 'Keandalan Offline-First',
+      title: 'Jualan Tetap Lancar Tanpa Khawatir Internet Putus',
+      desc: 'Dirancang dengan arsitektur Offline-First yang tangguh. Kasir Anda tetap dapat memproses pesanan, membuka laci kasir (cash drawer), dan mencetak struk thermal saat sinyal WiFi atau internet terputus.',
+      benefit: 'Data otomatis tersinkronisasi saat online kembali tanpa risiko transaksi ganda.',
+      metric: '99.99%',
+      metricLabel: 'Jaminan Kelancaran Kasir',
+      color: 'from-purple-500 to-rose-700',
+      accentColor: 'text-purple-400',
+      bgColor: 'bg-purple-500/10 border-purple-500/30',
     },
   ];
 
   // AI Simulator Mock Prompts & Responses
   const aiSimulations = [
     {
-      query: '📦 Stok apa yang paling kritis & mau habis?',
-      tag: 'Deteksi Stok & HPP',
+      query: '📦 Stok apa yang perlu di-restock minggu ini?',
+      tag: 'Prediksi Stok & HPP',
       badge: 'Rp 0 · < 5ms',
       answer:
-        'Ada 2 bahan baku di bawah batas aman: 1) Biji Kopi Gayo sisa 1.8 Kg (cukup ~85 cup lagi, pesan sebelum Kamis), 2) Susu Fresh Milk sisa 3 Liter (estimasi habis besok pukul 14.30). Klik [Pesan Ulang] untuk hubungi supplier.',
+        'Berdasarkan rata-rata penjualan 7 hari terakhir: 1) Biji Kopi Gayo tersisa 1.8 Kg (cukup ~85 cup lagi, disarankan pesan sebelum Kamis), 2) Susu Fresh Milk tersisa 3 Liter (estimasi habis besok pukul 14.30). Klik tombol [Pesan Ulang] untuk menghubungi supplier.',
     },
     {
-      query: '💰 Berapa omset & estimasi laba bersih hari ini?',
-      tag: 'Laporan Finansial Real-time',
+      query: '💰 Bagaimana performa omset & laba kotor hari ini?',
+      tag: 'Laporan Penjualan Real-time',
       badge: 'Rp 0 · < 5ms',
       answer:
-        'Total omset hari ini: Rp 3.840.000 dari 42 transaksi. Estimasi HPP bahan baku terpakai: Rp 1.450.000. Laba Kotor Harian: Rp 2.390.000 (Margin 62.2%). Penjualan naik 14% dibanding hari yang sama minggu lalu.',
+        'Total omset hari ini tercatat Rp 3.840.000 dari 42 transaksi. Estimasi HPP bahan baku terpakai: Rp 1.450.000. Laba Kotor Harian: Rp 2.390.000 (Margin 62.2%). Penjualan naik 14% dibandingkan hari yang sama minggu lalu.',
     },
     {
-      query: '🏆 Apa menu paling laris & menu yang harus dihapus?',
-      tag: 'Analitik Menu & ABC',
+      query: '🏆 Apa menu paling laris & rekomendasi bundling promosi?',
+      tag: 'Analitik Menu & Produk',
       badge: 'Rp 0 · < 5ms',
       answer:
-        'Produk Terlaris: "Es Kopi Susu Gula Aren" (58 cup terjual, kontribusi omset 38%). Produk Lambat (Dead Stock): "Pisang Keju Crispy" (0 terjual dalam 7 hari). Saran AI: Buat paket kombo kombo bundling hemat untuk dorong penjualan snack.',
+        'Menu Terlaris: "Es Kopi Susu Gula Aren" (58 cup terjual, kontribusi omset 38%). Rekomendasi AI: Buat paket kombo bundling hemat "Es Kopi Susu + Croissant Butter" untuk mendongkrak rata-rata nilai transaksi (basket size) sebesar 22%.',
     },
     {
-      query: '⭐ Siapa staf/kasir dengan performa terbaik shift ini?',
-      tag: 'Audit Staf & Komisi',
+      query: '⭐ Siapa staf dengan kontribusi transaksi terbaik hari ini?',
+      tag: 'Performa Staf & Komisi',
       badge: 'Rp 0 · < 5ms',
       answer:
-        'Budi Santoso mencatat 28 transaksi kasir dengan total penjualan Rp 2.450.000 tanpa selisih void. Mas Alex (Stylist) menyelesaikan 8 pengerjaan potong rambut dengan estimasi komisi jasa Rp 240.000.',
+        'Budi Santoso mencatat 28 transaksi kasir dengan total penjualan Rp 2.450.000 dengan kepuasan pelanggan sempurna. Mas Alex (Stylist) menyelesaikan 8 pengerjaan potong rambut dengan estimasi komisi jasa Rp 240.000.',
     },
   ];
 
-  // Testimonials Data
+  // Testimonials Data (Moka & Majoo style)
   const testimonials = [
     {
       quote:
-        'Sebelum pakai New Hope POS, kami sering tekor karena takaran susu dan biji kopi barista tidak terkontrol. Sekarang setiap cup terjual langsung potong gramatur resep. Laba kotor bulanan kami naik 28% karena 0% kebocoran bahan!',
+        'New Hope POS sangat praktis dan mudah digunakan oleh barista kami. Fitur resep otomatisnya membuat perhitungan HPP jadi sangat rapi, dan pembayaran QRIS Dinamis membuat antrean kasir jadi super cepat!',
       name: 'Doni Pratama',
       role: 'Owner & Founder',
-      business: 'Kopi Senayan Jakarta (3 Cabang)',
-      sector: 'Kafe & Resto (F&B)',
+      business: 'Kopi Senayan Jakarta (3 Outlet)',
+      sector: 'Kafe & Restoran (F&B)',
       rating: 5,
       icon: Coffee,
       color: 'from-amber-500 to-amber-700',
     },
     {
       quote:
-        'Fitur kirim nota otomatis ke WhatsApp dan pelacakan status cuci-kering-setrika benar-benar penyelamat. Komplain baju hilang atau tertukar jadi NOL. Pelanggan puas dan omset laundry kami tembus rekor baru!',
+        'Fitur kirim nota otomatis ke WhatsApp dan pelacakan status cucian membuat pelanggan merasa tenang dan terlayani dengan profesional. Pelanggan repeat order kami meningkat drastis!',
       name: 'Ibu Hj. Siti Aminah',
       role: 'Pemilik Usaha',
       business: 'Dago Express Laundry Bandung',
@@ -429,7 +404,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     },
     {
       quote:
-        'Scan barcode ribuan SKU sembako cepat sekali, tanpa jeda. Tutup toko tiap malam yang dulunya butuh 2 jam hitung manual di buku kasir, sekarang tinggal klik 1 tombol langsung tahu laba bersih hari ini.',
+        'Scan barcode ribuan produk sembako sangat cepat tanpa jeda. Tutup buku harian yang biasanya memakan waktu berjam-jam kini selesai dalam beberapa klik saja langsung dari HP.',
       name: 'Hendra Wijaya',
       role: 'Pengelola Toko',
       business: 'Toko Berkah Sentosa Surabaya',
@@ -440,11 +415,11 @@ export const HomePage: React.FC<HomePageProps> = ({
     },
     {
       quote:
-        'Dulu tiap malam Minggu selalu ribut hitung bagi hasil komisi kapster. Dengan New Hope POS, komisi terhitung otomatis per kepala dan antrean potong rambut jadi rapi. Staf senang, owner tenang.',
+        'Sistem bagi hasil komisi kapster terhitung otomatis dan transparan. Pelanggan juga senang karena antrean booking tertata rapi. Aplikasi kasir terbaik untuk salon dan barbershop!',
       name: 'Mas Alex Stylist',
-      role: 'Master Barber & Owner',
+      role: 'Master Barber & Founder',
       business: 'The Gentleman Barbershop Medan',
-      sector: 'Barbershop & Grooming',
+      sector: 'Barbershop & Salon',
       rating: 5,
       icon: Scissors,
       color: 'from-purple-500 to-rose-700',
@@ -455,23 +430,23 @@ export const HomePage: React.FC<HomePageProps> = ({
   const faqs = [
     {
       q: 'Apakah New Hope POS bisa tetap digunakan saat koneksi internet mati (Offline)?',
-      a: 'Tentu saja! New Hope POS menggunakan arsitektur Offline-First yang tangguh. Kasir Anda tetap bisa memproses pesanan, membuka laci kasir, dan mencetak struk saat internet terputus. Data transaksi akan otomatis tersinkronisasi ke cloud begitu internet terhubung kembali tanpa risiko duplikasi data.',
+      a: 'Tentu saja! New Hope POS menggunakan arsitektur Offline-First yang tangguh. Kasir Anda tetap bisa memproses pesanan, membuka laci kasir, dan mencetak struk saat internet terputus. Data transaksi akan otomatis tersinkronisasi ke cloud begitu internet terhubung kembali.',
     },
     {
-      q: 'Bagaimana jika saya malas mengetik ulang ratusan menu dari aplikasi kasir lama?',
-      a: 'Tenang saja! Kami menyediakan layanan White-Glove Onboarding GRATIS. Cukup foto buku menu, nota, atau file Excel katalog lama Anda dan kirimkan ke tim WhatsApp kami. Tim New Hope POS akan meng-input seluruh data produk & resep Anda sampai siap jualan dalam waktu kurang dari 3 jam.',
+      q: 'Bagaimana jika saya ingin dibantu memasukkan daftar menu atau produk toko?',
+      a: 'Kami menyediakan layanan Onboarding & Setup Menu GRATIS. Cukup kirimkan foto daftar menu, nota, atau file Excel katalog Anda ke tim WhatsApp kami. Tim New Hope POS akan meng-input seluruh data produk & resep Anda sampai siap jualan dalam waktu kurang dari 3 jam.',
     },
     {
-      q: 'Kapan uang dari transaksi pembayaran QRIS Dinamis masuk ke rekening saya?',
-      a: 'Uang pembayaran QRIS Dinamis dan kartu otomatis dicairkan (Auto-Settlement) langsung ke rekening bank mana saja (BCA, Mandiri, BRI, BNI, dll) setiap H+1 tanpa potongan biaya administrasi tersembunyi.',
+      q: 'Kapan dana pembayaran dari transaksi QRIS Dinamis masuk ke rekening saya?',
+      a: 'Dana pembayaran QRIS Dinamis otomatis dicairkan (Auto-Settlement) langsung ke rekening bank pilihan Anda (BCA, Mandiri, BRI, BNI, dll) setiap H+1 secara terjadwal dan transparan.',
     },
     {
-      q: 'Apakah saya wajib membeli mesin kasir baru atau bisa pakai tablet/HP saya sendiri?',
-      a: 'Anda TIDAK wajib membeli hardware baru! New Hope POS dapat berjalan mulus di perangkat apa pun yang Anda miliki: HP Android, Tablet, iPad, Laptop, PC Kasir Windows, maupun perangkat Android POS profesional seperti Sunmi, iMin, dan printer termal Bluetooth.',
+      q: 'Apakah saya bisa menggunakan tablet, HP Android, atau laptop yang sudah saya miliki?',
+      a: 'Bisa banget! Anda tidak wajib membeli perangkat baru. New Hope POS kompatibel dengan HP Android, Tablet, iPad, Laptop/PC Windows, hingga mesin Android POS profesional (Sunmi, iMin) serta printer termal Bluetooth.',
     },
     {
-      q: 'Apakah paket Free Trial 45 Hari benar-benar gratis tanpa kartu kredit?',
-      a: '100% Gratis tanpa biaya tersembunyi dan tanpa perlu input kartu kredit. Anda mendapatkan akses penuh untuk menguji fitur kasir, analitik, dan manajemen stok di toko Anda secara nyata.',
+      q: 'Apakah paket Coba Gratis 45 Hari benar-benar tanpa biaya dan tanpa kartu kredit?',
+      a: '100% Gratis tanpa biaya tersembunyi dan tanpa perlu kartu kredit. Anda dapat langsung mencoba seluruh fitur kasir, inventori, dan analitik toko secara nyata.',
     },
   ];
 
@@ -492,19 +467,19 @@ export const HomePage: React.FC<HomePageProps> = ({
               </span>
             </div>
             <span className="text-[11px] text-slate-400 font-medium block">
-              Multi-Sector Commerce & FinTech OS
+              Multi-Sector Commerce & Smart POS OS
             </span>
           </div>
         </div>
 
         {/* Center Desktop Links */}
         <nav className="hidden lg:flex items-center space-x-6 text-xs font-bold text-slate-300">
-          <a href="#simulator" className="hover:text-amber-400 transition-colors flex items-center gap-1">
+          <a href="#simulator" className="hover:text-amber-400 transition-colors flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>Coba Simulator POS</span>
+            <span>Simulator POS</span>
           </a>
-          <a href="#solusi-masalah" className="hover:text-amber-400 transition-colors">Solusi Masalah</a>
-          <a href="#kalkulator-roi" className="hover:text-amber-400 transition-colors">Kalkulator Profit</a>
+          <a href="#fitur" className="hover:text-amber-400 transition-colors">Fitur Unggulan</a>
+          <a href="#kalkulator-profit" className="hover:text-amber-400 transition-colors">Kalkulator Usaha</a>
           <a href="#sektor" className="hover:text-amber-400 transition-colors">5 Sektor Bisnis</a>
           <a href="#hardware" className="hover:text-amber-400 transition-colors">Perangkat Kasir</a>
           <a href="#pricing" className="hover:text-amber-400 transition-colors">Harga Paket</a>
@@ -535,7 +510,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </header>
 
-      {/* Registration Toast Alert */}
+      {/* Toast Notification Alert */}
       {registerSuccessMsg && (
         <div className="max-w-4xl mx-auto px-4">
           <div className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 px-5 py-4 rounded-2xl shadow-xl flex items-center justify-between animate-bounce">
@@ -558,47 +533,46 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       )}
 
-      {/* 🎯 2. HERO SECTION WITH INTERACTIVE POS SIMULATOR (SPOT ON & MOKA STYLE) */}
+      {/* 🎯 2. HERO SECTION WITH LIVE INTERACTIVE POS TERMINAL (SPOT ON & MOKA STYLE) */}
       <section className="relative px-4 lg:px-8 max-w-7xl mx-auto pt-6 lg:pt-10">
-        {/* Glow Ambient Lights */}
+        {/* Ambient Lights */}
         <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[350px] bg-amber-500/10 rounded-full blur-[140px] pointer-events-none" />
         <div className="absolute top-1/3 right-10 w-[450px] h-[350px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-          {/* Left Column: Value Prop */}
+          {/* Left Column: Headline & Value Prop */}
           <div className="lg:col-span-6 space-y-6 text-left">
-            {/* Top Pill Tag */}
+            {/* Pill Tag */}
             <div className="inline-flex items-center space-x-2.5 px-4 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 shadow-inner">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-xs font-extrabold text-amber-400 tracking-wide uppercase">
-                Solusi Tuntas Masalah Kasir & Kebocoran Toko
+                Aplikasi Kasir Wirausaha Lengkap
               </span>
               <span className="text-slate-500 text-xs font-bold">•</span>
-              <span className="text-slate-300 text-xs font-semibold">Tumbuhkan Omset & Profit Nyata</span>
+              <span className="text-slate-300 text-xs font-semibold">Tumbuh Lebih Cepat & Akurat</span>
             </div>
 
-            {/* Master Headline (Impact Driven) */}
-            <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-[1.12]">
-              Toko Ramai Tapi Uang Selalu 'Hilang'? <br />
+            {/* Master Headline */}
+            <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-[1.14]">
+              Satu Solusi Kasir Pintar untuk <br />
               <span className="bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500 bg-clip-text text-transparent">
-                Kunci Kebocoran Kasir & Stok Sekarang Juga
+                Semua Langkah Maju Bisnis Anda
               </span>
             </h1>
 
             {/* Subtitle Value Prop */}
             <p className="text-slate-300 text-sm sm:text-base leading-relaxed font-medium">
-              Beralih dari kasir manual & aplikasi lemot ke <b>New Hope POS</b>: Pembayaran <b>QRIS Dinamis</b> otomatis, 
-              resep gramatur <b>anti-bocor</b>, dan <b>Asisten AI Rp 0</b> yang menjaga laba bersih toko Anda 24/7 tanpa harus nongkrong di kasir setiap hari.
+              Kelola penjualan dengan cepat, terima pembayaran <b>QRIS otomatis</b>, pantau <b>stok bahan baku</b> secara presisi, dan dapatkan insight analitik cerdas bersama <b>Asisten AI Rp 0</b>. Lebih praktis, rapi, dan mudah digunakan.
             </p>
 
-            {/* Primary Action Buttons */}
+            {/* Action Buttons */}
             <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
               <button
                 onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
                 className="px-7 py-4 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-amber-500/25 transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center space-x-2.5 cursor-pointer"
               >
                 <Zap className="w-5 h-5 text-slate-950" />
-                <span>Mulai Uji Coba Gratis 45 Hari</span>
+                <span>Mulai Coba Gratis 45 Hari</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -627,24 +601,24 @@ export const HomePage: React.FC<HomePageProps> = ({
               </span>
             </div>
 
-            {/* Impact Metric Chips */}
+            {/* Value Highlights */}
             <div className="pt-4 grid grid-cols-3 gap-3 border-t border-slate-800/80">
               <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
-                <div className="text-xl font-black text-rose-400 font-mono">0%</div>
-                <div className="text-[11px] text-slate-300 font-bold">Selisih Kasir</div>
+                <div className="text-xl font-black text-amber-400 font-mono">&lt; 3 Detik</div>
+                <div className="text-[11px] text-slate-300 font-bold">Checkout Cepat</div>
               </div>
               <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
-                <div className="text-xl font-black text-amber-400 font-mono">3-5 Jam</div>
-                <div className="text-[11px] text-slate-300 font-bold">Hemat Rekap/Hari</div>
+                <div className="text-xl font-black text-emerald-400 font-mono">100% Akurat</div>
+                <div className="text-[11px] text-slate-300 font-bold">Laporan Real-Time</div>
               </div>
               <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
-                <div className="text-xl font-black text-emerald-400 font-mono">+28%</div>
-                <div className="text-[11px] text-slate-300 font-bold">Kenaikan Laba</div>
+                <div className="text-xl font-black text-blue-400 font-mono">Offline-First</div>
+                <div className="text-[11px] text-slate-300 font-bold">Jualan Tanpa Jeda</div>
               </div>
             </div>
           </div>
 
-          {/* Right Column: 🕹️ INTERACTIVE LIVE POS PLAYGROUND TERMINAL (SPOT ON & MOKA INSPIRED) */}
+          {/* Right Column: 🕹️ INTERACTIVE LIVE POS PLAYGROUND TERMINAL (SPOT ON & MOKA STYLE) */}
           <div id="simulator" className="lg:col-span-6 relative">
             {/* Tablet Frame */}
             <div className="bg-slate-900 border-2 border-slate-700/80 rounded-[32px] p-3 sm:p-5 shadow-2xl shadow-amber-500/10 backdrop-blur-xl relative overflow-hidden ring-4 ring-slate-800/50">
@@ -655,12 +629,12 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <div className="w-3 h-3 rounded-full bg-amber-500/80" />
                   <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
                   <span className="font-mono text-[11px] text-slate-400 ml-2 font-bold">
-                    Terminal Kasir #01 &bull; Live Interactive Simulator
+                    Terminal Kasir #01 &bull; Live Interactive Playground
                   </span>
                 </div>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-black border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  <span>Coba Klik Item di Bawah!</span>
+                  <span>Coba Tambah Menu!</span>
                 </span>
               </div>
 
@@ -686,8 +660,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {/* Product Catalog Grid (7 Cols) */}
                 <div className="sm:col-span-7 space-y-2">
                   <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center justify-between">
-                    <span>Daftar Menu ({BUSINESS_PRESETS[simSector]?.name})</span>
-                    <span className="text-amber-400">Klik untuk tambah ➔</span>
+                    <span>Katalog ({BUSINESS_PRESETS[simSector]?.name})</span>
+                    <span className="text-amber-400">Pilih item ➔</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -717,7 +691,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                       <div className="flex items-center space-x-1.5 text-xs font-black text-white">
                         <ShoppingCart className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Pesanan ({simCart.reduce((sum, i) => sum + i.qty, 0)})</span>
+                        <span>Keranjang ({simCart.reduce((sum, i) => sum + i.qty, 0)})</span>
                       </div>
                       {simCart.length > 0 && (
                         <button
@@ -735,7 +709,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                       {simCart.length === 0 ? (
                         <div className="py-6 text-center text-slate-500 text-xs">
                           <p>Keranjang kosong.</p>
-                          <p className="text-[10px]">Klik item di sebelah kiri!</p>
+                          <p className="text-[10px]">Klik menu di sebelah kiri!</p>
                         </div>
                       ) : (
                         simCart.map((item) => (
@@ -804,14 +778,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <h4 className="font-black text-lg text-white">QRIS Dinamis Tergenerate</h4>
+                      <h4 className="font-black text-lg text-white">QRIS Dinamis Terverifikasi</h4>
                       <p className="text-xs text-slate-400">
-                        Nominal terkunci otomatis &bull; Bebas salah input transfer
+                        Nominal terkunci otomatis &bull; Notifikasi pembayaran instan
                       </p>
                     </div>
 
                     <div className="p-3 bg-white rounded-2xl shadow-xl inline-block">
-                      {/* Fake stylized QRIS image */}
                       <div className="w-36 h-36 bg-slate-950 rounded-xl p-2 flex flex-col items-center justify-between border-4 border-amber-500">
                         <div className="flex justify-between w-full">
                           <div className="w-6 h-6 bg-white rounded-xs" />
@@ -852,12 +825,12 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <div className="w-16 h-16 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/30">
                       <CheckCircle className="w-10 h-10 stroke-[2.5]" />
                     </div>
-                    <h3 className="text-2xl font-black text-white">Pembayaran Sukses!</h3>
+                    <h3 className="text-2xl font-black text-white">Pembayaran Berhasil!</h3>
                     <p className="text-xs text-emerald-400 font-bold">
-                      Dana {formatRupiah(simTotal)} otomatis masuk ke rekening (Auto-Settlement H+1).
+                      Transaksi {formatRupiah(simTotal)} tercatat otomatis di laporan omset & Auto-Settlement H+1.
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Struk digital terkirim ke WhatsApp & Stok bahan baku terpotong per gramatur!
+                      Struk digital terkirim ke WhatsApp pelanggan & Stok bahan baku terpotong per gramatur.
                     </p>
                   </div>
                 )}
@@ -884,71 +857,70 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 🔥 3.5 DEDICATED SECTION: PROBLEM -> SOLUTION -> IMPACT ENGINE */}
-      <section id="solusi-masalah" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
+      {/* ✨ 3.5 FOUR CORE SOLUTION PILLARS (MOKA, MAJOO & SPOT ON STYLE) */}
+      <section id="fitur" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="text-center space-y-3 max-w-3xl mx-auto">
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs font-black uppercase">
-            <AlertOctagon className="w-3.5 h-3.5" />
-            <span>Problem &bull; Solution &bull; Impact</span>
+          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Solusi Lengkap Wirausaha</span>
           </div>
           <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Masalah Nyata Pengusaha yang Kami Tuntaskan
+            Semua Fitur yang Anda Butuhkan untuk Maju & Berkembang
           </h2>
           <p className="text-slate-400 text-xs sm:text-sm font-medium">
-            Kenapa ribuan pebisnis meninggalkan cara lama dan memilih New Hope POS? Lihat bagaimana sistem ini melindungi uang dan waktu Anda:
+            Dari pelayanan kasir kilat di meja depan hingga analisa finansial cerdas di ruang belakang, New Hope POS membuat operasional bisnis Anda lebih rapi, efisien, dan menguntungkan:
           </p>
         </div>
 
-        {/* 4 Cards Problem -> Solution -> Impact Grid */}
+        {/* 4 Solution Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {problemSolutionMatrix.map((item, idx) => {
+          {solutionPillars.map((item, idx) => {
             const IconComp = item.icon;
             return (
               <div
                 key={item.id}
                 className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl p-6 lg:p-8 flex flex-col justify-between space-y-6 shadow-xl relative overflow-hidden transition-all group"
               >
-                <div className="space-y-5">
-                  {/* Top Badge */}
+                <div className="space-y-4">
+                  {/* Top Badge & Icon */}
                   <div className="flex items-center justify-between">
                     <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider border ${item.bgColor} ${item.accentColor}`}>
                       {item.badge}
                     </span>
-                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center bg-gradient-to-tr ${item.color} text-white shadow-md`}>
+                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center bg-gradient-to-tr ${item.color} text-white shadow-md`}>
                       <IconComp className="w-5 h-5" />
                     </div>
                   </div>
 
-                  {/* 1. PROBLEM */}
-                  <div className="space-y-1.5 p-4 rounded-2xl bg-rose-950/30 border border-rose-900/40">
-                    <div className="flex items-center space-x-2 text-rose-400 font-extrabold text-xs uppercase tracking-wide">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>Masalah di Lapangan</span>
-                    </div>
-                    <h4 className="font-extrabold text-sm text-white">{item.problemTitle}</h4>
-                    <p className="text-xs text-slate-300 leading-relaxed font-normal">{item.problemDesc}</p>
+                  {/* Title & Description */}
+                  <div className="space-y-2">
+                    <h3 className="text-lg sm:text-xl font-black text-white group-hover:text-amber-400 transition-colors">
+                      {item.title}
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-normal">
+                      {item.desc}
+                    </p>
                   </div>
 
-                  {/* 2. SOLUTION */}
-                  <div className="space-y-1.5 p-4 rounded-2xl bg-emerald-950/30 border border-emerald-900/40">
-                    <div className="flex items-center space-x-2 text-emerald-400 font-extrabold text-xs uppercase tracking-wide">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Solusi New Hope POS</span>
-                    </div>
-                    <h4 className="font-extrabold text-sm text-white">{item.solutionTitle}</h4>
-                    <p className="text-xs text-slate-300 leading-relaxed font-normal">{item.solutionDesc}</p>
+                  {/* Benefit Highlight Box */}
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-start space-x-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-200 font-semibold leading-relaxed">
+                      {item.benefit}
+                    </p>
                   </div>
                 </div>
 
-                {/* 3. MEASURABLE IMPACT */}
-                <div className="pt-4 border-t border-slate-800 flex items-center justify-between bg-slate-950/80 p-4 rounded-2xl">
-                  <div className="space-y-0.5 max-w-[65%]">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Dampak Nyata Bisnis:</span>
-                    <p className="text-xs font-semibold text-slate-200">{item.impactOutcome}</p>
+                {/* Bottom Metric Bar */}
+                <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block">Keunggulan Utama:</span>
+                    <span className="text-xs font-bold text-slate-300">{item.metricLabel}</span>
                   </div>
                   <div className="text-right">
-                    <span className={`text-2xl lg:text-3xl font-black font-mono block ${item.accentColor}`}>{item.impactMetric}</span>
-                    <span className="text-[10px] text-slate-400 font-bold block">{item.impactLabel}</span>
+                    <span className={`text-xl sm:text-2xl font-black font-mono ${item.accentColor}`}>
+                      {item.metric}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -957,24 +929,24 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 🧮 3.8 INTERACTIVE ROI & PROFIT LEAK CALCULATOR (SPOT ON & MAJOO STYLE) */}
-      <section id="kalkulator-roi" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
+      {/* 🧮 3.8 INTERACTIVE GROWTH & EFFICIENCY CALCULATOR (SPOT ON & MAJOO STYLE) */}
+      <section id="kalkulator-profit" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/30 rounded-3xl p-6 lg:p-12 border border-slate-800 shadow-2xl relative overflow-hidden">
           <div className="max-w-3xl space-y-3 mb-8">
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-black uppercase">
               <Calculator className="w-3.5 h-3.5" />
-              <span>Kalkulator Penyelamat Profit</span>
+              <span>Kalkulator Pertumbuhan Usaha</span>
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-              Hitung Berapa Uang & Waktu yang Anda Selamatkan Setiap Bulan
+              Hitung Potensi Penghematan Waktu & Pertumbuhan Bisnis Anda
             </h2>
             <p className="text-slate-300 text-xs sm:text-sm font-medium">
-              Geser nilai di bawah sesuai skala bisnis Anda untuk melihat proyeksi keuntungan dan pencegahan kebocoran kasir:
+              Sesuaikan nilai di bawah dengan skala operasional toko Anda untuk melihat proyeksi efisiensi dan nilai pengembalian investasi (ROI):
             </p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            {/* Left Column: Sliders */}
+            {/* Left Column: Interactive Sliders */}
             <div className="lg:col-span-6 space-y-6 bg-slate-950/80 p-6 rounded-3xl border border-slate-800">
               {/* Slider 1: Revenue */}
               <div className="space-y-2">
@@ -1054,20 +1026,20 @@ export const HomePage: React.FC<HomePageProps> = ({
               <div className="bg-slate-950 p-6 lg:p-8 rounded-3xl border-2 border-amber-500/50 shadow-2xl space-y-6">
                 <div className="space-y-1">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
-                    Hasil Analisa Otomatis ROI New Hope POS
+                    Hasil Analisa Proyeksi New Hope POS
                   </span>
                   <h3 className="text-xl sm:text-2xl font-black text-white">
-                    Penyelamatan Profit Bisnis Anda:
+                    Efisiensi & Nilai Tambah Bisnis Anda:
                   </h3>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 space-y-1">
-                    <span className="text-[11px] text-slate-400 font-bold">Kebocoran Terselamatkan</span>
+                    <span className="text-[11px] text-slate-400 font-bold">Optimalisasi Biaya Operasional</span>
                     <p className="text-xl sm:text-2xl font-black text-emerald-400 font-mono">
                       {formatRupiah(calculatedSavingsMonthly)}
                     </p>
-                    <span className="text-[10px] text-slate-500 block">/ bulan dari HPP & Kasir</span>
+                    <span className="text-[10px] text-slate-500 block">/ bulan dari efisiensi bahan & kasir</span>
                   </div>
 
                   <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 space-y-1">
@@ -1075,13 +1047,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <p className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
                       ~{calculatedTimeSavedHours} Jam
                     </p>
-                    <span className="text-[10px] text-slate-500 block">/ bulan bebas lembur</span>
+                    <span className="text-[10px] text-slate-500 block">/ bulan untuk fokus ekspansi</span>
                   </div>
                 </div>
 
                 <div className="p-4 bg-gradient-to-r from-emerald-500/10 to-amber-500/10 border border-emerald-500/30 rounded-2xl space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-300">Estimasi Tambahan Profit Bersih Tahunan:</span>
+                    <span className="text-xs font-bold text-slate-300">Estimasi Kenaikan Profit Bersih Tahunan:</span>
                     <span className="text-xs font-extrabold px-2 py-0.5 rounded bg-emerald-500 text-slate-950">
                       ROI {roiMultiplier}x Lipat
                     </span>
@@ -1096,7 +1068,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   className="w-full py-4 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-amber-500/25 transition-all transform hover:scale-[1.02] cursor-pointer flex items-center justify-center space-x-2"
                 >
                   <Zap className="w-5 h-5 text-slate-950" />
-                  <span>Amankan Profit Toko Saya Sekarang ➔</span>
+                  <span>Coba Gratis & Tingkatkan Profit Toko ➔</span>
                 </button>
               </div>
             </div>
@@ -1104,18 +1076,18 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 🕹️ 4. INTERACTIVE 5-SECTOR SHOWCASE */}
+      {/* 🕹️ 4. INTERACTIVE 5-SECTOR SHOWCASE (MOKA & MAJOO STYLE) */}
       <section id="sektor" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="text-center space-y-3 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
             <Building2 className="w-3.5 h-3.5" />
-            <span>Multi-Sector Tailored Engine</span>
+            <span>Spesialisasi 5 Sektor Bisnis</span>
           </div>
           <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Fitur Spesifik yang Benar-Benar Mengerti Alur Bisnis Anda
+            Didesain Khusus Sesuai Karakteristik Usaha Anda
           </h2>
           <p className="text-slate-400 text-xs sm:text-sm font-medium">
-            Tidak ada bisnis yang sama. Pilih sektor usaha Anda untuk melihat alur kerja otomatis dan menguji katalog produknya:
+            Pilih sektor bisnis Anda untuk melihat fitur khusus dan menguji coba alur transaksinya:
           </p>
         </div>
 
@@ -1164,10 +1136,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <span className="px-3 py-1 bg-amber-500 text-slate-950 text-xs font-black rounded-full uppercase tracking-wide">
                   {selectedPreviewPreset.badge}
                 </span>
-                <span className="text-xs text-slate-400 font-medium">Mode Kerja: {selectedPreviewPreset.storeMode}</span>
+                <span className="text-xs text-slate-400 font-medium">Alur Operasional: {selectedPreviewPreset.storeMode}</span>
               </div>
               <h3 className="text-2xl sm:text-3xl font-black text-white">
-                Solusi Kasir Terintegrasi untuk {selectedPreviewPreset.name}
+                Solusi Kasir & Manajemen untuk {selectedPreviewPreset.name}
               </h3>
               <p className="text-sm text-slate-300 leading-relaxed font-medium">
                 {selectedPreviewPreset.description}
@@ -1180,7 +1152,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className="px-6 py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-2xl shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-95 cursor-pointer"
               >
                 <Zap className="w-5 h-5 text-slate-950" />
-                <span>Terapkan Preset {selectedPreviewPreset.name}</span>
+                <span>Aktifkan Mode {selectedPreviewPreset.name}</span>
               </button>
             </div>
           </div>
@@ -1188,7 +1160,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* Specialized Features Grid */}
           <div>
             <h4 className="text-xs font-extrabold text-amber-400 uppercase tracking-wider mb-4">
-              Fitur Kunci & Keunggulan Operasional Sektor {selectedPreviewPreset.name}:
+              Fitur Kunci Sektor {selectedPreviewPreset.name}:
             </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1207,7 +1179,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* Sample Products Preview */}
           <div className="pt-4 border-t border-slate-800">
             <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider mb-3">
-              Contoh Katalog & Item Produk Siap Pakai ({selectedPreviewPreset.products.length} Item Bawaan):
+              Katalog & Item Contoh ({selectedPreviewPreset.products.length} Produk Siap Pakai):
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1238,13 +1210,13 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="text-center space-y-3 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-black uppercase">
             <Smartphone className="w-3.5 h-3.5" />
-            <span>Fleksibilitas Perangkat Bebas</span>
+            <span>Fleksibilitas Perangkat Kasir</span>
           </div>
           <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Gunakan Perangkat yang Sudah Anda Miliki
+            Gunakan di Berbagai Perangkat Pilihan Anda
           </h2>
           <p className="text-slate-400 text-xs sm:text-sm font-medium">
-            Tidak perlu beli mesin kasir mahal puluhan juta. New Hope POS berjalan mulus di HP, Tablet, Laptop, hingga mesin Smart POS Android:
+            Bebas gunakan smartphone, tablet, iPad, laptop, hingga perangkat POS all-in-one tanpa biaya lisensi tambahan:
           </p>
         </div>
 
@@ -1253,9 +1225,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             <div className="w-12 h-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center">
               <Smartphone className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-black text-white">HP Android & iPhone</h3>
+            <h3 className="text-lg font-black text-white">HP Android & iOS</h3>
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Sempurna untuk pelayan kafe pesan di meja (Waitress App), kurir laundry jemput baju, dan kasir keliling.
+              Sempurna untuk pelayan pesan langsung di meja (Waitress App), kurir antar-jemput laundry, dan kasir mobile.
             </p>
             <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30 inline-block">
               Mobilitas Tinggi
@@ -1268,10 +1240,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
             <h3 className="text-lg font-black text-white">iPad & Android Tablet</h3>
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Standar meja kasir modern resto, kafe, dan barbershop dengan tampilan tombol besar yang responsif dan elegan.
+              Standar meja kasir modern resto, kafe, dan barbershop dengan tampilan tombol visual besar yang elegan.
             </p>
             <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 inline-block">
-              Paling Populer
+              Pilihan Utama
             </span>
           </div>
 
@@ -1281,10 +1253,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
             <h3 className="text-lg font-black text-white">Laptop & PC Windows</h3>
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Ideal untuk minimarket grosir ribuan SKU dengan barcode scanner tembak dan manajemen back-office admin.
+              Ideal untuk kasir minimarket ribuan SKU dengan barcode scanner tembak dan manajemen back-office admin.
             </p>
             <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 inline-block">
-              Super Cepat Scan
+              Scan Cepat
             </span>
           </div>
 
@@ -1294,10 +1266,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
             <h3 className="text-lg font-black text-white">Sunmi & Printer Termal</h3>
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Kompatibel dengan mesin Android POS all-in-one (Sunmi/iMin), printer Bluetooth 58/80mm, dan laci kasir otomatis.
+              Kompatibel dengan perangkat Android POS all-in-one (Sunmi/iMin), printer Bluetooth 58/80mm, dan laci kasir otomatis.
             </p>
             <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30 inline-block">
-              Hardware Plug & Play
+              Plug & Play
             </span>
           </div>
         </div>
@@ -1311,13 +1283,13 @@ export const HomePage: React.FC<HomePageProps> = ({
           <div className="max-w-3xl space-y-3 mb-8">
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/30 text-xs font-black uppercase">
               <Bot className="w-3.5 h-3.5" />
-              <span>Smart Business Intelligence &bull; Rp 0 Server Cost</span>
+              <span>Smart Business Intelligence &bull; Biaya Rp 0</span>
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-              Konsultan Bisnis Pribadi di Genggaman &bull; Jawaban Tepat dalam &lt; 5ms
+              Asisten Analisa Bisnis Pribadi &bull; Jawaban Tepat dalam &lt; 5ms
             </h2>
             <p className="text-slate-300 text-xs sm:text-sm leading-relaxed font-medium">
-              Bukan chatbot umum yang lambat dan menguras saldo token API. New Hope POS dibekali <b>3-Layer Deterministic Rule Engine</b> yang membaca database transaksi kasir Anda secara lokal dan instan — memberi saran restock, analisis menu lambat laku, dan audit performa kasir tanpa biaya tambahan.
+              New Hope POS dibekali <b>3-Layer Deterministic Rule Engine</b> cerdas yang membaca database transaksi toko Anda secara instan — memberikan rekomendasi restock, analisis menu terlaris, dan evaluasi penjualan tanpa biaya token tambahan.
             </p>
           </div>
 
@@ -1326,7 +1298,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             {/* Left Prompt Buttons */}
             <div className="lg:col-span-5 space-y-3">
               <p className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
-                Uji Coba Pertanyaan Nyata Pemilik Toko:
+                Coba Pilih Pertanyaan Simulasi:
               </p>
               {aiSimulations.map((sim, idx) => {
                 const isActive = activeAIQueryIdx === idx;
@@ -1391,75 +1363,18 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 📦 7. 3-LEVEL INVENTORY (BOM) SHOWCASE */}
-      <section id="inventory" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
-        <div className="text-center space-y-3 max-w-3xl mx-auto">
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-black uppercase">
-            <Package className="w-3.5 h-3.5" />
-            <span>Kontrol HPP & Resep Dapur</span>
-          </div>
-          <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Hentikan Kebocoran Dapur dengan Manajemen Stok 3-Tingkat
-          </h2>
-          <p className="text-slate-400 text-xs sm:text-sm font-medium">
-            Aplikasi kasir biasa hanya mencatat produk jadi. New Hope POS menghitung hingga ke butir biji kopi, gram daging, mililiter sirup, dan takaran sabun.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-xl">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black">
-              1
-            </div>
-            <h3 className="text-lg font-black text-white">Bahan Baku Mentah (Raw Materials)</h3>
-            <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Catat pembelian stok dari supplier: Biji Kopi Gayo per Kg, Susu Fresh Milk per Liter, Daging Ayam Fillet, dan Biang Sampo Mobil.
-            </p>
-            <div className="p-3 bg-slate-950 rounded-xl font-mono text-xs text-amber-300 border border-slate-800">
-              RAW-COFFEE-BEAN: 25 Kg
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-xl">
-            <div className="w-12 h-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-black">
-              2
-            </div>
-            <h3 className="text-lg font-black text-white">Bahan Setengah Jadi (WIP Prep)</h3>
-            <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Pantau racikan yang disiapkan tim sebelum toko buka: Ekstraksi Konsentrat Espresso 1 Liter, Adonan Croissant, dan Biang Deterjen Laundry.
-            </p>
-            <div className="p-3 bg-slate-950 rounded-xl font-mono text-xs text-blue-300 border border-slate-800">
-              WIP-ESP-01: 12 Liter Base
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-xl">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black">
-              3
-            </div>
-            <h3 className="text-lg font-black text-white">Barang Jadi & Resep (BOM)</h3>
-            <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Saat kasir menjual 1 Cup Es Kopi Susu, sistem otomatis memotong 30ml Espresso, 120ml Susu, 20ml Gula Aren, dan 1 Pcs Cup plastik.
-            </p>
-            <div className="p-3 bg-slate-950 rounded-xl font-mono text-xs text-emerald-300 border border-slate-800">
-              HPP Terhitung Otomatis: Rp 7.500
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* 🏷️ 8. OFFICIAL TRANSPARENT PRICING */}
       <section id="pricing" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="text-center space-y-4 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
             <DollarSign className="w-3.5 h-3.5" />
-            <span>Investasi Cerdas untuk Bisnis Anda</span>
+            <span>Pilihan Paket Langganan</span>
           </div>
           <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Harga Transparan &bull; Tanpa Potongan Tersembunyi
+            Harga Transparan untuk Setiap Skala Bisnis
           </h2>
           <p className="text-slate-400 text-xs sm:text-sm font-medium">
-            Mulai dari gratis selamanya hingga fitur enterprise multi-outlet. Hanya Rp 2.600 / hari untuk mengamankan jutaan rupiah potensi kebocoran toko Anda.
+            Mulai dari paket gratis hingga fitur enterprise multi-outlet. Sesuaikan dengan fase pertumbuhan usaha Anda:
           </p>
 
           {/* Monthly vs Annual Toggle */}
@@ -1618,10 +1533,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               <span>Gratis Layanan Migrasi & Input Menu</span>
             </div>
             <h3 className="text-xl sm:text-2xl font-black text-white">
-              Malas Mengetik Ulang Ratusan Menu Toko Anda?
+              Ingin Dibantu Memasukkan Daftar Menu Toko Anda?
             </h3>
             <p className="text-xs sm:text-sm text-slate-300 max-w-xl font-medium">
-              Cukup foto daftar menu, nota, atau kirim file Excel lama Anda ke WhatsApp kami. Tim New Hope POS akan meng-input seluruh 100 produk Anda <b>100% GRATIS</b> dan siap dipakai jualan dalam 3 jam!
+              Cukup foto daftar menu, nota, atau kirim file Excel katalog Anda ke WhatsApp kami. Tim New Hope POS akan meng-input seluruh 100 produk Anda <b>100% GRATIS</b> dan siap dipakai jualan dalam 3 jam!
             </p>
           </div>
 
@@ -1637,15 +1552,15 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 💬 10. REAL CUSTOMER TESTIMONIALS */}
+      {/* 💬 10. REAL CUSTOMER TESTIMONIALS (MOKA & MAJOO STYLE) */}
       <section className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="text-center space-y-3 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
             <Award className="w-3.5 h-3.5" />
-            <span>Kisah Sukses Pengguna Nyata</span>
+            <span>Kisah Sukses Pengguna</span>
           </div>
           <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-            Bukti Nyata dari Pengusaha yang Sudah Membuktikannya
+            Dipercaya oleh Ribuan Pemilik Usaha di Seluruh Indonesia
           </h2>
         </div>
 
@@ -1694,10 +1609,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               <span>Pusat Edukasi & Strategi Bisnis</span>
             </div>
             <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-              Blog Harapan Baru: Panduan & Trik Praktis UMKM
+              Blog Harapan Baru: Tips & Panduan Praktis UMKM
             </h2>
             <p className="text-xs sm:text-sm text-slate-400 font-medium">
-              Pelajari rahasia perhitungan HPP, panduan buka kafe modal 10 juta, dan cara mendongkrak omset laundry kiloan.
+              Pelajari strategi bisnis kafe, manajemen usaha laundry kiloan, hingga panduan pembayaran non-tunai modern.
             </p>
           </div>
 
@@ -1729,7 +1644,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Panduan Lengkap: Cara Membuka Kafe Modal 10 Juta dengan Sistem Kasir Otomatis
             </h3>
             <p className="text-xs text-slate-400 line-clamp-2">
-              Langkah praktis memulai bisnis kedai kopi kekinian, menghitung HPP resep, dan mencegah kebocoran susu/kopi.
+              Langkah praktis memulai bisnis kedai kopi kekinian, menghitung HPP resep, dan mengelola stok bahan baku.
             </p>
           </a>
 
@@ -1751,7 +1666,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Rahasia Sukses Bisnis Laundry Kiloan: Cara Atur Status Cucian & Kirim Nota WA
             </h3>
             <p className="text-xs text-slate-400 line-clamp-2">
-              Strategi menghentikan komplain baju hilang/tertukar dan mendongkrak omset laundry hingga Rp 25 juta per bulan.
+              Strategi mengelola cucian pelanggan secara rapi dan mendongkrak omset laundry hingga puluhan juta per bulan.
             </p>
           </a>
 
@@ -1773,7 +1688,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Revolusi QRIS Dinamis di Kasir POS: Kenapa Non-Tunai Wajib untuk UMKM 2026
             </h3>
             <p className="text-xs text-slate-400 line-clamp-2">
-              Keuntungan QRIS Dinamis dibanding stiker meja: bebas salah ketik nominal dan pencairan H+1 otomatis.
+              Keuntungan QRIS Dinamis dibanding stiker meja statis: bebas salah ketik nominal dan pencairan H+1 otomatis.
             </p>
           </a>
         </div>
@@ -1827,10 +1742,10 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 rounded-3xl p-8 lg:p-14 text-center text-slate-950 space-y-6 shadow-2xl relative overflow-hidden">
           <div className="space-y-3 max-w-3xl mx-auto">
             <h2 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
-              Hentikan Kebocoran Kasir & Bawa Bisnis Anda Naik Kelas Hari Ini
+              Siap Membawa Bisnis Anda Melangkah Lebih Maju?
             </h2>
             <p className="text-slate-900 text-xs sm:text-base font-semibold max-w-2xl mx-auto">
-              Bergabunglah dengan ribuan pemilik usaha di seluruh Indonesia yang telah menghemat jutaan rupiah dan ratusan jam kerja. Coba gratis 45 hari tanpa komitmen.
+              Bergabunglah dengan ribuan pemilik usaha di seluruh Indonesia yang telah menikmati kemudahan operasional kasir pintar. Coba gratis 45 hari tanpa komitmen.
             </p>
           </div>
 
