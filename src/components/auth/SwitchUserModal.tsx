@@ -1,6 +1,7 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { User, UserRole } from '../../types';
+import { verifyPinHash } from '../../lib/auth/pinSecurity';
 import {
   Users,
   X,
@@ -70,7 +71,7 @@ export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose }) => 
     setErrorMessage('');
   };
 
-  const handleConfirmSwitch = () => {
+  const handleConfirmSwitch = async () => {
     if (!selectedUser) return;
 
     if (pinInput.length !== 4) {
@@ -78,7 +79,8 @@ export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose }) => 
       return;
     }
 
-    if (pinInput !== selectedUser.pin) {
+    const isMatch = await verifyPinHash(pinInput, selectedUser.pin);
+    if (!isMatch) {
       setErrorMessage('PIN Salah! Silakan coba lagi.');
       setPinInput('');
       return;

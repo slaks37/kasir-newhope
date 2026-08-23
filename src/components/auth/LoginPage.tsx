@@ -111,10 +111,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         }
       } else {
-        const { error: err } = await signUpWithEmail(email, password, storeName.trim());
+        const { error: err } = await signUpWithEmail(email, password, {
+          fullName: fullName.trim() || storeName.trim(),
+          storeName: storeName.trim(),
+          sector,
+        });
         if (err) {
-
-          if (err.message.toLowerCase().includes('already registered')) {
+          if (err.message.toLowerCase().includes('already registered') || err.message.toLowerCase().includes('sudah terdaftar')) {
             setError('Email ini sudah terdaftar! Silakan login.');
             setMode('login');
           } else {

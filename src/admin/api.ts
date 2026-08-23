@@ -5,6 +5,9 @@
  * otentikasi role internal, dan audit jejak akses.
  */
 
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { verifyPinHash } from '../lib/auth/pinSecurity';
+
 const IDENTITY_KEY = 'nhpos_internal_identity';
 
 export type InternalRole = 'ROLE_SUPERADMIN' | 'ROLE_INTERNAL_GROWTH' | 'ROLE_INTERNAL_SUPPORT';
@@ -1151,24 +1154,43 @@ export const PRODUCT_RECIPES_DATA = [
 export const api = {
   login: async (email: string, pass: string): Promise<Session> => {
     const cleanEmail = email.trim().toLowerCase();
-
-    if (cleanEmail === 'stefenlaksana.sl@gmail.com' && pass === 'Stefen2012') {
-      setIdentity('stefenlaksana.sl@gmail.com');
-      return api.me();
+    if (!cleanEmail || !pass) {
+      throw new ApiError(400, 'INVALID_INPUT', 'Email dan kata sandi administrator wajib diisi.');
     }
 
-    if (cleanEmail === 'ops@newhopepos.id' && pass === 'Stefen2012') {
-      setIdentity('ops@newhopepos.id');
-      return api.me();
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: pass,
+        });
+
+        if (error || !data.user) {
+          throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi administrator salah.');
+        }
+
+        setIdentity(cleanEmail);
+        return api.me();
+      } catch (err: any) {
+        if (err instanceof ApiError) throw err;
+        console.warn('[admin-auth] Supabase signIn error, checking local fallback:', err);
+      }
     }
 
-    const matched = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === cleanEmail);
-    if (matched && (pass === 'Stefen2012' || pass === 'AdminPass2026!')) {
-      setIdentity(matched.email);
-      return api.me();
-    }
+    // Local / Dev Fallback: verify against stored salted hash in local auth
+    try {
+      const localUsers = JSON.parse(localStorage.getItem('nhpos_local_auth_users') || '{}');
+      const u = localUsers[cleanEmail];
+      if (u && u.passwordHash) {
+        const isMatch = await verifyPinHash(pass, u.passwordHash);
+        if (isMatch) {
+          setIdentity(cleanEmail);
+          return api.me();
+        }
+      }
+    } catch {}
 
-    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau password administrator salah.');
+    throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi administrator salah.');
   },
 
   identities: async (): Promise<{ identities: Identity[] }> => {
