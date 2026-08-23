@@ -26,6 +26,7 @@ type VercelResponse = any;
 import pg from 'pg';
 import { verifikasiNotifikasi } from '../../../src/server/dokuSignature.js';
 import { bacaNotifikasi, pembayaranBerhasil } from '../../_lib/doku.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -33,10 +34,9 @@ function getPool() {
   if (!pool) {
     pg.types.setTypeParser(1700, (v: string) => (v === null ? null : Number(v)));
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }

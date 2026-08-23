@@ -9,9 +9,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import bacaInsight from '../api/v1/assistant/insights';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('endpoint insight', () => {
   const BID = 'usr-uji-insight_FNB';
@@ -31,13 +34,14 @@ d('endpoint insight', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Uji Insight');
+    HDR = headerToko(tid, BID);
     await pasangPaket(tid, 'plan-pro-monthly');
   });
   afterAll(tutupDb);
 
   const panggil = async (businessId = BID) => {
     const res = resTiruan();
-    await bacaInsight({ method: 'GET', query: { businessId } }, res);
+    await bacaInsight({ method: 'GET', headers: HDR, query: { businessId } }, res);
     return res;
   };
 
@@ -101,9 +105,16 @@ d('endpoint insight', () => {
     await pasangPaket(tid, 'plan-pro-monthly');
   });
 
-  it('toko yang belum tersinkron ditolak, bukan dilayani dengan data kosong', async () => {
+  it('toko lain ditolak gerbang identitas, bukan dilayani data kosong', async () => {
+    // Dulu jawabannya 409 MERCHANT_BELUM_SINKRON: endpoint mencoba mencari toko
+    // yang diminta pemanggil, lalu menyerah karena tidak ketemu. Sejak gerbang
+    // identitas dipasang, pertanyaannya bahkan tidak sampai ke sana — token
+    // hanya berlaku untuk SATU toko, dan menyebut toko lain ditolak lebih awal.
+    //
+    // Ini penguatan, bukan penurunan: yang dulu 409 berarti "toko itu tidak ada"
+    // — sebuah jawaban yang memberi tahu penyusup kode toko mana yang nyata.
     const res = await panggil('usr-tidak-ada_FNB');
-    expect(res._status).toBe(409);
-    expect(res._body.error).toBe('MERCHANT_BELUM_SINKRON');
+    expect(res._status).toBe(403);
+    expect(res._body.error).toBe('TENANT_MISMATCH');
   });
 });

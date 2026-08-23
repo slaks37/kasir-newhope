@@ -10,9 +10,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkronKatalog from '../api/v1/sync/catalog';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, bersihkanPemilik } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, bersihkanPemilik, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('batas produk saat impor katalog', () => {
   const BID = 'usr-uji-impor_FNB';
@@ -20,13 +23,13 @@ d('batas produk saat impor katalog', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Uji Impor');
+    HDR = headerToko(tid, BID);
   });
   afterAll(tutupDb);
 
   const kirim = async (jumlah: number, tag: string) => {
     const res = resTiruan();
-    await sinkronKatalog({
-      method: 'POST',
+    await sinkronKatalog({ method: 'POST', headers: HDR,
       body: {
         businessId: BID, sector: 'FNB', storeName: 'Toko Uji Impor',
         products: Array.from({ length: jumlah }, (_, i) => ({
@@ -67,8 +70,7 @@ d('batas produk saat impor katalog', () => {
     // memperbaiki harga yang salah — justru yang paling mendesak.
     const sebelum = await jumlahProduk();
     const res = resTiruan();
-    await sinkronKatalog({
-      method: 'POST',
+    await sinkronKatalog({ method: 'POST', headers: HDR,
       body: {
         businessId: BID, sector: 'FNB',
         products: [{ id: 'a-0', name: 'Produk a 0', price: 99_000 }],
@@ -94,13 +96,13 @@ d('batas produk saat impor katalog', () => {
   it('merchant tanpa langganan memakai batas DARURAT, bukan tanpa batas', async () => {
     const BID2 = 'usr-uji-impor-nosub_FNB';
     const tid2 = await merchantUji(BID2, 'Tanpa Langganan');
+    HDR = headerToko(tid2, BID2);
     await db().query(
       `DELETE FROM billing.subscriptions
         WHERE merchant_id = (SELECT merchant_id FROM pos.businesses WHERE id = $1)`, [tid2]);
 
     const res = resTiruan();
-    await sinkronKatalog({
-      method: 'POST',
+    await sinkronKatalog({ method: 'POST', headers: HDR,
       body: {
         businessId: BID2, sector: 'FNB',
         products: Array.from({ length: 200 }, (_, i) => ({

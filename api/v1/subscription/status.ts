@@ -23,6 +23,8 @@ import {
   dalamTenggang,
   sisaHari,
 } from '../../../src/lib/plans/expiry.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -33,11 +35,10 @@ function getPool() {
     // Memaksanya membuat endpoint ini tidak bisa dijalankan atau diuji di mesin
     // sendiri sama sekali.
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -56,11 +57,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!tenantRef) {
     return res.status(400).json({ ok: false, error: 'TENANT_ID_REQUIRED' });
   }
+  // GERBANG IDENTITAS (lihat api/_lib/tokoContext.ts). Toko ditentukan dari
+  // token, bukan dari isi permintaan.
+  const toko = await wajibToko(req, res, tenantRef);
+  if (!toko) return;
+
 
   const db = getPool();
 
   try {
-    const tenantId = await resolveTenantId(db, tenantRef);
+    const tenantId = toko.businessId;
 
     if (!tenantId) {
       // Not an error — there is simply nothing to bill yet.

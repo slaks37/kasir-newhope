@@ -30,21 +30,31 @@ const DATABASE_URL = process.env.DATABASE_URL;
 // deployment yang memakai domain lain tidak perlu menyunting berkas ini.
 const DARI = process.env.BILLING_EMAIL_FROM || 'billing@newhopepos.id';
 
-if (!DATABASE_URL) {
-  console.error('DATABASE_URL belum diisi.');
-  process.exit(1);
-}
-if (!RESEND_API_KEY) {
-  console.error('RESEND_API_KEY belum diisi.');
-  process.exit(1);
+// Pemeriksaan lingkungan TIDAK di tingkat modul.
+//
+// Sebelumnya `process.exit(1)` di sini berarti sekadar MENGIMPOR berkas ini
+// mematikan proses pemanggilnya. Endpoint cron yang menjalankan tiga batch
+// sekaligus akan ikut mati sebelum dua lainnya sempat jalan — dan yang terlihat
+// hanya proses yang berhenti tanpa penjelasan.
+function periksaLingkungan() {
+  if (!DATABASE_URL) throw new Error('DATABASE_URL belum diisi.');
+  if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY belum diisi.');
 }
 
-const resend = new Resend(RESEND_API_KEY);
-const pool = new pg.Pool({ connectionString: DATABASE_URL });
+// Dibuat malas: membangun klien di tingkat modul menuntut kunci yang mungkin
+// memang sengaja tidak dipasang di lingkungan ini.
+let resend = null;
+let pool = null;
+function siapkan() {
+  periksaLingkungan();
+  if (!resend) resend = new Resend(RESEND_API_KEY);
+  if (!pool) pool = new pg.Pool({ connectionString: DATABASE_URL });
+}
 
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
-async function run() {
+export async function main() {
+  siapkan();
   console.log('[tagihan] mencari langganan yang habis 3 hari lagi...');
 
   let dikirim = 0;
@@ -118,8 +128,15 @@ async function run() {
     console.error('[tagihan] gagal:', error?.message || error);
     process.exitCode = 1;
   } finally {
-    await pool.end();
+    if (pool) { await pool.end(); pool = null; }
   }
 }
 
-run();
+// Hanya jalan bila dipanggil langsung — lihat catatan yang sama di
+// scripts/batch/merchant-health.mjs.
+const dijalankanLangsung =
+  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+
+if (dijalankanLangsung) {
+  main();
+}

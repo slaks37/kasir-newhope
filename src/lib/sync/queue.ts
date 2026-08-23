@@ -25,6 +25,7 @@
  */
 
 import type { Order, BusinessSector, Customer, ProductBundle } from '../../types';
+import { fetchToko } from './tokenToko';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
@@ -319,7 +320,7 @@ export async function pushCatalog(
   payload: CatalogPayload
 ): Promise<boolean> {
   try {
-    const res = await fetch('/api/v1/sync/catalog', {
+    const res = await fetchToko('/api/v1/sync/catalog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -331,7 +332,7 @@ export async function pushCatalog(
         customers: payload.customers ?? [],
         bundles: payload.bundles ?? [],
       }),
-    });
+    }, { businessId: target.businessId, ownerRef: target.ownerRef, storeName: target.storeName, sector: target.sector });
     return res.ok;
   } catch {
     return false;
@@ -381,7 +382,7 @@ export async function pushBranches(
 ): Promise<HasilSinkronCabang> {
   const kosong: HasilSinkronCabang = { ok: false, ditolak: [], maxOutlets: 0, activeOutlets: 0 };
   try {
-    const res = await fetch('/api/v1/sync/branches', {
+    const res = await fetchToko('/api/v1/sync/branches', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -389,7 +390,7 @@ export async function pushBranches(
         branches,
         activeBranchRef,
       }),
-    });
+    }, { businessId: target.businessId, ownerRef: target.ownerRef, storeName: target.storeName, sector: target.sector });
     if (!res.ok) return kosong;
 
     const d = await res.json();
@@ -461,7 +462,7 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
   const batch = all.slice(0, BATCH_SIZE);
 
   try {
-    const res = await fetch('/api/v1/sync/transactions', {
+    const res = await fetchToko('/api/v1/sync/transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -472,7 +473,7 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
         ownerRef: target.ownerRef,
         transactions: batch,
       }),
-    });
+    }, { businessId, ownerRef: target.ownerRef, storeName: target.storeName, sector: target.sector });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();

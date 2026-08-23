@@ -40,6 +40,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { fetchToko } from '../../lib/sync/tokenToko';
 
 /* ========================================================================== */
 /* Presentation helpers                                                       */
@@ -884,7 +885,7 @@ export const AIAssistant: React.FC = () => {
 
       setIsGenerating(true);
       try {
-        const res = await fetch('/api/v1/assistant/query', {
+        const res = await fetchToko('/api/v1/assistant/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -899,7 +900,7 @@ export const AIAssistant: React.FC = () => {
             // it can state its scope and be forbidden from straying outside it.
             storeContext: toAiContext(tenant),
           }),
-        });
+        }, { businessId: tenant.businessId, ownerRef: tenant.merchantId });
         const data = await res.json();
         if (data?.credits) setWallet(data.credits);
         if (data?.paywall) setPaywall(data.paywall);
@@ -945,7 +946,7 @@ export const AIAssistant: React.FC = () => {
 
   const handleTopUp = async () => {
     try {
-      const res = await fetch('/api/v1/assistant/credits/topup', {
+      const res = await fetchToko('/api/v1/assistant/credits/topup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -953,7 +954,7 @@ export const AIAssistant: React.FC = () => {
           businessId: tenant.businessId,
           credits: paywall?.addOnCredits ?? 50,
         }),
-      });
+      }, { businessId: tenant.businessId, ownerRef: tenant.merchantId });
       const data = await res.json();
       if (data?.credits) setWallet(data.credits);
       setPaywall(null);

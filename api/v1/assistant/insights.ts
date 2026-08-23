@@ -32,16 +32,17 @@ type VercelResponse = any;
 import pg from 'pg';
 import { resolveTenantId } from '../../_lib/tenant.js';
 import { jagaModul } from '../../_lib/entitlementGuard.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
 function getPool() {
   if (!pool) {
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -60,14 +61,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!ref) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId wajib diisi.' });
   }
+  // GERBANG IDENTITAS (lihat api/_lib/tokoContext.ts). Toko ditentukan dari
+  // token, bukan dari isi permintaan.
+  const toko = await wajibToko(req, res, ref);
+  if (!toko) return;
+
 
   const db = getPool();
 
   try {
-    const tenantId = await resolveTenantId(db, ref);
-    if (!tenantId) {
-      return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
-    }
+    const tenantId = toko.businessId;
 
     // Modul AI harus dibuka paket. Gerbangnya sama persis dengan
     // /assistant/query — insight semalam adalah bagian dari modul yang sama,

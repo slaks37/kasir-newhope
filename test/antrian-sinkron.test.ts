@@ -87,6 +87,12 @@ function pasangServer(jawab: (badan: any, ke: number) => { ok: boolean; status?:
   fetchDipanggil = [];
   (globalThis as any).fetch = vi.fn(async (_url: string, init: any) => {
     const badan = JSON.parse(init.body);
+    // Permintaan token bukan kiriman batch — dijawab, tapi tidak dihitung.
+    // Sejak gerbang identitas dipasang, setiap panggilan sinkron didahului
+    // penukaran token bila perangkat belum memegangnya.
+    if (String(_url).includes('/auth/session')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, token: 'm1.uji.uji', businessId: 'uji' }) };
+    }
     fetchDipanggil.push(badan);
     const r = jawab(badan, fetchDipanggil.length);
     if (r.ok === false && r.status) {
@@ -140,7 +146,10 @@ describe('siklus hidup antrian sinkron', () => {
   it('(c) JARINGAN MATI: antrian TIDAK disentuh, kegagalan dihitung', async () => {
     const q = await bukaUlangAplikasi();
     q.enqueue(BID, struk('t-jaringan'));
-    (globalThis as any).fetch = vi.fn(async () => { throw new Error('Failed to fetch'); });
+    (globalThis as any).fetch = vi.fn(async (u: string) =>
+      String(u).includes('/auth/session')
+        ? { ok: true, status: 200, json: async () => ({ ok: true, token: 'm1.uji.uji' }) }
+        : Promise.reject(new Error('Failed to fetch')));
 
     const hasil = await q.flush(TARGET);
     expect(hasil.pending).toBe(1);          // masih di antrian
@@ -172,7 +181,10 @@ describe('siklus hidup antrian sinkron', () => {
   it('BACKOFF menahan percobaan berikutnya, lalu melepasnya', async () => {
     const q = await bukaUlangAplikasi();
     q.enqueue(BID, struk('t-backoff'));
-    (globalThis as any).fetch = vi.fn(async () => { throw new Error('mati'); });
+    (globalThis as any).fetch = vi.fn(async (u: string) =>
+      String(u).includes('/auth/session')
+        ? { ok: true, status: 200, json: async () => ({ ok: true, token: 'm1.uji.uji' }) }
+        : Promise.reject(new Error('mati')));
     await q.flush(TARGET);
     expect(fetchDipanggil.length ?? 0).toBe(0);
 
@@ -232,6 +244,9 @@ describe('siklus hidup antrian sinkron', () => {
 
     let sudahSisip = false;
     (globalThis as any).fetch = vi.fn(async (_u: string, init: any) => {
+      if (String(_u).includes('/auth/session')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, token: 'm1.uji.uji', businessId: 'uji' }) };
+      }
       fetchDipanggil.push(JSON.parse(init.body));
       // Kasir melayani pelanggan berikutnya TEPAT saat kiriman sedang jalan.
       // Hanya sekali, supaya rekursi flush punya ujung.

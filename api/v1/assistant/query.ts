@@ -3,6 +3,8 @@ import { resolveTenantId } from '../../_lib/tenant.js';
 import { jagaModul } from '../../_lib/entitlementGuard.js';
 import { rutekan } from '../../../src/lib/assistant/router.js';
 import type { IntentName } from '../../../src/lib/assistant/types.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -12,10 +14,9 @@ let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -124,6 +125,15 @@ async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null
     );
     if (dibuat.rows.length) {
       const r = dibuat.rows[0];
+      // Saldo pembuka masuk ledger juga — lihat catatan di jalur pembaruan
+      // di bawah.
+      if (Number(r.balance) > 0) {
+        await db.query(
+          `INSERT INTO ai.credit_ledger (id, business_id, delta, reason, note)
+           VALUES (uuidv7(), $1, $2, 'OPENING_BALANCE', $3)`,
+          [tenantId, Number(r.balance), 'jatah awal dari paket']
+        ).catch(() => { /* ledger gagal tidak boleh menahan jawaban AI */ });
+      }
       return { balance: r.balance, monthlyGrant: r.monthly_grant, usedThisMonth: r.used_this_month };
     }
 
@@ -141,11 +151,23 @@ async function ambilDompet(db: pg.Pool, tenantId: string): Promise<Dompet | null
               monthly_grant   = $3,
               updated_at      = CURRENT_TIMESTAMP
         WHERE business_id = $1
-        RETURNING balance, monthly_grant, used_this_month`,
+        RETURNING balance, monthly_grant, used_this_month,
+                  CASE WHEN period_reset_at = $2::timestamptz THEN $3 ELSE 0 END AS diberi_jatah`,
       [tenantId, periodeBerikutnya(), jatah]
     );
     if (!rows.length) return null;
     const r = rows[0];
+
+    // Penyegaran jatah bulanan juga menulis ledger. Dua penulis saldo yang
+    // MELEWATI ledger — jalur ini dan topup — adalah sebab
+    // contract.ai_credit_drift tidak pernah nol.
+    if (r.diberi_jatah && Number(r.diberi_jatah) > 0) {
+      await db.query(
+        `INSERT INTO ai.credit_ledger (id, business_id, delta, reason, note)
+         VALUES (uuidv7(), $1, $2, 'MONTHLY_GRANT', $3)`,
+        [tenantId, Number(r.diberi_jatah), 'jatah bulanan disegarkan']
+      ).catch(() => { /* ledger gagal tidak boleh menahan jawaban AI */ });
+    }
     return { balance: r.balance, monthlyGrant: r.monthly_grant, usedThisMonth: r.used_this_month };
   } catch (err: any) {
     // FK ke tenants: merchant belum pernah tersinkronisasi. Bukan galat —
@@ -191,6 +213,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // GERBANG IDENTITAS (lihat api/_lib/tokoContext.ts). Toko ditentukan dari
+  // token, bukan dari isi permintaan.
+  const toko = await wajibToko(req, res, businessId);
+  if (!toko) return;
+
   const db = getPool();
 
   // Whether the numbers below actually came out of the database. A reply built
@@ -231,9 +258,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let lapsedCustomers: Array<{ name: string; tier: string; hari: number; belanja: string }> = [];
 
     try {
-      // businessId arrives as a business unit key (`usr-budi_FNB`) or an
-      // account ref (`usr-budi`), never as the UUID the tables are keyed by.
-      tenantId = await resolveTenantId(db, businessId);
+      // Diambil dari token, bukan dari businessId yang dikirim aplikasi.
+      // Sebelumnya siapa pun yang menebak client_key dapat menanyakan data toko
+      // orang lain — dan menguras kuota AI berbayar milik toko itu.
+      tenantId = toko.businessId;
 
       if (!tenantId) {
         // Not an error: a merchant that has never synced simply has no rows yet.

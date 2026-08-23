@@ -24,6 +24,7 @@ import {
 } from '../../src/lib/rbac/environments';
 import { tokenDariHeader, verifyToken } from '../../src/server/adminAuth';
 import type { Db } from '../../src/server/db';
+import { sslUntuk } from '../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -44,7 +45,7 @@ export function getPool(): pg.Pool {
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }

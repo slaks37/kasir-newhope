@@ -12,9 +12,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkron from '../api/v1/sync/transactions';
-import { ADA_DB, db, tutupDb, resTiruan, bersihkanPemilik } from './helper-db';
+import { ADA_DB, db, tutupDb, resTiruan, bersihkanPemilik, headerToko, hdrUntuk } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 const BID = 'usr-ledger_FNB';
 
 d('ORDER_PAID menurunkan efeknya ke ledger', () => {
@@ -27,6 +30,7 @@ d('ORDER_PAID menurunkan efeknya ke ledger', () => {
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Ledger', 'FNB', $1, 'usr-ledger', true) RETURNING id`, [BID]);
     bid = b.rows[0].id;
+    HDR = headerToko(bid, BID);
 
     const buatProduk = async (nama: string, ref: string, mode: string) => {
       const { rows } = await db().query(
@@ -56,7 +60,7 @@ d('ORDER_PAID menurunkan efeknya ke ledger', () => {
     const res = resTiruan();
     await sinkron({
       method: 'POST',
-      headers: { 'x-device-id': 'dev-ledger-01' },
+      headers: { ...HDR, 'x-device-id': 'dev-ledger-01' },
       body: {
         businessId: BID, sector: 'FNB', storeName: 'Toko Ledger', ownerRef: 'usr-ledger',
         idempotencyKey: `${tag}-${Date.now()}`,
@@ -135,6 +139,7 @@ d('ORDER_VOIDED membalik, bukan menghapus', () => {
       `INSERT INTO pos.businesses (id, name, business_sector, client_key, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Void', 'FNB', $1, 'usr-ledger-void', true) RETURNING id`, [BID2]);
     bid = b.rows[0].id;
+    HDR = headerToko(bid, BID2);
     const p = await db().query(
       `INSERT INTO pos.products (id, business_id, name, sku, price, cost_price,
                                  business_sector, client_key, external_ref, inventory_mode)
@@ -147,7 +152,8 @@ d('ORDER_VOIDED membalik, bukan menghapus', () => {
   const kirim = async (batal: boolean) => {
     const res = resTiruan();
     await sinkron({
-      method: 'POST', headers: {},
+      method: 'POST',
+      headers: HDR,
       body: {
         businessId: BID2, sector: 'FNB', ownerRef: 'usr-ledger-void',
         idempotencyKey: `v-${batal}-${Date.now()}`,

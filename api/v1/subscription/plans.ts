@@ -15,6 +15,7 @@
 type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -26,11 +27,10 @@ function getPool() {
     // Memaksanya membuat endpoint ini tidak bisa dijalankan atau diuji di mesin
     // sendiri sama sekali.
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }

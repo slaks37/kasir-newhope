@@ -14,12 +14,30 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import sinkron from '../api/v1/sync/transactions';
-import { ADA_DB, db, tutupDb, resTiruan, bersihkanPemilik } from './helper-db';
+import { ADA_DB, db, tutupDb, resTiruan, bersihkanPemilik, headerToko } from './helper-db';
+import sesi from '../api/v1/auth/session';
 
 const d = describe.skipIf(!ADA_DB);
 
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
+
 d('sinkron dan identitas staf', () => {
   const KEY = 'usr-stafuji_FNB';
+
+  // Tokonya belum ada saat tes dimulai — dibuat lewat endpoint sesi, yang
+  // memang merangkap pendaftaran. Ini sekaligus memastikan alur "terminal baru
+  // pertama kali menyala" benar-benar bekerja.
+  const siapkanToko = async () => {
+    const res = resTiruan();
+    await sesi({ method: 'POST', headers: {}, body: {
+      businessId: KEY, ownerRef: KEY.split('_')[0],
+      storeName: 'Warung Staf', sector: 'FNB',
+    } } as any, res as any);
+    const { rows } = await db().query(
+      'SELECT id FROM pos.businesses WHERE client_key = $1', [KEY]);
+    HDR = headerToko(rows[0].id, KEY);
+  };
 
   afterAll(async () => {
     if (ADA_DB) await bersihkanPemilik(KEY);
@@ -29,8 +47,7 @@ d('sinkron dan identitas staf', () => {
   const kirim = async (nama: string, tandai: string) => {
     const res = resTiruan();
     await sinkron(
-      {
-        method: 'POST',
+      { method: 'POST', headers: HDR,
         body: {
           businessId: KEY,
           storeName: 'Warung Staf',
@@ -57,6 +74,7 @@ d('sinkron dan identitas staf', () => {
 
   it('membuat staf lengkap dengan peran, tanpa satu pun kredensial', async () => {
     await bersihkanPemilik(KEY);
+    await siapkanToko();
     const res = await kirim('Kasir Uji', 'satu');
     expect(res._status).toBe(200);
 

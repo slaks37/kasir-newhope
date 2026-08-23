@@ -10,6 +10,12 @@
  */
 
 import pg from 'pg';
+import { terbitkanTokenToko } from '../src/server/merchantAuth';
+
+// Endpoint toko menolak permintaan tanpa token sejak gerbang identitas dipasang.
+// Rahasia uji dipasang di sini supaya setiap berkas tes tidak perlu mengurusnya.
+process.env.MERCHANT_SESSION_SECRET =
+  process.env.MERCHANT_SESSION_SECRET || 'rahasia-uji-minimal-tiga-puluh-dua-karakter';
 
 export const ADA_DB = Boolean(process.env.DATABASE_URL);
 
@@ -112,4 +118,59 @@ export function resTiruan() {
     json(b: any) { this._body = b; return this; },
     end() { return this; },
   };
+}
+
+
+/**
+ * Header Authorization untuk sebuah toko.
+ *
+ * Dipakai tes yang memanggil handler /api/v1/* langsung. Tanpa ini seluruhnya
+ * dijawab 401 — dan itu memang perilaku yang benar.
+ */
+export function headerToko(businessId: string, clientKey = ''): Record<string, string> {
+  return { authorization: `Bearer ${terbitkanTokenToko({ bid: businessId, ck: clientKey })}` };
+}
+
+/** Membuat toko uji sekaligus header tokennya. */
+export async function tokoBerToken(clientKey: string, nama = 'Toko Uji') {
+  const businessId = await merchantUji(clientKey, nama);
+  return { businessId, headers: headerToko(businessId, clientKey) };
+}
+
+
+/**
+ * Header token untuk toko yang SUDAH ada, dicari lewat client_key.
+ *
+ * Dipakai berkas tes yang membuat tokonya sendiri alih-alih lewat merchantUji.
+ */
+export async function hdrUntuk(clientKey: string): Promise<Record<string, string>> {
+  const { rows } = await db().query(
+    'SELECT id FROM pos.businesses WHERE client_key = $1 LIMIT 1', [clientKey]);
+  if (!rows.length) throw new Error(`hdrUntuk: toko ${clientKey} belum ada`);
+  return headerToko(rows[0].id, clientKey);
+}
+
+
+/**
+ * Mendaftarkan toko lewat endpoint sesi lalu mengembalikan headernya.
+ *
+ * Dipakai berkas tes yang tokonya dulu lahir dari panggilan sinkron pertama.
+ * Sejak gerbang identitas dipasang, urutannya terbalik: toko didaftarkan lebih
+ * dulu, baru sinkron bisa jalan. Itu memang alur yang sesungguhnya di lapangan.
+ */
+export async function daftarTokoUji(
+  clientKey: string,
+  sector = 'FNB',
+  storeName = 'Toko Uji'
+): Promise<Record<string, string>> {
+  const { default: sesi } = await import('../api/v1/auth/session');
+  const res = resTiruan();
+  await sesi(
+    { method: 'POST', headers: {}, body: {
+      businessId: clientKey, ownerRef: clientKey.split('_')[0], storeName, sector,
+    } } as any,
+    res as any
+  );
+  if (res._status !== 200) throw new Error(`daftarTokoUji gagal: ${JSON.stringify(res._body)}`);
+  return headerToko(res._body.businessId, clientKey);
 }

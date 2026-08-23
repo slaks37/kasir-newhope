@@ -8,10 +8,31 @@ const client = new pg.Client({
 });
 
 async function main() {
+  // TIDAK ADA KREDENSIAL DI BERKAS INI.
+  //
+  // Sebelumnya email dan password superadmin tertulis apa adanya di sini, dan
+  // sudah terlanjur masuk riwayat repositori. Siapa pun yang pernah membuka
+  // repo memegang akun dengan wewenang tertinggi di platform.
+  //
+  // Skrip ini sekarang MENOLAK BERJALAN tanpa variabel lingkungan. Memberi
+  // nilai bawaan akan mengembalikan masalah yang sama dalam bentuk lain.
+  const email = process.env.SUPERADMIN_EMAIL;
+  const password = process.env.SUPERADMIN_PASSWORD;
+  const fullName = process.env.SUPERADMIN_NAME || 'Superadmin';
+
+  if (!email || !password) {
+    console.error(
+      'Dihentikan. Isi SUPERADMIN_EMAIL dan SUPERADMIN_PASSWORD lebih dulu:\n\n' +
+      '  SUPERADMIN_EMAIL=... SUPERADMIN_PASSWORD=... node scripts/db/create-superadmin.mjs\n'
+    );
+    process.exit(1);
+  }
+  if (password.length < 12) {
+    console.error('Dihentikan. SUPERADMIN_PASSWORD minimal 12 karakter.');
+    process.exit(1);
+  }
+
   await client.connect();
-  const email = 'stefenlaksana.sl@gmail.com';
-  const password = 'Stefen2012';
-  const fullName = 'Stefen Laksana (Superadmin)';
 
   console.log(`[1] Ensuring pgcrypto extension is active...`);
   await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);

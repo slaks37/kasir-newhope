@@ -26,6 +26,8 @@ type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
 import { resolveTenantId } from '../../../_lib/tenant.js';
+import { wajibToko } from '../../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -34,11 +36,10 @@ function getPool() {
     // SSL wajib untuk database terkelola, dan mustahil untuk yang lokal —
     // Postgres di localhost menolak dengan "server does not support SSL".
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -63,6 +64,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = req.body ?? {};
   const merchantRef = String(body.merchantId ?? body.tenantId ?? '').trim();
+  // GERBANG IDENTITAS (lihat api/_lib/tokoContext.ts). Toko ditentukan dari
+  // token, bukan dari isi permintaan.
+  const toko = await wajibToko(req, res, merchantRef);
+  if (!toko) return;
+
   const diminta = Math.trunc(Number(body.credits));
 
   // Tidak ada merchant bawaan. Permintaan yang tidak menyebut siapa yang
@@ -80,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = getPool();
   try {
-    const tenantId = await resolveTenantId(db, merchantRef);
+    const tenantId = toko.businessId;
     if (!tenantId) {
       return res.status(409).json({
         ok: false,
@@ -103,6 +109,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          updated_at = CURRENT_TIMESTAMP
        RETURNING balance`,
       [tenantId, diminta]
+    );
+
+    // LEDGER IKUT DITULIS. Sebelum ini saldo bertambah tanpa satu baris pun di
+    // ai.credit_ledger, sehingga contract.ai_credit_drift tidak akan pernah nol
+    // secara struktural — terbukti 8 vs 4 pada basis data contoh. Kredit
+    // berbayar yang tidak dapat diaudit tidak dapat dijelaskan ke merchant yang
+    // komplain.
+    await db.query(
+      `INSERT INTO ai.credit_ledger (id, business_id, delta, reason, note)
+       VALUES (uuidv7(), $1::uuid, $2, 'TOPUP', $3)`,
+      [tenantId, diminta, 'pembelian kredit tambahan']
     );
 
     return res.status(200).json({

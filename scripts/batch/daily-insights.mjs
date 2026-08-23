@@ -1255,7 +1255,7 @@ async function catatRun(client, merchantId, status, ditulis, durasiMs, error) {
   );
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv);
   const startedAt = Date.now();
   const insightDate = new Date().toISOString().slice(0, 10);

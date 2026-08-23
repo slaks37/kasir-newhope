@@ -2,6 +2,8 @@ type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
 import { ENTITLEMENT_DARURAT } from '../../../src/lib/plans/entitlements.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -12,11 +14,10 @@ function getPool() {
     // Memaksanya membuat endpoint ini tidak bisa dijalankan atau diuji di mesin
     // sendiri sama sekali.
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -39,6 +40,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!businessId || !sector) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId and sector are required' });
   }
+
+  const toko = await wajibToko(req, res, businessId);
+  if (!toko) return;
+
 
   const db = getPool();
   const client = await db.connect();
@@ -175,7 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: any) {
     await client.query('ROLLBACK');
     console.error('[API Sync Catalog Error]:', err);
-    return res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED', detail: err.message });
+    return res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED' });
   } finally {
     client.release();
   }

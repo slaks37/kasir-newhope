@@ -12,9 +12,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkronCabang from '../api/v1/sync/branches';
-import { ADA_DB, db, tutupDb, pasangPaket, resTiruan, bersihkanPemilik } from './helper-db';
+import { ADA_DB, db, tutupDb, pasangPaket, resTiruan, bersihkanPemilik, headerToko, hdrUntuk } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('langganan per merchant', () => {
   const OWNER = 'usr-dua-usaha';
@@ -37,6 +40,7 @@ d('langganan per merchant', () => {
     await bersihkanPemilik(KAFE);
     idKafe = await buatUsaha(KAFE, 'FNB', 'Kopi Dua Usaha');
     idLaundry = await buatUsaha(LAUNDRY, 'LAUNDRY', 'Laundry Dua Usaha');
+    HDR = await hdrUntuk(KAFE);
   });
   afterAll(tutupDb);
 
@@ -105,7 +109,14 @@ d('langganan per merchant', () => {
 
     const kirim = async (businessId: string, branches: any[]) => {
       const res = resTiruan();
-      await sinkronCabang({ method: 'POST', body: { businessId, branches } }, res);
+      // Token per UNIT USAHA, bukan per pemilik: kafe dan laundry adalah dua
+      // toko terpisah walau pemiliknya sama, jadi masing-masing punya tokennya
+      // sendiri. Jatah outletnya yang dihitung semerchant — dan justru itu yang
+      // diuji di sini.
+      await sinkronCabang(
+        { method: 'POST', headers: await hdrUntuk(businessId), body: { businessId, branches } },
+        res
+      );
       return res._body;
     };
 

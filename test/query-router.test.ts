@@ -10,9 +10,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import tanyaAI from '../api/v1/assistant/query';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('router di jalur /assistant/query', () => {
   const BID = 'usr-uji-router_FNB';
@@ -20,6 +23,7 @@ d('router di jalur /assistant/query', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Uji Router');
+    HDR = headerToko(tid, BID);
     await pasangPaket(tid, 'plan-pro-monthly');
     // Kartu insight semalam, supaya lapisan analitik punya sesuatu untuk
     // dijawab tanpa memanggil model.
@@ -39,7 +43,7 @@ d('router di jalur /assistant/query', () => {
 
   const tanya = async (query: string) => {
     const res = resTiruan();
-    await tanyaAI({ method: 'POST', body: { businessId: BID, query }, headers: {} }, res);
+    await tanyaAI({ method: 'POST', headers: HDR, body: { businessId: BID, query } }, res);
     return res._body;
   };
 

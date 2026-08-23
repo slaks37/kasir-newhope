@@ -10,7 +10,7 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { validasiPaket, TANPA_BATAS, type AdminPlan } from '../src/lib/plans/entitlements';
-import { ADA_DB, db, tutupDb } from './helper-db';
+import { ADA_DB, db, tutupDb, headerToko } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
 

@@ -76,6 +76,7 @@ import {
   type PlanEntitlements,
 } from '../lib/plans/entitlements';
 import type { StatusLangganan } from '../lib/plans/expiry';
+import { fetchToko } from '../lib/sync/tokenToko';
 
 /**
  * Hasil penyimpanan yang BISA DITOLAK oleh batas paket.
@@ -466,7 +467,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let aktif = true;
     const businessId = makeBusinessId(currentUser.id, activeSector);
 
-    fetch(`/api/v1/subscription/status?tenantId=${encodeURIComponent(businessId)}`)
+    fetchToko(`/api/v1/subscription/status?tenantId=${encodeURIComponent(businessId)}`, {}, { businessId, ownerRef: currentUser.id })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!aktif || !d?.plan) return;

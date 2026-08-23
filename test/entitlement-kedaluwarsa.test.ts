@@ -11,9 +11,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import statusHandler from '../api/v1/subscription/status';
-import { ADA_DB, db, tutupDb, merchantUji, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, resTiruan, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('entitlement saat langganan mati', () => {
   const BID = 'usr-uji-nunggak_FNB';
@@ -22,6 +25,7 @@ d('entitlement saat langganan mati', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Nunggak');
+    HDR = headerToko(tid, BID);
     free = (await db().query(
       `SELECT product_limit, max_outlets, ai_quota_monthly, dashboard_access_level, module_access
          FROM billing.plans WHERE id = 'plan-free'`)).rows[0];
@@ -53,7 +57,7 @@ d('entitlement saat langganan mati', () => {
 
   const lewatEndpoint = async () => {
     const res = resTiruan();
-    await statusHandler({ method: 'GET', query: { tenantId: BID }, headers: {} }, res);
+    await statusHandler({ method: 'GET', headers: HDR, query: { tenantId: BID } }, res);
     return res._body;
   };
 

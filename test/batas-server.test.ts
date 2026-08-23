@@ -11,9 +11,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import sinkronTransaksi from '../api/v1/sync/transactions';
 import sinkronCabang from '../api/v1/sync/branches';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, bersihkanPemilik } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, bersihkanPemilik, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('batas produk di jalur sinkron', () => {
   const BID = 'usr-uji-produk_FNB';
@@ -21,13 +24,16 @@ d('batas produk di jalur sinkron', () => {
 
   beforeAll(async () => {
     await bersihkanPemilik(BID);
+    // Toko didaftarkan lebih dulu. Dulu ia lahir dari panggilan sinkron
+    // pertama; sejak endpoint toko menuntut token, urutannya harus terbalik —
+    // dan itu memang alur yang sesungguhnya di lapangan.
+    HDR = await daftarTokoUji(BID, 'FNB', 'Toko Uji Produk');
   });
   afterAll(tutupDb);
 
   const kirim = async (jumlahProduk: number, tag: string) => {
     const res = resTiruan();
-    await sinkronTransaksi({
-      method: 'POST',
+    await sinkronTransaksi({ method: 'POST', headers: HDR,
       body: {
         businessId: BID, sector: 'FNB', storeName: 'Toko Uji Produk', ownerRef: 'usr-uji-produk',
         idempotencyKey: `${tag}-${Date.now()}`,
@@ -94,8 +100,7 @@ d('batas produk di jalur sinkron', () => {
   it('turun paket menahan produk BARU tanpa menghapus yang lama', async () => {
     await pasangPaket(tid, 'plan-free');
     const res = resTiruan();
-    await sinkronTransaksi({
-      method: 'POST',
+    await sinkronTransaksi({ method: 'POST', headers: HDR,
       body: {
         businessId: BID, sector: 'FNB', ownerRef: 'usr-uji-produk',
         idempotencyKey: `c-${Date.now()}`,
@@ -118,6 +123,7 @@ d('batas outlet di jalur sinkron', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Uji Outlet');
+    HDR = headerToko(tid, BID);
   });
   afterAll(tutupDb);
 
@@ -129,7 +135,7 @@ d('batas outlet di jalur sinkron', () => {
 
   const kirim = async (branches: any[], activeBranchRef?: string) => {
     const res = resTiruan();
-    await sinkronCabang({ method: 'POST', body: { businessId: BID, branches, activeBranchRef } }, res);
+    await sinkronCabang({ method: 'POST', headers: HDR, body: { businessId: BID, branches, activeBranchRef } }, res);
     return res._body;
   };
 
@@ -192,14 +198,14 @@ d('batas outlet di jalur sinkron', () => {
   it('merchant baru memakai batas TRIAL, bukan tanpa batas', async () => {
     const BID2 = 'usr-baru-outlet_FNB';
     const tid2 = await merchantUji(BID2, 'Merchant Baru');
+    HDR = headerToko(tid2, BID2);
 
     const batasTrial = Number((await db().query(
       `SELECT max_outlets FROM contract.merchant_entitlements WHERE business_id = $1`,
       [tid2])).rows[0].max_outlets);
 
     const res = resTiruan();
-    await sinkronCabang({
-      method: 'POST',
+    await sinkronCabang({ method: 'POST', headers: HDR,
       body: { businessId: BID2, branches: Array.from({ length: batasTrial + 2 }, (_, i) => cabang(i + 1)) },
     }, res);
 

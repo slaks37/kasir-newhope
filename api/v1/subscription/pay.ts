@@ -15,6 +15,8 @@ type VercelResponse = any;
 import pg from 'pg';
 import { resolveTenantId, resolveMerchantId } from '../../_lib/tenant.js';
 import { konfigurasi, buatPembayaran } from '../../_lib/doku.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -22,10 +24,9 @@ function getPool() {
   if (!pool) {
     pg.types.setTypeParser(1700, (v: string) => (v === null ? null : Number(v)));
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -65,6 +66,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = req.body ?? {};
   const tenantRef = String(body.tenantId ?? body.businessId ?? '').trim();
+  // GERBANG IDENTITAS (lihat api/_lib/tokoContext.ts). Toko ditentukan dari
+  // token, bukan dari isi permintaan.
+  const toko = await wajibToko(req, res, tenantRef);
+  if (!toko) return;
+
   const planId = String(body.planId ?? body.targetPlanId ?? '').trim();
   const billingCycle = body.billingCycle === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
 
@@ -78,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const client = await db.connect();
 
   try {
-    const tenantId = await resolveTenantId(db, tenantRef);
+    const tenantId = toko.businessId;
     if (!tenantId) {
       return res.status(409).json({
         ok: false, error: 'MERCHANT_BELUM_SINKRON',

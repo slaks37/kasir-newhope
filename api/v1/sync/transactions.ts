@@ -4,6 +4,8 @@ import pg from 'pg';
 import { ENTITLEMENT_DARURAT, TANPA_BATAS } from '../../../src/lib/plans/entitlements.js';
 import { orderPaid, orderVoided } from '../../_lib/efekDomain.js';
 import { pastikanStaf } from '../../../src/lib/staf/resolusi.js';
+import { wajibToko } from '../../_lib/tokoContext.js';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
@@ -14,11 +16,10 @@ function getPool() {
     // Memaksanya membuat endpoint ini tidak bisa dijalankan atau diuji di mesin
     // sendiri sama sekali.
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
 
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }
@@ -49,6 +50,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // endpoint mana yang lebih dulu menerimanya.
   const ownerRef = body.ownerRef || String(businessId ?? '').split('_')[0] || null;
 
+  // GERBANG IDENTITAS. Sebelum ini tidak ada apa pun di sini, dan siapa saja
+  // bisa menulis transaksi ke pembukuan toko mana pun — sudah dibuktikan.
+  const toko = await wajibToko(req, res, businessId);
+  if (!toko) return;
+
   if (!businessId || !sector) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId and sector are required' });
   }
@@ -78,7 +84,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        RETURNING id`,
       [storeName || 'New Hope Store', sector, businessId, ownerRef]
     );
-    const tenantId = tenantRes.rows[0].id;
+    // Diambil dari TOKEN, bukan dari hasil upsert. Baris businesses tetap
+    // di-upsert supaya nama toko yang berubah ikut tersimpan, tapi identitas
+    // yang dipakai seluruh penyisipan di bawah datang dari token.
+    const tenantId = toko.businessId;
+    void tenantRes;
 
     // 2. Ensure the cashier this batch is attributed to.
     //
@@ -488,7 +498,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: any) {
     await client.query('ROLLBACK');
     console.error('[API Sync Transactions Error]:', err);
-    return res.status(500).json({ ok: false, error: 'SYNC_FAILED', detail: err.message });
+    // Pesan asli basis data TIDAK dikirim ke pemanggil: ia membocorkan nama
+    // tabel dan aturan yang dilanggar. Detailnya sudah tercatat di log server.
+    return res.status(500).json({ ok: false, error: 'SYNC_FAILED' });
   } finally {
     client.release();
   }

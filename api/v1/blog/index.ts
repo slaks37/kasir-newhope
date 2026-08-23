@@ -10,16 +10,16 @@ type VercelRequest = any;
 type VercelResponse = any;
 import pg from 'pg';
 import { daftarTerbit, satuTerbit, tambahDibaca } from '../../../src/server/blogRepo';
+import { sslUntuk } from '../../../src/server/sslDb.js';
 
 let pool: pg.Pool | null = null;
 
 function getPool() {
   if (!pool) {
     const url = process.env.DATABASE_URL || '';
-    const lokal = /@(127\.0\.0\.1|localhost)|host=\//.test(url);
     pool = new pg.Pool({
       connectionString: url,
-      ssl: lokal ? undefined : { rejectUnauthorized: false },
+      ssl: sslUntuk(url),
       max: Number(process.env.PGPOOL_MAX || 2),
     });
   }

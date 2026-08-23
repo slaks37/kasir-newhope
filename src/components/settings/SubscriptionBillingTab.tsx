@@ -22,6 +22,7 @@ import {
   XCircle,
   HelpCircle,
 } from 'lucide-react';
+import { fetchToko } from '../../lib/sync/tokenToko';
 
 export const SubscriptionBillingTab: React.FC = () => {
   const { settings, updateSettings, currentUser } = usePOS();
@@ -53,11 +54,11 @@ export const SubscriptionBillingTab: React.FC = () => {
 
       // Fetch Status
       const deviceId = await getDeviceId();
-      const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${encodeURIComponent(tenant.businessId)}`, {
+      const statusRes = await fetchToko(`/api/v1/subscription/status?tenantId=${encodeURIComponent(tenant.businessId)}`, {
         headers: {
           'x-device-id': deviceId
         }
-      });
+      }, { businessId: tenant.businessId, ownerRef: tenant.merchantId });
       const statusJson = await statusRes.json();
 
       if (statusJson.subscription) {
@@ -83,7 +84,7 @@ export const SubscriptionBillingTab: React.FC = () => {
     setSelectedPlanForUpgrade(plan);
     try {
       const deviceId = await getDeviceId();
-      const res = await fetch('/api/v1/subscription/prorated-upgrade', {
+      const res = await fetchToko('/api/v1/subscription/prorated-upgrade', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -93,7 +94,7 @@ export const SubscriptionBillingTab: React.FC = () => {
           tenantId: tenant.businessId,
           targetPlanId: plan.id,
         }),
-      });
+      }, { businessId: tenant.businessId, ownerRef: tenant.merchantId });
       const data = await res.json();
       // Server membungkusnya dalam `calculation`. Sebelumnya seluruh balasan
       // disimpan apa adanya, lalu modal membaca prorationData.currentPlan.name
@@ -130,11 +131,11 @@ export const SubscriptionBillingTab: React.FC = () => {
         return;
       }
 
-      const res = await fetch('/api/v1/subscription/pay', {
+      const res = await fetchToko('/api/v1/subscription/pay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenantId: tenant.businessId, planId: targetId }),
-      });
+      }, { businessId: tenant.businessId, ownerRef: tenant.merchantId });
       const data = await res.json();
       setIsProcessingPayment(false);
       setShowProrationModal(false);

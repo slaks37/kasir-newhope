@@ -44,9 +44,49 @@ function getLocalUsers(): Record<string, { email: string; passwordHash?: string;
   }
 }
 
-function saveLocalUser(email: string, pass: string, fullName?: string) {
+/**
+ * Mengacak kata sandi sebelum disimpan.
+ *
+ * Sebelumnya baris ini menyimpan `passwordHash: pass` — nama kolomnya
+ * menyiratkan sudah diamankan, isinya kata sandi asli. Siapa pun yang membuka
+ * penyimpanan browser di perangkat kasir dapat membacanya, dan karena orang
+ * sering memakai kata sandi yang sama, dampaknya melampaui aplikasi ini.
+ *
+ * Memakai SubtleCrypto (PBKDF2, 210.000 putaran) — tersedia di semua browser
+ * modern tanpa menambah satu pun dependensi. Ini BUKAN pengganti autentikasi
+ * server: mode ini memang hanya untuk pemasangan tanpa Supabase, dan siapa pun
+ * yang memegang perangkat tetap bisa mengubah isi penyimpanan. Yang ia tutup
+ * adalah kebocoran kata sandi itu sendiri.
+ */
+const PUTARAN_PBKDF2 = 210_000;
+
+async function acakSandi(pass: string, garamB64?: string): Promise<string> {
+  const enc = new TextEncoder();
+  const garam = garamB64
+    ? Uint8Array.from(atob(garamB64), (c) => c.charCodeAt(0))
+    : crypto.getRandomValues(new Uint8Array(16));
+  const kunci = await crypto.subtle.importKey('raw', enc.encode(pass.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
+  const bit = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: garam, iterations: PUTARAN_PBKDF2, hash: 'SHA-256' }, kunci, 256);
+  const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
+  return `pbkdf2$${PUTARAN_PBKDF2}$${b64(garam)}$${b64(new Uint8Array(bit))}`;
+}
+
+async function sandiCocok(pass: string, tersimpan: string | undefined): Promise<boolean> {
+  if (!tersimpan) return false;
+  const bagian = tersimpan.split('$');
+  // Nilai lama yang tersimpan apa adanya (sebelum perbaikan ini) tetap diterima
+  // sekali supaya pengguna tidak terkunci di luar akunnya sendiri.
+  if (bagian.length !== 4 || bagian[0] !== 'pbkdf2') return tersimpan === pass;
+  const ulang = await acakSandi(pass, bagian[2]);
+  // Perbandingan waktu-tetap tidak berarti di sini: seluruh datanya sudah ada
+  // di perangkat penyerang. Yang penting kata sandinya tidak terbaca.
+  return ulang === tersimpan;
+}
+
+async function saveLocalUser(email: string, pass: string, fullName?: string) {
   const users = getLocalUsers();
-  users[email.toLowerCase()] = { email, fullName, passwordHash: pass };
+  users[email.toLowerCase()] = { email, fullName, passwordHash: await acakSandi(pass) };
   localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
 }
 
@@ -142,7 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin') || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
       if (userRecord || isDemo) {
-        if (userRecord && userRecord.passwordHash && userRecord.passwordHash !== password) {
+        if (userRecord && userRecord.passwordHash && !(await sandiCocok(password, userRecord.passwordHash))) {
           return { error: { message: 'Password salah!' } as AuthError };
         }
         const sess = createLocalSession(email, userRecord?.fullName);
@@ -166,7 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (localUsers[cleanEmail]) {
         return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
       }
-      saveLocalUser(email, password);
+      await saveLocalUser(email, password);
       const sess = createLocalSession(email);
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
       setUser(sess.user);
@@ -183,14 +223,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      const { data, error } = await supabase.rpc('custom_signup', {
-        user_email: email,
-        user_password: password,
-      });
-
+      // Pendaftaran akun ditangani Supabase Auth; pembuatan TOKO ditangani
+      // endpoint kita sendiri (lihat api/v1/auth/register.ts).
+      //
+      // Sebelumnya keduanya dilakukan oleh satu fungsi basis data bernama
+      // `custom_signup` — yang tidak pernah ada di rantai migrasi, sehingga
+      // pendaftaran selalu gagal dan tidak ada pengguna baru yang bisa masuk.
+      const { data: daftar, error } = await supabase.auth.signUp({ email, password });
       if (error) throw error;
-      if (!data?.ok) {
-        return { error: { message: data?.error || 'Gagal mendaftar' } as AuthError };
+
+      const idPemilik = daftar?.user?.id;
+      if (!idPemilik) {
+        return { error: { message: 'Pendaftaran akun gagal. Coba lagi.' } as AuthError };
       }
 
       // Jika berhasil, panggil backend untuk kirim email welcome (fire-and-forget)

@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**41 tabel dan 34 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
+**41 tabel dan 35 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -772,6 +772,7 @@ Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
 | `blog_published` | Artikel blog yang BENAR-BENAR terbit — draf disaring di sini |
 | `staff_directory` | Staf + status kepegawaian + kredensial + peran. PIN tidak ikut |
 | `staff_permissions` | Izin efektif per staf; staf non-AKTIF tidak menghasilkan baris |
+| `staf_pin_belum_aman` | Kredensial kasir yang PIN-nya masih tersimpan apa adanya; harus kosong sebelum kolom lamanya dibuang |
 
 ---
 

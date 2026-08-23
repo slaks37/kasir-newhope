@@ -14,9 +14,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import queryHandler from '../api/v1/assistant/query';
 import { entitlementMerchant } from '../api/_lib/entitlementGuard';
-import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan } from './helper-db';
+import { ADA_DB, db, tutupDb, merchantUji, pasangPaket, resTiruan, headerToko, daftarTokoUji } from './helper-db';
 
 const d = describe.skipIf(!ADA_DB);
+
+// Endpoint toko menolak permintaan tanpa token. Diisi setelah toko ujinya ada.
+let HDR: Record<string, string> = {};
 
 d('penegakan modul di server', () => {
   const BID = 'usr-uji-modul_FNB';
@@ -24,6 +27,7 @@ d('penegakan modul di server', () => {
 
   beforeAll(async () => {
     tid = await merchantUji(BID, 'Toko Uji Modul');
+    HDR = headerToko(tid, BID);
     // Paket tanpa modul ai — dibuat khusus untuk tes ini.
     await db().query(
       `INSERT INTO billing.plans
@@ -41,7 +45,7 @@ d('penegakan modul di server', () => {
   const tanya = async () => {
     const res = resTiruan();
     await queryHandler(
-      { method: 'POST', body: { merchantId: BID, question: 'berapa omzet bulan ini?' }, headers: {} },
+      { method: 'POST', headers: HDR, body: { merchantId: BID, question: 'berapa omzet bulan ini?' } },
       res
     );
     return res._body;

@@ -265,7 +265,7 @@ async function catatRun(client, status, ditulis, durasiMs, error) {
   );
 }
 
-async function main() {
+export async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const inputIdx = args.indexOf('--input');
@@ -348,7 +348,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  log('FATAL', err && err.stack ? err.stack : err);
-  process.exit(1);
-});
+// Hanya jalan bila skrip ini dipanggil langsung. Tanpa penjaga ini, mengimpornya
+// dari endpoint cron akan langsung menjalankan seluruh batch saat modul dimuat.
+const dijalankanLangsung =
+  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+
+if (dijalankanLangsung) {
+  main().catch((err) => {
+    log('FATAL', err && err.stack ? err.stack : err);
+    process.exit(1);
+  });
+}

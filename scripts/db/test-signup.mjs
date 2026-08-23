@@ -12,7 +12,7 @@ async function test() {
 
   const { data, error } = await supabase.rpc('custom_signup', {
     user_email: testEmail,
-    user_password: 'Password123!',
+    user_password: KATA_SANDI,
     store_name: 'Warung Kopi Sukses',
     full_name: 'Budi Santoso',
     sector: 'FNB'
@@ -28,7 +28,7 @@ async function test() {
   console.log('Testing signInWithPassword with newly created user...');
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email: testEmail,
-    password: 'Password123!'
+    password: KATA_SANDI
   });
 
   if (authError) {

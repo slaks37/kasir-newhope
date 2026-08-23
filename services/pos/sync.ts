@@ -21,6 +21,8 @@ import type express from 'express';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { pastikanStaf } from '../../src/lib/staf/resolusi';
+import { bacaBatasProduk, bolehTambah, type KeadaanBatas } from '../../src/lib/batas/produk';
+import { orderPaid, orderVoided } from '../../api/_lib/efekDomain.js';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -67,6 +69,9 @@ interface SyncTxn {
   appModule?: string;
   createdAt?: string;
   customer?: SyncCustomer;
+  /** Poin yang didapat dan ditukar pada transaksi ini. Dipakai loyalty_ledger. */
+  pointsEarned?: number;
+  pointsRedeemed?: number;
   items: SyncItem[];
 }
 
@@ -100,6 +105,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     // melahirkan unit usaha TANPA merchant — dan trigger yang membuat merchant
     // beserta langganan trialnya melewatinya diam-diam.
     const ownerRef = str(body.ownerRef, 64) ?? (businessId ? businessId.split('_')[0] : null);
+    // Perangkat pengirim. Dipakai menandai siapa yang menerbitkan tiap peristiwa.
+    const deviceRef = str(req.headers?.['x-device-id'] as string | undefined, 128) ?? null;
     const idemKey = str(body.idempotencyKey, 120);
     const txns: SyncTxn[] = Array.isArray(body.transactions) ? body.transactions : [];
 
@@ -150,9 +157,20 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         );
         const tenantId: string = t.rows[0].id;
 
+        /* -- BATAS PAKET ---------------------------------------------------- */
+        //
+        // Sebelum ini jalur microservice TIDAK memeriksa batas produk sama
+        // sekali, sementara jalur serverless memeriksanya — merchant paket
+        // gratis dapat menyisipkan produk tanpa batas lewat sini. Aturannya
+        // sekarang ada di satu tempat dan dipanggil kedua jalur.
+        const batasProduk: KeadaanBatas = await bacaBatasProduk(c, tenantId);
+        let produkDitahan = 0;
+
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
-        const productCache = new Map<string, string>();
+        // Nilai null berarti "sudah dicoba, ditahan batas paket" — supaya
+        // produk yang sama tidak dihitung dua kali dalam satu batch.
+        const productCache = new Map<string, string | null>();
 
         // Sejak 0033, keduanya lewat satu jalur yang sama — dulu salinan di sini
         // menulis peran dari perangkat sementara salinan di api/v1/sync menulis
@@ -233,7 +251,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         const resolveProduct = async (i: SyncItem) => {
           const key = i.productRef || i.productName;
           if (!key) return null;
-          if (productCache.has(key)) return productCache.get(key)!;
+          if (productCache.has(key)) return productCache.get(key) ?? null;
 
           const found = await c.query(
             `SELECT id FROM pos.products WHERE business_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
@@ -243,6 +261,15 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (found.rows.length) {
             id = found.rows[0].id;
           } else {
+            // Produk yang tidak muat TIDAK menggagalkan transaksinya: struknya
+            // tetap tercatat, hanya katalognya yang tidak bertambah. Kasir sudah
+            // menerima uangnya, dan menolak transaksi karena batas katalog
+            // berarti menghukum penjualan yang sudah terjadi.
+            if (!bolehTambah(batasProduk, 0)) {
+              produkDitahan += 1;
+              productCache.set(key, null);
+              return null;
+            }
             const ins = await c.query(
               `INSERT INTO pos.products (id, business_id, name, sku, price, cost_price,
                                      business_sector, client_key, category_name,
@@ -262,6 +289,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               ]
             );
             id = ins.rows[0].id;
+            // Dihitung langsung supaya produk berikutnya dalam batch yang sama
+            // diukur terhadap jumlah yang sudah bertambah, bukan angka awal.
+            batasProduk.terpakai += 1;
           }
           productCache.set(key, id);
           return id;
@@ -355,6 +385,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               );
               if (upd.rows.length) {
                 voided++;
+                // Pembalik stok dan poin. Tanpa ini pembatalan tidak
+                // mengembalikan apa pun di jalur microservice — uang sudah
+                // kembali ke pelanggan, tapi stok dan poin tetap terpakai.
+                await orderVoided(c as any, tenantId, upd.rows[0].id, clientId, deviceRef);
                 await writeActivity(c, {
                   merchantId: tenantId,
                   businessSector: sector as Sector,
@@ -375,9 +409,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
 
           const txnId: string = ins.rows[0].id;
+          const barisStruk: Array<{ productId: string | null; productName: string; quantity: number }> = [];
+
           for (const i of x.items) {
+            // Produk yang ditahan batas paket TETAP dicatat sebagai baris struk,
+            // hanya tanpa tautan ke katalog. Melewatinya berarti struk kehilangan
+            // isinya: uangnya sudah diterima, tapi laporannya menunjukkan
+            // transaksi kosong.
             const productId = await resolveProduct(i);
-            if (!productId) continue;
             const qty = Math.max(1, Math.trunc(num(i.quantity, 1)));
             await c.query(
               `INSERT INTO pos.transaction_items
@@ -399,7 +438,27 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 str(i.productDescription, 300),
               ]
             );
+            barisStruk.push({ productId, productName: i.productName.slice(0, 100), quantity: qty });
           }
+
+          // EFEK DOMAIN. Sebelum ini jalur microservice tidak menerbitkan satu
+          // peristiwa pun dan tidak menulis ke ledger mana pun — sehingga saldo
+          // stok dan poin (yang merupakan view ATAS ledger) menjadi salah bila
+          // jalur inilah yang melayani, dan pembatalan tidak mengembalikan apa
+          // pun. Kini keduanya memanggil modul yang sama.
+          await orderPaid(c as any, {
+            businessId: tenantId,
+            transactionId: txnId,
+            idempotencyKey: String(x.clientTxnId),
+            deviceRef,
+            items: barisStruk,
+            customerId,
+            pointsEarned: Math.max(0, Math.trunc(num(x.pointsEarned))),
+            pointsRedeemed: Math.max(0, Math.trunc(num(x.pointsRedeemed))),
+            totalAmount: num(x.totalAmount),
+            occurredAt: x.createdAt ?? null,
+          });
+
           accepted++;
         }
 
