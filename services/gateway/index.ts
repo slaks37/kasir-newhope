@@ -35,6 +35,7 @@ import { createServer as createViteServer } from 'vite';
 import { PORTS, SERVICE_URL } from '../shared/service';
 import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
+import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -66,6 +67,18 @@ const breakers: Record<string, Breaker> = {
 };
 
 const app = express();
+
+const PUBLIC_API_PATHS = new Set([
+  '/api/health',
+  '/api/v1/subscription/plans',
+  '/api/v1/assistant/quick-chips',
+  // Webhook punya secret terpisah yang diperiksa billing-service.
+  '/api/v1/webhooks/payment-gateway',
+]);
+
+function isPublicApi(url: string): boolean {
+  return PUBLIC_API_PATHS.has(url.split('?')[0]);
+}
 
 // PENTING: body TIDAK diurai di sini. Gateway meneruskan aliran mentah apa
 // adanya. Mengurai lalu menyusunnya kembali mengubah byte-nya — dan pada jalur
@@ -104,6 +117,14 @@ const bolehDiulang = (metode: string) => metode === 'GET' || metode === 'HEAD';
 app.use('/api', async (req, res, next) => {
   const route = pickRoute(req.originalUrl);
   if (!route) return next();
+
+  if (!isPublicApi(req.originalUrl)) {
+    let authenticated = false;
+    await requireGatewayAuthentication(req, res, () => {
+      authenticated = true;
+    });
+    if (!authenticated) return;
+  }
 
   const breaker = breakers[route.name];
   if (!breaker.bolehLewat()) {
@@ -151,6 +172,16 @@ app.use('/api', async (req, res, next) => {
       headers['x-forwarded-for'] = req.ip || '';
       headers['x-request-id'] = requestId;
       headers['host'] = new URL(route.target).host;
+      const principal = res.locals.principal as AuthPrincipal | undefined;
+      if (principal) {
+        headers['x-auth-sub'] = principal.subject;
+        if (principal.email) headers['x-auth-email'] = principal.email;
+      }
+      // Service menolak request tanpa token ini, termasuk yang masuk langsung
+      // ke port internal dengan x-auth-sub palsu.
+      if (process.env.INTERNAL_GATEWAY_TOKEN) {
+        headers['x-newhope-gateway-token'] = process.env.INTERNAL_GATEWAY_TOKEN;
+      }
 
       const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
       const upstream = await fetch(route.target + req.originalUrl, {
@@ -237,7 +268,7 @@ app.get('/api/health', async (_req, res) => {
           ok: false,
           latencyMs: Date.now() - t0,
           breaker: breakers[n].status(),
-          error: (err as Error).message,
+          error: 'UNAVAILABLE',
         };
       }
     })

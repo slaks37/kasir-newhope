@@ -57,16 +57,16 @@ function keFaktur(r: any): SaaSInvoice {
 }
 
 /** Memastikan katalog paket ada di database. Aman dijalankan berulang. */
-export async function pastikanPaket(db: Db, paket: Array<{ id: string; name: string; tierLevel: number; priceIdr: number; features: string[] }>) {
+export async function pastikanPaket(db: Db, paket: Array<{ id: string; name: string; tierLevel: number; priceIdr: number; productLimit: number; features: string[] }>) {
   for (const p of paket) {
     await db.query(
-      `INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, features)
-       VALUES ($1, $2, $3, 'MONTHLY', $4, $5::jsonb)
+      `INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, product_limit, features)
+       VALUES ($1, $2, $3, 'MONTHLY', $4, $5, $6::jsonb)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, tier_level = EXCLUDED.tier_level,
-         price_idr = EXCLUDED.price_idr, features = EXCLUDED.features,
+         price_idr = EXCLUDED.price_idr, product_limit = EXCLUDED.product_limit, features = EXCLUDED.features,
          updated_at = CURRENT_TIMESTAMP`,
-      [p.id, p.name, p.tierLevel, p.priceIdr, JSON.stringify(p.features)]
+      [p.id, p.name, p.tierLevel, p.priceIdr, p.productLimit, JSON.stringify(p.features)]
     );
   }
 }
@@ -200,14 +200,21 @@ export async function buatFaktur(
   return keFaktur(rows[0]);
 }
 
-export async function tandaiFakturLunas(db: Db, id: string, ref?: string): Promise<SaaSInvoice | null> {
+export async function tandaiFakturLunas(
+  db: Db,
+  id: string,
+  ref?: string,
+  tenantId?: string
+): Promise<SaaSInvoice | null> {
   const { rows } = await db.query(
     `UPDATE billing.invoices
         SET payment_status = 'PAID', paid_at = CURRENT_TIMESTAMP,
             payment_gateway_ref = COALESCE($2, payment_gateway_ref)
-      WHERE id = $1 AND payment_status <> 'PAID'
+      WHERE id = $1
+        AND payment_status <> 'PAID'
+        AND ($3::uuid IS NULL OR tenant_id = $3::uuid)
       RETURNING *`,
-    [id, ref ?? null]
+    [id, ref ?? null, tenantId ?? null]
   );
   return rows.length ? keFaktur(rows[0]) : null;
 }

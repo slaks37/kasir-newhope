@@ -154,11 +154,14 @@ export async function tambahKredit(
   if (awal.monthlyGrant === 0) return awal;
 
   const merchantId = await keUuid(db, merchantIdMentah, businessId);
+  const amount = Math.max(0, Math.trunc(jumlah));
+  if (amount === 0) return awal;
+  // Fungsi database menandai perubahan ini TOPUP dan trigger menulis ledger
+  // pada transaksi yang sama; tidak ada jalur saldo yang diam-diam berubah.
+  await db.query(`SELECT ai.add_ai_credit($1::uuid, $2::int, $3)`, [merchantId, amount, 'api-topup']);
   const { rows } = await db.query(
-    `UPDATE ai.merchant_ai_credits
-        SET balance = balance + $2, updated_at = CURRENT_TIMESTAMP
-      WHERE merchant_id = $1 RETURNING *`,
-    [merchantId, Math.max(0, Math.trunc(jumlah))]
+    `SELECT * FROM ai.merchant_ai_credits WHERE merchant_id = $1`,
+    [merchantId]
   );
   return rows.length ? keWallet(rows[0]) : awal;
 }

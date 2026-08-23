@@ -19,9 +19,36 @@
 import type express from 'express';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
+import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
+
+class SyncAccessError extends Error {}
+class ProductLimitError extends Error {}
+
+async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubject: string): Promise<void> {
+  if (ownerSubject === 'local-development') return;
+  const { rows } = await db.query(
+    `SELECT t.owner_user_ref
+       FROM internal.merchants m
+       JOIN internal.tenants t ON t.id = m.tenant_id
+      WHERE m.external_ref = $1
+      LIMIT 1`,
+    [businessId]
+  );
+  if (rows.length && rows[0].owner_user_ref !== ownerSubject) {
+    throw new SyncAccessError('BUSINESS_NOT_OWNED');
+  }
+}
+
+async function productLimitForTenant(db: Db, tenantId: string): Promise<number> {
+  const { rows } = await db.query(
+    `SELECT product_limit FROM contract.merchant_product_entitlement WHERE tenant_id = $1`,
+    [tenantId]
+  );
+  return rows.length ? Number(rows[0].product_limit) : 30;
+}
 
 interface SyncItem {
   productRef?: string;
@@ -83,7 +110,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(body.businessId, 96);
     const sector = str(body.sector, 16);
     const storeName = str(body.storeName, 100) ?? 'Tanpa Nama';
-    const ownerRef = str(body.ownerRef, 64);
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    // ownerRef dari browser dapat dipalsukan. Principal gateway adalah sumber
+    // tunggal kepemilikan tenant baru maupun tenant yang sudah ada.
+    const ownerRef = principal.subject;
     const idemKey = str(body.idempotencyKey, 120);
     const txns: SyncTxn[] = Array.isArray(body.transactions) ? body.transactions : [];
 
@@ -104,6 +135,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
     try {
       const out = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
         if (idemKey) {
           const prev = await c.query(
@@ -164,6 +196,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
         const productCache = new Map<string, string>();
+        const productLimit = await productLimitForTenant(c, tenantId);
+        const existingProductCount = await c.query(
+          `SELECT COUNT(*)::int AS count FROM pos.products WHERE tenant_id = $1`,
+          [tenantId]
+        );
+        let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
 
         const resolveCashier = async (ref: string | null, name: string | null, role: string | null) => {
           const key = ref || name;
@@ -214,6 +252,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (found.rows.length) {
             id = found.rows[0].id;
           } else {
+            if (productLimit >= 0 && productCount >= productLimit) {
+              throw new ProductLimitError('PRODUCT_LIMIT_EXCEEDED');
+            }
             const ins = await c.query(
               `INSERT INTO pos.products (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price,
                                      business_sector, business_id, category_name,
@@ -235,6 +276,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               ]
             );
             id = ins.rows[0].id;
+            productCount++;
           }
           productCache.set(key, id);
           return id;
@@ -342,6 +384,43 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
                   [voidedTxnId]
                 );
+
+                /*
+                 * PENGEMBALIAN STOK SAAT VOID.
+                 *
+                 * Setiap item dari transaksi yang dibatalkan dikembalikan ke
+                 * inventory ledger sebagai delta positif. Trigger
+                 * trg_apply_inventory_transaction menambah saldo secara atomik.
+                 *
+                 * Idempoten: void hanya terjadi sekali karena UPDATE di atas
+                 * mensyaratkan order_status <> 'VOIDED' — kiriman kedua tidak
+                 * menghasilkan baris RETURNING, jadi blok ini tidak dimasuki.
+                 */
+                const voidedItems = await c.query(
+                  `SELECT ti.product_id, ti.quantity,
+                          p.inventory_item_id, p.merchant_id, p.outlet_id
+                     FROM pos.transaction_items ti
+                     JOIN pos.products p ON p.id = ti.product_id
+                    WHERE ti.transaction_id = $1
+                      AND p.inventory_item_id IS NOT NULL`,
+                  [voidedTxnId]
+                );
+                for (const vi of voidedItems.rows) {
+                  await c.query(
+                    `INSERT INTO pos.inventory_transactions
+                       (id, tenant_id, merchant_id, outlet_id, location_id,
+                        inventory_item_id, quantity_delta, movement_type,
+                        reference_id, reason, created_at)
+                     VALUES (
+                       uuidv7(), $1, $2, $3,
+                       (SELECT location_id FROM pos.inventory_balances
+                         WHERE inventory_item_id = $5 AND outlet_id = $3 LIMIT 1),
+                       $5, $4, 'VOID_RESTORE', $6,
+                       'Pengembalian stok — transaksi dibatalkan', CURRENT_TIMESTAMP)`,
+                    [tenantId, vi.merchant_id, vi.outlet_id, vi.quantity, vi.inventory_item_id, voidedTxnId]
+                  );
+                }
+
                 voided++;
                 await writeActivity(c, {
                   merchantId: tenantId,
@@ -397,6 +476,44 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 str(i.productDescription, 300),
               ]
             );
+
+            /*
+             * PENGURANGAN STOK ATOMIK DI SERVER.
+             *
+             * Jika produk terhubung ke inventory item (pos.products.inventory_item_id),
+             * sisipkan baris ke pos.inventory_transactions dengan delta negatif.
+             * Trigger trg_apply_inventory_transaction (migrasi 0024) secara atomik
+             * mengeksekusi: current_stock = current_stock + quantity_delta
+             *
+             * Aman terhadap concurrent updates karena:
+             *  - PostgreSQL row-level lock pada UPDATE di trigger bersifat atomic
+             *  - Tidak ada read-then-write di level aplikasi
+             *  - Idempoten: jika transaksi duplikat ditolak oleh ON CONFLICT pada
+             *    pos.transactions (L280), loop ini tidak dimasuki sama sekali
+             */
+            if (!isVoid) {
+              await c.query(
+                `INSERT INTO pos.inventory_transactions
+                   (id, tenant_id, merchant_id, outlet_id, location_id,
+                    inventory_item_id, quantity_delta, movement_type,
+                    reference_id, reason, created_at)
+                 SELECT
+                   uuidv7(), p.tenant_id, p.merchant_id, p.outlet_id,
+                   (SELECT ib.location_id FROM pos.inventory_balances ib
+                     WHERE ib.inventory_item_id = p.inventory_item_id
+                       AND ib.outlet_id = p.outlet_id LIMIT 1),
+                   p.inventory_item_id,
+                   -$2,
+                   'SALE_DEDUCT',
+                   $3,
+                   'Penjualan POS',
+                   CURRENT_TIMESTAMP
+                 FROM pos.products p
+                 WHERE p.id = $1
+                   AND p.inventory_item_id IS NOT NULL`,
+                [productId, qty, txnId]
+              );
+            }
           }
           accepted++;
         }
@@ -430,6 +547,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       res.json({ ok: true, ...out });
     } catch (err) {
       console.error('[sync] gagal:', (err as Error).message);
+      if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+      if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
       res.status(500).json({ ok: false, error: 'SYNC_FAILED' });
     }
   });
@@ -454,7 +573,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(b.businessId, 96);
     const sector = str(b.sector, 16);
     const storeName = str(b.storeName, 100) ?? 'Tanpa Nama';
-    const ownerRef = str(b.ownerRef, 64);
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    const ownerRef = principal.subject;
     const products: any[] = Array.isArray(b.products) ? b.products : [];
 
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
@@ -464,8 +585,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       return res.status(413).json({ ok: false, error: 'CATALOG_TOO_LARGE' });
     }
 
+    const desiredProductRefs = new Set(
+      products.map((p) => str(p?.id, 96)).filter((ref): ref is string => !!ref)
+    );
+
     try {
       const out = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
         const tenantExternalRef = ownerRef || `tenant_${businessId}`;
         const t = await c.query(
           `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
@@ -486,6 +612,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           [tenantId, storeName, sector, businessId]
         );
         const merchantId: string = m.rows[0].id;
+
+        const productLimit = await productLimitForTenant(c, tenantId);
+        if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
+          throw new ProductLimitError('PRODUCT_LIMIT_EXCEEDED');
+        }
 
         const outq = await c.query(
           `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
@@ -511,13 +642,22 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (!ref || !name) continue;
           seen.push(ref);
 
+          /*
+           * CATALOG SYNC: hanya metadata produk.
+           *
+           * Kolom `stock` dan `min_stock_alert` sudah di-DROP dari pos.products
+           * oleh migrasi 0023 dan dipindahkan ke pos.inventory_balances. Stok
+           * dimutasi secara atomik melalui pos.inventory_transactions ledger
+           * (di endpoint /api/v1/sync/transactions), bukan melalui snapshot
+           * overwrite dari klien.
+           */
           await c.query(
             `INSERT INTO pos.products
                (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price, is_available,
                 business_sector, business_id, category_name, description,
-                stock, min_stock_alert, unit, external_ref, catalog_synced_at)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                     CURRENT_TIMESTAMP)
+                unit, external_ref, catalog_synced_at)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                     $13, $14, CURRENT_TIMESTAMP)
              ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET
                name              = EXCLUDED.name,
@@ -527,8 +667,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                is_available      = EXCLUDED.is_available,
                category_name     = EXCLUDED.category_name,
                description       = EXCLUDED.description,
-               stock             = EXCLUDED.stock,
-               min_stock_alert   = EXCLUDED.min_stock_alert,
                unit              = EXCLUDED.unit,
                catalog_synced_at = CURRENT_TIMESTAMP`,
             [
@@ -544,8 +682,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               businessId,
               str(p.categoryName, 100),
               str(p.description, 300),
-              num(p.stock),
-              num(p.minStockAlert),
               str(p.unit, 20),
               ref,
             ]
@@ -575,6 +711,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       res.json({ ok: true, ...out });
     } catch (err) {
       console.error('[sync] katalog gagal:', (err as Error).message);
+      if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+      if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
       res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED' });
     }
   });
@@ -584,6 +722,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const b = req.body ?? {};
     const businessId = str(b.businessId, 96);
     if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) {
+      return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+    }
 
     const t = await db.query(`SELECT id, business_sector FROM internal.tenants WHERE external_ref = $1`, [
       businessId,
@@ -613,6 +756,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
   app.get('/api/v1/sync/status', async (req, res) => {
     const businessId = str(req.query.businessId, 96);
     if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) {
+      return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+    }
 
     const { rows } = await db.query(
       `SELECT t.id, t.name, t.business_sector,

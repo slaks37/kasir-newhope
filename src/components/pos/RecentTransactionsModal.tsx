@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -20,6 +20,8 @@ import {
   Download,
   FileSpreadsheet,
   ShieldAlert,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { PinAuthorizationModal } from '../auth/PinAuthorizationModal';
 
@@ -226,6 +228,20 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
             </div>
             <XCircle className="w-5 h-5 text-rose-600" />
           </div>
+        </div>
+
+        {/* Immutability Security Audit Notice */}
+        <div className="px-4 py-2 bg-emerald-50/80 border-b border-emerald-100 flex items-center justify-between text-xs text-emerald-900 shrink-0">
+          <div className="flex items-center space-x-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold text-[11px]">
+              <strong>Catatan Finansial Permanen (Immutable Ledger):</strong> Transaksi kasir yang sudah lunas tidak dapat dihapus dari sistem. Pembatalan hanya dapat dilakukan melalui mekanisme <strong>Void</strong> berotorisasi.
+            </span>
+          </div>
+          <span className="text-[10px] text-emerald-800 bg-emerald-100/90 font-mono font-bold px-2 py-0.5 rounded-md border border-emerald-300 shrink-0 hidden sm:inline-flex items-center space-x-1">
+            <Lock className="w-3 h-3 text-emerald-700" />
+            <span>Audit-Protected</span>
+          </span>
         </div>
 
         {/* Search & Filter Toolbar */}

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { UserRole } from '../../types';
-import { ShieldAlert, X, KeyRound, CheckCircle2, Lock } from 'lucide-react';
+import { ShieldAlert, X, KeyRound, Lock, AlertCircle, ShieldCheck } from 'lucide-react';
+import { getPinLockoutStatus } from '../../lib/auth/pinSecurity';
 
 interface PinAuthorizationModalProps {
   title?: string;
@@ -21,8 +22,34 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
   const { verifyPin } = usePOS();
   const [pinInput, setPinInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  // Status Lockout & Percobaan
+  const [lockoutSec, setLockoutSec] = useState(() => getPinLockoutStatus().remainingSec);
+  const [attemptsLeft, setAttemptsLeft] = useState(() => getPinLockoutStatus().attemptsLeft);
+
+  // Timer hitung mundur saat lockout aktif
+  useEffect(() => {
+    if (lockoutSec <= 0) return;
+    const interval = setInterval(() => {
+      setLockoutSec((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setAttemptsLeft(3);
+          setErrorMessage('');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [lockoutSec]);
+
+  const isLockedOut = lockoutSec > 0;
 
   const handleKeyClick = (num: string) => {
+    if (isLockedOut || isVerifying) return;
     if (pinInput.length < 4) {
       setPinInput((prev) => prev + num);
       setErrorMessage('');
@@ -30,29 +57,48 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
   };
 
   const handleBackspace = () => {
+    if (isLockedOut || isVerifying) return;
     setPinInput((prev) => prev.slice(0, -1));
     setErrorMessage('');
   };
 
   const handleClear = () => {
+    if (isLockedOut || isVerifying) return;
     setPinInput('');
     setErrorMessage('');
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
+    if (isLockedOut || isVerifying) return;
+
     if (pinInput.length !== 4) {
       setErrorMessage('Masukkan 4 digit PIN Supervisor / Manager');
       return;
     }
 
-    const result = verifyPin(pinInput, requiredRoles);
-    if (!result.success || !result.user) {
-      setErrorMessage(result.message || 'PIN Salah atau Otorisasi Ditolak!');
-      setPinInput('');
-      return;
-    }
+    setIsVerifying(true);
+    try {
+      const result = await verifyPin(pinInput, requiredRoles);
 
-    onAuthorized(result.user.role, result.user.name);
+      if (result.isLockedOut && result.remainingSec) {
+        setLockoutSec(result.remainingSec);
+        setAttemptsLeft(0);
+        setErrorMessage(result.message || 'Terminal terkunci!');
+        setPinInput('');
+        return;
+      }
+
+      if (!result.success || !result.user) {
+        setAttemptsLeft(result.attemptsLeft ?? 0);
+        setErrorMessage(result.message || 'PIN Salah atau Otorisasi Ditolak!');
+        setPinInput('');
+        return;
+      }
+
+      onAuthorized(result.user.role, result.user.name);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   return (
@@ -80,34 +126,58 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
 
         {/* Content & Keypad */}
         <div className="p-6 space-y-5">
-          <div className="text-center">
-            <p className="text-xs font-semibold text-slate-600">
-              Masukkan PIN Supervisor (Role: {requiredRoles.join(' atau ')})
-            </p>
-
-            {/* PIN Display Dots */}
-            <div className="flex justify-center items-center space-x-3 py-3 mt-3 bg-slate-50 border border-slate-200 rounded-2xl shadow-inner">
-              {[0, 1, 2, 3].map((idx) => {
-                const isFilled = pinInput.length > idx;
-                return (
-                  <div
-                    key={idx}
-                    className={`w-4 h-4 rounded-full transition-all ${
-                      isFilled
-                        ? 'bg-rose-600 scale-110 shadow-xs ring-2 ring-rose-300'
-                        : 'bg-slate-300'
-                    }`}
-                  />
-                );
-              })}
-            </div>
-
-            {errorMessage && (
-              <p className="text-xs font-bold text-rose-600 text-center mt-2 animate-shake">
-                {errorMessage}
+          {/* Lockout Active Banner */}
+          {isLockedOut ? (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-center space-y-1 animate-pulse">
+              <div className="flex items-center justify-center space-x-2 text-rose-700 font-extrabold text-sm">
+                <Lock className="w-4 h-4 text-rose-600" />
+                <span>TERMINAL POS TERKUNCI</span>
+              </div>
+              <p className="text-xs text-rose-600">
+                Terlalu banyak percobaan PIN salah. Coba lagi dalam:
               </p>
-            )}
-          </div>
+              <div className="font-mono font-black text-2xl text-rose-800 pt-1">
+                00:{lockoutSec.toString().padStart(2, '0')}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center">
+              <p className="text-xs font-semibold text-slate-600">
+                Masukkan PIN Supervisor (Role: {requiredRoles.join(' atau ')})
+              </p>
+
+              {/* PIN Display Dots */}
+              <div className="flex justify-center items-center space-x-3 py-3 mt-3 bg-slate-50 border border-slate-200 rounded-2xl shadow-inner">
+                {[0, 1, 2, 3].map((idx) => {
+                  const isFilled = pinInput.length > idx;
+                  return (
+                    <div
+                      key={idx}
+                      className={`w-4 h-4 rounded-full transition-all ${
+                        isFilled
+                          ? 'bg-rose-600 scale-110 shadow-xs ring-2 ring-rose-300'
+                          : 'bg-slate-300'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Remaining Attempts Warning */}
+              {attemptsLeft < 3 && attemptsLeft > 0 && !errorMessage && (
+                <p className="text-[11px] font-bold text-amber-700 mt-2 flex items-center justify-center space-x-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Sisa {attemptsLeft} kali percobaan sebelum terminal terkunci</span>
+                </p>
+              )}
+
+              {errorMessage && (
+                <p className="text-xs font-bold text-rose-600 text-center mt-2 animate-shake">
+                  {errorMessage}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Keypad */}
           <div className="grid grid-cols-3 gap-2">
@@ -115,37 +185,47 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
               <button
                 key={num}
                 type="button"
+                disabled={isLockedOut || isVerifying}
                 onClick={() => handleKeyClick(num)}
-                className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-rose-100 border border-slate-200 rounded-2xl font-bold text-base text-slate-800 transition-all active:scale-95 shadow-xs"
+                className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-rose-100 disabled:opacity-40 disabled:pointer-events-none border border-slate-200 rounded-2xl font-bold text-base text-slate-800 transition-all active:scale-95 shadow-xs"
               >
                 {num}
               </button>
             ))}
             <button
               type="button"
+              disabled={isLockedOut || isVerifying}
               onClick={handleClear}
-              className="py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-2xl font-bold text-xs transition-all active:scale-95"
+              className="py-3 bg-slate-200 hover:bg-slate-300 disabled:opacity-40 disabled:pointer-events-none text-slate-700 rounded-2xl font-bold text-xs transition-all active:scale-95"
             >
               C
             </button>
             <button
               type="button"
+              disabled={isLockedOut || isVerifying}
               onClick={() => handleKeyClick('0')}
-              className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-rose-100 border border-slate-200 rounded-2xl font-bold text-base text-slate-800 transition-all active:scale-95 shadow-xs"
+              className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-rose-100 disabled:opacity-40 disabled:pointer-events-none border border-slate-200 rounded-2xl font-bold text-base text-slate-800 transition-all active:scale-95 shadow-xs"
             >
               0
             </button>
             <button
               type="button"
+              disabled={isLockedOut || isVerifying}
               onClick={handleBackspace}
-              className="py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-2xl font-bold text-xs transition-all active:scale-95 flex items-center justify-center"
+              className="py-3 bg-slate-200 hover:bg-slate-300 disabled:opacity-40 disabled:pointer-events-none text-slate-700 rounded-2xl font-bold text-xs transition-all active:scale-95 flex items-center justify-center"
             >
               ⌫
             </button>
           </div>
 
+          {/* Security Badge */}
+          <div className="flex items-center justify-center space-x-1.5 text-[10px] text-slate-400 font-medium">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Enkripsi Kriptografis SHA-256 + Anti Brute-Force Rate Limiting</span>
+          </div>
+
           {/* Action Buttons */}
-          <div className="flex space-x-3 pt-2">
+          <div className="flex space-x-3 pt-1">
             <button
               type="button"
               onClick={onClose}
@@ -155,11 +235,12 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
             </button>
             <button
               type="button"
+              disabled={isLockedOut || isVerifying || pinInput.length !== 4}
               onClick={handleVerify}
-              className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-extrabold text-xs rounded-xl transition-all shadow-md flex items-center justify-center space-x-1.5"
+              className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 disabled:opacity-50 disabled:pointer-events-none text-white font-extrabold text-xs rounded-xl transition-all shadow-md flex items-center justify-center space-x-1.5"
             >
               <KeyRound className="w-4 h-4" />
-              <span>Verifikasi PIN</span>
+              <span>{isVerifying ? 'Memverifikasi...' : 'Verifikasi PIN'}</span>
             </button>
           </div>
         </div>
@@ -167,3 +248,4 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
     </div>
   );
 };
+

@@ -218,8 +218,6 @@ export async function pushCatalog(
     sku?: string;
     price: number;
     costPrice: number;
-    stock: number;
-    minStockAlert: number;
     unit?: string;
     description?: string;
     categoryName?: string;

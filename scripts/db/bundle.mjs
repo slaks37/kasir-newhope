@@ -52,6 +52,8 @@ const MIGRATIONS = [
   'migrations/0032_four_lifecycles_and_staff_commissions.sql',
   'migrations/0033_resilient_payments_and_immutable_compensating_ledger.sql',
   'migrations/0034_sector_master_data_reconciliation.sql',
+  'migrations/0035_enforce_financial_records_immutability.sql',
+  'migrations/0036_secure_entitlements_and_ai_credit_ledger.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

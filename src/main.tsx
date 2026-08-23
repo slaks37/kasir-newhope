@@ -24,8 +24,11 @@ try {
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import { AuthProvider } from './context/AuthContext';
+import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App.tsx';
 import './index.css';
+
+installAuthenticatedFetch();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -34,4 +37,3 @@ createRoot(document.getElementById('root')!).render(
     </AuthProvider>
   </StrictMode>,
 );
-

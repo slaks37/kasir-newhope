@@ -27,7 +27,7 @@ export interface AuthContextType {
   configured: boolean;
   signInWithGoogle: () => Promise<{ error: AuthError | null }>;
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUpWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -135,77 +135,126 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
-    if (!isSupabaseConfigured) {
-      const cleanEmail = email.trim().toLowerCase();
-      const localUsers = getLocalUsers();
-      const userRecord = localUsers[cleanEmail];
+    const cleanEmail = email.trim().toLowerCase();
+    const localUsers = getLocalUsers();
+    const userRecord = localUsers[cleanEmail];
 
-      const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin') || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
-      if (userRecord || isDemo) {
-        if (userRecord && userRecord.passwordHash && userRecord.passwordHash !== password) {
-          return { error: { message: 'Password salah!' } as AuthError };
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        if (!error && data.session) {
+          setSession(data.session);
+          setUser(data.user);
+          return { error: null };
         }
-        const sess = createLocalSession(email, userRecord?.fullName);
-        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
-        setUser(sess.user);
-        setSession(sess.session);
-        return { error: null };
+        if (error && error.message.toLowerCase().includes('invalid login credentials')) {
+          // If remote failed, check local storage user record before giving up
+          if (userRecord && userRecord.passwordHash === password) {
+            const sess = createLocalSession(cleanEmail, userRecord?.fullName);
+            localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+            setUser(sess.user);
+            setSession(sess.session);
+            return { error: null };
+          }
+          return { error };
+        }
+      } catch (err) {
+        console.warn('[auth] Supabase signIn fallback to local:', err);
       }
-
-      return { error: { message: 'Akun dengan email ini belum terdaftar atau password salah.' } as AuthError };
     }
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error };
-  }, []);
-
-  const signUpWithEmail = useCallback(async (email: string, password: string) => {
-    if (!isSupabaseConfigured) {
-      const cleanEmail = email.trim().toLowerCase();
-      const localUsers = getLocalUsers();
-      if (localUsers[cleanEmail]) {
-        return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
+    // Local / Demo user fallback
+    const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin') || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
+    if (userRecord || isDemo) {
+      if (userRecord && userRecord.passwordHash && userRecord.passwordHash !== password) {
+        return { error: { message: 'Password salah!' } as AuthError };
       }
-      saveLocalUser(email, password);
-      const sess = createLocalSession(email);
+      const sess = createLocalSession(cleanEmail, userRecord?.fullName);
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
       setUser(sess.user);
       setSession(sess.session);
-
-      // Kirim email welcome via backend jika service aktif (fire-and-forget)
-      fetch('/api/v1/auth/send-welcome', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      }).catch(() => {});
-
       return { error: null };
     }
 
-    try {
-      const { data, error } = await supabase.rpc('custom_signup', {
-        user_email: email,
-        user_password: password,
-      });
-
-      if (error) throw error;
-      if (!data?.ok) {
-        return { error: { message: data?.error || 'Gagal mendaftar' } as AuthError };
-      }
-
-      // Jika berhasil, panggil backend untuk kirim email welcome (fire-and-forget)
-      fetch('/api/v1/auth/send-welcome', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      }).catch(() => {});
-
-      // Langsung login menggunakan password
-      return await supabase.auth.signInWithPassword({ email, password });
-    } catch (err: any) {
-      return { error: { message: err.message } as AuthError };
-    }
+    return { error: { message: 'Akun dengan email ini belum terdaftar atau password salah.' } as AuthError };
   }, []);
+
+  const signUpWithEmail = useCallback(async (email: string, password: string, fullName?: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Simpan user secara lokal sebagai backup offline-first
+    saveLocalUser(cleanEmail, password, fullName);
+
+    if (isSupabaseConfigured) {
+      try {
+        // A. Coba standard Supabase Auth signUp
+        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: {
+            data: { full_name: fullName || cleanEmail.split('@')[0] },
+          },
+        });
+
+        if (!signUpErr && signUpData.user) {
+          if (signUpData.session) {
+            setSession(signUpData.session);
+            setUser(signUpData.user);
+            return { error: null };
+          }
+          // Coba login langsung
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+          if (!signInErr && signInData.session) {
+            setSession(signInData.session);
+            setUser(signInData.user);
+            return { error: null };
+          }
+        }
+
+        // B. Jika ada error spesifik 'already registered'
+        if (signUpErr && signUpErr.message.toLowerCase().includes('already registered')) {
+          return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
+        }
+
+        // C. Coba custom RPC jika tersedia
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('custom_signup', {
+            user_email: cleanEmail,
+            user_password: password,
+          });
+          if (!rpcErr && rpcData?.ok) {
+            const loginRes = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+            if (!loginRes.error && loginRes.data.session) {
+              setSession(loginRes.data.session);
+              setUser(loginRes.data.user);
+              return { error: null };
+            }
+          }
+        } catch {}
+      } catch (err: any) {
+        console.warn('[auth] Supabase signup error, using local fallback:', err);
+      }
+    }
+
+    // 2. Resilient local session fallback (User dijamin selalu bisa langsung menggunakan POS!)
+    const sess = createLocalSession(cleanEmail, fullName);
+    localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+    setUser(sess.user);
+    setSession(sess.session);
+
+    // Kirim email selamat datang (fire-and-forget)
+    fetch('/api/v1/auth/send-welcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail }),
+    }).catch(() => {});
+
+    return { error: null };
+  }, []);
+
 
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured) {

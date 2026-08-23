@@ -111,8 +111,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         }
       } else {
-        const { error: err } = await signUpWithEmail(email, password);
+        const { error: err } = await signUpWithEmail(email, password, storeName.trim());
         if (err) {
+
           if (err.message.toLowerCase().includes('already registered')) {
             setError('Email ini sudah terdaftar! Silakan login.');
             setMode('login');

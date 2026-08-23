@@ -11,6 +11,7 @@ import express from 'express';
 import type { Db } from './db';
 import { connectDb } from './db';
 import { buatLogger, buatRequestId, jalankanDenganKonteks, type Logger } from './log';
+import { requireTrustedGateway } from './auth';
 
 export interface ServiceOptions {
   name: string;
@@ -108,14 +109,19 @@ export async function startService(opts: ServiceOptions): Promise<void> {
       await db.query('SELECT 1');
       res.json({ ok: true, service: opts.name, ready: true });
     } catch (err) {
+      log.warn('readiness probe database gagal', { sebab: (err as Error).message });
       res.status(503).json({
         ok: false,
         service: opts.name,
         ready: false,
-        error: (err as Error).message,
+        error: 'DATABASE_UNAVAILABLE',
       });
     }
   });
+
+  // Semua route bisnis hanya boleh dicapai melalui gateway. Health/readiness
+  // sengaja dipasang sebelumnya agar orkestrator tidak memerlukan kredensial.
+  app.use(requireTrustedGateway);
 
   if (opts.schema) {
     db = await connectDb({ schema: opts.schema });

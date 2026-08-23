@@ -1,0 +1,57 @@
+name: Nightly Batch Analytics & Operations Jobs
+
+on:
+  schedule:
+    # Runs daily at 01:00 UTC (08:00 WIB)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      job_name:
+        description: 'Pilih job untuk dijalankan secara manual'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - insights
+          - health
+          - billing
+
+jobs:
+  run-batch-analytics:
+    name: Execute Batch Jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Daily Insights Job
+        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'insights' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run batch:insights
+
+      - name: Run Merchant Health Job
+        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'health' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANALYTICS_DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL || secrets.DATABASE_URL }}
+        run: npm run batch:health
+
+      - name: Run Billing Reminders Job
+        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'billing' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: npm run batch:billing

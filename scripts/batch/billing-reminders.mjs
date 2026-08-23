@@ -26,8 +26,20 @@ const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 async function run() {
   console.log('[Billing Reminder] Memulai pengecekan langganan yang akan habis H-3...');
+  const startedAt = Date.now();
+  const runId = `run-billing-${Date.now()}`;
 
   try {
+    // Record start in batch_job_runs
+    try {
+      await pool.query(
+        `INSERT INTO batch_job_runs (id, job_name, started_at, status)
+         VALUES ($1, 'billing-reminders', CURRENT_TIMESTAMP, 'RUNNING')
+         ON CONFLICT (id) DO NOTHING`,
+        [runId]
+      );
+    } catch {}
+
     // Cari langganan aktif/trial yang akan kedaluwarsa 3 hari lagi.
     // Interval 3 hari berarti: sisa waktu antara > 2 hari dan < 3 hari
     const res = await pool.query(`
@@ -46,6 +58,7 @@ async function run() {
     const subscriptions = res.rows;
     console.log(`[Billing Reminder] Ditemukan ${subscriptions.length} langganan yang jatuh tempo H-3.`);
 
+    let sentCount = 0;
     for (const sub of subscriptions) {
       console.log(`-> Mengirim pengingat ke ${sub.tenant_id} (Paket: ${sub.plan_name})...`);
       
@@ -68,12 +81,39 @@ async function run() {
           html: emailHtml
         });
         console.log(`   [OK] Email berhasil dikirim ke ${sub.email}.`);
+        sentCount++;
       } catch (e) {
         console.error(`   [ERROR] Gagal mengirim ke ${sub.email}:`, e);
       }
     }
+
+    const durationMs = Date.now() - startedAt;
+    try {
+      await pool.query(
+        `UPDATE batch_job_runs
+            SET finished_at = CURRENT_TIMESTAMP,
+                status = 'SUCCESS',
+                duration_ms = $2,
+                insights_written = $3
+          WHERE id = $1`,
+        [runId, durationMs, subscriptions.length]
+      );
+    } catch {}
+
   } catch (error) {
     console.error('[Billing Reminder] Gagal menjalankan script:', error);
+    const durationMs = Date.now() - startedAt;
+    try {
+      await pool.query(
+        `UPDATE batch_job_runs
+            SET finished_at = CURRENT_TIMESTAMP,
+                status = 'FAILED',
+                duration_ms = $2,
+                error_message = $3
+          WHERE id = $1`,
+        [runId, durationMs, error?.message || 'UNKNOWN_ERROR']
+      );
+    } catch {}
   } finally {
     await pool.end();
     console.log('[Billing Reminder] Selesai.');
@@ -81,3 +121,4 @@ async function run() {
 }
 
 run();
+

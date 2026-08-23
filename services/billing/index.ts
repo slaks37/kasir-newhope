@@ -22,6 +22,7 @@ import { startService, PORTS } from '../shared/service';
 import type { SaaSPlan } from '../../src/types';
 import { newDocumentNumber } from '../../src/lib/ids';
 import * as store from './store';
+import { tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 
 const SAAS_PLANS: SaaSPlan[] = [
   {
@@ -106,10 +107,16 @@ startService({
     svc.log.info(`katalog paket disiapkan (${SAAS_PLANS.length} paket)`);
 
     const cariPaket = (id: string) => SAAS_PLANS.find((p) => p.id === id) ?? null;
-    const tenantDari = (req: express.Request) =>
-      String(
-        req.body?.tenantId || req.query?.tenantId || req.headers['x-tenant-id'] || 'tenant-default'
-      );
+    const tenantDari = async (req: express.Request): Promise<string | null> => {
+      const principal = trustedPrincipal(req);
+      if (!principal) return null;
+      if (principal.subject === 'local-development') {
+        return String(req.body?.tenantId || req.query?.tenantId || req.headers['x-tenant-id'] || 'tenant-default');
+      }
+      // tenant ID klien sengaja diabaikan: hanya owner_ref dari token yang
+      // menentukan langganan/faktur mana yang boleh dibaca atau diubah.
+      return tenantForPrincipal(svc.db, principal);
+    };
 
     /**
      * Kedaluwarsa DIHITUNG, tidak disimpan.
@@ -164,12 +171,13 @@ startService({
         if (err.code === '23505') {
           return res.status(400).json({ ok: false, error: 'User already registered' });
         }
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(500).json({ ok: false, error: 'WELCOME_EMAIL_FAILED' });
       }
     });
 
     app.get('/api/v1/subscription/status', async (req, res) => {
-      const tenantId = tenantDari(req);
+      const tenantId = await tenantDari(req);
+      if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
       if (!sub) {
         // Merchant belum tersinkronisasi ke database. Bukan error — hanya belum
@@ -191,7 +199,8 @@ startService({
     });
 
     app.post('/api/v1/subscription/checkout', async (req, res) => {
-      const tenantId = tenantDari(req);
+      const tenantId = await tenantDari(req);
+      if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       const plan = cariPaket(String(req.body?.planId || ''));
       if (!plan) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
@@ -222,11 +231,12 @@ startService({
         return res.status(403).json({ ok: false, error: 'SIMULATION_DISABLED' });
       }
 
-      const tenantId = tenantDari(req);
+      const tenantId = await tenantDari(req);
+      if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       const invoiceId = String(req.body?.invoiceId || '');
       const planId = String(req.body?.planId || '');
 
-      const lunas = await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED');
+      const lunas = await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED', tenantId);
       if (!lunas) return res.status(404).json({ ok: false, error: 'INVOICE_NOT_FOUND_OR_PAID' });
 
       const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
@@ -244,7 +254,8 @@ startService({
     });
 
     app.post('/api/v1/subscription/prorated-upgrade', async (req, res) => {
-      const tenantId = tenantDari(req);
+      const tenantId = await tenantDari(req);
+      if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       const planBaru = cariPaket(String(req.body?.planId || ''));
       if (!planBaru) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
@@ -285,6 +296,10 @@ startService({
      * langganan dua kali.
      */
     app.post('/api/v1/webhooks/payment-gateway', async (req, res) => {
+      const secret = process.env.PAYMENT_WEBHOOK_SECRET;
+      if (!secret || String(req.headers['x-payment-webhook-secret'] || '') !== secret) {
+        return res.status(401).json({ ok: false, error: 'INVALID_WEBHOOK_SIGNATURE' });
+      }
       const body = req.body ?? {};
       const eventId = String(body.eventId || body.id || '');
       const eventType = String(body.eventType || body.type || 'UNKNOWN');

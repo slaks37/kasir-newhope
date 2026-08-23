@@ -47,6 +47,12 @@ import {
   type SyncTarget,
 } from '../lib/sync/queue';
 import {
+  verifyPinHash,
+  getPinLockoutStatus,
+  recordFailedPinAttempt,
+  resetPinAttempts,
+} from '../lib/auth/pinSecurity';
+import {
   INITIAL_CATEGORIES,
   INITIAL_PRODUCTS,
   INITIAL_TABLES,
@@ -142,8 +148,17 @@ interface POSContextType {
   saveUser: (user: User) => void;
   deleteUser: (userId: string) => void;
   hasPermission: (feature: PermissionFeature) => boolean;
-  verifyPin: (pin: string, requiredRoles?: UserRole[]) => { success: boolean; user?: User; message?: string };
-  
+  verifyPin: (
+    pin: string,
+    requiredRoles?: UserRole[]
+  ) => Promise<{
+    success: boolean;
+    user?: User;
+    message?: string;
+    attemptsLeft?: number;
+    isLockedOut?: boolean;
+    remainingSec?: number;
+  }>;
   cart: CartItem[];
   selectedCategory: string;
   setSelectedCategory: (catId: string) => void;
@@ -263,8 +278,7 @@ const loadGlobalUserData = <T,>(entity: string, userId: string, fallback: T): T 
  * FNB is the default sector and keeps the demo data; other sectors start clean
  * and fill up from real transactions.
  */
-const seedCustomersFor = (sector: BusinessSector): Customer[] =>
-  sector === 'FNB' ? INITIAL_CUSTOMERS : [];
+const seedCustomersFor = (_sector: BusinessSector): Customer[] => [];
 
 const seedPromosFor = (sector: BusinessSector): PromoCode[] =>
   sector === 'FNB' ? INITIAL_PROMO_CODES : [];
@@ -465,8 +479,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    return loadScopedData('orders', currentUser.id, activeSector, INITIAL_HISTORICAL_ORDERS);
+    return loadScopedData('orders', currentUser.id, activeSector, []);
   });
+
 
   const [heldOrders, setHeldOrders] = useState<Order[]>(() => {
     return loadScopedData('held_orders', currentUser.id, activeSector, []);
@@ -653,8 +668,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           sku: p.sku,
           price: p.price,
           costPrice: p.costPrice,
-          stock: p.stock,
-          minStockAlert: p.minStockAlert,
           unit: p.unit,
           description: p.description,
           categoryName: categories.find((c) => c.id === p.categoryId)?.name,
@@ -950,19 +963,86 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return allowed.includes(feature);
   };
 
-  const verifyPin = (pinInput: string, requiredRoles?: UserRole[]) => {
-    const matchedUser = users.find((u) => u.pin === pinInput && u.status === 'ACTIVE');
-    if (!matchedUser) {
-      return { success: false, message: 'PIN Salah atau akun pengguna tidak aktif!' };
+  const verifyPin = async (pinInput: string, requiredRoles?: UserRole[]) => {
+    // 1. Cek status lockout terlebih dahulu
+    const lockout = getPinLockoutStatus();
+    if (lockout.isLockedOut) {
+      return {
+        success: false,
+        isLockedOut: true,
+        remainingSec: lockout.remainingSec,
+        attemptsLeft: 0,
+        message: `🔒 Terminal Terkunci: Terlalu banyak percobaan salah. Tunggu ${lockout.remainingSec} detik.`,
+      };
     }
+
+    // 2. Cari kecocokan user via Cryptographic Hash / Legacy Plaintext
+    let matchedUser: User | undefined;
+    for (const u of users) {
+      if (u.status !== 'ACTIVE') continue;
+      const isMatch = await verifyPinHash(pinInput, u.pin);
+      if (isMatch) {
+        matchedUser = u;
+        break;
+      }
+    }
+
+    // 3. Jika tidak ada yang cocok -> Catat kegagalan & evaluasi lockout
+    if (!matchedUser) {
+      const attempt = recordFailedPinAttempt();
+      const nowIso = new Date().toISOString();
+
+      // Log Security Audit
+      setInventoryLogs((prev) => [
+        {
+          id: newId('log'),
+          productId: 'SEC-PIN-FAIL',
+          productName: '[SECURITY AUDIT] Percobaan Otorisasi PIN Gagal',
+          type: 'ADJUSTMENT',
+          quantity: 0,
+          previousStock: 0,
+          newStock: 0,
+          reason: attempt.isLockedOut
+            ? `Terminal terkunci (${attempt.remainingSec}s) akibat 3x kegagalan input PIN`
+            : `PIN salah dimasukkan oleh kasir ${currentUser.name} (Sisa ${attempt.attemptsLeft} kesempatan)`,
+          timestamp: nowIso,
+          user: currentUser.name,
+          businessSector: settings.businessSector,
+        },
+        ...prev,
+      ]);
+
+      if (attempt.isLockedOut) {
+        return {
+          success: false,
+          isLockedOut: true,
+          remainingSec: attempt.remainingSec,
+          attemptsLeft: 0,
+          message: `🔒 Terlalu banyak percobaan salah! Terminal dikunci selama ${attempt.remainingSec} detik.`,
+        };
+      }
+
+      return {
+        success: false,
+        isLockedOut: false,
+        attemptsLeft: attempt.attemptsLeft,
+        message: `PIN Salah! Sisa ${attempt.attemptsLeft} kesempatan sebelum terminal terkunci.`,
+      };
+    }
+
+    // 4. Verifikasi Role Permission
     if (requiredRoles && requiredRoles.length > 0 && !requiredRoles.includes(matchedUser.role)) {
       return {
         success: false,
         message: `Akses Ditolak! Memerlukan PIN dengan role: ${requiredRoles.join(' / ')}`,
       };
     }
+
+    // 5. Sukses -> Reset counter percobaan gagal
+    resetPinAttempts();
     return { success: true, user: matchedUser, message: 'Otorisasi Berhasil' };
   };
+
 
   const toggleSound = () => setSoundEnabled((prev) => !prev);
 

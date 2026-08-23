@@ -922,7 +922,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                           <span>Akurat 100% dari Database Toko</span>
                         </span>
                         <button
-                          onClick={handleOpenPOS}
+                          onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
                           className="text-purple-400 hover:text-purple-300 font-extrabold transition-colors flex items-center gap-1 cursor-pointer"
                         >
                           <span>{activeQuery.actionBtn}</span>
@@ -940,7 +940,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <span>Mendukung Perintah Suara & WhatsApp Copilot</span>
                 </div>
                 <button
-                  onClick={handleOpenPOS}
+                  onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
                   className="px-4 py-2 bg-gradient-to-r from-purple-600 via-purple-500 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black text-xs rounded-xl shadow-lg shadow-purple-500/25 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Bot className="w-3.5 h-3.5" />
@@ -948,6 +948,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
+
             </div>
           </div>
         </div>

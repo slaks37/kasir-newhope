@@ -30,7 +30,10 @@ const MIGRATIONS = [
   'migrations/0008_catalog_and_charges.sql',
   'migrations/0009_service_schemas.sql',
   'migrations/0010_credit_uuid.sql',
-  'migrations/0011_identity_grants.sql',
+  ...fs.readdirSync(path.join(process.cwd(), 'migrations'))
+    .filter((file) => /^\d{4}_.*\.sql$/.test(file) && file !== '0001_compat.sql')
+    .sort()
+    .map((file) => `migrations/${file}`),
 ];
 
 async function main() {

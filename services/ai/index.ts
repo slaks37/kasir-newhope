@@ -34,6 +34,7 @@ import {
 } from '../../src/lib/assistant/types';
 import { parseIntent, resolveIntentFromAggregates, QUICK_CHIPS } from '../../src/lib/assistant/intents';
 import { newId } from '../../src/lib/ids';
+import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
 
 startService({
   name: 'ai',
@@ -60,6 +61,19 @@ startService({
 
   function chipSuggestions() {
     return QUICK_CHIPS.map((c) => ({ label: c.label, query: c.label }));
+  }
+
+  async function requireBusiness(req: express.Request, res: express.Response, businessId: string): Promise<boolean> {
+    const principal = trustedPrincipal(req);
+    if (!principal) {
+      res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+      return false;
+    }
+    if (!businessId || !(await canAccessBusiness(svc.db, principal, businessId))) {
+      res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+      return false;
+    }
+    return true;
   }
   
   /**
@@ -92,6 +106,8 @@ startService({
       slotNoun: body.storeContext?.slotNoun || 'Meja',
       userRole: body.storeContext?.userRole || 'ADMIN',
     };
+
+    if (!(await requireBusiness(req, res, ctx.businessId))) return;
 
     // Dompet diambil SESUDAH ctx terbentuk: kredit dimiliki UNIT USAHA, dan
     // unit usaha hanya diketahui dari ctx.businessId. Mengambilnya lebih dulu
@@ -370,6 +386,7 @@ startService({
       const merchantId =
         (req.query.merchantId as string) || (req.headers['x-tenant-id'] as string) || 'tenant-default';
       const businessId = (req.query.businessId as string) || undefined;
+      if (!(await requireBusiness(req, res, businessId || ''))) return;
       res.json({ ok: true, credits: await ambilDompet(svc.db, merchantId, businessId) });
     } catch {
       res.status(500).json({ ok: false, error: 'Gagal membaca sisa AI Credit.' });
@@ -379,10 +396,15 @@ startService({
   app.post('/api/v1/assistant/credits/topup', async (req, res) => {
     try {
       const { merchantId = 'tenant-default', credits = ADDON_CREDITS, businessId } = req.body || {};
+      if (!(await requireBusiness(req, res, String(businessId || '')))) return;
+      const secret = process.env.AI_CREDIT_TOPUP_SECRET;
+      const supplied = String(req.headers['x-ai-topup-secret'] || '');
+      if ((!secret || supplied !== secret) && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT !== '1') {
+        return res.status(403).json({ ok: false, error: 'PAYMENT_PROOF_REQUIRED' });
+      }
       const amount = Math.max(1, Math.min(500, Math.floor(Number(credits) || ADDON_CREDITS)));
-      // Penambahan dilakukan di SQL, bukan dengan mengubah objek hasil baca:
-      // dua pembelian bersamaan pada jalur baca-lalu-tulis akan saling
-      // menimpa, dan salah satunya hilang tanpa jejak.
+      // tambahKredit memanggil fungsi database yang menuliskan TOPUP ke
+      // immutable ledger dalam transaksi yang sama dengan perubahan saldo.
       const wallet = await tambahKredit(svc.db, merchantId, amount, businessId);
       res.json({
         ok: true,
@@ -404,7 +426,9 @@ startService({
     try {
       const merchantId =
         (req.query.merchantId as string) || (req.headers['x-tenant-id'] as string) || 'tenant-default';
-      const r = await ringkasanAudit(svc.db, merchantId, Number(req.query.limit) || 100, (req.query.businessId as string) || undefined);
+      const businessId = (req.query.businessId as string) || '';
+      if (!(await requireBusiness(req, res, businessId))) return;
+      const r = await ringkasanAudit(svc.db, merchantId, Number(req.query.limit) || 100, businessId);
       res.json({
         ok: true,
         logs: r.logs,
