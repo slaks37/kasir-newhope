@@ -1502,10 +1502,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // terkirim saat aplikasi dibuka lagi. Pengirimannya sendiri sengaja tidak
     // di-await: kasir tidak boleh menunggu jaringan untuk menyelesaikan
     // penjualan.
-    enqueueSync(
+    const terantre = enqueueSync(
       tenant.businessId,
       orderToPayload({ ...newOrder, customer: updatedCustomer ?? undefined }, currentUser.role)
     );
+    // enqueue mengembalikan false hanya bila penyimpanan perangkat penuh.
+    // Struknya sudah tercetak dan uangnya sudah diterima, jadi penjualannya
+    // TIDAK dibatalkan — tapi ia tidak akan pernah sampai ke pusat, dan diam
+    // di sini berarti kasir menutup toko dengan pembukuan yang kurang.
+    if (!terantre) {
+      console.error('[pos] transaksi tidak dapat diantrikan: penyimpanan penuh');
+    }
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
@@ -1543,10 +1550,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // memperlakukan tabrakan berstatus CANCELLED sebagai pembaruan, bukan
     // duplikat — kalau tidak, uang yang sudah dikembalikan ke pelanggan akan
     // terus terhitung sebagai omzet di admin panel.
-    enqueueSync(
+    const voidTerantre = enqueueSync(
       tenant.businessId,
       orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role)
     );
+    // Pembatalan yang tidak terkirim lebih berbahaya daripada penjualan yang
+    // tidak terkirim: uangnya sudah kembali ke pelanggan, tapi pusat masih
+    // menghitungnya sebagai omzet.
+    if (!voidTerantre) {
+      console.error('[pos] pembatalan tidak dapat diantrikan: penyimpanan penuh');
+    }
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 

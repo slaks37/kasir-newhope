@@ -122,15 +122,47 @@ function readQueue(businessId: string): SyncPayloadTxn[] {
   }
 }
 
-function writeQueue(businessId: string, rows: SyncPayloadTxn[]): void {
+/**
+ * Mengembalikan false bila antrian TIDAK jadi tersimpan.
+ *
+ * Dulu fungsi ini void dan hanya mencetak ke console. Akibatnya, saat kuota
+ * localStorage penuh, `enqueue` tampak berhasil, `pending` tetap 0, dan
+ * transaksinya lenyap tanpa satu pun jalur kode yang bisa tahu — kasir melihat
+ * struk tercetak dan menganggap penjualannya tercatat. Sudah dibuktikan di
+ * test/antrian-sinkron.test.ts sebelum perbaikan ini.
+ *
+ * Antrian yang awet SAMPAI penyimpanannya penuh bukan antrian yang awet.
+ */
+/**
+ * Penanda DI MEMORI bahwa penyimpanan menolak tulisan.
+ *
+ * Tidak bisa hanya mengandalkan writeMeta: kalau localStorage benar-benar
+ * penuh, penanda itu sendiri gagal ditulis, dan peringatannya ikut hilang
+ * bersama transaksinya. Penanda di memori bertahan selama tab terbuka — cukup
+ * lama untuk sampai ke layar kasir, yang memang satu-satunya tujuannya.
+ */
+const penyimpananPenuh = new Set<string>();
+
+function writeQueue(businessId: string, rows: SyncPayloadTxn[]): boolean {
   try {
     localStorage.setItem(queueKey(businessId), JSON.stringify(rows));
+    penyimpananPenuh.delete(businessId);
+    return true;
   } catch (err) {
-    // Kuota localStorage penuh. Tidak boleh diam — ini berarti transaksi
-    // berikutnya berisiko hilang.
     console.error('[sync] gagal menulis antrian:', err);
+    penyimpananPenuh.add(businessId);
+    // Dicoba juga ke penyimpanan supaya peringatannya bertahan setelah tab
+    // dibuka ulang. Boleh gagal — penanda di memori sudah menahannya.
+    writeMeta(businessId, {
+      lastError: PENYIMPANAN_PENUH,
+      lastErrorAt: new Date().toISOString(),
+    });
+    return false;
   }
 }
+
+/** Kode galat yang dikenali Header untuk menampilkan peringatan khusus. */
+export const PENYIMPANAN_PENUH = 'PENYIMPANAN_PENUH';
 
 function readMeta(businessId: string): SyncMeta {
   try {
@@ -238,7 +270,11 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
 }
 
 export function getStatus(businessId: string, inFlight = false): SyncStatus {
-  return { ...readMeta(businessId), pending: readQueue(businessId).length, inFlight };
+  const meta = readMeta(businessId);
+  // Penanda di memori menang atas apa pun yang terbaca dari penyimpanan:
+  // kalau penyimpanan sedang menolak tulisan, isinya sudah pasti basi.
+  if (penyimpananPenuh.has(businessId)) meta.lastError = PENYIMPANAN_PENUH;
+  return { ...meta, pending: readQueue(businessId).length, inFlight };
 }
 
 /**
@@ -376,7 +412,12 @@ export async function pushBranches(
  * Menulis ke disk SEBELUM apa pun dikirim. Kalau proses mati tepat setelah
  * baris ini, transaksinya tetap terkirim nanti.
  */
-export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
+/**
+ * Mengembalikan true bila transaksi benar-benar tersimpan di penyimpanan yang
+ * bertahan setelah tab ditutup. False berarti ia TIDAK akan pernah terkirim,
+ * dan pemanggilnya wajib memberi tahu kasir.
+ */
+export function enqueue(businessId: string, txn: SyncPayloadTxn): boolean {
   const q = readQueue(businessId);
   // Anti-ganda di sisi klien juga. Menekan "bayar" dua kali, atau void yang
   // masuk untuk transaksi yang masih mengantri, tidak boleh menghasilkan dua
@@ -384,7 +425,7 @@ export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
   const existing = q.findIndex((t) => t.clientTxnId === txn.clientTxnId);
   if (existing >= 0) q[existing] = txn;
   else q.push(txn);
-  writeQueue(businessId, q);
+  return writeQueue(businessId, q);
 }
 
 let flushing = new Set<string>();

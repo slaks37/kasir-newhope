@@ -202,21 +202,27 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Sync Status Indicator */}
-        {(syncStatus.pending > 0 || syncStatus.failures > 0) && (
+        {/* Peringatan penyimpanan penuh harus muncul meski pending = 0 —
+            justru itu gejalanya: transaksinya tidak pernah masuk antrian. */}
+        {(syncStatus.pending > 0 ||
+          syncStatus.failures > 0 ||
+          syncStatus.lastError === 'PENYIMPANAN_PENUH') && (
           <button
             onClick={forceSync}
             title={
-              syncStatus.failures > 0
+              syncStatus.lastError === 'PENYIMPANAN_PENUH'
+                ? 'Penyimpanan perangkat penuh. Transaksi TIDAK tersimpan untuk dikirim ke pusat — hubungi admin sebelum melanjutkan.'
+                : syncStatus.failures > 0
                 ? `Gagal mengirim (${syncStatus.lastError ?? 'tidak diketahui'}). ${syncStatus.pending} transaksi menunggu.`
                 : `${syncStatus.pending} transaksi sedang dikirim ke pusat.`
             }
             className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border text-xs font-bold transition-colors ${
-              syncStatus.failures > 0
+              syncStatus.failures > 0 || syncStatus.lastError === 'PENYIMPANAN_PENUH'
                 ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
                 : 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
             }`}
           >
-            {syncStatus.failures > 0 ? (
+            {syncStatus.failures > 0 || syncStatus.lastError === 'PENYIMPANAN_PENUH' ? (
               <CloudAlert className="w-4 h-4" />
             ) : (
               <CloudUpload className={`w-4 h-4 ${syncStatus.inFlight ? 'animate-pulse' : ''}`} />
