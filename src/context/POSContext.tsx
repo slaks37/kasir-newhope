@@ -56,6 +56,7 @@ import {
   INITIAL_SHIFT,
   INITIAL_HISTORICAL_ORDERS,
   INITIAL_USERS,
+  buatPemilik,
   INITIAL_PROMO_CODES,
   INITIAL_STAFF_MEMBERS,
   INITIAL_STOCK_ITEMS,
@@ -359,6 +360,29 @@ const enforce12HourDemoReset = () => {
 // Jalankan saat script dimuat
 enforce12HourDemoReset();
 
+/**
+ * Membaca akun yang sedang masuk dari sesi Supabase di penyimpanan browser.
+ *
+ * POSContext berada di bawah AuthProvider tetapi tidak memanggil useAuth —
+ * memanggilnya di sini akan membuat seluruh state kasir dirender ulang setiap
+ * kali token disegarkan. Yang dibutuhkan hanya identitas pemilik, dan itu
+ * sudah ada di penyimpanan.
+ */
+function bacaAkunTersimpan(): { id: string; email?: string; nama?: string } | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith('sb-') || !k.endsWith('-auth-token')) continue;
+      const v = JSON.parse(localStorage.getItem(k) || '{}');
+      const u = v?.user ?? v?.currentSession?.user;
+      if (u?.id) {
+        return { id: u.id, email: u.email, nama: u.user_metadata?.full_name };
+      }
+    }
+  } catch { /* penyimpanan tidak terbaca: pemanggil memakai nilai cadangan */ }
+  return null;
+}
+
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   useEffect(() => {
     // Cek berkala setiap 5 menit jika browser tetap terbuka
@@ -373,7 +397,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem('newhope_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    if (saved) return JSON.parse(saved);
+    const akun = bacaAkunTersimpan();
+    return akun ? [buatPemilik(akun)] : INITIAL_USERS;
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
@@ -385,7 +411,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error('Failed to parse current user', e);
       }
     }
-    return INITIAL_USERS[0];
+    // Tidak ada lagi akun contoh untuk jatuh ke sana. Pemilik dibentuk dari
+    // akun yang benar-benar mendaftar; tanpa akun, aplikasi ini tidak pernah
+    // dirender sama sekali (lihat gerbang di App.tsx).
+    const akun = bacaAkunTersimpan();
+    return buatPemilik(akun ?? { id: 'usr-pemilik', email: '' });
   });
 
   const [settings, setSettings] = useState<StoreSettings>(() => {
@@ -547,15 +577,28 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [bizId, activeSector, storeNameForSync, currentUser.id, runSync]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
-    return loadScopedData('categories', currentUser.id, activeSector, defaultPreset.categories);
+    /*
+     * KATALOG TOKO BARU DIMULAI KOSONG.
+     *
+     * Dulu nilai cadangannya `defaultPreset.categories` / `.products` /
+     * `.tables` — sehingga setiap toko FNB baru langsung berisi 24 produk
+     * contoh bernama "Nasi Goreng Spesial" dan sepuluh meja yang tidak pernah
+     * ada di tempatnya. Pemilik melihatnya sebagai katalognya sendiri, dan
+     * angka laporan pertamanya dihitung dari barang yang tidak ia jual.
+     *
+     * Presetnya tetap ada dan tetap dipakai — untuk peragaan di halaman depan,
+     * dan sebagai contoh yang bisa dimuat pemilik bila ia memang mau. Yang
+     * hilang hanyalah pengisian otomatis ke akun sungguhan.
+     */
+    return loadScopedData<Category[]>('categories', currentUser.id, activeSector, []);
   });
 
   const [products, setProducts] = useState<Product[]>(() => {
-    return loadScopedData('products', currentUser.id, activeSector, defaultPreset.products);
+    return loadScopedData<Product[]>('products', currentUser.id, activeSector, []);
   });
 
   const [tables, setTables] = useState<Table[]>(() => {
-    return loadScopedData('tables', currentUser.id, activeSector, defaultPreset.tables);
+    return loadScopedData<Table[]>('tables', currentUser.id, activeSector, []);
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
@@ -1059,9 +1102,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const preset = BUSINESS_PRESETS[userSec] || BUSINESS_PRESETS.FNB;
 
     setSettings(userSettings);
-    setCategories(loadScopedData('categories', newUId, userSec, preset.categories));
-    setProducts(loadScopedData('products', newUId, userSec, preset.products));
-    setTables(loadScopedData('tables', newUId, userSec, preset.tables));
+    setCategories(loadScopedData<Category[]>('categories', newUId, userSec, []));
+    setProducts(loadScopedData<Product[]>('products', newUId, userSec, []));
+    setTables(loadScopedData<Table[]>('tables', newUId, userSec, []));
     setStockItems(loadScopedData('stock_items', newUId, userSec, INITIAL_STOCK_ITEMS));
     setOrders(loadScopedData('orders', newUId, userSec, []));
     setHeldOrders(loadScopedData('held_orders', newUId, userSec, []));
@@ -1940,9 +1983,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('promo_codes', uId, currentSec), JSON.stringify(promoCodes));
 
     // 2. Load target sector state
-    const targetCategories = loadScopedData('categories', uId, sector, preset.categories);
-    const targetProducts = loadScopedData('products', uId, sector, preset.products);
-    const targetTables = loadScopedData('tables', uId, sector, preset.tables);
+    const targetCategories = loadScopedData<Category[]>('categories', uId, sector, []);
+    const targetProducts = loadScopedData<Product[]>('products', uId, sector, []);
+    const targetTables = loadScopedData<Table[]>('tables', uId, sector, []);
     const targetStockItems = loadScopedData('stock_items', uId, sector, INITIAL_STOCK_ITEMS);
     const targetOrders = loadScopedData('orders', uId, sector, []);
     const targetHeldOrders = loadScopedData('held_orders', uId, sector, []);

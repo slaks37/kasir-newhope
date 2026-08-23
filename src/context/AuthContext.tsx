@@ -27,94 +27,36 @@ export interface AuthContextType {
   configured: boolean;
   signInWithGoogle: () => Promise<{ error: AuthError | null }>;
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUpWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    toko?: { storeName: string; sector: string }
+  ) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
 }
 
 const AuthCtx = createContext<AuthContextType | undefined>(undefined);
 
-const LOCAL_SESSION_KEY = 'nhpos_local_session';
-const LOCAL_USERS_KEY = 'nhpos_local_auth_users';
-
-function getLocalUsers(): Record<string, { email: string; passwordHash?: string; fullName?: string }> {
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || '{}');
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Mengacak kata sandi sebelum disimpan.
+/*
+ * TIDAK ADA LAGI SESI LOKAL.
  *
- * Sebelumnya baris ini menyimpan `passwordHash: pass` — nama kolomnya
- * menyiratkan sudah diamankan, isinya kata sandi asli. Siapa pun yang membuka
- * penyimpanan browser di perangkat kasir dapat membacanya, dan karena orang
- * sering memakai kata sandi yang sama, dampaknya melampaui aplikasi ini.
+ * Sebelumnya, bila Supabase belum dikonfigurasi, seluruh autentikasi berjalan
+ * di dalam browser: siapa pun bisa "mendaftar" dengan email apa pun, mendapat
+ * sesi buatan sendiri, dan langsung masuk ke aplikasi kasir. Tidak ada satu
+ * permintaan pun ke server. Itu bukan login — itu tombol masuk yang menyamar
+ * sebagai login, dan ia melewati seluruh paywall sekaligus.
  *
- * Memakai SubtleCrypto (PBKDF2, 210.000 putaran) — tersedia di semua browser
- * modern tanpa menambah satu pun dependensi. Ini BUKAN pengganti autentikasi
- * server: mode ini memang hanya untuk pemasangan tanpa Supabase, dan siapa pun
- * yang memegang perangkat tetap bisa mengubah isi penyimpanan. Yang ia tutup
- * adalah kebocoran kata sandi itu sendiri.
+ * Sekarang aplikasi GAGAL TERTUTUP: tanpa konfigurasi yang benar tidak ada yang
+ * bisa masuk, dan pesannya menyebut persis apa yang belum diisi. Lebih baik
+ * berhenti dengan jelas daripada melayani orang yang sebenarnya tidak dikenal.
  */
-const PUTARAN_PBKDF2 = 210_000;
 
-async function acakSandi(pass: string, garamB64?: string): Promise<string> {
-  const enc = new TextEncoder();
-  const garam = garamB64
-    ? Uint8Array.from(atob(garamB64), (c) => c.charCodeAt(0))
-    : crypto.getRandomValues(new Uint8Array(16));
-  const kunci = await crypto.subtle.importKey('raw', enc.encode(pass.normalize('NFKC')), 'PBKDF2', false, ['deriveBits']);
-  const bit = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: garam, iterations: PUTARAN_PBKDF2, hash: 'SHA-256' }, kunci, 256);
-  const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
-  return `pbkdf2$${PUTARAN_PBKDF2}$${b64(garam)}$${b64(new Uint8Array(bit))}`;
-}
+const PESAN_BELUM_DIKONFIGURASI =
+  'Layanan akun belum tersambung, jadi tidak ada yang bisa masuk. ' +
+  'Isi VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di server, lalu muat ulang.';
 
-async function sandiCocok(pass: string, tersimpan: string | undefined): Promise<boolean> {
-  if (!tersimpan) return false;
-  const bagian = tersimpan.split('$');
-  // Nilai lama yang tersimpan apa adanya (sebelum perbaikan ini) tetap diterima
-  // sekali supaya pengguna tidak terkunci di luar akunnya sendiri.
-  if (bagian.length !== 4 || bagian[0] !== 'pbkdf2') return tersimpan === pass;
-  const ulang = await acakSandi(pass, bagian[2]);
-  // Perbandingan waktu-tetap tidak berarti di sini: seluruh datanya sudah ada
-  // di perangkat penyerang. Yang penting kata sandinya tidak terbaca.
-  return ulang === tersimpan;
-}
-
-async function saveLocalUser(email: string, pass: string, fullName?: string) {
-  const users = getLocalUsers();
-  users[email.toLowerCase()] = { email, fullName, passwordHash: await acakSandi(pass) };
-  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
-}
-
-function createLocalSession(email: string, fullName?: string): { user: User; session: Session } {
-  const u: User = {
-    id: 'usr-' + email.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 20),
-    app_metadata: { provider: 'email', providers: ['email'] },
-    user_metadata: { email, full_name: fullName || email.split('@')[0] },
-    aud: 'authenticated',
-    confirmation_sent_at: new Date().toISOString(),
-    confirmed_at: new Date().toISOString(),
-    created_at: new Date().toISOString(),
-    email,
-    phone: '',
-    role: 'authenticated',
-    updated_at: new Date().toISOString(),
-  } as unknown as User;
-
-  const s: Session = {
-    access_token: 'local-session-token-' + Date.now(),
-    refresh_token: 'local-session-refresh-' + Date.now(),
-    expires_in: 86400 * 30,
-    expires_at: Math.floor(Date.now() / 1000) + 86400 * 30,
-    token_type: 'bearer',
-    user: u,
-  };
-
-  return { user: u, session: s };
+function galatBelumDikonfigurasi(): { error: AuthError } {
+  return { error: { message: PESAN_BELUM_DIKONFIGURASI } as AuthError };
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -124,16 +66,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
+      // Tidak ada sesi yang dipulihkan. Sesi lokal yang mungkin tertinggal dari
+      // versi lama ikut dibuang, supaya perangkat yang pernah memakainya tidak
+      // tetap "masuk" tanpa pernah benar-benar login.
       try {
-        const saved = localStorage.getItem(LOCAL_SESSION_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          setUser(parsed.user);
-          setSession(parsed.session);
-        }
-      } catch (e) {
-        console.error('Failed to restore local session', e);
-      }
+        localStorage.removeItem('nhpos_local_session');
+        localStorage.removeItem('nhpos_local_auth_users');
+      } catch { /* penyimpanan tidak bisa dibaca: tidak ada yang perlu dibersihkan */ }
+      setUser(null);
+      setSession(null);
       setLoading(false);
       return;
     }
@@ -157,13 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    if (!isSupabaseConfigured) {
-      const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
-      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
-      setUser(sess.user);
-      setSession(sess.session);
-      return { error: null };
-    }
+    if (!isSupabaseConfigured) return galatBelumDikonfigurasi();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -175,52 +110,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
-    if (!isSupabaseConfigured) {
-      const cleanEmail = email.trim().toLowerCase();
-      const localUsers = getLocalUsers();
-      const userRecord = localUsers[cleanEmail];
-
-      const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin') || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
-      if (userRecord || isDemo) {
-        if (userRecord && userRecord.passwordHash && !(await sandiCocok(password, userRecord.passwordHash))) {
-          return { error: { message: 'Password salah!' } as AuthError };
-        }
-        const sess = createLocalSession(email, userRecord?.fullName);
-        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
-        setUser(sess.user);
-        setSession(sess.session);
-        return { error: null };
-      }
-
-      return { error: { message: 'Akun dengan email ini belum terdaftar atau password salah.' } as AuthError };
-    }
+    // PINTU BELAKANG DICABUT.
+    //
+    // Baris di sini dulu berbunyi:
+    //
+    //     const isDemo = cleanEmail.includes('budi') || cleanEmail.includes('admin')
+    //                 || cleanEmail.includes('stefen') || cleanEmail.includes('ops');
+    //     if (userRecord || isDemo) { ...beri sesi... }
+    //
+    // Artinya email apa pun yang MENGANDUNG kata "admin" — termasuk
+    // admin@apapun.com — masuk dengan password apa pun, tanpa satu permintaan
+    // pun ke server. Tidak ada akun, tidak ada merchant, tidak ada langganan,
+    // dan karena itu tidak ada satu batas paket pun yang bisa ditegakkan.
+    if (!isSupabaseConfigured) return galatBelumDikonfigurasi();
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
   }, []);
 
-  const signUpWithEmail = useCallback(async (email: string, password: string) => {
-    if (!isSupabaseConfigured) {
-      const cleanEmail = email.trim().toLowerCase();
-      const localUsers = getLocalUsers();
-      if (localUsers[cleanEmail]) {
-        return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
-      }
-      await saveLocalUser(email, password);
-      const sess = createLocalSession(email);
-      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
-      setUser(sess.user);
-      setSession(sess.session);
-
-      // Kirim email welcome via backend jika service aktif (fire-and-forget)
-      fetch('/api/v1/auth/send-welcome', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      }).catch(() => {});
-
-      return { error: null };
-    }
+  const signUpWithEmail = useCallback(async (
+    email: string,
+    password: string,
+    toko?: { storeName: string; sector: string }
+  ) => {
+    if (!isSupabaseConfigured) return galatBelumDikonfigurasi();
 
     try {
       // Pendaftaran akun ditangani Supabase Auth; pembuatan TOKO ditangani
@@ -235,6 +148,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const idPemilik = daftar?.user?.id;
       if (!idPemilik) {
         return { error: { message: 'Pendaftaran akun gagal. Coba lagi.' } as AuthError };
+      }
+
+      // TOKONYA DIBUAT DI SERVER, bukan hanya di penyimpanan browser.
+      //
+      // Sebelumnya nama toko dan sektor hanya ditulis ke localStorage, dan baris
+      // toko di server baru lahir saat sinkron pertama. Akibatnya pemilik baru
+      // punya "toko" yang tidak ada di mana pun kecuali di perangkatnya sendiri
+      // — tanpa merchant, tanpa langganan percobaan, dan tanpa batas paket yang
+      // bisa ditegakkan.
+      if (toko?.storeName && toko?.sector) {
+        const res = await fetch('/api/v1/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            businessId: `${idPemilik}_${toko.sector}`,
+            ownerRef: idPemilik,
+            storeName: toko.storeName,
+            sector: toko.sector,
+          }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok) {
+          // Akunnya sudah jadi, tokonya belum. Dikatakan apa adanya alih-alih
+          // membiarkan pemilik masuk ke kasir yang tidak punya toko.
+          return { error: { message:
+            'Akun berhasil dibuat, tetapi toko gagal didaftarkan. Coba masuk lagi, ' +
+            'atau hubungi kami bila tetap gagal.' } as AuthError };
+        }
+        try {
+          localStorage.setItem(`newhope_token_toko_${data.businessId}`, data.token);
+        } catch { /* penyimpanan penuh: token diambil ulang saat dibutuhkan */ }
       }
 
       // Jika berhasil, panggil backend untuk kirim email welcome (fire-and-forget)
@@ -253,7 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured) {
-      localStorage.removeItem(LOCAL_SESSION_KEY);
+      localStorage.removeItem('nhpos_local_session');
       setUser(null);
       setSession(null);
       return;

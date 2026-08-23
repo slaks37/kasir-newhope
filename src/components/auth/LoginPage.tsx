@@ -109,7 +109,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         }
       } else {
-        const { error: err } = await signUpWithEmail(email, password);
+        // Nama toko dan sektor ikut dikirim: pendaftaran akun DAN pendaftaran
+        // toko terjadi bersamaan, bukan menunggu sinkron pertama.
+        const { error: err } = await signUpWithEmail(email, password, {
+          storeName: storeName.trim(),
+          sector,
+        });
         if (err) {
           if (err.message.toLowerCase().includes('already registered')) {
             setError('Email ini sudah terdaftar! Silakan login.');
@@ -118,6 +123,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             setError(err.message);
           }
         } else {
+          // Pengaturan lokal menyusul pendaftaran server, bukan menggantikannya.
           if (storeName.trim()) {
             try {
               const currentSettings = JSON.parse(localStorage.getItem('newhope_settings') || '{}');
