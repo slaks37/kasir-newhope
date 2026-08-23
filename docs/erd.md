@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**41 tabel dan 33 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
+**41 tabel dan 34 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -757,7 +757,8 @@ Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
 | `customer_rfm` | Recency, frequency, monetary per pelanggan |
 | `branches` | Cabang per unit usaha |
 | `bundles` | Paket bundling |
-| `transaction_log` | Struk |
+| `transaction_log` | Struk yang benar-benar terjadi — CANCELLED sudah dibuang di `merchant_revenue` |
+| `transaction_status` | SELURUH struk termasuk yang dibatalkan; satu-satunya tempat CANCELLED terlihat |
 | `transaction_items` | Baris struk |
 | `activity_log` | Kejadian di aplikasi kasir |
 | `activity_by_sector` | Kejadian, diagregat per sektor |

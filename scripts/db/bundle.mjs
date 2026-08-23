@@ -51,6 +51,7 @@ const MIGRATIONS = [
   'migrations/0031_blog_publik.sql',
   'migrations/0032_kepemilikan_ditegakkan.sql',
   'migrations/0033_identitas_staf.sql',
+  'migrations/0034_transaction_log_dipulihkan.sql',
 ];
 
 const KELUARAN = process.argv[2] || 'supabase-setup.sql';

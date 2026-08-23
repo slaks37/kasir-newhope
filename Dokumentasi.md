@@ -434,7 +434,7 @@ membuktikannya.
 | `D3` ai | P3, P4 | P3.3–P3.6, P4.2–P4.4 | 7 |
 | `D4` internal | P4, P5 | P4.5, P5.1–P5.6 | 5 |
 
-**Total 41 tabel.** `contract` (33 view) sengaja tidak ada di tabel ini —
+**Total 41 tabel.** `contract` (34 view) sengaja tidak ada di tabel ini —
 alasannya di bagian [`contract` BUKAN data store](#contract-bukan-data-store).
 
 Tidak ada store yang muncul di Level 2 tapi hilang di Level 1, dan tidak ada

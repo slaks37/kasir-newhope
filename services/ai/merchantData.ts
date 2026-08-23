@@ -99,13 +99,22 @@ export async function buildAggregatesFromDb(
 
   /*
    * Void rate TIDAK BISA dihitung dari contract.merchant_revenue — view itu
-   * memang sudah membuang baris CANCELLED, dan itulah gunanya. Angkanya diambil
-   * dari transaction_log yang mempertahankan payment_status.
+   * memang sudah membuang baris CANCELLED, dan itulah gunanya.
+   *
+   * Sampai 0034 kueri ini membaca contract.transaction_log, dengan komentar
+   * yang menyatakan view itu "mempertahankan payment_status". Ia memang
+   * mempertahankan KOLOMNYA — tapi dibangun di atas merchant_revenue, yang
+   * sudah membuang CANCELLED. Pembilangnya tidak pernah bisa lebih dari nol,
+   * jadi angka ini selalu 0,00% sejak awal, dan skor kesehatan merchant
+   * memakainya sebagai kabar baik.
+   *
+   * contract.transaction_status adalah satu-satunya permukaan kontrak tempat
+   * baris CANCELLED masih terlihat.
    */
   const voids = await db.query(
     `SELECT COUNT(*) FILTER (WHERE payment_status = 'CANCELLED')::int AS voided,
             COUNT(*)::int                                            AS total
-       FROM contract.transaction_log
+       FROM contract.transaction_status
       WHERE business_id = $1 ${W}`,
     [t]
   );
