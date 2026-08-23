@@ -13,13 +13,15 @@ import {
   UserCog,
   Briefcase,
   Store,
+  LogOut,
 } from 'lucide-react';
 
 interface SwitchUserModalProps {
   onClose: () => void;
+  onLogout?: () => void;
 }
 
-export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose }) => {
+export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose, onLogout }) => {
   const { users, currentUser, switchUser, verifyPin } = usePOS();
 
   const [selectedUser, setSelectedUser] = useState<User | null>(currentUser);
@@ -263,11 +265,24 @@ export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose }) => 
             {/* Action Submit */}
             <button
               onClick={handleConfirmSwitch}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-extrabold text-sm rounded-xl transition-all shadow-md flex items-center justify-center space-x-2"
+              className="w-full py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-extrabold text-sm rounded-xl transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
             >
               <KeyRound className="w-4 h-4" />
               <span>Masuk Sekarang</span>
             </button>
+
+            {onLogout && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onLogout();
+                }}
+                className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 text-rose-600" />
+                <span>Keluar ke Halaman Depan</span>
+              </button>
+            )}
           </div>
         </div>
 

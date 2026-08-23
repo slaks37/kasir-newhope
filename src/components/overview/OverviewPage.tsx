@@ -47,6 +47,8 @@ import {
   HelpCircle,
   CheckCircle,
   Star,
+  Home,
+  LogOut,
 } from 'lucide-react';
 
 interface OverviewPageProps {
@@ -370,6 +372,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
                 </button>
               ))}
             </div>
+
+            {onBackToHome && (
+              <button
+                onClick={onBackToHome}
+                className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 font-bold text-xs border border-slate-700 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                title="Keluar ke Halaman Depan / Beranda"
+              >
+                <Home className="w-4 h-4 text-amber-400" />
+                <span>Halaman Depan</span>
+              </button>
+            )}
 
             <button
               onClick={() => setActiveTab('pos')}

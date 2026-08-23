@@ -19,6 +19,7 @@ import {
   Globe,
   CloudUpload,
   CloudAlert,
+  LogOut,
 } from 'lucide-react';
 import { formatRupiah } from '../utils/formatters';
 
@@ -28,6 +29,7 @@ interface HeaderProps {
   onOpenRecentTransactions?: () => void;
   onOpenSwitchUser?: () => void;
   onOpenClockIn?: () => void;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenRecentTransactions,
   onOpenSwitchUser,
   onOpenClockIn,
+  onLogout,
 }) => {
   const {
     settings,
@@ -189,6 +192,18 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 transition-colors" />
         </button>
+
+        {/* Tombol Keluar / Halaman Depan */}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="flex items-center space-x-1.5 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200 text-rose-700 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+            title="Keluar dari Aplikasi Kasir ke Halaman Depan"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-600" />
+            <span className="hidden sm:inline">Keluar</span>
+          </button>
+        )}
 
         {/* Shift Badge (Desktop only) */}
         <div className="hidden xl:flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl text-xs text-slate-700">

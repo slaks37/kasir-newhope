@@ -242,12 +242,6 @@ const loadScopedData = <T,>(entity: string, userId: string, sector: BusinessSect
     const key = getScopedKey(entity, userId, sector);
     const saved = localStorage.getItem(key);
     if (saved) return JSON.parse(saved);
-
-    // Fallback migration check for FNB or initial legacy keys
-    if (sector === 'FNB') {
-      const legacy = localStorage.getItem(`newhope_${entity}`) || localStorage.getItem(`mokamajoo_${entity}`);
-      if (legacy) return JSON.parse(legacy);
-    }
   } catch (e) {
     console.error(`Failed to load scoped data for ${entity}:`, e);
   }
@@ -259,9 +253,6 @@ const loadGlobalUserData = <T,>(entity: string, userId: string, fallback: T): T 
     const key = getGlobalUserKey(entity, userId);
     const saved = localStorage.getItem(key);
     if (saved) return JSON.parse(saved);
-
-    const legacy = localStorage.getItem(`newhope_${entity}`) || localStorage.getItem(`mokamajoo_${entity}`);
-    if (legacy) return JSON.parse(legacy);
   } catch (e) {
     console.error(`Failed to load global user data for ${entity}:`, e);
   }
@@ -270,71 +261,51 @@ const loadGlobalUserData = <T,>(entity: string, userId: string, fallback: T): T 
 
 /*
  * SECTOR-AWARE SEEDS
- *
- * Customers, promo codes and attendance used to be stored per-user only, so a
- * cafe and a laundry run by the same merchant shared one list. Now that they are
- * sector-scoped, each sector needs its own starting point — otherwise every
- * sector would open with the identical demo rows and still *look* mixed.
- *
- * FNB is the default sector and keeps the demo data; other sectors start clean
- * and fill up from real transactions.
  */
 const seedCustomersFor = (_sector: BusinessSector): Customer[] => [];
 
-const seedPromosFor = (sector: BusinessSector): PromoCode[] =>
-  sector === 'FNB' ? INITIAL_PROMO_CODES : [];
+const seedPromosFor = (_sector: BusinessSector): PromoCode[] => [];
 
 /** Attendance seed follows the staff member's own sector. */
-const seedAttendanceFor = (sector: BusinessSector): AttendanceRecord[] =>
-  INITIAL_ATTENDANCE_LOGS.filter((rec) => {
-    const staff = INITIAL_STAFF_MEMBERS.find((s) => s.id === rec.staffId);
-    return ((staff?.sector || rec.businessSector || 'FNB') as BusinessSector) === sector;
-  });
+const seedAttendanceFor = (_sector: BusinessSector): AttendanceRecord[] => [];
 
-/**
- * 12-Hour Demo Data Lifecycle
- *
- * Menghapus data demo lokal dan mengembalikan data ke kondisi default bersih
- * setiap 12 jam (43.200.000 ms) agar sesi demo pengunjung selalu segar.
- */
-const DEMO_LIFECYCLE_HOURS = 12;
-const DEMO_RESET_INTERVAL_MS = DEMO_LIFECYCLE_HOURS * 60 * 60 * 1000;
-const DEMO_TIMESTAMP_KEY = 'newhope_demo_session_created_at';
-
-const enforce12HourDemoReset = () => {
+// Immediate cleanup of legacy dummy keys across browser storage
+const purgeLegacyMockData = () => {
   try {
-    const rawTimestamp = localStorage.getItem(DEMO_TIMESTAMP_KEY);
-    const now = Date.now();
-
-    if (!rawTimestamp) {
-      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
-      return;
-    }
-
-    const createdAt = parseInt(rawTimestamp, 10);
-    if (isNaN(createdAt) || now - createdAt >= DEMO_RESET_INTERVAL_MS) {
-      console.warn(`[Demo Lifecycle] 12 jam telah tercapai. Mereset data demo ke default bersih.`);
-      
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('newhope_') || key.startsWith('mokamajoo_') || key.startsWith('scoped_'))) {
-          // Jangan hapus token Supabase Auth kalau ada
-          if (!key.includes('supabase.auth')) {
-            keysToRemove.push(key);
-          }
-        }
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      // Do not touch credentials, local registered users or active auth sessions
+      if (
+        key.includes('supabase.auth') ||
+        key === 'nhpos_local_auth_users' ||
+        key === 'nhpos_local_session'
+      ) {
+        continue;
       }
-      keysToRemove.forEach((k) => localStorage.removeItem(k));
-      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
+      // Purge legacy fallback keys and mock user items
+      if (
+        key.startsWith('mokamajoo_') ||
+        key === 'newhope_users' ||
+        key === 'newhope_current_user' ||
+        key === 'newhope_shift' ||
+        key === 'newhope_settings' ||
+        key === 'newhope_orders' ||
+        key.includes('usr-1') ||
+        key.includes('usr-2') ||
+        key.includes('usr-3') ||
+        key.includes('shift-001')
+      ) {
+        keysToRemove.push(key);
+      }
     }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
   } catch (e) {
-    console.error('Failed to enforce 12-hour demo reset:', e);
+    console.error('Failed to purge legacy mock data:', e);
   }
 };
-
-// Jalankan saat script dimuat
-enforce12HourDemoReset();
+purgeLegacyMockData();
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user: authUser } = useAuth();
@@ -541,18 +512,28 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [shift, setShift] = useState<Shift>(() => {
-    const loaded = loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT);
-    const activeCashier = currentUser.name || authUser?.user_metadata?.full_name || 'Kasir';
-    if (!loaded.cashierName || loaded.cashierName === 'Ahmad Kasir' || loaded.cashierName === 'Budi Santoso') {
+    const activeCashier = authUser?.user_metadata?.full_name || currentUser.name || 'Kasir';
+    const loaded = loadScopedData('shift', authUser?.id || currentUser.id, activeSector, INITIAL_SHIFT);
+
+    if (
+      !loaded.cashierName ||
+      loaded.cashierName === 'Ahmad Kasir' ||
+      loaded.cashierName === 'Budi Santoso' ||
+      loaded.id === 'shift-001' ||
+      loaded.totalSales === 2800000
+    ) {
       return {
-        ...loaded,
+        id: newId('shift'),
         cashierName: activeCashier,
-        totalSales: 0,
+        startTime: new Date().toISOString(),
+        initialCash: 0,
         cashSales: 0,
         qrisSales: 0,
         cardSales: 0,
         eWalletSales: 0,
-        expectedCash: loaded.initialCash || 0,
+        totalSales: 0,
+        expectedCash: 0,
+        status: 'OPEN',
       };
     }
     return loaded;

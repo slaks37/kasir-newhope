@@ -162,6 +162,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
         onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
         onOpenClockIn={() => setShowClockInModal(true)}
+        onLogout={onBackToHome}
       />
 
       {/* Main Container */}
@@ -376,7 +377,10 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
       )}
 
       {showSwitchUserModal && (
-        <SwitchUserModal onClose={() => setShowSwitchUserModal(false)} />
+        <SwitchUserModal
+          onClose={() => setShowSwitchUserModal(false)}
+          onLogout={onBackToHome}
+        />
       )}
 
       {showClockInModal && (
@@ -446,7 +450,7 @@ export function App() {
     if (authView === 'login' || authView === 'register') {
       return (
         <LoginPage
-          onBackToLanding={() => { window.location.hash = ''; }}
+          onBackToLanding={() => { window.location.hash = ''; setAuthView('home'); }}
           initialMode={authView}
         />
       );
@@ -455,7 +459,7 @@ export function App() {
       return (
         <BlogHarapanBaru
           initialSlug={blogSlug}
-          onBackToHome={() => { window.location.hash = ''; }}
+          onBackToHome={() => { window.location.hash = ''; setAuthView('home'); }}
           onOpenLogin={() => { window.location.hash = 'login'; }}
           onOpenRegister={() => { window.location.hash = 'register'; }}
         />
@@ -473,9 +477,15 @@ export function App() {
   }
 
   // JIKA SUDAH LOGIN: Tampilkan Aplikasi POS
+  const handleSignOutAndGoHome = async () => {
+    window.location.hash = '';
+    setAuthView('home');
+    await signOut();
+  };
+
   return (
     <POSProvider>
-      <POSAppContent onBackToHome={signOut} />
+      <POSAppContent onBackToHome={handleSignOutAndGoHome} />
     </POSProvider>
   );
 }
