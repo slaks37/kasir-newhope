@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**41 tabel dan 35 view kontrak, dalam 10 domain.** Diturunkan langsung dari file
+**46 tabel dan 41 view kontrak, dalam 11 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -732,9 +732,150 @@ dan gagal kalau berbeda.
 
 ---
 
+## 11. Domain OPERASIONAL HARIAN (0036)
+
+Enam entitas yang sampai 0036 **tidak pernah meninggalkan perangkat**. Semuanya
+hanya hidup di `localStorage` peramban yang kebetulan dipakai: bersihkan
+riwayat, dan seluruhnya hilang tanpa satu pun salinan.
+
+| Entitas | Yang hilang saat cache dibersihkan |
+|---|---|
+| `dining_tables` | Seluruh denah meja |
+| `ingredients` | Seluruh daftar bahan baku dan stoknya |
+| `promo_codes` | Seluruh kode promo yang sedang berjalan |
+| `cashier_shifts` | Seluruh rekap buka/tutup kas, termasuk selisihnya |
+| `attendance_records` | Seluruh catatan absensi berikut koordinatnya |
+| `store_settings` | Tarif pajak, service charge, dan tarif loyalitas |
+
+Dua di antaranya dipakai untuk **menilai orang**: selisih kas dan absensi.
+Angka yang hanya ada di satu perangkat, bisa disunting siapa pun yang membuka
+devtools, dan lenyap saat cache dibersihkan bukan dasar yang layak untuk itu.
+
+`pos.ingredients` adalah kasus tersendiri: tabelnya sudah ada sejak migrasi
+pertama dan **tidak pernah menerima satu baris pun**. Yang hilang bukan
+tabelnya melainkan `external_ref` — tanpa itu tidak ada cara mencocokkan
+`stk-…` di perangkat dengan baris di sini, sehingga setiap kiriman akan
+menggandakan seluruh daftar bahan.
+
+```mermaid
+erDiagram
+    businesses  ||--o{ dining_tables      : ""
+    businesses  ||--o{ ingredients        : ""
+    businesses  ||--o{ promo_codes        : ""
+    businesses  ||--o{ cashier_shifts     : ""
+    businesses  ||--o{ attendance_records : ""
+    businesses  ||--|| store_settings     : "satu baris"
+    staff_users |o--o{ cashier_shifts     : "kasir (SET NULL)"
+    staff_users |o--o{ attendance_records : "staf (SET NULL)"
+    outlets     |o--o{ attendance_records : "cabang (SET NULL)"
+
+    dining_tables {
+        uuid id PK
+        uuid business_id FK
+        varchar external_ref "UNIQUE per unit usaha"
+        varchar name
+        smallint capacity
+        varchar zone
+        boolean is_active
+    }
+    ingredients {
+        uuid id PK
+        uuid business_id FK
+        varchar external_ref "ditambahkan 0036"
+        varchar name
+        numeric current_stock
+        numeric min_stock_alert
+        varchar unit
+        numeric cost_price
+        varchar stock_type
+    }
+    promo_codes {
+        uuid id PK
+        uuid business_id FK
+        varchar code "UNIQUE (business_id, upper(code))"
+        numeric discount_percent
+        numeric max_discount_amount
+        numeric min_purchase_amount
+        boolean is_active
+    }
+    cashier_shifts {
+        uuid id PK
+        uuid business_id FK
+        varchar external_ref
+        varchar cashier_name
+        timestamptz opened_at
+        timestamptz closed_at
+        numeric expected_cash "disimpan, bukan dihitung ulang"
+        numeric actual_cash "NULL = kas belum dihitung"
+        numeric difference "NULL = belum ada kesimpulan"
+    }
+    attendance_records {
+        uuid id PK
+        uuid business_id FK
+        varchar external_ref
+        varchar staff_name
+        timestamptz clock_in_at
+        timestamptz clock_out_at
+        numeric clock_in_lat "koordinat mentah"
+        numeric clock_in_lon
+        integer clock_in_distance_m
+    }
+    store_settings {
+        uuid business_id PK_FK
+        numeric tax_rate
+        numeric service_rate
+        boolean enable_loyalty
+        numeric loyalty_earn_rate
+        jsonb extra "sakelar yang belum punya kolom"
+    }
+```
+
+**Status meja tidak disimpan.** Tabel dan pesanan yang sedang berjalan berubah
+setiap beberapa detik dan hanya berarti di perangkat yang melayani meja itu.
+Mengirimnya berarti dua kasir saling menimpa status meja sepanjang jam sibuk.
+Yang disinkronkan adalah **denahnya** — nama, kapasitas, zona — yang berubah
+beberapa kali setahun.
+
+**Selisih kas disimpan, tidak dihitung ulang saat dibaca.** Alasannya sama
+dengan snapshot harga di `transaction_items`: `expected_cash` adalah kesimpulan
+yang diambil pada saat shift ditutup, dari angka yang berlaku saat itu.
+Menghitungnya ulang dari transaksi bulan lalu akan mengubah selisih kas yang
+sudah ditandatangani orang.
+
+**`actual_cash` NULL bukan nol.** "Kas belum dihitung" dan "kas dihitung dan
+hasilnya nol" adalah dua keadaan yang sangat berbeda bagi orang yang tanda
+tangan di lembar serah terima.
+
+**Koordinat absensi disimpan mentah, kesimpulannya tidak.** Yang tersimpan
+adalah jarak dalam meter, bukan "di dalam radius" — radius cabang bisa diubah
+pemilik kapan saja, dan kesimpulan yang sudah tersimpan akan menjadi salah
+tanpa ada yang menyadarinya. Kesimpulannya dihitung saat dibaca, terhadap
+radius yang berlaku saat itu.
+
+**Pengaturan: kolom untuk yang dibaca server, `extra` untuk sisanya.**
+`tax_rate`, `service_rate`, dan tarif loyalitas dipakai laporan dan Smart
+Assistant di sisi server; menyembunyikannya di dalam jsonb berarti setiap kueri
+laporan harus tahu bentuk objek pengaturan versi klien. Sisanya masuk `extra`
+apa adanya, karena memaksa migrasi baru untuk setiap sakelar berarti sakelar
+itu akan disimpan di localStorage saja — persis keadaan yang diperbaiki 0036.
+`subscription` dan `branches` **ditolak** masuk `extra`: status langganan
+ditentukan billing, dan cabang punya tabelnya sendiri.
+
+| View kontrak | Menjawab |
+|---|---|
+| `dining_tables` | Denah meja per unit usaha |
+| `ingredients` | Bahan baku + penanda stok menipis, dihitung satu tempat |
+| `promo_codes` | Kode promo yang terdaftar |
+| `cashier_shifts` | Rekap kas per shift; selisihnya apa adanya |
+| `attendance` | Absensi + menit kerja; NULL untuk yang belum pulang |
+| `store_settings` | Pengaturan toko yang tersimpan di pusat |
+
+---
+
 ## Seluruh view kontrak
 
-Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
+Empat puluh satu view, dikelompokkan menurut yang dijawabnya. Semuanya
+hanya-baca.
 
 | View | Menjawab |
 |---|---|
@@ -773,6 +914,12 @@ Tiga puluh view, dikelompokkan menurut yang dijawabnya. Semuanya hanya-baca.
 | `staff_directory` | Staf + status kepegawaian + kredensial + peran. PIN tidak ikut |
 | `staff_permissions` | Izin efektif per staf; staf non-AKTIF tidak menghasilkan baris |
 | `staf_pin_belum_aman` | Kredensial kasir yang PIN-nya masih tersimpan apa adanya; harus kosong sebelum kolom lamanya dibuang |
+| `dining_tables` | Denah meja per unit usaha; status meja sengaja tidak ikut |
+| `ingredients` | Bahan baku + `stok_menipis`, dihitung di satu tempat saja |
+| `promo_codes` | Kode promo yang terdaftar per unit usaha |
+| `cashier_shifts` | Rekap buka/tutup kas; `difference` apa adanya, tidak dihitung ulang |
+| `attendance` | Absensi + `menit_kerja`; NULL untuk yang belum pulang |
+| `store_settings` | Pengaturan toko yang tersimpan di pusat |
 
 ---
 

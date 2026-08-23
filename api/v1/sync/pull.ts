@@ -31,6 +31,16 @@ import { wajibToko } from '../../_lib/tokoContext.js';
 /** Transaksi yang ikut ditarik. Cukup untuk laporan, tidak sampai membanjiri. */
 const BATAS_TRANSAKSI = 500;
 
+/**
+ * Shift dan absensi yang ikut ditarik.
+ *
+ * Jauh lebih kecil daripada transaksi dan disengaja. Keduanya dibaca untuk
+ * rekap, bukan untuk dijalankan ulang di perangkat; menarik absensi setahun ke
+ * ponsel kasir hanya memperlambat pembukaan aplikasi tanpa menambah satu pun
+ * yang bisa ia lakukan dengannya.
+ */
+const BATAS_RIWAYAT = 200;
+
 let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
@@ -61,7 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const id = toko.businessId;
 
   try {
-    const [usaha, katalog, pelanggan, cabang, bundel, transaksi] = await Promise.all([
+    const [
+      usaha, katalog, pelanggan, cabang, bundel, transaksi,
+      meja, bahan, promo, shift, absensi, pengaturan,
+    ] = await Promise.all([
       db.query(
         `SELECT b.id, b.name, b.business_sector, b.client_key, b.owner_user_ref,
                 b.active_outlet_id
@@ -98,6 +111,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           WHERE business_id = $1
           ORDER BY created_at DESC
           LIMIT ${BATAS_TRANSAKSI}`, [id]),
+
+      /* -- YANG DITAMBAHKAN 0036 ----------------------------------------- */
+      //
+      // Keenamnya dulu hanya ada di localStorage satu peramban. Tanpa bagian
+      // ini, mengirimnya ke server tidak ada gunanya: data yang bisa naik tapi
+      // tidak bisa turun tetap hilang saat perangkatnya berganti.
+
+      db.query(
+        `SELECT external_ref, name, capacity, zone, business_sector, is_active
+           FROM pos.dining_tables WHERE business_id = $1 ORDER BY name`, [id]),
+
+      db.query(
+        `SELECT external_ref, name, sku, current_stock, min_stock_alert, unit,
+                cost_price, stock_type, category_name, location, notes,
+                business_sector, updated_at
+           FROM pos.ingredients WHERE business_id = $1 ORDER BY name`, [id]),
+
+      db.query(
+        `SELECT code, discount_percent, max_discount_amount, min_purchase_amount,
+                is_active, created_at
+           FROM pos.promo_codes WHERE business_id = $1 ORDER BY code`, [id]),
+
+      db.query(
+        `SELECT external_ref, cashier_name, opened_at, closed_at, status,
+                initial_cash, cash_sales, qris_sales, card_sales, ewallet_sales,
+                total_sales, expected_cash, actual_cash, difference,
+                total_orders, notes, business_sector
+           FROM pos.cashier_shifts WHERE business_id = $1
+          ORDER BY opened_at DESC LIMIT ${BATAS_RIWAYAT}`, [id]),
+
+      db.query(
+        `SELECT external_ref, staff_ref, staff_name, staff_role,
+                clock_in_at, clock_out_at, status, outlet_ref, outlet_name,
+                clock_in_lat, clock_in_lon, clock_in_distance_m,
+                clock_out_lat, clock_out_lon, clock_out_distance_m,
+                shift_notes, business_sector
+           FROM pos.attendance_records WHERE business_id = $1
+          ORDER BY clock_in_at DESC LIMIT ${BATAS_RIWAYAT}`, [id]),
+
+      db.query(
+        `SELECT store_name, tagline, address, phone, tax_rate, enable_tax,
+                service_rate, enable_service, enable_loyalty, loyalty_earn_rate,
+                loyalty_redeem_rate, monthly_revenue_target,
+                geofence_enforcement, extra, updated_at
+           FROM pos.store_settings WHERE business_id = $1`, [id]),
     ]);
 
     if (!usaha.rows.length) {
@@ -122,6 +180,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       branches: cabang.rows,
       bundles: bundel.rows,
       transactions: transaksi.rows,
+      tables: meja.rows,
+      stockItems: bahan.rows,
+      promoCodes: promo.rows,
+      shifts: shift.rows,
+      attendance: absensi.rows,
+      // `null` bila toko ini belum pernah mengirim pengaturannya — dan itu
+      // BERBEDA dari objek kosong. Perangkat yang menerima objek kosong akan
+      // menimpa pajak dan tarif loyalitas yang sedang berlaku di layarnya
+      // dengan nol.
+      settings: pengaturan.rows[0] ?? null,
       // Dilaporkan supaya aplikasi tahu daftarnya terpotong, bukan menyangka
       // toko ini memang hanya punya 500 struk.
       transactionsTruncated: transaksi.rows.length === BATAS_TRANSAKSI,

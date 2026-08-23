@@ -23,6 +23,8 @@ import { SECTORS, writeActivity, type Sector } from './activity';
 import { pastikanStaf } from '../../src/lib/staf/resolusi';
 import { bacaBatasProduk, bolehTambah, type KeadaanBatas } from '../../src/lib/batas/produk';
 import { orderPaid, orderVoided } from '../../api/_lib/efekDomain.js';
+import handlerOperasional from '../../api/v1/sync/operasional.js';
+import handlerPull from '../../api/v1/sync/pull.js';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -770,4 +772,22 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
   });
+
+  /* ------------------------------------------------------------------------ */
+  /* JALUR YANG DIPAKAI BERSAMA DENGAN PENYEBARAN VERCEL                       */
+  /* ------------------------------------------------------------------------ */
+  //
+  // Aplikasi ini punya DUA penyebaran: fungsi serverless di api/ dan layanan
+  // di services/. Sebagian besar endpoint ditulis dua kali, dan setiap kali
+  // salah satunya diperbaiki tanpa yang lain, hasilnya adalah dua sistem yang
+  // sama-sama "sudah diperbaiki" tapi berperilaku berbeda — persis yang
+  // terjadi pada /sync/pull, yang sampai sekarang HANYA ada di jalur Vercel
+  // sehingga kasir di penyebaran layanan tidak pernah bisa menarik apa pun.
+  //
+  // Untuk yang baru, penulisan ganda itu dihentikan: handler Vercel dipasang
+  // langsung. Tanda tangannya memang sudah cocok dengan Express — req.body,
+  // req.query, req.headers, res.status().json() semuanya ada di keduanya —
+  // dan satu implementasi tidak bisa berbeda dari dirinya sendiri.
+  app.post('/api/v1/sync/operasional', (req, res) => handlerOperasional(req, res));
+  app.all('/api/v1/sync/pull', (req, res) => handlerPull(req, res));
 }

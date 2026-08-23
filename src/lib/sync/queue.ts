@@ -433,6 +433,64 @@ export async function pushBranches(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* SINKRONISASI DATA OPERASIONAL                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Meja, bahan baku, kode promo, rekap shift, absensi, dan pengaturan toko.
+ *
+ * Keenamnya sebelum ini TIDAK PERNAH sampai ke server sama sekali — hanya ada
+ * di localStorage peramban yang kebetulan dipakai. Bersihkan riwayat, dan
+ * seluruh denah meja, seluruh bahan baku, seluruh catatan absensi, serta
+ * seluruh rekap selisih kas hilang tanpa satu pun salinan.
+ *
+ * Dua di antaranya dipakai untuk MENILAI ORANG: selisih kas dan absensi.
+ * Angka yang hanya ada di satu perangkat, bisa disunting siapa pun yang
+ * membuka devtools, dan lenyap saat cache dibersihkan bukan dasar yang layak
+ * untuk itu.
+ *
+ * TERPISAH DARI pushCatalog, dan itu penting. Katalog dikirim ulang pada
+ * SETIAP penjualan karena stoknya berubah; menumpangkan absensi di kiriman yang
+ * sama berarti absensi ikut dikirim ratusan kali sehari, dan satu katalog yang
+ * ditahan batas paket akan menahan absensi hari itu bersamanya.
+ *
+ * Bagian yang tidak diisi TIDAK dikirim, dan server tidak menyentuhnya. Array
+ * kosong berarti "memang tidak ada"; tidak dikirim berarti "belum tahu".
+ */
+export interface OperasionalPayload {
+  tables?: Array<Record<string, unknown>>;
+  stockItems?: Array<Record<string, unknown>>;
+  promoCodes?: Array<Record<string, unknown>>;
+  shifts?: Array<Record<string, unknown>>;
+  attendance?: Array<Record<string, unknown>>;
+  settings?: Record<string, unknown>;
+}
+
+export async function pushOperasional(
+  target: SyncTarget,
+  payload: OperasionalPayload
+): Promise<boolean> {
+  tandaiTertunda(target.businessId, 'operasional');
+  if (!bolehMencoba()) return false;
+
+  try {
+    const res = await fetchToko('/api/v1/sync/operasional', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: target.businessId,
+        sector: target.sector,
+        ...payload,
+      }),
+    }, { businessId: target.businessId, ownerRef: target.ownerRef, storeName: target.storeName, sector: target.sector });
+    if (res.ok) tandaiSampai(target.businessId, 'operasional');
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Memasukkan satu transaksi ke antrian.
  *

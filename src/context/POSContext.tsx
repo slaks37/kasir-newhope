@@ -46,6 +46,7 @@ import {
   type SyncStatus,
   type SyncTarget,
   pushBranches,
+  pushOperasional,
   setelBackoff,
 } from '../lib/sync/queue';
 import {
@@ -89,7 +90,19 @@ import {
 } from '../lib/plans/entitlements';
 import type { StatusLangganan } from '../lib/plans/expiry';
 import { fetchToko } from '../lib/sync/tokenToko';
-import { tarikDariCloud, keProduk, keKategori, kePelanggan, keCabang } from '../lib/sync/tarik';
+import {
+  tarikDariCloud,
+  keProduk,
+  keKategori,
+  kePelanggan,
+  keCabang,
+  keMeja,
+  keBahan,
+  keKodePromo,
+  keShift,
+  keAbsensi,
+  kePengaturan,
+} from '../lib/sync/tarik';
 
 /**
  * Hasil penyimpanan yang BISA DITOLAK oleh batas paket.
@@ -582,6 +595,39 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } else if (isi.business.storeName) {
         setSettings((prev) => ({ ...prev, storeName: isi.business.storeName }));
       }
+
+      /* -- DATA OPERASIONAL (0036) --------------------------------------- */
+      //
+      // Aturan penggabungannya sama seperti katalog: cloud menang, TAPI hanya
+      // bila server memang punya isinya. Toko yang baru mendaftar dan belum
+      // sempat mengirim apa pun tidak boleh kehilangan denah meja atau daftar
+      // bahan yang sedang disusun pemiliknya di layar.
+      if (isi.tables?.length) setTables(keMeja(isi.tables, sec) as Table[]);
+      if (isi.stockItems?.length) setStockItems(keBahan(isi.stockItems, sec) as StockItem[]);
+      if (isi.promoCodes?.length) setPromoCodes(keKodePromo(isi.promoCodes) as PromoCode[]);
+
+      // Riwayat shift yang sudah DITUTUP saja. Shift yang masih terbuka di
+      // perangkat lain bukan shift perangkat ini; menariknya akan membuat dua
+      // kasir tampak membuka laci yang sama.
+      if (isi.shifts?.length) {
+        setShiftHistory(
+          keShift(isi.shifts, sec).filter((sh: any) => sh.status === 'CLOSED') as Shift[]
+        );
+      }
+
+      if (isi.attendance?.length) {
+        // Radius yang BERLAKU SEKARANG, diambil dari cabang di layar — bukan
+        // dari server. Lihat alasannya di keAbsensi.
+        const radius = new Map<string, number>();
+        for (const b of (settings.branches ?? [])) {
+          if (b?.id) radius.set(String(b.id), Number(b.allowedRadiusMeters) || 0);
+        }
+        setAttendanceLogs(keAbsensi(isi.attendance, sec, radius) as AttendanceRecord[]);
+      }
+
+      if (isi.settings) {
+        setSettings((prev) => kePengaturan(isi.settings, prev));
+      }
     },
     // Sengaja hanya bergantung pada identitas toko. `settings.storeName` ikut
     // dibaca di dalam, tapi ia hanya dipakai untuk mendaftarkan toko yang belum
@@ -691,6 +737,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const kirimKatalogRef = useRef<() => void>(() => {});
   const kirimCabangRef = useRef<() => void>(() => {});
+  const kirimOperasionalRef = useRef<() => void>(() => {});
 
   const [jaringan, setJaringan] = useState<KeadaanJaringan>(() => bacaKeadaan());
 
@@ -748,6 +795,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // server tidak perlu dikirim ulang hanya karena jaringan sempat putus.
       if (adaTertunda(bizId, 'catalog')) kirimKatalogRef.current();
       if (adaTertunda(bizId, 'branches')) kirimCabangRef.current();
+      if (adaTertunda(bizId, 'operasional')) kirimOperasionalRef.current();
       await tarikSekarang(tersambungKembali);
     };
 
@@ -1173,6 +1221,68 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const timer = window.setTimeout(kirimCabang, 8000);
     return () => window.clearTimeout(timer);
   }, [kirimCabang]);
+
+  /*
+   * SINKRONISASI DATA OPERASIONAL.
+   *
+   * Meja, bahan baku, kode promo, riwayat shift, absensi, dan pengaturan toko.
+   * Sebelum ini keenamnya TIDAK PERNAH meninggalkan perangkat sama sekali —
+   * bersihkan riwayat peramban dan seluruhnya hilang tanpa satu pun salinan,
+   * termasuk catatan absensi dan rekap selisih kas yang dipakai menilai orang.
+   *
+   * Jeda 15 detik, lebih panjang daripada katalog. Tidak satu pun dari keenamnya
+   * berubah pada irama penjualan: denah meja diubah beberapa kali setahun,
+   * pengaturan lebih jarang lagi. Yang paling sering pun — absensi — hanya dua
+   * kejadian per orang per hari.
+   *
+   * SHIFT YANG MASIH TERBUKA TIDAK IKUT. Angkanya masih berubah setiap
+   * penjualan; mengirimnya berarti satu baris shift dikirim ulang sesering
+   * katalog, dan yang tersimpan di server hanyalah potret setengah jalan yang
+   * langsung basi. Yang dikirim adalah shift yang sudah ditutup — saat itulah
+   * angkanya menjadi kesimpulan, dan kesimpulan itulah yang perlu ada di pusat.
+   */
+  const kirimOperasional = React.useCallback(() => {
+    const shiftSelesai = shiftHistory.filter((sh) => sh.status === 'CLOSED');
+    const adaIsi =
+      tables.length || stockItems.length || promoCodes.length ||
+      shiftSelesai.length || attendanceLogs.length;
+    if (!adaIsi) return;
+
+    void pushOperasional(
+      {
+        businessId: makeBusinessId(currentUser.id, activeSector),
+        sector: activeSector,
+        storeName: settings.storeName,
+        ownerRef: currentUser.id,
+      },
+      {
+        tables: tables as unknown as Array<Record<string, unknown>>,
+        stockItems: stockItems as unknown as Array<Record<string, unknown>>,
+        promoCodes: promoCodes as unknown as Array<Record<string, unknown>>,
+        shifts: shiftSelesai as unknown as Array<Record<string, unknown>>,
+        attendance: attendanceLogs as unknown as Array<Record<string, unknown>>,
+        settings: settings as unknown as Record<string, unknown>,
+      }
+    );
+  }, [
+    tables,
+    stockItems,
+    promoCodes,
+    shiftHistory,
+    attendanceLogs,
+    settings,
+    currentUser.id,
+    activeSector,
+  ]);
+
+  useEffect(() => {
+    kirimOperasionalRef.current = kirimOperasional;
+  }, [kirimOperasional]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(kirimOperasional, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [kirimOperasional]);
 
   const clockInStaff = (
     staffId: string,
@@ -2423,7 +2533,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         voidOrder,
         syncStatus,
         jaringan,
-        adaYangTertunda: adaTertunda(bizId, 'catalog') || adaTertunda(bizId, 'branches'),
+        adaYangTertunda:
+          adaTertunda(bizId, 'catalog') ||
+          adaTertunda(bizId, 'branches') ||
+          adaTertunda(bizId, 'operasional'),
         forceSync: () => {
           /*
            * "Coba lagi" berarti SEKARANG, bukan "nanti setelah backoff habis".
@@ -2440,6 +2553,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             await runSync(syncTarget);
             if (adaTertunda(bizId, 'catalog')) kirimKatalogRef.current();
             if (adaTertunda(bizId, 'branches')) kirimCabangRef.current();
+            if (adaTertunda(bizId, 'operasional')) kirimOperasionalRef.current();
             await tarikSekarang(true);
           })();
         },

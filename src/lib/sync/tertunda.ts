@@ -28,7 +28,7 @@
  * terkirim akan tetap mengirimnya saat dibuka kembali.
  */
 
-export type JenisTertunda = 'catalog' | 'branches';
+export type JenisTertunda = 'catalog' | 'branches' | 'operasional';
 
 const KUNCI = 'newhope_tertunda_';
 
@@ -88,5 +88,5 @@ export function tertundaSejak(businessId: string, jenis: JenisTertunda): string 
 /** Semua yang belum sampai untuk satu toko. */
 export function daftarTertunda(businessId: string): JenisTertunda[] {
   const c = baca(businessId);
-  return (['catalog', 'branches'] as JenisTertunda[]).filter((j) => c[j]);
+  return (['catalog', 'branches', 'operasional'] as JenisTertunda[]).filter((j) => c[j]);
 }
