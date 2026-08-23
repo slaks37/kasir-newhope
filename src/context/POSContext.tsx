@@ -528,10 +528,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('categories', uId, sec), JSON.stringify(categories));
   }, [categories, currentUser.id, settings.businessSector]);
 
+  // Debounce: products berubah SETIAP transaksi (stok berkurang). Tanpa
+  // penundaan, satu jam sibuk menghasilkan ratusan JSON.stringify katalog penuh.
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('products', uId, sec), JSON.stringify(products));
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(getScopedKey('products', uId, sec), JSON.stringify(products));
+    }, 2_000);
+    return () => window.clearTimeout(timer);
   }, [products, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
@@ -540,10 +545,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('tables', uId, sec), JSON.stringify(tables));
   }, [tables, currentUser.id, settings.businessSector]);
 
+  // Debounce: sama seperti products — bahan baku terpotong setiap transaksi.
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('stock_items', uId, sec), JSON.stringify(stockItems));
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(getScopedKey('stock_items', uId, sec), JSON.stringify(stockItems));
+    }, 2_000);
+    return () => window.clearTimeout(timer);
   }, [stockItems, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
@@ -552,10 +561,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('bundles', uId, sec), JSON.stringify(bundles));
   }, [bundles, currentUser.id, settings.businessSector]);
 
+  // Cap 50 order terbaru. Order lama sudah aman di server lewat sync queue —
+  // menyimpan semuanya membengkakkan localStorage (limit 5 MB) dan memperlambat
+  // JSON.stringify di setiap transaksi.
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('orders', uId, sec), JSON.stringify(orders));
+    localStorage.setItem(getScopedKey('orders', uId, sec), JSON.stringify(orders.slice(0, 50)));
   }, [orders, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
@@ -564,10 +576,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('held_orders', uId, sec), JSON.stringify(heldOrders));
   }, [heldOrders, currentUser.id, settings.businessSector]);
 
+  // Cap 50 log terbaru — alasan sama dengan orders di atas.
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('inventory_logs', uId, sec), JSON.stringify(inventoryLogs));
+    localStorage.setItem(getScopedKey('inventory_logs', uId, sec), JSON.stringify(inventoryLogs.slice(0, 50)));
   }, [inventoryLogs, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
@@ -576,10 +589,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('shift', uId, sec), JSON.stringify(shift));
   }, [shift, currentUser.id, settings.businessSector]);
 
+  // Cap 30 shift terbaru (kurang-lebih 1 bulan harian).
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('shift_history', uId, sec), JSON.stringify(shiftHistory));
+    localStorage.setItem(getScopedKey('shift_history', uId, sec), JSON.stringify(shiftHistory.slice(0, 30)));
   }, [shiftHistory, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
@@ -867,11 +881,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('products', oldUId, currentSec), JSON.stringify(products));
     localStorage.setItem(getScopedKey('tables', oldUId, currentSec), JSON.stringify(tables));
     localStorage.setItem(getScopedKey('stock_items', oldUId, currentSec), JSON.stringify(stockItems));
-    localStorage.setItem(getScopedKey('orders', oldUId, currentSec), JSON.stringify(orders));
+    localStorage.setItem(getScopedKey('orders', oldUId, currentSec), JSON.stringify(orders.slice(0, 50)));
     localStorage.setItem(getScopedKey('held_orders', oldUId, currentSec), JSON.stringify(heldOrders));
-    localStorage.setItem(getScopedKey('inventory_logs', oldUId, currentSec), JSON.stringify(inventoryLogs));
+    localStorage.setItem(getScopedKey('inventory_logs', oldUId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
     localStorage.setItem(getScopedKey('shift', oldUId, currentSec), JSON.stringify(shift));
-    localStorage.setItem(getScopedKey('shift_history', oldUId, currentSec), JSON.stringify(shiftHistory));
+    localStorage.setItem(getScopedKey('shift_history', oldUId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
     localStorage.setItem(getScopedKey('customers', oldUId, currentSec), JSON.stringify(customers));
     localStorage.setItem(getScopedKey('attendance_logs', oldUId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', oldUId, currentSec), JSON.stringify(promoCodes));
@@ -1568,11 +1582,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('products', uId, currentSec), JSON.stringify(products));
     localStorage.setItem(getScopedKey('tables', uId, currentSec), JSON.stringify(tables));
     localStorage.setItem(getScopedKey('stock_items', uId, currentSec), JSON.stringify(stockItems));
-    localStorage.setItem(getScopedKey('orders', uId, currentSec), JSON.stringify(orders));
+    localStorage.setItem(getScopedKey('orders', uId, currentSec), JSON.stringify(orders.slice(0, 50)));
     localStorage.setItem(getScopedKey('held_orders', uId, currentSec), JSON.stringify(heldOrders));
-    localStorage.setItem(getScopedKey('inventory_logs', uId, currentSec), JSON.stringify(inventoryLogs));
+    localStorage.setItem(getScopedKey('inventory_logs', uId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
     localStorage.setItem(getScopedKey('shift', uId, currentSec), JSON.stringify(shift));
-    localStorage.setItem(getScopedKey('shift_history', uId, currentSec), JSON.stringify(shiftHistory));
+    localStorage.setItem(getScopedKey('shift_history', uId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
     localStorage.setItem(getScopedKey('customers', uId, currentSec), JSON.stringify(customers));
     localStorage.setItem(getScopedKey('attendance_logs', uId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', uId, currentSec), JSON.stringify(promoCodes));

@@ -72,13 +72,6 @@ interface HomePageProps {
   isStandaloneLanding?: boolean;
 }
 
-interface SimulatorCartItem {
-  id: string;
-  name: string;
-  price: number;
-  qty: number;
-  sector: BusinessSector;
-}
 
 export const HomePage: React.FC<HomePageProps> = ({
   onStartDemo,
@@ -124,16 +117,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [dailyTransactions, setDailyTransactions] = useState<number>(65);
   const [staffCount, setStaffCount] = useState<number>(3);
 
-  // 🎮 Hero Live POS Terminal Interactive Simulator State (Spot On & Moka style)
-  const [simSector, setSimSector] = useState<BusinessSector>('FNB');
-  const [simCart, setSimCart] = useState<SimulatorCartItem[]>([
-    { id: 'sim-1', name: 'Es Kopi Gula Aren', price: 18000, qty: 2, sector: 'FNB' },
-    { id: 'sim-2', name: 'Croissant Butter', price: 22000, qty: 1, sector: 'FNB' },
-  ]);
-  const [showSimPaymentModal, setShowSimPaymentModal] = useState<boolean>(false);
-  const [simPaymentDone, setSimPaymentDone] = useState<boolean>(false);
-
-  // 🔔 Live Social Proof Floating Toast Ticker (Spot On style)
+  // 🔔 Live Social Proof Floating Toast Ticker
   const [currentToastIdx, setCurrentToastIdx] = useState<number>(0);
   const [showLiveToast, setShowLiveToast] = useState<boolean>(true);
 
@@ -175,86 +159,246 @@ export const HomePage: React.FC<HomePageProps> = ({
     return () => clearInterval(timer);
   }, [liveSocialProofs.length]);
 
-  // Simulator Catalog Items
-  const simulatorCatalog: Record<BusinessSector, Array<{ id: string; name: string; price: number; icon: string }>> = {
+  // 📱 Hero Live Cloud POS & Interactive AI Copilot Simulator State
+  const [previewSector, setPreviewSector] = useState<BusinessSector>('FNB');
+  const [heroCopilotQueryIdx, setHeroCopilotQueryIdx] = useState<number>(0);
+  const [heroCopilotTyping, setHeroCopilotTyping] = useState<boolean>(false);
+
+  const heroCopilotQueries: Record<
+    BusinessSector,
+    Array<{
+      id: string;
+      tag: string;
+      icon: string;
+      query: string;
+      badge: string;
+      metrics: Array<{ label: string; value: string; color: string }>;
+      summary: string;
+      actionableTip: string;
+      actionBtn: string;
+    }>
+  > = {
     FNB: [
-      { id: 'fnb-1', name: 'Es Kopi Gula Aren', price: 18000, icon: '☕' },
-      { id: 'fnb-2', name: 'Croissant Butter', price: 22000, icon: '🥐' },
-      { id: 'fnb-3', name: 'Matcha Latte Oat', price: 25000, icon: '🍵' },
-      { id: 'fnb-4', name: 'Nasi Goreng Spesial', price: 32000, icon: '🍳' },
-    ],
-    LAUNDRY: [
-      { id: 'lnd-1', name: 'Cuci Kering Lipat 5Kg', price: 35000, icon: '🧺' },
-      { id: 'lnd-2', name: 'Cuci Setrika Express', price: 50000, icon: '👔' },
-      { id: 'lnd-3', name: 'Bed Cover King Size', price: 40000, icon: '🛏️' },
-      { id: 'lnd-4', name: 'Cuci Sepatu Premium', price: 30000, icon: '👟' },
+      {
+        id: 'fnb-omzet',
+        tag: 'Laba & Omzet',
+        icon: '📈',
+        query: 'Berapa proyeksi omzet & estimasi laba bersih toko saya hari ini?',
+        badge: 'Gross Margin 68.0%',
+        metrics: [
+          { label: 'Penjualan Kotor', value: 'Rp 4.850.000', color: 'text-amber-400' },
+          { label: 'HPP Bahan Baku', value: 'Rp 1.552.000', color: 'text-slate-300' },
+          { label: 'Estimasi Laba', value: 'Rp 3.298.000', color: 'text-emerald-400' },
+        ],
+        summary: 'Performa penjualan meningkat +24.8% vs kemarin. Sebanyak 148 struk telah tercatat dengan rata-rata belanja Rp 32.770 per pelanggan.',
+        actionableTip: '💡 Jam sibuk makan siang (12:00-14:00) menyumbang 48% omzet. Rekomendasi: siapkan pre-mix sirup aren lebih awal.',
+        actionBtn: 'Buka Laporan P&L Lengkap',
+      },
+      {
+        id: 'fnb-stok',
+        tag: 'Peringatan Stok',
+        icon: '📦',
+        query: 'Cek bahan baku & resep menu yang menipis dan perlu restock?',
+        badge: '2 Bahan Kritis',
+        metrics: [
+          { label: 'Susu Fresh Milk', value: 'Sisa 3.2 L (16 cup)', color: 'text-rose-400' },
+          { label: 'Sirup Gula Aren', value: 'Sisa 1.8 L (Habis 17:00)', color: 'text-rose-400' },
+          { label: 'Kopi Arabika Gayo', value: 'Sisa 14.5 Kg (Aman)', color: 'text-emerald-400' },
+        ],
+        summary: 'Berdasarkan rata-rata pesanan 2 jam terakhir, Susu Fresh dan Sirup Aren diproyeksikan habis sebelum jam 17:30 WIB.',
+        actionableTip: '⚠️ Segera buat Purchase Order (PO) ke supplier sebelum pukul 15:30 agar stok malam tidak terganggu.',
+        actionBtn: 'Buat PO Bahan Baku Otomatis',
+      },
+      {
+        id: 'fnb-promo',
+        tag: 'Strategi Menu',
+        icon: '☕',
+        query: 'Menu apa yang paling laris dan rekomendasi promo jam sepi?',
+        badge: 'Es Kopi Aren 68 Porsi',
+        metrics: [
+          { label: 'Es Kopi Aren', value: '68 Cup (Rp 1.22M)', color: 'text-amber-400' },
+          { label: 'Croissant Butter', value: '34 Pcs (Rp 748rb)', color: 'text-slate-300' },
+          { label: 'Upselling Combo', value: '+35% Potensi Omzet', color: 'text-emerald-400' },
+        ],
+        summary: 'Es Kopi Gula Aren memimpin omzet (+42%). Pembelian bundling dengan Croissant Butter terbukti mendongkrak margin hingga 72%.',
+        actionableTip: '🎯 Rekomendasi: Terapkan "Afternoon Combo Kopi + Pastry Rp 32.000" pada jam sepi 14:30 - 17:00 WIB.',
+        actionBtn: 'Aktifkan Promo di Kasir',
+      },
     ],
     RETAIL: [
-      { id: 'rtl-1', name: 'Beras Premium 5 Kg', price: 74000, icon: '🌾' },
-      { id: 'rtl-2', name: 'Minyak Goreng 2 Liter', price: 36000, icon: '🌻' },
-      { id: 'rtl-3', name: 'Gula Pasir 1 Kg', price: 17500, icon: '🧂' },
-      { id: 'rtl-4', name: 'Susu UHT Full Cream', price: 19500, icon: '🥛' },
+      {
+        id: 'rtl-omzet',
+        tag: 'Omzet & SKU',
+        icon: '🛒',
+        query: 'Kategori apa yang menyumbang penjualan tertinggi hari ini?',
+        badge: 'Sembako 68% Omzet',
+        metrics: [
+          { label: 'Total Penjualan', value: 'Rp 8.920.000', color: 'text-amber-400' },
+          { label: 'Item Terjual', value: '342 Unit SKU', color: 'text-slate-300' },
+          { label: 'Laba Bersih', value: 'Rp 2.450.000', color: 'text-emerald-400' },
+        ],
+        summary: 'Kategori Sembako & Minuman Dingin menyumbang 74% dari total transaksi. Rata-rata waktu scan barcode 1.4 detik per item.',
+        actionableTip: '💡 Stok Minyak Goreng 2L dan Beras 5Kg bergerak cepat. Sinkronisasi rak display dengan gudang belakang.',
+        actionBtn: 'Lihat Analisis Margin SKU',
+      },
+      {
+        id: 'rtl-stok',
+        tag: 'Restock Gudang',
+        icon: '📦',
+        query: 'Cek daftar produk yang mendekati batas minimum stok gudang?',
+        badge: '3 Produk Kritis',
+        metrics: [
+          { label: 'Gula Pasir 1Kg', value: 'Sisa 6 Pcs (Min 15)', color: 'text-rose-400' },
+          { label: 'Minyak Goreng 2L', value: 'Sisa 4 Pouch (Min 10)', color: 'text-rose-400' },
+          { label: 'Beras Premium 5Kg', value: 'Sisa 12 Sak (Aman)', color: 'text-emerald-400' },
+        ],
+        summary: 'Terdapat 3 SKU sembako di bawah ambang batas stok aman. Perkiraan habis dalam 4 jam ke depan jika tidak restock.',
+        actionableTip: '⚠️ Kirim notifikasi daftar belanjaan langsung ke distributor rekanan toko via WhatsApp otomatis.',
+        actionBtn: 'Kirim List PO ke Distributor',
+      },
+    ],
+    LAUNDRY: [
+      {
+        id: 'lnd-util',
+        tag: 'Kapasitas Mesin',
+        icon: '🧺',
+        query: 'Bagaimana utilisasi mesin cuci dan status nota siap ambil?',
+        badge: '85% Kapasitas Aktif',
+        metrics: [
+          { label: 'Cucian Masuk', value: '142 Kg Hari Ini', color: 'text-amber-400' },
+          { label: 'Siap Ambil', value: '18 Nota (Rak B)', color: 'text-emerald-400' },
+          { label: 'Speed Selesai', value: 'Rata-rata 3.2 Jam', color: 'text-slate-300' },
+        ],
+        summary: 'Mesin Cuci #01-#04 beroperasi optimal. Sebanyak 18 nota pelanggan sudah selesai disetrika dan masuk rak penyimpanan.',
+        actionableTip: '📲 12 pelanggan belum mengambil pakaian > 24 jam. Kirim pengingat WhatsApp otomatis 1-klik.',
+        actionBtn: 'Kirim Pengingat WhatsApp',
+      },
     ],
     BARBERSHOP: [
-      { id: 'brb-1', name: 'Gentleman Haircut + Wash', price: 50000, icon: '✂️' },
-      { id: 'brb-2', name: 'Beard Trim & Shave', price: 30000, icon: '🪒' },
-      { id: 'brb-3', name: 'Hair Color Treatment', price: 90000, icon: '🎨' },
-      { id: 'brb-4', name: 'Creambath Tradisional', price: 60000, icon: '💆' },
+      {
+        id: 'brb-staff',
+        tag: 'Komisi Staff',
+        icon: '✂️',
+        query: 'Berapa rekap komisi kapster & jam sibuk potong rambut hari ini?',
+        badge: '58 Tamu Dilayani',
+        metrics: [
+          { label: 'Omzet Layanan', value: 'Rp 4.150.000', color: 'text-amber-400' },
+          { label: 'Total Komisi', value: 'Rp 1.245.000 (30%)', color: 'text-purple-400' },
+          { label: 'Top Kapster', value: 'Budi (14 Tamu)', color: 'text-emerald-400' },
+        ],
+        summary: 'Kapster Budi dan Aris mencapai target harian. Semua komisi bagi hasil terhitung otomatis dan siap ditransfer.',
+        actionableTip: '💡 Jam ramai malam diproyeksikan mulai pukul 18:30-21:00 WIB. 4 kursi siap melayani antrean.',
+        actionBtn: 'Lihat Slip Komisi Staff',
+      },
     ],
     CARWASH: [
-      { id: 'cw-1', name: 'Cuci Hidrolik Salju + Vac', price: 50000, icon: '🚗' },
-      { id: 'cw-2', name: 'Poles Jamur Kaca Depan', price: 75000, icon: '✨' },
-      { id: 'cw-3', name: 'Fogging Anti-Bakteri', price: 45000, icon: '💨' },
-      { id: 'cw-4', name: 'Cuci Motor Matic Salju', price: 20000, icon: '🛵' },
+      {
+        id: 'cw-speed',
+        tag: 'Efisiensi Bay',
+        icon: '🚗',
+        query: 'Berapa durasi rata-rata cuci mobil & konsumsi bahan kimia salju?',
+        badge: '18 Menit / Mobil',
+        metrics: [
+          { label: 'Kendaraan Masuk', value: '64 Unit Hari Ini', color: 'text-amber-400' },
+          { label: 'Shampoo Terpakai', value: '12 Liter Salju', color: 'text-slate-300' },
+          { label: 'Efisiensi Waktu', value: '+18% Lebih Cepat', color: 'text-emerald-400' },
+        ],
+        summary: 'Pengerjaan Bay 1 & Bay 2 rata-rata 18 menit (target < 25 menit). Antrean digital mengurangi waktu tunggu pelanggan sebesar 22%.',
+        actionableTip: '⚡ Terapkan promo Fogging Disinfektan + Rp 25.000 saat pelanggan menunggu di kasir.',
+        actionBtn: 'Buka Manajemen Antrean',
+      },
     ],
   };
 
-  const handleAddSimItem = (item: { id: string; name: string; price: number }) => {
-    setSimCart((prev) => {
-      const existing = prev.find((p) => p.id === item.id);
-      if (existing) {
-        return prev.map((p) => (p.id === item.id ? { ...p, qty: p.qty + 1 } : p));
-      }
-      return [...prev, { ...item, qty: 1, sector: simSector }];
-    });
-  };
-
-  const handleUpdateSimQty = (id: string, delta: number) => {
-    setSimCart((prev) =>
-      prev
-        .map((p) => {
-          if (p.id === id) {
-            const newQty = p.qty + delta;
-            return newQty > 0 ? { ...p, qty: newQty } : null;
-          }
-          return p;
-        })
-        .filter(Boolean) as SimulatorCartItem[]
-    );
-  };
-
-  const simSubtotal = simCart.reduce((sum, i) => sum + i.price * i.qty, 0);
-  const simTax = Math.round(simSubtotal * 0.1);
-  const simTotal = simSubtotal + simTax;
-
-  const handleTriggerSimPayment = () => {
-    setShowSimPaymentModal(true);
-    setSimPaymentDone(false);
-  };
-
-  const handleExecuteSimSuccess = () => {
-    setSimPaymentDone(true);
-    confetti({
-      particleCount: 75,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#f59e0b', '#10b981', '#6366f1'],
-    });
+  const handleSelectHeroQuery = (idx: number) => {
+    setHeroCopilotTyping(true);
+    setHeroCopilotQueryIdx(idx);
     setTimeout(() => {
-      setShowSimPaymentModal(false);
-      setSimCart([]);
-      setSimPaymentDone(false);
-    }, 3500);
+      setHeroCopilotTyping(false);
+    }, 150);
+  };
+
+  const previewData: Record<
+    BusinessSector,
+    {
+      sectorName: string;
+      revenue: string;
+      txCount: string;
+      orderTitle: string;
+      orderDetail: string;
+      amount: string;
+      paymentStatus: string;
+      operationalStatus: string;
+      inventoryStatus: string;
+      aiInsight: string;
+      badgeIcon: string;
+    }
+  > = {
+    FNB: {
+      sectorName: 'Kafe, Resto & Kuliner',
+      revenue: 'Rp 4.850.000',
+      txCount: '148 Struk',
+      orderTitle: 'Meja #04 • Dine-In',
+      orderDetail: '2x Es Kopi Aren, 1x Croissant Butter, 1x Nasi Goreng',
+      amount: 'Rp 90.000',
+      paymentStatus: 'QRIS Dinamis Sukses',
+      operationalStatus: 'Kitchen Display: Sedang Disiapkan (3 min)',
+      inventoryStatus: 'Bahan Baku: Biji Kopi & Susu Terpotong Otomatis',
+      aiInsight: 'Menu Es Kopi Aren naik +32% di jam makan siang. Stok susu segar tersisa 4 Liter.',
+      badgeIcon: '☕',
+    },
+    RETAIL: {
+      sectorName: 'Toko Kelontong & Minimarket',
+      revenue: 'Rp 8.920.000',
+      txCount: '210 Struk',
+      orderTitle: 'Kasir Scanner 01 • Struk #RTL-104',
+      orderDetail: '1x Beras 5Kg, 2x Minyak 2L, 1x Gula Pasir 1Kg',
+      amount: 'Rp 163.500',
+      paymentStatus: 'Debit / EDC Terverifikasi',
+      operationalStatus: 'Barcode Scanner Aktif • Cetak Struk 58mm',
+      inventoryStatus: 'Stok Sembako: Sinkron Real-Time ke Gudang',
+      aiInsight: 'Kategori Sembako menyumbang 68% omzet. 3 SKU mendekati batas minimum stok.',
+      badgeIcon: '🛒',
+    },
+    LAUNDRY: {
+      sectorName: 'Laundry Kiloan & Satuan',
+      revenue: 'Rp 3.420.000',
+      txCount: '76 Nota',
+      orderTitle: 'Nota #LND-082 • Ibu Maya',
+      orderDetail: '6.5 Kg Cuci Setrika Express + 1x Bed Cover King',
+      amount: 'Rp 98.500',
+      paymentStatus: 'WhatsApp Nota Terkirim',
+      operationalStatus: 'Rak Siap Ambil: B-03 • Mesin Cuci #02 Selesai',
+      inventoryStatus: 'Deterjen & Pewangi Terpotong per Kilogram',
+      aiInsight: 'Rata-rata selesai 3.2 jam. 12 nota siap dikirimi pengingat WhatsApp ambil cucian.',
+      badgeIcon: '🧺',
+    },
+    BARBERSHOP: {
+      sectorName: 'Barbershop & Salon Kecantikan',
+      revenue: 'Rp 4.150.000',
+      txCount: '58 Pelanggan',
+      orderTitle: 'Kursi #02 • Kapster Budi',
+      orderDetail: '1x Gentleman Fade + Creambath Tradisional + Wash',
+      amount: 'Rp 110.000',
+      paymentStatus: 'Komisi Staff Rp 33.000',
+      operationalStatus: 'Antrean Berjalan: 2 Tamu Sedang Menunggu',
+      inventoryStatus: 'Pomade & Tonik Terhitung ke HPP Layanan',
+      aiInsight: 'Kapster Budi mencapai target 12 tamu hari ini. Estimasi jam ramai: 18:30 WIB.',
+      badgeIcon: '✂️',
+    },
+    CARWASH: {
+      sectorName: 'Cuci Mobil & Motor Auto Detailing',
+      revenue: 'Rp 5.200.000',
+      txCount: '64 Kendaraan',
+      orderTitle: 'Bay #01 • Honda HR-V (B 1284 K)',
+      orderDetail: '1x Cuci Salju Hidrolik + Vacum Interior + Fogging',
+      amount: 'Rp 95.000',
+      paymentStatus: 'Tunai / Cash Lunas',
+      operationalStatus: 'Durasi Pengerjaan: 16/25 Menit (3 Crew)',
+      inventoryStatus: 'Shampoo Salju & Semir Ban Terhitung Otomatis',
+      aiInsight: 'Efisiensi waktu pengerjaan naik 18% setelah implementasi antrean digital.',
+      badgeIcon: '🚗',
+    },
   };
 
   // ROI & Growth Calculations (Spot On style)
@@ -474,9 +618,9 @@ export const HomePage: React.FC<HomePageProps> = ({
 
         {/* Center Desktop Links */}
         <nav className="hidden lg:flex items-center space-x-6 text-xs font-bold text-slate-300">
-          <a href="#simulator" className="hover:text-amber-400 transition-colors flex items-center gap-1.5">
+          <a href="#ai-copilot" className="hover:text-amber-400 transition-colors flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>Simulator POS</span>
+            <span>Asisten AI Copilot</span>
           </a>
           <a href="#fitur" className="hover:text-amber-400 transition-colors">Fitur Unggulan</a>
           <a href="#kalkulator-profit" className="hover:text-amber-400 transition-colors">Kalkulator Usaha</a>
@@ -618,224 +762,193 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           </div>
 
-          {/* Right Column: 🕹️ INTERACTIVE LIVE POS PLAYGROUND TERMINAL (SPOT ON & MOKA STYLE) */}
-          <div id="simulator" className="lg:col-span-6 relative">
-            {/* Tablet Frame */}
-            <div className="bg-slate-900 border-2 border-slate-700/80 rounded-[32px] p-3 sm:p-5 shadow-2xl shadow-amber-500/10 backdrop-blur-xl relative overflow-hidden ring-4 ring-slate-800/50">
-              {/* Tablet Header Bar */}
-              <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800 text-xs">
+          {/* Right Column: 🤖 INTERACTIVE AI COPILOT & BUSINESS INTELLIGENCE SIMULATOR */}
+          <div id="ai-copilot" className="lg:col-span-6 relative">
+            {/* Ambient Multi-glow Aura */}
+            <div className="absolute -inset-1 bg-gradient-to-r from-purple-500/25 via-amber-500/20 to-emerald-500/25 rounded-[36px] blur-xl opacity-75 pointer-events-none" />
+
+            {/* Main AI Terminal Frame */}
+            <div className="bg-slate-900/95 border-2 border-purple-500/40 rounded-[32px] p-4 sm:p-5 shadow-2xl backdrop-blur-xl relative overflow-hidden ring-4 ring-purple-950/50 space-y-4">
+              {/* Terminal Header Bar */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-xs">
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 rounded-full bg-rose-500/80" />
                   <div className="w-3 h-3 rounded-full bg-amber-500/80" />
                   <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
-                  <span className="font-mono text-[11px] text-slate-400 ml-2 font-bold">
-                    Terminal Kasir #01 &bull; Live Interactive Playground
-                  </span>
+                  <div className="flex items-center space-x-1.5 ml-1.5">
+                    <Bot className="w-4 h-4 text-purple-400" />
+                    <span className="font-mono text-[11px] text-purple-200 font-bold">
+                      New Hope AI Copilot &bull; Live Terminal
+                    </span>
+                  </div>
                 </div>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-black border border-emerald-500/30 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  <span>Coba Tambah Menu!</span>
+
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-black border border-emerald-500/30 flex items-center gap-1.5 shadow-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Biaya Token Rp 0 &bull; Instan &lt; 5ms</span>
                 </span>
               </div>
 
-              {/* Sector Quick Switcher inside Terminal */}
-              <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none mb-3">
-                {(Object.keys(simulatorCatalog) as BusinessSector[]).map((sec) => (
-                  <button
-                    key={sec}
-                    onClick={() => setSimSector(sec)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
-                      simSector === sec
-                        ? 'bg-amber-500 text-slate-950 shadow-md font-black'
-                        : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
-                    }`}
-                  >
-                    {BUSINESS_PRESETS[sec]?.name || sec}
-                  </button>
-                ))}
+              {/* Sector Quick Filter */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    Pilih Konteks Sektor Usaha:
+                  </span>
+                  <span className="text-[10px] text-purple-400 font-bold">Sesuaikan Analisa</span>
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  {[
+                    { id: 'FNB' as BusinessSector, label: 'Kafe & Resto', icon: '☕' },
+                    { id: 'RETAIL' as BusinessSector, label: 'Ritel & Toko', icon: '🛒' },
+                    { id: 'LAUNDRY' as BusinessSector, label: 'Laundry', icon: '🧺' },
+                    { id: 'BARBERSHOP' as BusinessSector, label: 'Barbershop', icon: '✂️' },
+                    { id: 'CARWASH' as BusinessSector, label: 'Cuci Kendaraan', icon: '🚗' },
+                  ].map((sec) => (
+                    <button
+                      key={sec.id}
+                      onClick={() => {
+                        setPreviewSector(sec.id);
+                        handleSelectHeroQuery(0);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                        previewSector === sec.id
+                          ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 font-black scale-[1.02]'
+                          : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>{sec.icon}</span>
+                      <span>{sec.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Two Column POS Interface Mock: Catalog & Cart */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                {/* Product Catalog Grid (7 Cols) */}
-                <div className="sm:col-span-7 space-y-2">
-                  <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center justify-between">
-                    <span>Katalog ({BUSINESS_PRESETS[simSector]?.name})</span>
-                    <span className="text-amber-400">Pilih item ➔</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    {simulatorCatalog[simSector].map((item) => (
+              {/* Interactive Query Selection Chips */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                  Klik Pertanyaan untuk Uji Respon AI:
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                  {(heroCopilotQueries[previewSector] || heroCopilotQueries.FNB).map((q, idx) => {
+                    const isSelected = heroCopilotQueryIdx === idx;
+                    return (
                       <button
-                        key={item.id}
-                        onClick={() => handleAddSimItem(item)}
-                        className="p-3 bg-slate-950/80 hover:bg-amber-500/10 hover:border-amber-500/60 border border-slate-800 rounded-2xl text-left transition-all active:scale-95 group cursor-pointer space-y-1.5"
+                        key={q.id}
+                        onClick={() => handleSelectHeroQuery(idx)}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer space-y-1 ${
+                          isSelected
+                            ? 'bg-purple-500/20 border-purple-500 text-white shadow-md ring-1 ring-purple-500/40 scale-[1.01]'
+                            : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
+                        }`}
                       >
-                        <div className="text-2xl">{item.icon}</div>
-                        <div>
-                          <p className="text-xs font-extrabold text-white group-hover:text-amber-400 transition-colors line-clamp-1">
-                            {item.name}
-                          </p>
-                          <p className="text-xs font-black text-amber-400 font-mono">
-                            {formatRupiah(item.price)}
-                          </p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-purple-400 flex items-center gap-1">
+                            <span>{q.icon}</span>
+                            <span>{q.tag}</span>
+                          </span>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
                         </div>
+                        <p className="text-[11px] font-bold text-slate-200 line-clamp-1">
+                          {q.query}
+                        </p>
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
+              </div>
 
-                {/* Live Cart & Instant Checkout (5 Cols) */}
-                <div className="sm:col-span-5 bg-slate-950/90 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between space-y-3">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <div className="flex items-center space-x-1.5 text-xs font-black text-white">
-                        <ShoppingCart className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Keranjang ({simCart.reduce((sum, i) => sum + i.qty, 0)})</span>
+              {/* Live AI Structured Output Display Card */}
+              {(() => {
+                const currentList = heroCopilotQueries[previewSector] || heroCopilotQueries.FNB;
+                const activeQuery = currentList[heroCopilotQueryIdx] || currentList[0];
+
+                return (
+                  <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    {/* User Question Bubble */}
+                    <div className="flex items-start space-x-2.5">
+                      <div className="w-6 h-6 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">
+                        Anda
                       </div>
-                      {simCart.length > 0 && (
-                        <button
-                          onClick={() => setSimCart([])}
-                          className="text-[10px] text-rose-400 hover:text-rose-300 font-bold"
-                          title="Hapus Semua"
-                        >
-                          Reset
-                        </button>
-                      )}
+                      <div className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-slate-200">
+                        &ldquo;{activeQuery.query}&rdquo;
+                      </div>
                     </div>
 
-                    {/* Cart Items List */}
-                    <div className="space-y-1.5 max-h-[140px] overflow-y-auto scrollbar-thin pr-1">
-                      {simCart.length === 0 ? (
-                        <div className="py-6 text-center text-slate-500 text-xs">
-                          <p>Keranjang kosong.</p>
-                          <p className="text-[10px]">Klik menu di sebelah kiri!</p>
-                        </div>
-                      ) : (
-                        simCart.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between text-xs py-1 border-b border-slate-800/40"
-                          >
-                            <div className="min-w-0 flex-1 pr-2">
-                              <p className="font-bold text-white text-[11px] truncate">{item.name}</p>
-                              <p className="text-[10px] text-amber-400 font-mono">
-                                {formatRupiah(item.price * item.qty)}
-                              </p>
-                            </div>
-                            <div className="flex items-center space-x-1 shrink-0">
-                              <button
-                                onClick={() => handleUpdateSimQty(item.id, -1)}
-                                className="w-5 h-5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold text-xs"
-                              >
-                                -
-                              </button>
-                              <span className="w-4 text-center font-mono font-bold text-xs text-white">
-                                {item.qty}
-                              </span>
-                              <button
-                                onClick={() => handleUpdateSimQty(item.id, 1)}
-                                className="w-5 h-5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold text-xs"
-                              >
-                                +
-                              </button>
-                            </div>
+                    {/* AI Structured Answer Box */}
+                    <div className="space-y-3 pt-1 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-6 h-6 rounded-lg bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                            <Bot className="w-3.5 h-3.5" />
                           </div>
-                        ))
-                      )}
+                          <div>
+                            <span className="text-xs font-black text-white block">Jawaban Analisis Copilot</span>
+                            <span className="text-[9px] text-slate-400">Database Engine Live</span>
+                          </div>
+                        </div>
+
+                        <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black">
+                          {activeQuery.badge}
+                        </span>
+                      </div>
+
+                      {/* 📊 Key Metrics Strip */}
+                      <div className="grid grid-cols-3 gap-2">
+                        {activeQuery.metrics.map((m, mIdx) => (
+                          <div key={mIdx} className="bg-slate-900/90 border border-slate-800 rounded-xl p-2 text-left">
+                            <span className="text-[9px] text-slate-400 block font-semibold truncate">{m.label}</span>
+                            <span className={`text-xs font-black font-mono block mt-0.5 ${m.color}`}>
+                              {m.value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Summary & Strategy Recommendation */}
+                      <div className="p-3 bg-slate-900/60 border border-slate-800/80 rounded-xl space-y-1.5">
+                        <p className="text-xs text-slate-200 leading-relaxed font-medium">
+                          {activeQuery.summary}
+                        </p>
+                        <div className="pt-1.5 border-t border-slate-800/70 text-[11px] font-semibold text-amber-300">
+                          {activeQuery.actionableTip}
+                        </div>
+                      </div>
+
+                      {/* Provenance & Action Trigger */}
+                      <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400">
+                        <span className="flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                          <span>Akurat 100% dari Database Toko</span>
+                        </span>
+                        <button
+                          onClick={handleOpenPOS}
+                          className="text-purple-400 hover:text-purple-300 font-extrabold transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>{activeQuery.actionBtn}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
+                );
+              })()}
 
-                  {/* Summary & Trigger Checkout */}
-                  <div className="space-y-2 pt-2 border-t border-slate-800">
-                    <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Total + PPN (10%):</span>
-                      <span className="font-mono font-black text-amber-400 text-sm">
-                        {formatRupiah(simTotal)}
-                      </span>
-                    </div>
-
-                    <button
-                      disabled={simCart.length === 0}
-                      onClick={handleTriggerSimPayment}
-                      className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center space-x-1.5"
-                    >
-                      <QrCode className="w-4 h-4 text-slate-950" />
-                      <span>Simulasi Bayar QRIS ➔</span>
-                    </button>
-                  </div>
+              {/* Bottom Quick Trigger Bar */}
+              <div className="pt-1 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
+                  <Sparkles className="w-4 h-4 text-purple-400" />
+                  <span>Mendukung Perintah Suara & WhatsApp Copilot</span>
                 </div>
+                <button
+                  onClick={handleOpenPOS}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 via-purple-500 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black text-xs rounded-xl shadow-lg shadow-purple-500/25 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Bot className="w-3.5 h-3.5" />
+                  <span>Buka AI Copilot Penuh di POS</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
-
-            {/* Interactive Payment Success Modal Overlay */}
-            {showSimPaymentModal && (
-              <div className="absolute inset-0 z-30 bg-slate-950/95 backdrop-blur-md rounded-[32px] p-6 flex flex-col items-center justify-center text-center animate-fade-in space-y-4 border-2 border-amber-500/60 shadow-2xl">
-                {!simPaymentDone ? (
-                  <>
-                    <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/40">
-                      <QrCode className="w-7 h-7" />
-                    </div>
-
-                    <div className="space-y-1">
-                      <h4 className="font-black text-lg text-white">QRIS Dinamis Terverifikasi</h4>
-                      <p className="text-xs text-slate-400">
-                        Nominal terkunci otomatis &bull; Notifikasi pembayaran instan
-                      </p>
-                    </div>
-
-                    <div className="p-3 bg-white rounded-2xl shadow-xl inline-block">
-                      <div className="w-36 h-36 bg-slate-950 rounded-xl p-2 flex flex-col items-center justify-between border-4 border-amber-500">
-                        <div className="flex justify-between w-full">
-                          <div className="w-6 h-6 bg-white rounded-xs" />
-                          <div className="w-6 h-6 bg-white rounded-xs" />
-                        </div>
-                        <span className="text-[10px] font-black text-amber-400 tracking-wider">
-                          QRIS DINAMIS
-                        </span>
-                        <span className="text-xs font-black text-white font-mono">
-                          {formatRupiah(simTotal)}
-                        </span>
-                        <div className="flex justify-between w-full">
-                          <div className="w-6 h-6 bg-white rounded-xs" />
-                          <div className="w-6 h-6 bg-white rounded-xs" />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 w-full max-w-xs">
-                      <button
-                        onClick={handleExecuteSimSuccess}
-                        className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center space-x-1.5"
-                      >
-                        <Check className="w-4 h-4 stroke-[3]" />
-                        <span>Simulasi Pelanggan Bayar</span>
-                      </button>
-
-                      <button
-                        onClick={() => setShowSimPaymentModal(false)}
-                        className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
-                      >
-                        Batal
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-3 animate-scale-up">
-                    <div className="w-16 h-16 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/30">
-                      <CheckCircle className="w-10 h-10 stroke-[2.5]" />
-                    </div>
-                    <h3 className="text-2xl font-black text-white">Pembayaran Berhasil!</h3>
-                    <p className="text-xs text-emerald-400 font-bold">
-                      Transaksi {formatRupiah(simTotal)} tercatat otomatis di laporan omset & Auto-Settlement H+1.
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      Struk digital terkirim ke WhatsApp pelanggan & Stok bahan baku terpotong per gramatur.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </section>
