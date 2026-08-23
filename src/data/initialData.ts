@@ -16,18 +16,33 @@ export const INITIAL_CUSTOMERS: Customer[] = [];
 /** Cabang. Cabang pertama dibuat dari nama toko saat pendaftaran. */
 export const INITIAL_BRANCHES: StoreBranch[] = [];
 
+/**
+ * Pengaturan awal toko yang BARU LAHIR.
+ *
+ * Seluruh identitas toko dikosongkan. Sebelumnya berisi 'New Hope POS',
+ * 'Jl. Utama Resto No. 123', dan nomor telepon '081234567890' — dan karena
+ * struk mencetak ketiganya, setiap toko yang belum sempat membuka layar
+ * Pengaturan memberi pelanggannya struk beralamat kantor kami.
+ *
+ * Kosong lebih jujur daripada terisi salah: layar Pengaturan bisa menandai
+ * yang kosong sebagai "belum diisi", tapi tidak punya cara mengetahui bahwa
+ * 'Jl. Utama Resto No. 123' bukan alamat toko ini.
+ */
 export const INITIAL_SETTINGS: StoreSettings = {
-  storeName: 'New Hope POS',
-  tagline: 'KASIR & RESTO',
-  address: 'Jl. Utama Resto No. 123',
-  phone: '081234567890',
+  storeName: '',
+  tagline: '',
+  address: '',
+  phone: '',
   taxRate: 0,
   enableTax: false,
   serviceRate: 0,
   enableService: false,
   currencySymbol: 'Rp',
-  receiptHeader: 'New Hope POS - KASIR & RESTO\nTerima Kasih Atas Kunjungan Anda!',
-  receiptFooter: 'Semoga Harimu Menyenangkan!',
+  // Kepala struk dibiarkan kosong: yang dicetak di atas struk adalah nama dan
+  // alamat toko, dan keduanya diisi pemiliknya sendiri. Kaki struk boleh
+  // berupa ucapan umum — tidak ada yang bisa salah dari "terima kasih".
+  receiptHeader: '',
+  receiptFooter: 'Terima kasih atas kunjungan Anda',
   storeMode: 'FNB',
   autoPrintReceipt: false,
   // Menyala secara bawaan: toko yang tidak memakainya cukup mematikannya di
@@ -37,22 +52,45 @@ export const INITIAL_SETTINGS: StoreSettings = {
   loyaltyRedeemRate: 100,
   loyaltyTiers: [...TIER_BAWAAN],
   branches: INITIAL_BRANCHES,
-  activeBranchId: 'branch-senayan',
+  // TIDAK menunjuk cabang mana pun. Dulu berisi 'branch-senayan' — id cabang
+  // contoh yang sudah tidak ada, sehingga setiap pencarian cabang aktif
+  // mengembalikan undefined dan geofence absensi diam-diam tidak menemukan
+  // titik pembanding apa pun.
+  activeBranchId: undefined,
   geofenceEnforcement: 'FLEXIBLE',
 };
 
+/**
+ * Shift awal: TIDAK ADA SHIFT.
+ *
+ * INILAH SUMBER "OMZET" YANG MUNCUL DI TOKO YANG BELUM PERNAH MENJUAL APA PUN.
+ * Nilai sebelumnya bukan nol melainkan sebuah shift lengkap milik "Budi
+ * Santoso" berisi omzet Rp 2.800.000 — Rp 780.000 tunai, Rp 1.250.000 QRIS,
+ * Rp 450.000 kartu, Rp 320.000 e-wallet — dengan modal awal Rp 500.000.
+ *
+ * Header membaca `shift.totalSales` dan mencetaknya apa adanya, jadi pemilik
+ * yang baru mendaftar membuka aplikasi dan langsung melihat omzet Rp 2,8 juta
+ * atas nama kasir yang tidak pernah ia pekerjakan. Angka itu juga masuk ke
+ * `expectedCash`, sehingga tutup kas pertama akan melaporkan selisih Rp 1,28
+ * juta terhadap laci yang sebenarnya kosong.
+ *
+ * Statusnya CLOSED, bukan OPEN. Toko yang belum pernah dibuka siapa pun tidak
+ * sedang berada di tengah shift, dan layar "Mulai Shift" memang yang
+ * seharusnya muncul pertama kali.
+ */
 export const INITIAL_SHIFT: Shift = {
-  id: 'shift-001',
-  cashierName: 'Budi Santoso',
-  startTime: '2026-08-10T08:00:00',
-  initialCash: 500000,
-  cashSales: 780000,
-  qrisSales: 1250000,
-  cardSales: 450000,
-  eWalletSales: 320000,
-  totalSales: 2800000,
-  expectedCash: 1280000, // initial 500k + cash sales 780k
-  status: 'OPEN',
+  id: '',
+  cashierName: '',
+  startTime: '',
+  initialCash: 0,
+  cashSales: 0,
+  qrisSales: 0,
+  cardSales: 0,
+  eWalletSales: 0,
+  totalSales: 0,
+  expectedCash: 0,
+  totalOrders: 0,
+  status: 'CLOSED',
 };
 
 /** Riwayat penjualan. Toko baru belum menjual apa pun — angka omzet palsu di layar pemilik lebih buruk daripada layar kosong. */

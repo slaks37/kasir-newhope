@@ -6,6 +6,7 @@ import {
   getBlogPostBySlug,
 } from '../../lib/blogStorage';
 import { MediaEmbedRenderer } from './MediaEmbedRenderer';
+import { AvatarPenulis } from './AvatarPenulis';
 import { BlogSEOHead } from './BlogSEOHead';
 import {
   BookOpen,
@@ -257,10 +258,9 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
             {/* Author Info & Publish Date */}
             <div className="flex items-center justify-between pt-4 border-t border-slate-800/80">
               <div className="flex items-center space-x-3">
-                <img
-                  src={selectedPost.author.avatar}
-                  alt={selectedPost.author.name}
-                  className="w-11 h-11 rounded-full object-cover border border-amber-500/40"
+                <AvatarPenulis
+                  penulis={selectedPost.author}
+                  className="w-11 h-11 text-sm border border-amber-500/40"
                 />
                 <div>
                   <h4 className="font-extrabold text-sm text-white">{selectedPost.author.name}</h4>
@@ -494,11 +494,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
                 <div className="flex items-center justify-between pt-4 border-t border-slate-800 text-xs text-slate-400">
                   <div className="flex items-center space-x-2">
-                    <img
-                      src={featuredPost.author.avatar}
-                      alt={featuredPost.author.name}
-                      className="w-7 h-7 rounded-full object-cover"
-                    />
+                    <AvatarPenulis penulis={featuredPost.author} className="w-7 h-7 text-[10px]" />
                     <span className="font-bold text-white">{featuredPost.author.name}</span>
                   </div>
 
@@ -566,11 +562,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                   {/* Card Footer */}
                   <div className="p-5 sm:p-6 pt-0 border-t border-slate-800/80 mt-2 flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2">
-                      <img
-                        src={p.author.avatar}
-                        alt={p.author.name}
-                        className="w-6 h-6 rounded-full object-cover"
-                      />
+                      <AvatarPenulis penulis={p.author} className="w-6 h-6 text-[9px]" />
                       <span className="font-bold text-slate-300 truncate max-w-[120px]">{p.author.name}</span>
                     </div>
 

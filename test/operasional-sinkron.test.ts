@@ -292,10 +292,89 @@ describe.skipIf(!ADA_DB)('sinkronisasi data operasional', () => {
     expect(rows.length).toBe(0);
   });
 
+  it('KAS: modal awal, uang masuk, dan uang keluar sampai ke server', async () => {
+    const res = await kirim({
+      businessId: KUNCI, sector: 'FNB',
+      cashEntries: [
+        { id: 'kas-1', jenis: 'MODAL_AWAL', jumlah: 500000, kategori: 'Modal Awal Laci',
+          waktu: '2026-08-23T01:00:00.000Z', dicatatOleh: 'Sari' },
+        { id: 'kas-2', jenis: 'KELUAR', jumlah: 150000, kategori: 'Belanja Bahan Baku',
+          keterangan: 'Beli telur 3 kg', waktu: '2026-08-23T03:00:00.000Z' },
+        { id: 'kas-3', jenis: 'MASUK', jumlah: 100000, kategori: 'Pelunasan Piutang',
+          waktu: '2026-08-23T05:00:00.000Z' },
+      ],
+    });
+    expect(res._status).toBe(200);
+    expect(res._body.tersimpan.cashEntries).toBe(3);
+
+    const t = await tarik();
+    expect(t._body.cashEntries.length).toBe(3);
+    const keluar = t._body.cashEntries.find((r: any) => r.external_ref === 'kas-2');
+    // Disimpan POSITIF. Arahnya dari entry_type, bukan dari tanda angkanya.
+    expect(Number(keluar.amount)).toBe(150000);
+    expect(keluar.entry_type).toBe('KELUAR');
+  });
+
+  it('KAS: jumlah negatif atau nol DITOLAK, tidak disimpan sebagai nol', async () => {
+    const res = await kirim({
+      businessId: KUNCI, sector: 'FNB',
+      cashEntries: [
+        { id: 'kas-nol', jenis: 'KELUAR', jumlah: 0, waktu: '2026-08-23T06:00:00.000Z' },
+        // Angka bertanda yang lolos ke server akan MENAMBAH kas ketika
+        // seharusnya mengurangi, dan hasilnya tetap tampak masuk akal —
+        // sehingga tidak ada yang memeriksanya. Nilai mutlaknya yang dipakai.
+        { id: 'kas-min', jenis: 'KELUAR', jumlah: -75000, waktu: '2026-08-23T07:00:00.000Z' },
+        { id: 'kas-aneh', jenis: 'TRANSFER', jumlah: 50000, waktu: '2026-08-23T08:00:00.000Z' },
+      ],
+    });
+    expect(res._status).toBe(200);
+    expect(res._body.tersimpan.cashEntries).toBe(1);
+
+    const { rows } = await db().query(
+      `SELECT external_ref, amount FROM pos.cash_entries
+        WHERE external_ref IN ('kas-nol','kas-min','kas-aneh')`);
+    expect(rows.length).toBe(1);
+    expect(rows[0].external_ref).toBe('kas-min');
+    expect(Number(rows[0].amount)).toBe(75000);
+  });
+
+  it('REKAP HARIAN memisahkan omzet dari isi laci', async () => {
+    const d = db();
+    const { rows } = await d.query(
+      `SELECT tanggal, omzet, omzet_tunai, modal_awal, kas_masuk_lain,
+              kas_keluar, saldo_kas_seharusnya
+         FROM contract.daily_cash
+        WHERE business_id = $1 AND tanggal = DATE '2026-08-23'`, [KUNCI]);
+
+    expect(rows.length).toBe(1);
+    const r = rows[0];
+    // Toko uji ini belum punya transaksi, jadi omzetnya nol — dan justru itu
+    // yang membuktikan hari yang HANYA berisi pengeluaran tetap muncul.
+    // FULL OUTER JOIN yang menahannya; INNER JOIN akan menyembunyikan persis
+    // hari yang paling perlu dilihat pemilik.
+    expect(Number(r.omzet)).toBe(0);
+    expect(Number(r.modal_awal)).toBe(500000);
+    expect(Number(r.kas_masuk_lain)).toBe(100000);
+    expect(Number(r.kas_keluar)).toBe(225000);
+    expect(Number(r.saldo_kas_seharusnya)).toBe(375000);
+  });
+
+  it('KAS: view kontrak memberi angka bertanda di satu tempat saja', async () => {
+    const { rows } = await db().query(
+      `SELECT entry_ref, amount, amount_signed FROM contract.cash_entries
+        WHERE business_id = $1 AND entry_ref IN ('kas-2','kas-3')
+        ORDER BY entry_ref`, [KUNCI]);
+
+    expect(Number(rows[0].amount)).toBe(150000);
+    expect(Number(rows[0].amount_signed)).toBe(-150000);
+    expect(Number(rows[1].amount_signed)).toBe(100000);
+  });
+
   it('PERMUKAAN KONTRAK ikut terisi, karena panel admin membaca dari sana', async () => {
     const d = db();
     for (const view of ['dining_tables', 'ingredients', 'promo_codes',
-                        'cashier_shifts', 'attendance', 'store_settings']) {
+                        'cashier_shifts', 'attendance', 'store_settings',
+                        'cash_entries', 'daily_cash']) {
       const { rows } = await d.query(
         `SELECT COUNT(*)::int AS n FROM contract.${view} WHERE business_id = $1`, [KUNCI]);
       expect({ view, n: rows[0].n }).toEqual({ view, n: expect.any(Number) });

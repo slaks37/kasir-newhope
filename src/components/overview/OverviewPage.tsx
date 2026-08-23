@@ -290,7 +290,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     BARBERSHOP: Scissors,
   };
 
-  const activeCashierName = currentUser?.name || (shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : 'Budi Santoso');
+  // Nama orang yang benar-benar masuk, atau tanda hubung. Nilai cadangan
+  // 'Budi Santoso' membuat layar tampak menyebut seseorang padahal tidak ada
+  // yang tercatat — dan nama itu ikut tercetak di struk.
+  const activeCashierName = currentUser?.name || shift.cashierName || '—';
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
@@ -323,7 +326,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 text-slate-300 text-xs font-semibold border border-slate-700">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Pengguna Aktif: {currentUser?.name || 'Budi Santoso'} ({currentUser?.role || 'ADMIN'})</span>
+                <span>Pengguna Aktif: {currentUser?.name || '—'} ({currentUser?.role || '—'})</span>
               </span>
               {shift.status === 'OPEN' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 animate-pulse">
@@ -724,7 +727,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
                 Fitur Unggulan Format {activePreset.name}:
               </span>
-              <span className="text-[11px] text-slate-400 font-medium">{activePreset.products.length} produk katalog bawaan</span>
+              {/* Dulu: "{activePreset.products.length} produk katalog bawaan".
+                  Tidak ada katalog bawaan, dan tidak seharusnya ada — angka
+                  itu selalu tertulis nol setelah preset dikosongkan, dan
+                  menjanjikan isi yang tidak akan pernah muncul. */}
+              <span className="text-[11px] text-slate-400 font-medium">{products.length} produk di katalog Anda</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
               {activePreset.features.map((feat, idx) => (

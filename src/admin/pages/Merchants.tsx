@@ -120,7 +120,12 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   <span>{data.profile.merchant_name}</span>
                 </h1>
                 <p className="text-xs text-slate-300 font-medium">
-                  Pemilik: <strong>{data.profile.owner_name || 'Budi Santoso'}</strong> • Kontak: {data.profile.email || 'budi@newhope.id'} ({data.profile.phone || '081234567890'})
+                  {/* Identitas merchant sungguhan, atau tanda hubung. Nilai
+                      cadangan di sini bukan sekadar kosmetik: panel ini dipakai
+                      tim dukungan untuk MENGHUBUNGI merchant, dan nomor
+                      '081234567890' yang muncul untuk setiap merchant tanpa
+                      kontak adalah nomor yang akan benar-benar ditelepon. */}
+                  Pemilik: <strong>{data.profile.owner_name || '—'}</strong> • Kontak: {data.profile.email || '—'} ({data.profile.phone || '—'})
                 </p>
               </div>
 

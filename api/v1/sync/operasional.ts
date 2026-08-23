@@ -98,6 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const promo = ambil('promoCodes');
   const shift = ambil('shifts');
   const absensi = ambil('attendance');
+  const kas = ambil('cashEntries');
   const pengaturan = body.settings && typeof body.settings === 'object' ? body.settings : null;
 
   const db = getPool();
@@ -309,6 +310,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         n++;
       }
       tersimpan.attendance = n;
+    }
+
+    /* -- KAS HARIAN ------------------------------------------------------- */
+    //
+    // Modal awal, uang masuk non-penjualan, dan pengeluaran. PENJUALAN TIDAK
+    // ADA DI SINI — struk sudah menjadi catatannya di pos.transactions, dan
+    // mencatatnya sekali lagi sebagai kas masuk membuat omzet terhitung dua
+    // kali. Yang menggabungkan keduanya adalah contract.daily_cash.
+    if (kas) {
+      let n = 0;
+      for (const e of kas) {
+        const ref = teks(e?.id, 96);
+        const kapan = waktu(e?.waktu);
+        const jenis = String(e?.jenis ?? '').toUpperCase();
+        if (!ref || !kapan) continue;
+        if (!['MODAL_AWAL', 'MASUK', 'KELUAR'].includes(jenis)) continue;
+
+        // Nilai nol atau negatif ditolak, bukan disimpan sebagai nol. Arah
+        // uang ditentukan `entry_type`; angka bertanda yang lolos ke sini akan
+        // MENAMBAH kas ketika seharusnya mengurangi, dan hasilnya tetap
+        // tampak masuk akal sehingga tidak ada yang memeriksanya.
+        const jumlah = Math.abs(angka(e?.jumlah));
+        if (!(jumlah > 0)) continue;
+
+        await client.query(
+          `INSERT INTO pos.cash_entries
+             (business_id, external_ref, entry_type, amount, category, note,
+              occurred_at, shift_ref, recorded_by_ref, recorded_by_name,
+              business_sector, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, CURRENT_TIMESTAMP)
+           ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
+           DO UPDATE SET entry_type = EXCLUDED.entry_type,
+                         amount = EXCLUDED.amount,
+                         category = EXCLUDED.category,
+                         note = EXCLUDED.note,
+                         occurred_at = EXCLUDED.occurred_at,
+                         shift_ref = EXCLUDED.shift_ref,
+                         recorded_by_ref = EXCLUDED.recorded_by_ref,
+                         recorded_by_name = EXCLUDED.recorded_by_name,
+                         updated_at = CURRENT_TIMESTAMP`,
+          [tenantId, ref, jenis, jumlah,
+           teks(e?.kategori, 80) ?? 'Lainnya', teks(e?.keterangan, 300),
+           kapan, teks(e?.shiftId, 96),
+           teks(e?.dicatatOlehId, 96), teks(e?.dicatatOleh, 100),
+           teks(e?.businessSector, 16) ?? teks(sector, 16)]
+        );
+        n++;
+      }
+      tersimpan.cashEntries = n;
     }
 
     /* -- PENGATURAN ------------------------------------------------------- */

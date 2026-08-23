@@ -56,6 +56,7 @@ const MIGRATIONS = [
   'migrations/0034_transaction_log_dipulihkan.sql',
   'migrations/0035_pin_diamankan.sql',
   'migrations/0036_operasional_tersinkron.sql',
+  'migrations/0037_kas_harian.sql',
 ];
 
 async function main() {

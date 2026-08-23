@@ -1,6 +1,6 @@
 # ERD — New Hope POS
 
-**46 tabel dan 41 view kontrak, dalam 11 domain.** Diturunkan langsung dari file
+**47 tabel dan 43 view kontrak, dalam 12 domain.** Diturunkan langsung dari file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL — jadi diagram ini
 menunjukkan apa yang benar-benar dibuat Postgres, bukan yang diniatkan.
 
@@ -872,9 +872,88 @@ ditentukan billing, dan cabang punya tabelnya sendiri.
 
 ---
 
+## 12. Domain KAS HARIAN (0037)
+
+**Uang keluar tidak punya tempat di sistem ini sampai 0037.**
+
+Aplikasi hanya mengenal satu arah uang: penjualan. Isi laci dihitung sebagai
+`modal awal + penjualan tunai`, titik. Di warung yang sesungguhnya, laci kasir
+dipakai sepanjang hari untuk hal lain:
+
+- belanja bahan mendadak ("beli telur dulu, kasnya nanti diganti")
+- bayar ojek, parkir, kasbon karyawan
+- setoran ke bank di tengah hari
+- tambahan modal saat kembalian menipis
+
+Tidak satu pun punya tempat untuk dicatat, sehingga **setiap** tutup kas
+melaporkan selisih atas uang yang jelas ke mana perginya. Karena selisih kas
+dipakai untuk menilai kejujuran orang, kekeliruan ini tidak sekadar salah
+hitung: ia menuduh orang yang tidak melakukan apa-apa.
+
+```mermaid
+erDiagram
+    businesses     ||--o{ cash_entries : ""
+    cashier_shifts |o--o{ cash_entries : "shift (SET NULL)"
+    staff_users    |o--o{ cash_entries : "pencatat (SET NULL)"
+
+    cash_entries {
+        uuid id PK
+        uuid business_id FK
+        varchar external_ref "UNIQUE per unit usaha"
+        varchar entry_type "MODAL_AWAL / MASUK / KELUAR"
+        numeric amount "CHECK (amount > 0)"
+        varchar category
+        varchar note
+        timestamptz occurred_at
+        uuid shift_id FK "SET NULL"
+        uuid recorded_by FK "SET NULL"
+    }
+```
+
+**Penjualan TIDAK masuk tabel ini.** Struk sudah menjadi catatannya di
+`pos.transactions`. Mencatatnya sekali lagi sebagai "kas masuk" adalah cara
+paling cepat membuat omzet terhitung dua kali — dan omzet yang terhitung dua
+kali tidak bisa diperbaiki dari layar mana pun setelah dilaporkan ke pemilik.
+Yang menggabungkan keduanya adalah `contract.daily_cash`, bukan tabelnya.
+
+**`amount` selalu positif; arah uang ditentukan `entry_type`.** Menyimpan
+pengeluaran sebagai angka negatif tampak lebih ringkas sampai satu baris lolos
+dengan tanda terbalik: penjumlahan tetap berjalan, hasilnya tetap masuk akal,
+dan tidak ada satu pun pemeriksaan yang menangkapnya. `CHECK (amount > 0)`
+membuat keadaan itu mustahil ada.
+
+**`shift_id` dan `recorded_by` keduanya `SET NULL`.** Rekap shift yang dihapus
+tidak boleh menghapus bukti belanjanya, dan staf yang berhenti tidak boleh
+menghapus catatan siapa yang mencatat — justru itu yang ditelusuri pertama saat
+kas tidak cocok.
+
+**Saldo laci dihitung per SHIFT di aplikasi, per HARI di panel.** Laci
+diserahterimakan saat pergantian kasir, bukan saat tengah malam: warung yang
+buka sampai pukul 02.00 punya satu shift yang melintasi dua tanggal.
+Menghitungnya per tanggal berarti kasir malam menyerahkan laci dengan selisih
+sebesar seluruh penjualan sesudah pukul 00.00. Rekap harian tetap ada untuk
+pemilik, yang memang berpikir per hari.
+
+| View kontrak | Menjawab |
+|---|---|
+| `cash_entries` | Setiap pergerakan kas + `amount_signed`, dihitung satu tempat |
+| `daily_cash` | Omzet, omzet tunai, modal, masuk, keluar, dan saldo laci per hari |
+
+**`daily_cash` memakai `FULL OUTER JOIN`, dan itu disengaja.** Hari yang hanya
+berisi pengeluaran tanpa penjualan tetap muncul — justru hari seperti itu yang
+paling perlu dilihat pemilik. `INNER JOIN` akan menyembunyikannya.
+
+**Omzet dan kas dibedakan, dan pembedaan itulah seluruh gunanya view ini.**
+Omzet adalah semua penjualan apa pun cara bayarnya; kas hanya yang berbentuk
+uang tunai. QRIS Rp 1 juta menambah omzet dan **tidak** menambah satu rupiah pun
+isi laci. Pemilik yang membandingkan omzet dengan isi laci akan selalu mengira
+uangnya hilang.
+
+---
+
 ## Seluruh view kontrak
 
-Empat puluh satu view, dikelompokkan menurut yang dijawabnya. Semuanya
+Empat puluh tiga view, dikelompokkan menurut yang dijawabnya. Semuanya
 hanya-baca.
 
 | View | Menjawab |
@@ -920,6 +999,8 @@ hanya-baca.
 | `cashier_shifts` | Rekap buka/tutup kas; `difference` apa adanya, tidak dihitung ulang |
 | `attendance` | Absensi + `menit_kerja`; NULL untuk yang belum pulang |
 | `store_settings` | Pengaturan toko yang tersimpan di pusat |
+| `cash_entries` | Pergerakan kas non-penjualan + `amount_signed` |
+| `daily_cash` | Omzet dan kas satu hari dalam satu baris; saldo laci seharusnya |
 
 ---
 

@@ -402,7 +402,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                         type="text"
                         value={newCashierName}
                         onChange={(e) => setNewCashierName(e.target.value)}
-                        placeholder="Masukkan nama kasir (contoh: Ahmad Kasir)..."
+                        placeholder="Nama kasir yang memegang laci shift ini"
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
                         required
                       />

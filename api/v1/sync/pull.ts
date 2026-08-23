@@ -73,7 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const [
       usaha, katalog, pelanggan, cabang, bundel, transaksi,
-      meja, bahan, promo, shift, absensi, pengaturan,
+      meja, bahan, promo, shift, absensi, kas, pengaturan,
     ] = await Promise.all([
       db.query(
         `SELECT b.id, b.name, b.business_sector, b.client_key, b.owner_user_ref,
@@ -150,6 +150,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            FROM pos.attendance_records WHERE business_id = $1
           ORDER BY clock_in_at DESC LIMIT ${BATAS_RIWAYAT}`, [id]),
 
+      // Kas harian. Dibatasi sama seperti riwayat lain: yang dibaca di
+      // perangkat adalah buku hari ini dan beberapa hari terakhir, bukan
+      // seluruh arsip.
+      db.query(
+        `SELECT external_ref, entry_type, amount, category, note, occurred_at,
+                shift_ref, recorded_by_ref, recorded_by_name, business_sector
+           FROM pos.cash_entries WHERE business_id = $1
+          ORDER BY occurred_at DESC LIMIT ${BATAS_RIWAYAT}`, [id]),
+
       db.query(
         `SELECT store_name, tagline, address, phone, tax_rate, enable_tax,
                 service_rate, enable_service, enable_loyalty, loyalty_earn_rate,
@@ -185,6 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       promoCodes: promo.rows,
       shifts: shift.rows,
       attendance: absensi.rows,
+      cashEntries: kas.rows,
       // `null` bila toko ini belum pernah mengirim pengaturannya — dan itu
       // BERBEDA dari objek kosong. Perangkat yang menerima objek kosong akan
       // menimpa pajak dan tarif loyalitas yang sedang berlaku di layarnya

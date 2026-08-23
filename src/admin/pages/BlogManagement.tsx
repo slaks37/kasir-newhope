@@ -142,7 +142,7 @@ export const BlogManagement: React.FC = () => {
     setCoverImage(p.coverImage);
     setAuthorName(p.author.name);
     setAuthorRole(p.author.role);
-    setAuthorAvatar(p.author.avatar);
+    setAuthorAvatar(p.author.avatar ?? '');
     setReadingTime(p.readingTimeMinutes);
     setTagsInput(p.tags.join(', '));
     setIsPublished(p.isPublished);

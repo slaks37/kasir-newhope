@@ -20,7 +20,13 @@ export interface BlogMediaEmbed {
 export interface BlogAuthor {
   name: string;
   role: string;
-  avatar: string;
+  /**
+   * Opsional. Dulu wajib, dan diisi foto wajah orang asli dari bank foto stok
+   * untuk penulis yang tidak ada — foto seseorang yang tidak pernah menulis
+   * apa pun di sini, ditampilkan sebagai penulisnya. Tanpa avatar, tampilan
+   * blog memakai inisial nama.
+   */
+  avatar?: string;
 }
 
 export interface BlogSEOMetadata {

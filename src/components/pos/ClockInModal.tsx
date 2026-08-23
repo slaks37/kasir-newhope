@@ -44,7 +44,11 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
 
   const [activeTab, setActiveTab] = useState<'clock_in' | 'history'>('clock_in');
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
-    activeBranch?.id || branches[0]?.id || 'branch-senayan'
+    // Tanpa cabang mana pun, biarkan kosong. 'branch-senayan' adalah id
+    // cabang contoh yang tidak pernah ada di toko siapa pun, sehingga
+    // pemeriksaan geofence mencari titik pembanding yang tidak akan ditemukan
+    // dan absensi tercatat tanpa lokasi tanpa satu pun peringatan.
+    activeBranch?.id || branches[0]?.id || ''
   );
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [currentTime, setCurrentTime] = useState<Date>(new Date());

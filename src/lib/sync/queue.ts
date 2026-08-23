@@ -464,6 +464,8 @@ export interface OperasionalPayload {
   promoCodes?: Array<Record<string, unknown>>;
   shifts?: Array<Record<string, unknown>>;
   attendance?: Array<Record<string, unknown>>;
+  /** Modal awal, kas masuk non-penjualan, dan pengeluaran. Bukan penjualan. */
+  cashEntries?: Array<Record<string, unknown>>;
   settings?: Record<string, unknown>;
 }
 

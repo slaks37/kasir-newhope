@@ -330,6 +330,66 @@ export interface InventoryLog {
   userId?: string;
 }
 
+/* -------------------------------------------------------------------------- */
+/* KAS HARIAN                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Jenis pergerakan uang tunai di laci kasir.
+ *
+ *   MODAL_AWAL  Uang yang dimasukkan pemilik saat membuka laci. Bukan omzet
+ *               dan tidak boleh pernah ikut terhitung sebagai penjualan.
+ *   MASUK       Uang tunai masuk yang BUKAN dari penjualan: setoran tambahan
+ *               di tengah hari, pengembalian dari pemasok, pelunasan piutang.
+ *   KELUAR      Uang tunai keluar: belanja bahan, bayar ojek, kasbon, setoran
+ *               ke bank.
+ *
+ * PENJUALAN TIDAK ADA DI DAFTAR INI, dan itu disengaja. Penjualan sudah punya
+ * catatannya sendiri berupa struk, dan mencatatnya dua kali — sekali sebagai
+ * transaksi, sekali sebagai kas masuk — adalah cara paling cepat membuat omzet
+ * terhitung ganda. Yang menggabungkan keduanya adalah laporan kas, bukan
+ * penyimpanannya.
+ */
+export type JenisKas = 'MODAL_AWAL' | 'MASUK' | 'KELUAR';
+
+/** Kategori bawaan untuk uang keluar. Merchant boleh menulis miliknya sendiri. */
+export const KATEGORI_KAS_KELUAR = [
+  'Belanja Bahan Baku',
+  'Belanja Perlengkapan',
+  'Transport & Ongkir',
+  'Gaji & Kasbon',
+  'Listrik, Air & Internet',
+  'Sewa Tempat',
+  'Setor ke Bank',
+  'Lainnya',
+] as const;
+
+/** Kategori bawaan untuk uang masuk non-penjualan. */
+export const KATEGORI_KAS_MASUK = [
+  'Tambahan Modal',
+  'Pelunasan Piutang',
+  'Refund dari Pemasok',
+  'Pendapatan Lain',
+  'Lainnya',
+] as const;
+
+export interface EntriKas {
+  id: string;
+  jenis: JenisKas;
+  /** Selalu POSITIF. Arahnya ditentukan `jenis`, bukan tanda angkanya. */
+  jumlah: number;
+  kategori: string;
+  keterangan?: string;
+  /** ISO 8601. Kapan uangnya benar-benar bergerak. */
+  waktu: string;
+  /** Shift yang sedang berjalan saat dicatat. Kosong bila di luar shift. */
+  shiftId?: string;
+  /** Siapa yang mencatat. Dipakai saat menelusuri selisih kas. */
+  dicatatOlehId?: string;
+  dicatatOleh?: string;
+  businessSector?: BusinessSector;
+}
+
 export interface Shift {
   id: string;
   cashierName: string;

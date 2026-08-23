@@ -48,6 +48,7 @@ export interface IsiToko {
   promoCodes: any[];
   shifts: any[];
   attendance: any[];
+  cashEntries: any[];
   /**
    * `null` bila toko ini belum pernah mengirim pengaturannya.
    *
@@ -335,4 +336,27 @@ export function kePengaturan(r: any, sekarang: any): any {
     activeBranchId: sekarang.activeBranchId,
     subscription: sekarang.subscription,
   };
+}
+
+/**
+ * KAS HARIAN. `amount` selalu positif di server; arahnya dari `entry_type`.
+ *
+ * Diterjemahkan apa adanya tanpa membubuhkan tanda. Menyimpan pengeluaran
+ * sebagai angka negatif di sisi klien akan membuat penjumlahan di layar
+ * berjalan "otomatis" — sampai satu baris lolos dengan tanda terbalik, dan
+ * hasilnya tetap tampak masuk akal sehingga tidak ada yang memeriksanya.
+ */
+export function keEntriKas(baris: any[], sector: string): any[] {
+  return baris.map((r) => ({
+    id: r.external_ref,
+    jenis: r.entry_type,
+    jumlah: Math.abs(Number(r.amount) || 0),
+    kategori: r.category ?? 'Lainnya',
+    keterangan: r.note ?? undefined,
+    waktu: r.occurred_at,
+    shiftId: r.shift_ref ?? undefined,
+    dicatatOlehId: r.recorded_by_ref ?? undefined,
+    dicatatOleh: r.recorded_by_name ?? undefined,
+    businessSector: r.business_sector ?? sector,
+  }));
 }

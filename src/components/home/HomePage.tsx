@@ -458,57 +458,38 @@ export const HomePage: React.FC<HomePageProps> = ({
       tag: 'Performa Staf & Komisi',
       badge: 'Rp 0 · < 5ms',
       answer:
-        'Budi Santoso mencatat 28 transaksi kasir dengan total penjualan Rp 2.450.000 dengan kepuasan pelanggan sempurna. Mas Alex (Stylist) menyelesaikan 8 pengerjaan potong rambut dengan estimasi komisi jasa Rp 240.000.',
+        'Kasir shift pagi mencatat 28 transaksi dengan total penjualan Rp 2.450.000. Satu stylist menyelesaikan 8 pengerjaan potong rambut dengan estimasi komisi jasa Rp 240.000.',
     },
   ];
 
-  // Testimonials Data (Moka & Majoo style)
-  const testimonials = [
-    {
-      quote:
-        'New Hope POS sangat praktis dan mudah digunakan oleh barista kami. Fitur resep otomatisnya membuat perhitungan HPP jadi sangat rapi, dan pembayaran QRIS Dinamis membuat antrean kasir jadi super cepat!',
-      name: 'Doni Pratama',
-      role: 'Owner & Founder',
-      business: 'Kopi Senayan Jakarta (3 Outlet)',
-      sector: 'Kafe & Restoran (F&B)',
-      rating: 5,
-      icon: Coffee,
-      color: 'from-amber-500 to-amber-700',
-    },
-    {
-      quote:
-        'Fitur kirim nota otomatis ke WhatsApp dan pelacakan status cucian membuat pelanggan merasa tenang dan terlayani dengan profesional. Pelanggan repeat order kami meningkat drastis!',
-      name: 'Ibu Hj. Siti Aminah',
-      role: 'Pemilik Usaha',
-      business: 'Dago Express Laundry Bandung',
-      sector: 'Laundry Kiloan & Satuan',
-      rating: 5,
-      icon: Shirt,
-      color: 'from-blue-500 to-indigo-700',
-    },
-    {
-      quote:
-        'Scan barcode ribuan produk sembako sangat cepat tanpa jeda. Tutup buku harian yang biasanya memakan waktu berjam-jam kini selesai dalam beberapa klik saja langsung dari HP.',
-      name: 'Hendra Wijaya',
-      role: 'Pengelola Toko',
-      business: 'Toko Berkah Sentosa Surabaya',
-      sector: 'Ritel & Minimarket',
-      rating: 5,
-      icon: ShoppingBag,
-      color: 'from-emerald-500 to-teal-700',
-    },
-    {
-      quote:
-        'Sistem bagi hasil komisi kapster terhitung otomatis dan transparan. Pelanggan juga senang karena antrean booking tertata rapi. Aplikasi kasir terbaik untuk salon dan barbershop!',
-      name: 'Mas Alex Stylist',
-      role: 'Master Barber & Founder',
-      business: 'The Gentleman Barbershop Medan',
-      sector: 'Barbershop & Salon',
-      rating: 5,
-      icon: Scissors,
-      color: 'from-purple-500 to-rose-700',
-    },
-  ];
+  /*
+   * TESTIMONI — DIKOSONGKAN.
+   *
+   * Di sini pernah ada empat testimoni lengkap dengan nama orang, nama usaha,
+   * dan kota: "Doni Pratama, Kopi Senayan Jakarta (3 Outlet)", "Ibu Hj. Siti
+   * Aminah, Dago Express Laundry Bandung", dan seterusnya. Tak satu pun dari
+   * mereka ada, dan judul bagiannya menyatakan "Dipercaya oleh Ribuan Pemilik
+   * Usaha di Seluruh Indonesia".
+   *
+   * Ini bukan data contoh yang kebetulan tertinggal seperti katalog demo. Ini
+   * pernyataan publik tentang pelanggan yang tidak pernah ada, di halaman yang
+   * dibaca calon pembeli sebelum memutuskan membayar. Data dummy di layar
+   * kasir menyesatkan pemiliknya sendiri; testimoni palsu menyesatkan orang
+   * yang belum menjadi pelanggan.
+   *
+   * Diisi kembali kalau ada merchant sungguhan yang memberi izin. Sampai saat
+   * itu, seluruh bagiannya tidak dirender.
+   */
+  const testimonials: Array<{
+    quote: string;
+    name: string;
+    role: string;
+    business: string;
+    sector: string;
+    rating: number;
+    icon: React.ElementType;
+    color: string;
+  }> = [];
 
   // FAQs Data
   const faqs = [
@@ -1646,7 +1627,11 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </section>
 
-      {/* 💬 10. REAL CUSTOMER TESTIMONIALS (MOKA & MAJOO STYLE) */}
+      {/* 💬 10. TESTIMONI PENGGUNA.
+          Tidak dirender selama daftarnya kosong. Judul "Dipercaya oleh Ribuan
+          Pemilik Usaha" di atas kartu yang tidak ada isinya adalah klaim yang
+          sama saja dengan testimoni palsu — hanya lebih kentara. */}
+      {testimonials.length > 0 && (
       <section className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">
         <div className="text-center space-y-3 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
@@ -1693,6 +1678,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           })}
         </div>
       </section>
+      )}
 
       {/* 📚 10.5 BLOG HARAPAN BARU HIGHLIGHTS SECTION */}
       <section id="blog-section" className="px-4 lg:px-8 max-w-7xl mx-auto space-y-8">

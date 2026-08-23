@@ -251,8 +251,42 @@ async function seedBlog(db: Db) {
   console.log(`  blog: ${INITIAL_BLOG_POSTS.length} artikel awal dimasukkan`);
 }
 
+/**
+ * Menolak berjalan terhadap database yang bukan milik mesin sendiri.
+ *
+ * Berkas ini memasukkan merchant contoh — "Toko Berkah Siti", "Warung Doni
+ * (Vakum)" — dan `--force` MENGHAPUS SELURUH ISI database lebih dulu. Satu
+ * `DATABASE_URL` yang tertinggal di shell dari sesi lain sudah cukup untuk
+ * menjalankannya terhadap data merchant sungguhan, dan tidak ada satu langkah
+ * pun setelahnya yang bisa membatalkannya.
+ *
+ * Pagarnya di sini, bukan di dokumentasi: perkakas yang bisa menghapus
+ * produksi harus menolak sendiri, bukan mengandalkan orang membaca komentar
+ * lebih dulu.
+ */
+function pastikanDatabaseLokal(url: string): void {
+  const lokal = /@(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\//.test(url) || /host=\//.test(url);
+  if (lokal) return;
+
+  // Satu pintu keluar yang harus disengaja, untuk lingkungan uji terkelola
+  // di CI yang memang databasenya jauh tapi memang boleh dihapus.
+  if (process.env.SEED_IZINKAN_NONLOKAL === '1') {
+    console.warn('[seed] SEED_IZINKAN_NONLOKAL=1 — melanjutkan ke database non-lokal.');
+    return;
+  }
+
+  console.error(
+    '\n[seed] DITOLAK: DATABASE_URL menunjuk database yang bukan lokal.\n' +
+    '       Berkas ini memasukkan merchant contoh dan --force menghapus\n' +
+    '       seluruh isinya lebih dulu.\n\n' +
+    '       Kalau memang disengaja, jalankan dengan SEED_IZINKAN_NONLOKAL=1.\n'
+  );
+  process.exit(1);
+}
+
 async function main() {
   const force = process.argv.includes('--force');
+  pastikanDatabaseLokal(process.env.DATABASE_URL || '');
   const db = await getDb((m) => console.log(m));
 
   // --force MENGHAPUS TANPA SYARAT.

@@ -208,7 +208,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Clock className="w-3.5 h-3.5 text-amber-600" />
           <div>
             <span className="text-slate-500 block text-[10px]">
-              Kasir: {shift.cashierName && shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : currentUser?.name || 'Budi Santoso'}
+              Kasir: {shift.cashierName || currentUser?.name || '—'}
             </span>
             <span className="font-semibold text-emerald-700">{formatRupiah(shift.totalSales)}</span>
           </div>

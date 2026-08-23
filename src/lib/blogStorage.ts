@@ -3,6 +3,20 @@ import { newId } from './ids';
 
 const STORAGE_KEY = 'newhope_pos_blog_posts_v1';
 
+/*
+ * Artikel blog bawaan.
+ *
+ * PENULISNYA ADALAH PENERBITNYA SENDIRI. Sebelumnya keempat artikel ini
+ * ditandatangani "Doni Pratama, Owner & Founder", "Ibu Hj. Siti Aminah, Owner
+ * Dago Express Laundry", dan dua nama lain — orang-orang yang tidak ada,
+ * ditampilkan sebagai pemilik usaha sungguhan yang menulis pengalamannya.
+ * Isi artikelnya memang tulisan kami; yang palsu hanya siapa yang mengaku
+ * menulisnya, dan itu justru bagian yang dipercaya pembaca.
+ *
+ * Tautan embed berakhiran `sample123` juga dibuang: tautan yang tidak menuju
+ * ke mana pun, ditampilkan sebagai bukti visual, adalah bentuk klaim yang
+ * sama.
+ */
 export const INITIAL_BLOG_POSTS: BlogPost[] = [
   {
     id: 'blog-1',
@@ -12,9 +26,8 @@ export const INITIAL_BLOG_POSTS: BlogPost[] = [
     category: 'Kuliner & F&B',
     coverImage: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&q=80&w=1200',
     author: {
-      name: 'Doni Pratama',
-      role: 'Head Barista & Konsultan F&B',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+      name: 'Redaksi Harapan Baru',
+      role: 'Tim Konten New Hope POS',
     },
     readingTimeMinutes: 5,
     tags: ['Bisnis Kafe', 'Kedai Kopi', 'Modal 10 Juta', 'HPP Kopi', 'Tips F&B'],
@@ -91,19 +104,12 @@ Dengan menggunakan fitur **Resep Bahan Baku (BOM)** di **New Hope POS**, setiap 
     category: 'Laundry & Jasa',
     coverImage: 'https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?auto=format&fit=crop&q=80&w=1200',
     author: {
-      name: 'Ibu Hj. Siti Aminah',
-      role: 'Owner Dago Express Laundry',
-      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+      name: 'Redaksi Harapan Baru',
+      role: 'Tim Konten New Hope POS',
     },
     readingTimeMinutes: 4,
     tags: ['Bisnis Laundry', 'Laundry Kiloan', 'Nota WhatsApp', 'Tips Usaha Jasa'],
     mediaEmbeds: [
-      {
-        id: 'emb-3',
-        type: 'instagram',
-        url: 'https://www.instagram.com/p/C_sample123',
-        caption: 'Workflow Packing & Quality Control Laundry Kiloan Bersih & Rapi',
-      },
     ],
     seo: {
       metaTitle: 'Rahasia Sukses Bisnis Laundry Kiloan Omset Puluhan Juta | Blog Harapan Baru',
@@ -149,9 +155,8 @@ Pelanggan merasa tenang, status cucian transparan, dan loyalitas pelanggan pun m
     category: 'FinTech & QRIS',
     coverImage: 'https://images.unsplash.com/photo-1556742049-0a67e557b640?auto=format&fit=crop&q=80&w=1200',
     author: {
-      name: 'Rian Ardiansyah',
+      name: 'Redaksi Harapan Baru',
       role: 'FinTech Solution Specialist',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
     },
     readingTimeMinutes: 6,
     tags: ['QRIS Dinamis', 'FinTech UMKM', 'Cashless', 'Pembayaran Digital'],
@@ -205,9 +210,8 @@ Di era pembayaran serba non-tunai saat ini, menyediakan QRIS adalah keharusan ba
     category: 'Tips Bisnis & Strategi',
     coverImage: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=1200',
     author: {
-      name: 'Mas Alex Stylist',
+      name: 'Redaksi Harapan Baru',
       role: 'Master Barber & Mentor Usaha',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
     },
     readingTimeMinutes: 4,
     tags: ['Bisnis Barbershop', 'Carwash', 'Komisi Karyawan', 'Manajemen Staf'],

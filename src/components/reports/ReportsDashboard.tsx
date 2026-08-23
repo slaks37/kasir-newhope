@@ -3,6 +3,7 @@ import { usePOS } from '../../context/POSContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
 import { bolehLevelDashboard } from '../../lib/plans/entitlements';
+import { KasHarian } from './KasHarian';
 import {
   BarChart3,
   TrendingUp,
@@ -316,6 +317,19 @@ export const ReportsDashboard: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* 0. KAS & OMZET HARI INI.
+             Ditaruh PALING ATAS, di atas kartu metrik periode. Yang pertama
+             dicari pemilik setiap kali membuka laporan adalah keadaan hari
+             ini — bukan rekap 30 hari — dan sampai sekarang pertanyaan
+             "di laci seharusnya ada berapa" tidak bisa dijawab di layar mana
+             pun karena uang keluar tidak punya tempat untuk dicatat.
+
+             SENGAJA TIDAK DIGATE LEVEL PAKET. Mengetahui isi laci sendiri
+             bukan fitur analitik lanjutan; ia syarat dasar untuk menutup toko
+             tanpa menuduh kasir. Yang dijual adalah tren, HPP, dan margin —
+             bukan hak merchant atas uangnya sendiri. */}
+      <KasHarian />
 
       {/* 1. KARTU METRIK — dua di antaranya (HPP, Laba Bersih) hanya ADVANCED,
              jadi kolom grid mengikuti jumlah kartu yang benar-benar tampil. */}

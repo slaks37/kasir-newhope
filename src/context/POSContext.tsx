@@ -24,8 +24,19 @@ import {
   StoreBranch,
   GeoLocationInfo,
   ProductBundle,
+  EntriKas,
+  JenisKas,
 } from '../types';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
+import {
+  ringkasOmzet,
+  ringkasKas,
+  entriHari,
+  kasShift,
+  hariIni as kunciHariIni,
+  type RingkasanOmzet,
+  type RingkasanKas,
+} from '../lib/kas/buku';
 import { ROLE_PERMISSIONS } from '../data/rolePermissions';
 import {
   TenantInfo,
@@ -101,6 +112,7 @@ import {
   keKodePromo,
   keShift,
   keAbsensi,
+  keEntriKas,
   kePengaturan,
 } from '../lib/sync/tarik';
 
@@ -141,6 +153,33 @@ interface POSContextType {
     minPurchaseAmount?: number;
     isActive?: boolean;
   }) => void;
+
+  /* ---------------------------------------------------------------------- */
+  /* KAS HARIAN                                                              */
+  /* ---------------------------------------------------------------------- */
+  //
+  // Modal awal, uang masuk non-penjualan, dan pengeluaran. Sebelum ini tidak
+  // ada satu pun cara mencatat uang KELUAR dari laci, sehingga setiap tutup
+  // kas melaporkan selisih atas belanja yang jelas ke mana perginya.
+  entriKas: EntriKas[];
+  /**
+   * Mencatat satu pergerakan kas. `jumlah` selalu diperlakukan positif —
+   * arahnya ditentukan `jenis`, bukan tanda angkanya.
+   */
+  catatKas: (masukan: {
+    jenis: JenisKas;
+    jumlah: number;
+    kategori: string;
+    keterangan?: string;
+    waktu?: string;
+  }) => EntriKas | null;
+  hapusEntriKas: (id: string) => void;
+  /** Ringkasan omzet satu hari. Kosongkan argumennya untuk hari ini. */
+  ringkasanOmzetHari: (hari?: string) => RingkasanOmzet;
+  /** Buku kas satu hari, sudah menggabungkan penjualan tunai dari struk. */
+  ringkasanKasHari: (hari?: string) => RingkasanKas;
+  /** Entri kas satu hari, terbaru di atas dan modal awal di paling bawah. */
+  entriKasHari: (hari?: string) => EntriKas[];
 
   // Branch & Geotagging Management
   branches: StoreBranch[];
@@ -350,50 +389,30 @@ const seedAttendanceFor = (sector: BusinessSector): AttendanceRecord[] =>
     return ((staff?.sector || rec.businessSector || 'FNB') as BusinessSector) === sector;
   });
 
-/**
- * 12-Hour Demo Data Lifecycle
+/*
+ * SIKLUS DEMO 12 JAM — DIBUANG.
  *
- * Menghapus data demo lokal dan mengembalikan data ke kondisi default bersih
- * setiap 12 jam (43.200.000 ms) agar sesi demo pengunjung selalu segar.
+ * Di tempat ini pernah ada `enforce12HourDemoReset()`, dipanggil saat modul
+ * dimuat, yang MENGHAPUS setiap kunci localStorage berawalan `newhope_`,
+ * `mokamajoo_`, atau `scoped_` begitu umur sesi melewati 12 jam.
+ *
+ * Sisa dari masa aplikasi ini masih berupa demo pengunjung. Sejak ia menjadi
+ * kasir sungguhan, yang dihapusnya bukan lagi data contoh:
+ *
+ *   newhope_sync_queue_*   ANTRIAN TRANSAKSI. Struk yang sudah dibayar dan
+ *                          belum sempat terkirim — satu-satunya data yang
+ *                          hanya ada di perangkat ini. Terhapus permanen,
+ *                          tanpa galat, tanpa ada satu pun jalur kode yang
+ *                          bisa tahu.
+ *   newhope_token_toko_*   Token perangkat.
+ *   scoped_*               Katalog, pelanggan, meja, absensi, shift.
+ *
+ * Kasir yang tokonya buka lebih dari 12 jam — warung 24 jam, atau sekadar tab
+ * yang tidak pernah ditutup — kehilangan penjualan yang sudah terjadi. Tidak
+ * ada satu pun laporan yang akan menunjukkan bahwa itu pernah terjadi.
+ *
+ * Tidak ada penggantinya. Data merchant tidak dihapus berdasarkan waktu.
  */
-const DEMO_LIFECYCLE_HOURS = 12;
-const DEMO_RESET_INTERVAL_MS = DEMO_LIFECYCLE_HOURS * 60 * 60 * 1000;
-const DEMO_TIMESTAMP_KEY = 'newhope_demo_session_created_at';
-
-const enforce12HourDemoReset = () => {
-  try {
-    const rawTimestamp = localStorage.getItem(DEMO_TIMESTAMP_KEY);
-    const now = Date.now();
-
-    if (!rawTimestamp) {
-      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
-      return;
-    }
-
-    const createdAt = parseInt(rawTimestamp, 10);
-    if (isNaN(createdAt) || now - createdAt >= DEMO_RESET_INTERVAL_MS) {
-      console.warn(`[Demo Lifecycle] 12 jam telah tercapai. Mereset data demo ke default bersih.`);
-      
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('newhope_') || key.startsWith('mokamajoo_') || key.startsWith('scoped_'))) {
-          // Jangan hapus token Supabase Auth kalau ada
-          if (!key.includes('supabase.auth')) {
-            keysToRemove.push(key);
-          }
-        }
-      }
-      keysToRemove.forEach((k) => localStorage.removeItem(k));
-      localStorage.setItem(DEMO_TIMESTAMP_KEY, now.toString());
-    }
-  } catch (e) {
-    console.error('Failed to enforce 12-hour demo reset:', e);
-  }
-};
-
-// Jalankan saat script dimuat
-enforce12HourDemoReset();
 
 /**
  * Membaca akun yang sedang masuk dari sesi Supabase di penyimpanan browser.
@@ -419,14 +438,6 @@ function bacaAkunTersimpan(): { id: string; email?: string; nama?: string } | nu
 }
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  useEffect(() => {
-    // Cek berkala setiap 5 menit jika browser tetap terbuka
-    const interval = setInterval(() => {
-      enforce12HourDemoReset();
-    }, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
   const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('overview');
 
   // Users & RBAC state
@@ -623,6 +634,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (b?.id) radius.set(String(b.id), Number(b.allowedRadiusMeters) || 0);
         }
         setAttendanceLogs(keAbsensi(isi.attendance, sec, radius) as AttendanceRecord[]);
+      }
+
+      if (isi.cashEntries?.length) {
+        setEntriKas(keEntriKas(isi.cashEntries, sec) as EntriKas[]);
       }
 
       if (isi.settings) {
@@ -892,17 +907,34 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('inventory_logs', currentUser.id, activeSector, []);
   });
 
-  const [shift, setShift] = useState<Shift>(() => {
-    const loaded = loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT);
-    if (!loaded.cashierName || loaded.cashierName === 'Ahmad Kasir') {
-      return { ...loaded, cashierName: currentUser.name || 'Budi Santoso' };
-    }
-    return loaded;
-  });
+  /*
+   * Shift dibaca APA ADANYA dari penyimpanan.
+   *
+   * Dulu nama kasirnya ditambal: kosong atau 'Ahmad Kasir' diganti dengan
+   * nama pengguna yang sedang membuka layar, atau 'Budi Santoso'. Tambalan
+   * itu menulis ulang catatan siapa yang memegang laci — dan nama yang salah
+   * pada rekap kas lebih berbahaya daripada nama yang kosong, karena selisih
+   * kas dipakai untuk menuduh orang. Shift tanpa nama artinya belum ada yang
+   * membukanya, dan itulah yang seharusnya terbaca.
+   */
+  const [shift, setShift] = useState<Shift>(() =>
+    loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT)
+  );
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
     return loadScopedData('shift_history', currentUser.id, activeSector, []);
   });
+
+  /*
+   * ENTRI KAS.
+   *
+   * Dilingkupi per unit usaha seperti entitas lain: kafe dan laundry milik
+   * pemilik yang sama punya laci yang berbeda, dan mencampurnya berarti
+   * belanja bahan kopi muncul di rekap kas laundry.
+   */
+  const [entriKas, setEntriKas] = useState<EntriKas[]>(() =>
+    loadScopedData<EntriKas[]>('cash_entries', currentUser.id, activeSector, [])
+  );
 
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => {
     return loadScopedData('promo_codes', currentUser.id, activeSector, seedPromosFor(activeSector));
@@ -1025,6 +1057,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('promo_codes', uId, sec), JSON.stringify(promoCodes));
   }, [promoCodes, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('cash_entries', uId, sec), JSON.stringify(entriKas));
+  }, [entriKas, currentUser.id, settings.businessSector]);
 
   /*
    * SINKRONISASI KATALOG.
@@ -1245,7 +1283,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const shiftSelesai = shiftHistory.filter((sh) => sh.status === 'CLOSED');
     const adaIsi =
       tables.length || stockItems.length || promoCodes.length ||
-      shiftSelesai.length || attendanceLogs.length;
+      shiftSelesai.length || attendanceLogs.length || entriKas.length;
     if (!adaIsi) return;
 
     void pushOperasional(
@@ -1261,6 +1299,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         promoCodes: promoCodes as unknown as Array<Record<string, unknown>>,
         shifts: shiftSelesai as unknown as Array<Record<string, unknown>>,
         attendance: attendanceLogs as unknown as Array<Record<string, unknown>>,
+        // Buku kas ikut naik seluruhnya. Berbeda dengan shift, entri kas tidak
+        // pernah berubah setelah dicatat — ia kejadian, bukan keadaan — jadi
+        // tidak ada potret setengah jalan yang bisa terkirim.
+        cashEntries: entriKas as unknown as Array<Record<string, unknown>>,
         settings: settings as unknown as Record<string, unknown>,
       }
     );
@@ -1270,6 +1312,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     promoCodes,
     shiftHistory,
     attendanceLogs,
+    entriKas,
     settings,
     currentUser.id,
     activeSector,
@@ -1472,6 +1515,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCustomers(loadScopedData('customers', newUId, userSec, seedCustomersFor(userSec)));
     setAttendanceLogs(loadScopedData('attendance_logs', newUId, userSec, seedAttendanceFor(userSec)));
     setPromoCodes(loadScopedData('promo_codes', newUId, userSec, seedPromosFor(userSec)));
+    setEntriKas(loadScopedData<EntriKas[]>('cash_entries', newUId, userSec, []));
     // Staff roster stays per-account (one roster across the merchant's
     // businesses); the exposed list is filtered to the active sector.
     setStaffMembers(loadGlobalUserData('staff_members', newUId, INITIAL_STAFF_MEMBERS));
@@ -1885,7 +1929,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cardSales,
         eWalletSales,
         totalSales,
-        expectedCash: prevShift.initialCash + cashSales,
+        // `expectedCash` TIDAK dihitung di sini lagi. Rumus lamanya
+        // `initialCash + cashSales` mengabaikan seluruh uang yang keluar dari
+        // laci untuk belanja, sehingga setiap tutup kas melaporkan selisih
+        // atas pengeluaran yang jelas ke mana perginya. Sekarang satu efek di
+        // bawah yang menghitungnya dari buku kas — lihat "SALDO LACI".
       };
     });
 
@@ -2022,7 +2070,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           cardSales,
           eWalletSales,
           totalSales,
-          expectedCash: Math.max(0, prevShift.initialCash + cashSales),
+          // Lihat catatan di jalur pembayaran: saldo laci dihitung satu tempat.
         };
       });
     }
@@ -2380,6 +2428,101 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (soundEnabled) playPOSSound('payment_success');
   };
 
+  /* ---------------------------------------------------------------------- */
+  /* KAS HARIAN                                                              */
+  /* ---------------------------------------------------------------------- */
+
+  /*
+   * SALDO LACI — SATU TEMPAT MENGHITUNGNYA.
+   *
+   * `expectedCash` dulu ditulis di dua jalur berbeda (pembayaran dan
+   * pembatalan), keduanya dengan rumus `modal awal + penjualan tunai`. Rumus
+   * itu mengabaikan setiap rupiah yang KELUAR dari laci — belanja bahan, ojek,
+   * kasbon — sehingga tutup kas melaporkan selisih atas uang yang jelas ke
+   * mana perginya. Dan karena selisih kas dipakai untuk menilai kejujuran
+   * orang, kekeliruan ini tidak sekadar salah hitung: ia menuduh.
+   *
+   * Sekarang dihitung dari buku kas, per SHIFT — bukan per tanggal. Laci
+   * diserahterimakan saat pergantian kasir, bukan saat tengah malam.
+   *
+   * Efek, bukan turunan yang dihitung saat render, karena `expectedCash`
+   * IKUT TERSIMPAN di rekap shift: angka yang dibandingkan dengan hitungan
+   * fisik harus bertahan apa adanya setelah shift ditutup, bukan dihitung
+   * ulang dari data yang bisa berubah kemudian.
+   */
+  useEffect(() => {
+    if (shift.status !== 'OPEN' || !shift.id) return;
+
+    const seharusnya = kasShift(entriKas, shift.id, shift.cashSales, shift.initialCash);
+    if (seharusnya === shift.expectedCash) return;
+
+    setShift((prev) =>
+      prev.status === 'OPEN' && prev.id === shift.id
+        ? { ...prev, expectedCash: seharusnya }
+        : prev
+    );
+  }, [entriKas, shift.id, shift.status, shift.cashSales, shift.initialCash, shift.expectedCash]);
+
+  const catatKas = (masukan: {
+    jenis: JenisKas;
+    jumlah: number;
+    kategori: string;
+    keterangan?: string;
+    waktu?: string;
+  }): EntriKas | null => {
+    // Nol dan negatif DITOLAK, bukan disimpan sebagai nol. Arah uang
+    // ditentukan `jenis`; angka bertanda yang lolos ke sini akan menambah kas
+    // ketika seharusnya mengurangi, dan hasilnya tetap tampak masuk akal
+    // sehingga tidak ada yang memeriksanya.
+    const jumlah = Math.abs(Number(masukan.jumlah) || 0);
+    if (!(jumlah > 0)) return null;
+
+    const entri: EntriKas = {
+      id: newId('kas'),
+      jenis: masukan.jenis,
+      jumlah,
+      kategori: (masukan.kategori || 'Lainnya').trim() || 'Lainnya',
+      keterangan: masukan.keterangan?.trim() || undefined,
+      waktu: masukan.waktu || new Date().toISOString(),
+      // Shift yang sedang berjalan, kalau ada. Belanja yang dicatat di luar
+      // shift tetap sah — warung yang belum membuka kas pun tetap mengeluarkan
+      // uang — jadi ini opsional, bukan syarat.
+      shiftId: shift.status === 'OPEN' ? shift.id : undefined,
+      dicatatOlehId: currentUser?.id,
+      dicatatOleh: currentUser?.name,
+      businessSector: activeSector,
+    };
+
+    setEntriKas((prev) => [entri, ...prev]);
+    return entri;
+  };
+
+  const hapusEntriKas = (id: string) => {
+    setEntriKas((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  /*
+   * PEMBACA RINGKASAN.
+   *
+   * Ketiganya meneruskan ke src/lib/kas/buku.ts alih-alih menghitung sendiri.
+   * Rumus yang disalin ke tiap layar akan menyimpang, dan menyimpangnya tidak
+   * berisik: dua layar menunjukkan saldo kas berbeda untuk hari yang sama, dan
+   * tidak ada yang tahu mana yang benar.
+   */
+  const ringkasanOmzetHari = (hari?: string): RingkasanOmzet =>
+    ringkasOmzet(orders, hari || kunciHariIni());
+
+  const ringkasanKasHari = (hari?: string): RingkasanKas => {
+    const h = hari || kunciHariIni();
+    // Penjualan tunai diambil dari STRUK, bukan dari entri kas. Struk sudah
+    // menjadi catatannya; mencatatnya sekali lagi sebagai kas masuk membuat
+    // omzet terhitung dua kali.
+    return ringkasKas(entriKas, h, ringkasOmzet(orders, h).omzetTunai);
+  };
+
+  const entriKasHari = (hari?: string): EntriKas[] =>
+    entriHari(entriKas, hari || kunciHariIni());
+
   const startShift = (cashierName: string, initialCash: number): Shift => {
     const newShift: Shift = {
       id: newId('shift'),
@@ -2396,6 +2539,37 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'OPEN',
     };
     setShift(newShift);
+
+    /*
+     * MODAL AWAL IKUT TERCATAT DI BUKU KAS.
+     *
+     * Sebelumnya angka ini hanya hidup di dalam objek shift, sehingga buku kas
+     * — kalau ada — tidak akan pernah tahu dari mana isi laci berasal, dan
+     * saldonya selalu kurang persis sebesar modal awal. Yang mencatatnya di
+     * sini, bukan layar pembuka shift, supaya modal awal dari jalur mana pun
+     * masuk ke buku yang sama.
+     *
+     * Modal Rp 0 tidak menghasilkan entri: laci yang dibuka kosong memang
+     * tidak punya pergerakan uang untuk dicatat.
+     */
+    if (initialCash > 0) {
+      setEntriKas((prev) => [
+        {
+          id: newId('kas'),
+          jenis: 'MODAL_AWAL',
+          jumlah: initialCash,
+          kategori: 'Modal Awal Laci',
+          keterangan: `Pembukaan shift oleh ${cashierName}`,
+          waktu: newShift.startTime,
+          shiftId: newShift.id,
+          dicatatOlehId: currentUser?.id,
+          dicatatOleh: currentUser?.name,
+          businessSector: activeSector,
+        },
+        ...prev,
+      ]);
+    }
+
     return newShift;
   };
 
@@ -2574,6 +2748,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         activateBusinessSector,
         startShift,
         endShift,
+        entriKas,
+        catatKas,
+        hapusEntriKas,
+        ringkasanOmzetHari,
+        ringkasanKasHari,
+        entriKasHari,
       }}
     >
       {/* Anything below can read the active business unit via useTenant(). */}
