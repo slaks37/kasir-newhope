@@ -120,7 +120,7 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   <span>{data.profile.merchant_name}</span>
                 </h1>
                 <p className="text-xs text-slate-300 font-medium">
-                  Pemilik: <strong>{data.profile.owner_name || 'Budi Santoso'}</strong> • Kontak: {data.profile.email || 'budi@newhope.id'} ({data.profile.phone || '081234567890'})
+                  Pemilik: <strong>{data.profile.owner_name || 'Pemilik Toko'}</strong> • Kontak: {data.profile.email || '-'} ({data.profile.phone || '-'})
                 </p>
               </div>
 

@@ -77,137 +77,36 @@ const ADMIN_USERS_DATA: AdminUser[] = [
   },
 ];
 
-const CLIENT_USERS_DATA: ClientUser[] = [
-  {
-    id: 'usr-c01',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Budi Santoso',
-    username: 'budi.admin',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (1234)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c02',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Siti Aminah',
-    username: 'siti.manager',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (5555)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c03',
-    storeName: 'New Hope Resto & Cafe',
-    businessSector: 'FNB',
-    name: 'Rian Ardiansyah',
-    username: 'rian.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c04',
-    storeName: 'Kopi Kenangan Senopati',
-    businessSector: 'FNB',
-    name: 'Budi Santoso',
-    username: 'budi.kopi',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (1234)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c05',
-    storeName: 'Kopi Kenangan Senopati',
-    businessSector: 'FNB',
-    name: 'Rian Barista',
-    username: 'rian.kopi',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c06',
-    storeName: 'Laundry Bersih Kilat',
-    businessSector: 'LAUNDRY',
-    name: 'Dewi Lestari',
-    username: 'dewi.laundry',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (2222)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c07',
-    storeName: 'Toko Berkah Siti',
-    businessSector: 'RETAIL',
-    name: 'Siti Rahma',
-    username: 'siti.berkah',
-    role: 'ADMIN',
-    pinStatus: 'PIN Aktif (3333)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c08',
-    storeName: 'Toko Berkah Siti',
-    businessSector: 'RETAIL',
-    name: 'Gudang Fajar',
-    username: 'fajar.stock',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c09',
-    storeName: 'Agus Auto Wash',
-    businessSector: 'CARWASH',
-    name: 'Teknisi Rudi',
-    username: 'rudi.wash',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c10',
-    storeName: 'Agus Auto Wash',
-    businessSector: 'CARWASH',
-    name: 'Kasir Nina',
-    username: 'nina.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c11',
-    storeName: 'Rina Beauty Lounge',
-    businessSector: 'BARBERSHOP',
-    name: 'Kapster Yoga',
-    username: 'yoga.barber',
-    role: 'MANAGER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'usr-c12',
-    storeName: 'Rina Beauty Lounge',
-    businessSector: 'BARBERSHOP',
-    name: 'Kasir Tari',
-    username: 'tari.kasir',
-    role: 'CASHIER',
-    pinStatus: 'PIN Aktif (0000)',
-    status: 'ACTIVE',
-  },
-];
+function getRegisteredClientUsers(): ClientUser[] {
+  try {
+    const raw = localStorage.getItem('nhpos_local_auth_users');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const list = Object.values(parsed).map((u: any, idx) => ({
+        id: `usr-reg-${idx + 1}`,
+        storeName: u.storeName || 'Toko Terdaftar',
+        businessSector: (u.sector || 'FNB') as any,
+        name: u.fullName || u.email?.split('@')[0] || 'Pemilik Toko',
+        username: u.email?.split('@')[0] || 'owner',
+        role: 'ADMIN' as const,
+        pinStatus: 'PIN Terenkripsi',
+        status: 'ACTIVE' as const,
+      }));
+      if (list.length > 0) return list;
+    }
+  } catch {}
+  return [];
+}
 
 export default function UserManagement() {
   const [activeTab, setActiveTab] = useState<'ADMIN_USERS' | 'CLIENT_USERS'>('ADMIN_USERS');
   const [sectorFilter, setSectorFilter] = useState<string>('ALL');
+  const [clientUsersList] = useState<ClientUser[]>(() => getRegisteredClientUsers());
 
   const filteredClientUsers =
     sectorFilter === 'ALL'
-      ? CLIENT_USERS_DATA
-      : CLIENT_USERS_DATA.filter((u) => u.businessSector === sectorFilter);
+      ? clientUsersList
+      : clientUsersList.filter((u) => u.businessSector === sectorFilter);
 
   return (
     <div className="space-y-6">
@@ -244,7 +143,7 @@ export default function UserManagement() {
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>User Client Merchant ({CLIENT_USERS_DATA.length})</span>
+            <span>User Client Merchant ({clientUsersList.length})</span>
           </button>
         </div>
       </div>
@@ -277,7 +176,7 @@ export default function UserManagement() {
           </div>
           <div className="flex items-center justify-between text-slate-300">
             <span>Merchant Staf:</span>
-            <span className="font-mono text-emerald-400 font-bold">{CLIENT_USERS_DATA.length} Staf</span>
+            <span className="font-mono text-emerald-400 font-bold">{clientUsersList.length} Staf</span>
           </div>
           <div className="flex items-center justify-between text-slate-300">
             <span>Superadmin:</span>
@@ -378,7 +277,7 @@ export default function UserManagement() {
                 onChange={(e) => setSectorFilter(e.target.value)}
                 className="bg-white border border-slate-300 text-xs font-bold text-slate-800 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20"
               >
-                <option value="ALL">Semua Sektor Usaha ({CLIENT_USERS_DATA.length})</option>
+                <option value="ALL">Semua Sektor Usaha ({clientUsersList.length})</option>
                 <option value="FNB">Kafe &amp; Resto (F&amp;B)</option>
                 <option value="LAUNDRY">Laundry</option>
                 <option value="RETAIL">Ritel &amp; Minimarket</option>

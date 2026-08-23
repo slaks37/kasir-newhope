@@ -1039,7 +1039,7 @@ export const InventoryManager: React.FC = () => {
                     </td>
                     <td className="p-4 text-right font-mono font-bold text-slate-700">{log.newStock}</td>
                     <td className="p-4 text-slate-700 font-medium">{log.reason}</td>
-                    <td className="p-4 font-bold text-slate-900">{log.user || 'Budi Santoso'}</td>
+                    <td className="p-4 font-bold text-slate-900">{log.user || 'Admin'}</td>
                   </tr>
                 ))}
               </tbody>

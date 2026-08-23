@@ -191,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
               <span className="text-[10px] text-slate-500 font-normal truncate">
                 {shift.status === 'OPEN'
-                  ? `Kasir: ${shift.cashierName && shift.cashierName !== 'Ahmad Kasir' ? shift.cashierName : currentUser?.name || 'Budi Santoso'}`
+                  ? `Kasir: ${shift.cashierName || currentUser?.name || 'Kasir'}`
                   : 'Status: Ditutup'}
               </span>
             </div>

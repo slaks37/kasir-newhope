@@ -215,10 +215,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
           ) : (
             <>
               {activeTab === 'home' && (
-                <HomePage
-                  onStartDemo={() => setActiveTab('pos')}
-                  onOpenLogin={() => {}}
-                />
+                <OverviewPage onBackToHome={onBackToHome} />
               )}
 
               {activeTab === 'overview' && (
@@ -402,10 +399,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 };
 
 export function App() {
-  const { user, loading } = useAuth();
-  const [guestMode, setGuestMode] = useState<boolean>(() => {
-    return localStorage.getItem('newhope_pos_guest_mode') === 'true';
-  });
+  const { user, loading, signOut } = useAuth();
   const [authView, setAuthView] = useState<'home' | 'login' | 'register' | 'blog'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'login' || hash === 'register') return hash;
@@ -435,18 +429,7 @@ export function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const handleStartDemo = () => {
-    localStorage.setItem('newhope_pos_guest_mode', 'true');
-    setGuestMode(true);
-  };
-
-  const handleBackToHome = () => {
-    localStorage.removeItem('newhope_pos_guest_mode');
-    setGuestMode(false);
-    setAuthView('home');
-  };
-
-  // Loading spinner saat mengecek sesi awal.
+  // Loading spinner saat mengecek sesi awal
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
@@ -458,46 +441,41 @@ export function App() {
     );
   }
 
-  // Jika belum login dan belum masuk mode demo kasir:
-  if (!user && !guestMode) {
+  // JIKA BELUM LOGIN: Pengguna WAJIB Login atau Registrasi Toko Baru untuk dapat masuk ke POS.
+  if (!user) {
     if (authView === 'login' || authView === 'register') {
       return (
         <LoginPage
           onBackToLanding={() => { window.location.hash = ''; }}
-          onStartDemo={handleStartDemo}
           initialMode={authView}
         />
       );
     }
     if (authView === 'blog') {
       return (
-        <POSProvider>
-          <BlogHarapanBaru
-            initialSlug={blogSlug}
-            onBackToHome={() => { window.location.hash = ''; }}
-            onOpenPOS={handleStartDemo}
-            onOpenRegister={() => { window.location.hash = 'register'; }}
-          />
-        </POSProvider>
+        <BlogHarapanBaru
+          initialSlug={blogSlug}
+          onBackToHome={() => { window.location.hash = ''; }}
+          onOpenLogin={() => { window.location.hash = 'login'; }}
+          onOpenRegister={() => { window.location.hash = 'register'; }}
+        />
       );
     }
     return (
-      <POSProvider>
-        <div className="min-h-screen bg-slate-50 flex flex-col">
-          <HomePage
-            isStandaloneLanding={true}
-            onStartDemo={handleStartDemo}
-            onOpenLogin={() => { window.location.hash = 'login'; }}
-            onOpenRegister={() => { window.location.hash = 'register'; }}
-          />
-        </div>
-      </POSProvider>
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <HomePage
+          isStandaloneLanding={true}
+          onOpenLogin={() => { window.location.hash = 'login'; }}
+          onOpenRegister={() => { window.location.hash = 'register'; }}
+        />
+      </div>
     );
   }
 
+  // JIKA SUDAH LOGIN: Tampilkan Aplikasi POS
   return (
     <POSProvider>
-      <POSAppContent onBackToHome={handleBackToHome} />
+      <POSAppContent onBackToHome={signOut} />
     </POSProvider>
   );
 }

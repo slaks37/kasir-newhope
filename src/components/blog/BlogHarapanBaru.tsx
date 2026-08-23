@@ -36,14 +36,14 @@ import {
 interface BlogHarapanBaruProps {
   initialSlug?: string | null;
   onBackToHome: () => void;
-  onOpenPOS?: () => void;
+  onOpenLogin?: () => void;
   onOpenRegister?: () => void;
 }
 
 export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
   initialSlug,
   onBackToHome,
-  onOpenPOS,
+  onOpenLogin,
   onOpenRegister,
 }) => {
   const [posts, setPosts] = useState<BlogPost[]>([]);
@@ -175,13 +175,13 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
         </div>
 
         <div className="flex items-center space-x-3">
-          {onOpenPOS && (
+          {onOpenLogin && (
             <button
-              onClick={onOpenPOS}
-              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-700 font-bold text-xs transition-all cursor-pointer hidden sm:flex items-center space-x-1.5"
+              onClick={onOpenLogin}
+              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold text-xs transition-all cursor-pointer hidden sm:flex items-center space-x-1.5"
             >
-              <Store className="w-4 h-4" />
-              <span>Buka Kasir POS</span>
+              <Store className="w-4 h-4 text-amber-400" />
+              <span>Masuk Kasir</span>
             </button>
           )}
 

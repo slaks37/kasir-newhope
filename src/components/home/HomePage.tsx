@@ -66,7 +66,6 @@ import {
 } from 'lucide-react';
 
 interface HomePageProps {
-  onStartDemo?: () => void;
   onOpenLogin?: () => void;
   onOpenRegister?: () => void;
   isStandaloneLanding?: boolean;
@@ -74,7 +73,6 @@ interface HomePageProps {
 
 
 export const HomePage: React.FC<HomePageProps> = ({
-  onStartDemo,
   onOpenLogin,
   onOpenRegister,
   isStandaloneLanding = false,
@@ -427,8 +425,10 @@ export const HomePage: React.FC<HomePageProps> = ({
   };
 
   const handleOpenPOS = () => {
-    if (onStartDemo) {
-      onStartDemo();
+    if (onOpenRegister) {
+      onOpenRegister();
+    } else if (onOpenLogin) {
+      onOpenLogin();
     } else {
       setActiveTab('pos');
     }

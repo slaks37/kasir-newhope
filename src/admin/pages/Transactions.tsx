@@ -69,7 +69,7 @@ function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
               <div className="pt-2 border-t border-slate-200">
                 <p className="text-[11px] font-bold text-slate-500 uppercase">Kasir</p>
-                <p className="font-bold text-slate-900 mt-0.5">{data.transaction.cashier_name ?? 'Budi Santoso'}</p>
+                <p className="font-bold text-slate-900 mt-0.5">{data.transaction.cashier_name ?? 'Kasir'}</p>
               </div>
               <div className="pt-2 border-t border-slate-200">
                 <p className="text-[11px] font-bold text-slate-500 uppercase">Metode Bayar</p>
@@ -244,7 +244,7 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
                         {x.payment_method}
                       </span>
                     </Td>
-                    <Td className="font-medium text-slate-700">{x.cashier_name ?? 'Budi Santoso'}</Td>
+                    <Td className="font-medium text-slate-700">{x.cashier_name ?? 'Kasir'}</Td>
                     <Td align="right" className="font-bold">{angka(x.item_count)} item</Td>
                     <Td align="right" className="font-mono font-black text-slate-950 text-sm">
                       {rupiah(x.total_amount)}

@@ -52,6 +52,7 @@ import {
   recordFailedPinAttempt,
   resetPinAttempts,
 } from '../lib/auth/pinSecurity';
+import { useAuth } from './AuthContext';
 import {
   INITIAL_CATEGORIES,
   INITIAL_PRODUCTS,
@@ -336,37 +337,85 @@ const enforce12HourDemoReset = () => {
 enforce12HourDemoReset();
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  useEffect(() => {
-    // Cek berkala setiap 5 menit jika browser tetap terbuka
-    const interval = setInterval(() => {
-      enforce12HourDemoReset();
-    }, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+  const { user: authUser } = useAuth();
+
+  const defaultOwnerUser: User = {
+    id: authUser?.id || 'usr-owner',
+    name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko',
+    username: authUser?.email?.split('@')[0] || 'owner',
+    role: 'ADMIN',
+    pin: '1234',
+    email: authUser?.email || '',
+    phone: '',
+    status: 'ACTIVE',
+    createdAt: authUser?.created_at || new Date().toISOString(),
+  };
 
   const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('overview');
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem('newhope_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = parsed.filter((u) => u.name !== 'Budi Santoso' && u.email !== 'budi@newhope.id');
+          if (cleaned.length > 0) return cleaned;
+        }
+      } catch {}
+    }
+    return [defaultOwnerUser];
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('newhope_current_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.name !== 'Budi Santoso' && parsed.email !== 'budi@newhope.id') {
+          return parsed;
+        }
       } catch (e) {
         console.error('Failed to parse current user', e);
       }
     }
-    return INITIAL_USERS[0];
+    return defaultOwnerUser;
   });
 
+  // Sync with authUser when user signs in
+  useEffect(() => {
+    if (authUser) {
+      const activeName = authUser.user_metadata?.full_name || authUser.user_metadata?.store_name || authUser.email?.split('@')[0] || 'Pemilik Toko';
+      const updatedUser: User = {
+        id: authUser.id,
+        name: activeName,
+        username: authUser.email?.split('@')[0] || 'owner',
+        role: 'ADMIN',
+        pin: currentUser?.pin || '1234',
+        email: authUser.email || '',
+        phone: '',
+        status: 'ACTIVE',
+        createdAt: authUser.created_at || new Date().toISOString(),
+      };
+      setCurrentUser(updatedUser);
+      setUsers((prev) => {
+        const filtered = prev.filter((u) => u.name !== 'Budi Santoso' && u.email !== 'budi@newhope.id' && u.id !== authUser.id);
+        return [updatedUser, ...filtered];
+      });
+    }
+  }, [authUser]);
+
   const [settings, setSettings] = useState<StoreSettings>(() => {
-    const uId = currentUser?.id || 'usr-admin';
-    return loadGlobalUserData('settings', uId, INITIAL_SETTINGS);
+    const uId = currentUser?.id || authUser?.id || 'usr-admin';
+    const loaded = loadGlobalUserData('settings', uId, INITIAL_SETTINGS);
+    const storeName = authUser?.user_metadata?.store_name || authUser?.user_metadata?.full_name;
+    const sector = (authUser?.user_metadata?.business_sector || authUser?.user_metadata?.sector || loaded.businessSector || 'FNB') as BusinessSector;
+    return {
+      ...loaded,
+      storeName: storeName || (loaded.storeName && loaded.storeName !== 'New Hope POS' ? loaded.storeName : 'Toko Saya'),
+      businessSector: sector,
+    };
   });
 
   const activeSector = settings.businessSector || 'FNB';
@@ -493,11 +542,62 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [shift, setShift] = useState<Shift>(() => {
     const loaded = loadScopedData('shift', currentUser.id, activeSector, INITIAL_SHIFT);
-    if (!loaded.cashierName || loaded.cashierName === 'Ahmad Kasir') {
-      return { ...loaded, cashierName: currentUser.name || 'Budi Santoso' };
+    const activeCashier = currentUser.name || authUser?.user_metadata?.full_name || 'Kasir';
+    if (!loaded.cashierName || loaded.cashierName === 'Ahmad Kasir' || loaded.cashierName === 'Budi Santoso') {
+      return {
+        ...loaded,
+        cashierName: activeCashier,
+        totalSales: 0,
+        cashSales: 0,
+        qrisSales: 0,
+        cardSales: 0,
+        eWalletSales: 0,
+        expectedCash: loaded.initialCash || 0,
+      };
     }
     return loaded;
   });
+
+  // Reconcile shift sales strictly against active shift's completed orders
+  // to ensure omzet is 100% accurate and never displays phantom/dummy omzet.
+  useEffect(() => {
+    if (shift.status === 'OPEN') {
+      const shiftOrders = orders.filter((o) => o.shiftId === shift.id && o.status === 'COMPLETED');
+      let cSales = 0;
+      let qSales = 0;
+      let cardSales = 0;
+      let eSales = 0;
+
+      shiftOrders.forEach((o) => {
+        if (o.paymentMethod === 'CASH') cSales += o.total;
+        else if (o.paymentMethod === 'QRIS') qSales += o.total;
+        else if (o.paymentMethod === 'DEBIT' || o.paymentMethod === 'CREDIT') cardSales += o.total;
+        else eSales += o.total;
+      });
+
+      const computedTotal = cSales + qSales + cardSales + eSales;
+      const expected = (shift.initialCash || 0) + cSales;
+
+      if (
+        shift.totalSales !== computedTotal ||
+        shift.cashSales !== cSales ||
+        shift.qrisSales !== qSales ||
+        shift.cardSales !== cardSales ||
+        shift.eWalletSales !== eSales ||
+        shift.expectedCash !== expected
+      ) {
+        setShift((prev) => ({
+          ...prev,
+          cashSales: cSales,
+          qrisSales: qSales,
+          cardSales: cardSales,
+          eWalletSales: eSales,
+          totalSales: computedTotal,
+          expectedCash: expected,
+        }));
+      }
+    }
+  }, [orders, shift.id, shift.status, shift.initialCash]);
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
     return loadScopedData('shift_history', currentUser.id, activeSector, []);
