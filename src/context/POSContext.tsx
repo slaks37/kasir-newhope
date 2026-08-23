@@ -24,6 +24,9 @@ import {
   StoreBranch,
   GeoLocationInfo,
   ProductBundle,
+  CashMovement,
+  CashMovementType,
+  CashMovementCategory,
 } from '../types';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 import { ROLE_PERMISSIONS } from '../data/rolePermissions';
@@ -223,6 +226,18 @@ interface POSContextType {
   activateBusinessSector: (sector: BusinessSector, customStoreName?: string) => void;
   startShift: (cashierName: string, initialCash: number) => Shift;
   endShift: (actualCash: number, notes?: string) => Shift;
+  
+  // Cash Movements & Petty Cash Management
+  cashMovements: CashMovement[];
+  addCashMovement: (
+    type: CashMovementType,
+    category: CashMovementCategory,
+    amount: number,
+    description: string,
+    recipientOrSource?: string
+  ) => CashMovement;
+  deleteCashMovement: (id: string) => void;
+  setInitialCash: (amount: number) => void;
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
@@ -511,6 +526,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('inventory_logs', currentUser.id, activeSector, []);
   });
 
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>(() => {
+    return loadScopedData('cash_movements', authUser?.id || currentUser.id, activeSector, []);
+  });
+
   const [shift, setShift] = useState<Shift>(() => {
     const activeCashier = authUser?.user_metadata?.full_name || currentUser.name || 'Kasir';
     const loaded = loadScopedData('shift', authUser?.id || currentUser.id, activeSector, INITIAL_SHIFT);
@@ -532,6 +551,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cardSales: 0,
         eWalletSales: 0,
         totalSales: 0,
+        totalCashIn: 0,
+        totalCashOut: 0,
         expectedCash: 0,
         status: 'OPEN',
       };
@@ -540,7 +561,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   // Reconcile shift sales strictly against active shift's completed orders
-  // to ensure omzet is 100% accurate and never displays phantom/dummy omzet.
+  // and cash movements (cash in, cash out/belanja, modal awal).
   useEffect(() => {
     if (shift.status === 'OPEN') {
       const shiftOrders = orders.filter((o) => o.shiftId === shift.id && o.status === 'COMPLETED');
@@ -556,8 +577,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         else eSales += o.total;
       });
 
+      const shiftMovements = cashMovements.filter((m) => m.shiftId === shift.id);
+      let totalCashIn = 0;
+      let totalCashOut = 0;
+
+      shiftMovements.forEach((m) => {
+        if (m.category === 'MODAL_AWAL') return;
+        if (m.type === 'CASH_IN') totalCashIn += m.amount;
+        else if (m.type === 'CASH_OUT') totalCashOut += m.amount;
+      });
+
       const computedTotal = cSales + qSales + cardSales + eSales;
-      const expected = (shift.initialCash || 0) + cSales;
+      const expected = Math.max(0, (shift.initialCash || 0) + cSales + totalCashIn - totalCashOut);
 
       if (
         shift.totalSales !== computedTotal ||
@@ -565,6 +596,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         shift.qrisSales !== qSales ||
         shift.cardSales !== cardSales ||
         shift.eWalletSales !== eSales ||
+        shift.totalCashIn !== totalCashIn ||
+        shift.totalCashOut !== totalCashOut ||
         shift.expectedCash !== expected
       ) {
         setShift((prev) => ({
@@ -574,11 +607,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           cardSales: cardSales,
           eWalletSales: eSales,
           totalSales: computedTotal,
+          totalCashIn,
+          totalCashOut,
           expectedCash: expected,
         }));
       }
     }
-  }, [orders, shift.id, shift.status, shift.initialCash]);
+  }, [orders, cashMovements, shift.id, shift.status, shift.initialCash]);
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
     return loadScopedData('shift_history', currentUser.id, activeSector, []);
@@ -965,6 +1000,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
   useEffect(() => { localStorage.setItem('newhope_users', JSON.stringify(users)); }, [users]);
   useEffect(() => { localStorage.setItem('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
+  useEffect(() => {
+    localStorage.setItem(
+      getScopedKey('cash_movements', authUser?.id || currentUser.id, activeSector),
+      JSON.stringify(cashMovements)
+    );
+  }, [cashMovements, authUser?.id, currentUser.id, activeSector]);
 
   const switchUser = (user: User) => {
     const oldUId = currentUser.id;
@@ -983,6 +1024,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('customers', oldUId, currentSec), JSON.stringify(customers));
     localStorage.setItem(getScopedKey('attendance_logs', oldUId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', oldUId, currentSec), JSON.stringify(promoCodes));
+    localStorage.setItem(getScopedKey('cash_movements', oldUId, currentSec), JSON.stringify(cashMovements));
 
     // 2. Set new user
     setCurrentUser(user);
@@ -1010,6 +1052,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCustomers(loadScopedData('customers', newUId, userSec, seedCustomersFor(userSec)));
     setAttendanceLogs(loadScopedData('attendance_logs', newUId, userSec, seedAttendanceFor(userSec)));
     setPromoCodes(loadScopedData('promo_codes', newUId, userSec, seedPromosFor(userSec)));
+    setCashMovements(loadScopedData('cash_movements', newUId, userSec, []));
     // Staff roster stays per-account (one roster across the merchant's
     // businesses); the exposed list is filtered to the active sector.
     setStaffMembers(loadGlobalUserData('staff_members', newUId, INITIAL_STAFF_MEMBERS));
@@ -1751,6 +1794,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('customers', uId, currentSec), JSON.stringify(customers));
     localStorage.setItem(getScopedKey('attendance_logs', uId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', uId, currentSec), JSON.stringify(promoCodes));
+    localStorage.setItem(getScopedKey('cash_movements', uId, currentSec), JSON.stringify(cashMovements));
 
     // 2. Load target sector state
     const targetCategories = loadScopedData('categories', uId, sector, preset.categories);
@@ -1765,6 +1809,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const targetCustomers = loadScopedData('customers', uId, sector, seedCustomersFor(sector));
     const targetAttendance = loadScopedData('attendance_logs', uId, sector, seedAttendanceFor(sector));
     const targetPromos = loadScopedData('promo_codes', uId, sector, seedPromosFor(sector));
+    const targetCashMovements = loadScopedData('cash_movements', uId, sector, []);
 
     const storeName = customStoreName || preset.defaultStoreName;
 
@@ -1790,6 +1835,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCustomers(targetCustomers);
     setAttendanceLogs(targetAttendance);
     setPromoCodes(targetPromos);
+    setCashMovements(targetCashMovements);
 
     setSelectedCategory(targetCategories[0]?.id || 'ALL');
     clearCart();
@@ -1798,8 +1844,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const startShift = (cashierName: string, initialCash: number): Shift => {
+    const sId = newId('shift');
     const newShift: Shift = {
-      id: newId('shift'),
+      id: sId,
       cashierName,
       startTime: new Date().toISOString(),
       initialCash,
@@ -1808,11 +1855,30 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cardSales: 0,
       eWalletSales: 0,
       totalSales: 0,
+      totalCashIn: 0,
+      totalCashOut: 0,
       expectedCash: initialCash,
       totalOrders: 0,
       status: 'OPEN',
     };
     setShift(newShift);
+
+    if (initialCash > 0) {
+      const initialLog: CashMovement = {
+        id: newId('csh'),
+        type: 'CASH_IN',
+        category: 'MODAL_AWAL',
+        amount: initialCash,
+        description: `Modal Awal Kasir Shift (${cashierName})`,
+        timestamp: new Date().toISOString(),
+        cashierName,
+        shiftId: sId,
+        businessSector: activeSector,
+        userId: authUser?.id || currentUser.id,
+      };
+      setCashMovements((prev) => [initialLog, ...prev]);
+    }
+
     return newShift;
   };
 
@@ -1821,10 +1887,22 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       (o) => o.shiftId === shift.id && o.status === 'COMPLETED'
     ).length;
 
+    const shiftMovements = cashMovements.filter((m) => m.shiftId === shift.id);
+    let totalCashIn = 0;
+    let totalCashOut = 0;
+
+    shiftMovements.forEach((m) => {
+      if (m.category === 'MODAL_AWAL') return;
+      if (m.type === 'CASH_IN') totalCashIn += m.amount;
+      else if (m.type === 'CASH_OUT') totalCashOut += m.amount;
+    });
+
     const endedShift: Shift = {
       ...shift,
       endTime: new Date().toISOString(),
       actualCash,
+      totalCashIn,
+      totalCashOut,
       difference: actualCash - shift.expectedCash,
       totalOrders: shiftOrdersCount,
       notes: notes || shift.notes,
@@ -1833,6 +1911,54 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setShift(endedShift);
     setShiftHistory((prev) => [endedShift, ...prev]);
     return endedShift;
+  };
+
+  const addCashMovement = (
+    type: CashMovementType,
+    category: CashMovementCategory,
+    amount: number,
+    description: string,
+    recipientOrSource?: string
+  ): CashMovement => {
+    const activeCashier = authUser?.user_metadata?.full_name || currentUser.name || 'Kasir';
+    const movement: CashMovement = {
+      id: newId('csh'),
+      type,
+      category,
+      amount: Math.abs(amount),
+      description: description.trim(),
+      timestamp: new Date().toISOString(),
+      cashierName: activeCashier,
+      shiftId: shift.id,
+      businessSector: activeSector,
+      userId: authUser?.id || currentUser.id,
+      recipientOrSource: recipientOrSource?.trim(),
+    };
+
+    setCashMovements((prev) => [movement, ...prev]);
+
+    if (category === 'MODAL_AWAL') {
+      setShift((prev) => ({
+        ...prev,
+        initialCash: Math.abs(amount),
+      }));
+    }
+
+    if (soundEnabled) playPOSSound('click');
+    return movement;
+  };
+
+  const deleteCashMovement = (id: string) => {
+    setCashMovements((prev) => prev.filter((m) => m.id !== id));
+    if (soundEnabled) playPOSSound('delete');
+  };
+
+  const setInitialCash = (amount: number) => {
+    const val = Math.max(0, amount);
+    setShift((prev) => ({
+      ...prev,
+      initialCash: val,
+    }));
   };
 
   const updateOrderLaundryStatus = (
@@ -1962,6 +2088,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         activateBusinessSector,
         startShift,
         endShift,
+        cashMovements,
+        addCashMovement,
+        deleteCashMovement,
+        setInitialCash,
       }}
     >
       {/* Anything below can read the active business unit via useTenant(). */}

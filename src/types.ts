@@ -300,6 +300,30 @@ export interface InventoryLog {
   userId?: string;
 }
 
+export type CashMovementType = 'CASH_IN' | 'CASH_OUT';
+export type CashMovementCategory =
+  | 'MODAL_AWAL' // Kas Awal / Modal Awal
+  | 'BELANJA_BAHAN' // Belanja Bahan Baku & Stok
+  | 'OPERASIONAL' // Listrik, Air, Gas, Kebersihan, Internet
+  | 'KASBON' // Kasbon Karyawan
+  | 'TAMBAH_MODAL' // Setoran Tambahan Modal Kasir
+  | 'PENDAPATAN_LAIN' // Pendapatan Non-Sales
+  | 'PENGELUARAN_LAIN'; // Pengeluaran Lain-lain
+
+export interface CashMovement {
+  id: string;
+  type: CashMovementType;
+  category: CashMovementCategory;
+  amount: number;
+  description: string;
+  timestamp: string; // ISO date string
+  cashierName: string;
+  shiftId?: string;
+  businessSector?: BusinessSector;
+  userId?: string;
+  recipientOrSource?: string;
+}
+
 export interface Shift {
   id: string;
   cashierName: string;
@@ -311,6 +335,8 @@ export interface Shift {
   cardSales: number;
   eWalletSales: number;
   totalSales: number;
+  totalCashIn?: number;
+  totalCashOut?: number;
   expectedCash: number;
   actualCash?: number;
   difference?: number;
