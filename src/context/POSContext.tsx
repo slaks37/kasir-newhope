@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import {
   Category,
   Product,
@@ -78,6 +78,7 @@ import {
 } from '../lib/plans/entitlements';
 import type { StatusLangganan } from '../lib/plans/expiry';
 import { fetchToko } from '../lib/sync/tokenToko';
+import { tarikDariCloud, keProduk, keKategori, kePelanggan, keCabang } from '../lib/sync/tarik';
 
 /**
  * Hasil penyimpanan yang BISA DITOLAK oleh batas paket.
@@ -463,6 +464,83 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     getSyncStatus(makeBusinessId(currentUser.id, activeSector))
   );
+
+  /* ------------------------------------------------------------------------ */
+  /* PENARIKAN DARI CLOUD                                                      */
+  /* ------------------------------------------------------------------------ */
+  //
+  // ONLINE-FIRST UNTUK ISI TOKO, OFFLINE-FIRST UNTUK PENJUALAN.
+  //
+  // Keduanya bukan pilihan yang saling meniadakan, dan membedakannya penting:
+  //
+  //   Katalog, pelanggan, cabang  -> CLOUD yang berwenang. Ketiganya disunting
+  //     dari perangkat mana pun dan dikirim utuh, jadi salinan server selalu
+  //     yang paling akhir. Perangkat yang baru menyala mengambilnya dari sana.
+  //
+  //   Struk dan antrian kirim     -> PERANGKAT yang berwenang. Kasir harus
+  //     tetap melayani saat internet mati, dan struk yang belum terkirim adalah
+  //     satu-satunya data yang hanya ada di sini.
+  //
+  // Sebelum ini tidak ada penarikan sama sekali: pemilik yang menyiapkan
+  // katalog di laptop lalu membuka aplikasi di ponsel menemukan tokonya kosong,
+  // padahal seluruh datanya utuh di server.
+  const [sedangMenarik, setSedangMenarik] = useState(false);
+  const sudahMenarik = useRef(false);
+
+  useEffect(() => {
+    if (sudahMenarik.current) return;
+    const bid = tenant.businessId;
+    if (!bid || !currentUser?.id) return;
+    sudahMenarik.current = true;
+
+    let dibatalkan = false;
+    setSedangMenarik(true);
+
+    void (async () => {
+      const hasil = await tarikDariCloud({
+        businessId: bid,
+        ownerRef: currentUser.id,
+        storeName: settings.storeName,
+        sector: activeSector,
+      });
+      if (dibatalkan) return;
+      setSedangMenarik(false);
+
+      if (!hasil.ok) {
+        // Offline atau ditolak: perangkat memakai salinan lokalnya. Tidak ada
+        // yang dihapus — kegagalan menarik tidak boleh mengosongkan layar.
+        return;
+      }
+
+      const isi = hasil.isi;
+      const sec = (isi.business.sector || activeSector) as BusinessSector;
+
+      // Katalog hanya ditimpa bila server memang punya isinya. Toko yang baru
+      // mendaftar dan belum pernah mengirim apa-apa tidak boleh kehilangan
+      // katalog yang sedang disusun pemiliknya di layar.
+      if (isi.products.length) {
+        setProducts(keProduk(isi.products, sec) as Product[]);
+        setCategories(keKategori(isi.products, sec) as Category[]);
+      }
+      if (isi.customers.length) {
+        setCustomers(kePelanggan(isi.customers, sec) as Customer[]);
+      }
+      if (isi.branches.length) {
+        setSettings((prev) => ({
+          ...prev,
+          storeName: isi.business.storeName || prev.storeName,
+          branches: keCabang(isi.branches, sec) as StoreBranch[],
+        }));
+      } else if (isi.business.storeName) {
+        setSettings((prev) => ({ ...prev, storeName: isi.business.storeName }));
+      }
+    })();
+
+    return () => { dibatalkan = true; };
+    // Sengaja hanya bergantung pada identitas toko: penarikan terjadi sekali
+    // per sesi, bukan setiap kali pengaturan disunting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenant.businessId, currentUser?.id]);
 
   /* ------------------------------------------------------------------------ */
   /* ENTITLEMENT PAKET                                                         */

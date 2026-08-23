@@ -34,8 +34,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const body = req.body ?? {};
-  const { businessId, sector, storeName, ownerRef, products } = body;
+  const { businessId, sector, storeName, ownerRef, products, customers } = body;
   const prods = Array.isArray(products) ? products : [];
+  // Aplikasi kasir SUDAH mengirim daftar member sejak lama (lihat pushCatalog
+  // di src/lib/sync/queue.ts) — endpoint ini yang tidak pernah membacanya, dan
+  // membuangnya diam-diam. Akibatnya seluruh data member hanya ada di perangkat
+  // tempat ia diketik: hilang saat ganti perangkat, dan tidak pernah bisa
+  // ditarik kembali.
+  const members = Array.isArray(customers) ? customers : [];
 
   if (!businessId || !sector) {
     return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId and sector are required' });
@@ -161,11 +167,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     }
 
+    /* -- MEMBER TOKO ------------------------------------------------------ */
+    //
+    // Dicocokkan lewat external_ref, sama seperti produk. Angka loyalitas
+    // ditimpa apa adanya dari perangkat kasir: menjumlahkan di server akan
+    // menggandakan total belanja pada setiap kiriman ulang, dan kiriman ulang
+    // adalah kejadian normal di sini.
+    let memberTersimpan = 0;
+    for (const c of members) {
+      const ref = String(c?.externalRef ?? c?.ref ?? c?.id ?? '').trim().slice(0, 96);
+      const nama = String(c?.name ?? '').trim().slice(0, 100);
+      if (!ref || !nama) continue;
+
+      await client.query(
+        `INSERT INTO pos.customers
+           (id, business_id, external_ref, name, phone, email, points, total_spent,
+            visit_count, tier, last_visit_at, business_sector, client_key)
+         VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         -- Indeksnya PARSIAL (WHERE external_ref IS NOT NULL), jadi predikatnya
+         -- harus ikut disebut. Tanpa itu Postgres tidak menemukan indeks yang
+         -- cocok dan seluruh kiriman katalog gagal.
+         ON CONFLICT (business_id, external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET
+           name = EXCLUDED.name,
+           phone = EXCLUDED.phone,
+           email = EXCLUDED.email,
+           points = EXCLUDED.points,
+           total_spent = EXCLUDED.total_spent,
+           visit_count = EXCLUDED.visit_count,
+           tier = EXCLUDED.tier,
+           last_visit_at = EXCLUDED.last_visit_at`,
+        [
+          tenantId, ref, nama,
+          String(c?.phone ?? '').slice(0, 32),
+          String(c?.email ?? '').slice(0, 160),
+          Math.max(0, Math.trunc(Number(c?.points) || 0)),
+          Math.max(0, Number(c?.totalSpent) || 0),
+          Math.max(0, Math.trunc(Number(c?.visitCount) || 0)),
+          ['BRONZE', 'SILVER', 'GOLD', 'PLATINUM'].includes(String(c?.tier ?? '').toUpperCase())
+            ? String(c.tier).toUpperCase() : 'BRONZE',
+          c?.lastVisitAt ?? null,
+          sector,
+          businessId,
+        ]
+      );
+      memberTersimpan += 1;
+    }
+
     await client.query('COMMIT');
 
     return res.status(200).json({
       ok: true,
       synced: prods.length - ditahan.length,
+      customersSynced: memberTersimpan,
       tenantId,
       productLimit: batasProduk,
       productCount: jumlahProduk,
