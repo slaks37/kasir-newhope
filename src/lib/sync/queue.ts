@@ -26,6 +26,8 @@
 
 import type { Order, BusinessSector, Customer, ProductBundle } from '../../types';
 import { fetchToko } from './tokenToko';
+import { tandaiTertunda, tandaiSampai } from './tertunda';
+import { bolehMencoba } from './jaringan';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
@@ -282,12 +284,19 @@ export function getStatus(businessId: string, inFlight = false): SyncStatus {
  * Mengirim seluruh katalog satu unit usaha.
  *
  * TIDAK memakai antrian transaksi, dan itu disengaja. Katalog bersifat
- * "keadaan terkini", bukan "kejadian": kiriman terakhir selalu benar dan
- * kiriman yang gagal tidak perlu diulang — cukup ditunggu kiriman berikutnya.
- * Memasukkannya ke antrian yang sama justru berisiko menahan transaksi di
- * belakang katalog yang gagal terkirim.
+ * "keadaan terkini", bukan "kejadian": kiriman terakhir selalu benar, dan
+ * memasukkannya ke antrian yang sama berisiko menahan transaksi di belakang
+ * katalog yang gagal terkirim.
  *
- * Karena itu kegagalannya ditelan diam-diam: tidak ada yang bisa hilang.
+ * TAPI KEGAGALANNYA TIDAK LAGI DITELAN. Dulu berkas ini beralasan "cukup
+ * ditunggu kiriman berikutnya" — dan itu keliru: kiriman berikutnya hanya
+ * terjadi kalau ada SUNTINGAN berikutnya. Pemilik yang menyusun katalognya
+ * sekali lalu tidak menyentuhnya lagi kehilangan seluruh katalognya di server
+ * bila satu-satunya kiriman itu jatuh tepat saat internetnya terputus, tanpa
+ * satu pun galat yang bisa dilihat siapa pun.
+ *
+ * Sekarang kegagalannya meninggalkan penanda tertunda (lihat `tertunda.ts`)
+ * yang bertahan sampai server benar-benar mengonfirmasi.
  */
 export interface CatalogPayload {
   products: Array<{
@@ -319,6 +328,14 @@ export async function pushCatalog(
   target: SyncTarget,
   payload: CatalogPayload
 ): Promise<boolean> {
+  // Ditandai SEBELUM dikirim. Kalau proses mati di tengah pengiriman, penanda
+  // ini yang membuat percobaan berikutnya tetap terjadi.
+  tandaiTertunda(target.businessId, 'catalog');
+
+  // Tidak ada tautan jaringan sama sekali: tidak usah dicoba. Penandanya sudah
+  // terpasang, jadi pengiriman akan dilakukan begitu jaringan kembali.
+  if (!bolehMencoba()) return false;
+
   try {
     const res = await fetchToko('/api/v1/sync/catalog', {
       method: 'POST',
@@ -333,6 +350,8 @@ export async function pushCatalog(
         bundles: payload.bundles ?? [],
       }),
     }, { businessId: target.businessId, ownerRef: target.ownerRef, storeName: target.storeName, sector: target.sector });
+    // Hanya konfirmasi server yang boleh mencabut penandanya.
+    if (res.ok) tandaiSampai(target.businessId, 'catalog');
     return res.ok;
   } catch {
     return false;
@@ -381,6 +400,9 @@ export async function pushBranches(
   activeBranchRef?: string
 ): Promise<HasilSinkronCabang> {
   const kosong: HasilSinkronCabang = { ok: false, ditolak: [], maxOutlets: 0, activeOutlets: 0 };
+  tandaiTertunda(target.businessId, 'branches');
+  if (!bolehMencoba()) return kosong;
+
   try {
     const res = await fetchToko('/api/v1/sync/branches', {
       method: 'POST',
@@ -394,6 +416,10 @@ export async function pushBranches(
     if (!res.ok) return kosong;
 
     const d = await res.json();
+    // Penolakan batas paket TETAP berarti server sudah menerima daftarnya —
+    // yang ditolak memang tidak boleh ada. Yang tertunda adalah "belum sampai",
+    // bukan "belum diterima seluruhnya".
+    if (d?.ok) tandaiSampai(target.businessId, 'branches');
     return {
       ok: Boolean(d?.ok),
       ditolak: Array.isArray(d?.rejected) ? d.rejected : [],
@@ -432,6 +458,24 @@ export function enqueue(businessId: string, txn: SyncPayloadTxn): boolean {
 let flushing = new Set<string>();
 
 /**
+ * Menghapus jeda backoff supaya pengiriman berikutnya terjadi SEKARANG.
+ *
+ * Backoff ada untuk melindungi server yang sedang bermasalah, bukan untuk
+ * menghukum kasir yang baru masuk area ber-sinyal. Tanpa fungsi ini, perangkat
+ * yang lima kali gagal saat offline harus menunggu lima menit LAGI setelah
+ * jaringannya kembali sebelum satu pun struk terkirim — padahal penyebab
+ * kegagalannya sudah hilang.
+ *
+ * Hanya dipanggil oleh peristiwa yang benar-benar mengubah keadaan: jaringan
+ * yang kembali tersambung. Bukan oleh timer.
+ */
+export function setelBackoff(businessId: string): void {
+  const meta = readMeta(businessId);
+  if (meta.failures === 0 && !meta.lastErrorAt) return;
+  writeMeta(businessId, { failures: 0, lastErrorAt: null });
+}
+
+/**
  * Mengirim antrian. Aman dipanggil kapan saja dan sesering apa pun.
  *
  * Mengembalikan status terbaru. Tidak pernah melempar — pemanggilnya adalah
@@ -447,6 +491,15 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
 
   const all = readQueue(businessId);
   if (all.length === 0) return getStatus(businessId);
+
+  // TIDAK ADA TAUTAN JARINGAN: berhenti tanpa mencatat kegagalan.
+  //
+  // Mencatatnya akan menaikkan hitungan `failures` sampai backoff mentok lima
+  // menit — sehingga saat jaringannya benar-benar kembali, antriannya masih
+  // harus menunggu lima menit lagi karena kegagalan yang penyebabnya sudah
+  // tidak ada. Percobaan yang tidak pernah dilakukan bukan percobaan yang
+  // gagal.
+  if (!bolehMencoba()) return getStatus(businessId);
 
   const meta = readMeta(businessId);
 

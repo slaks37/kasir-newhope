@@ -19,6 +19,7 @@ import {
   Globe,
   CloudUpload,
   CloudAlert,
+  CloudOff,
 } from 'lucide-react';
 import { formatRupiah } from '../utils/formatters';
 
@@ -49,8 +50,20 @@ export const Header: React.FC<HeaderProps> = ({
     setActiveTab,
     currentUser,
     syncStatus,
+    jaringan,
+    adaYangTertunda,
     forceSync,
   } = usePOS();
+
+  /*
+   * SATU KEPUTUSAN, DIPAKAI SELURUH LENCANA DI BAWAH.
+   *
+   * `jaringan.serverTerjangkau === false` sengaja dibedakan dari
+   * `!perangkatOnline`: yang pertama berarti WiFi-nya nyala tapi datanya tidak
+   * sampai ke mana-mana — keadaan yang paling menipu, karena setiap indikator
+   * di perangkat tampak sehat.
+   */
+  const terputus = !jaringan.perangkatOnline || jaringan.serverTerjangkau === false;
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -201,10 +214,34 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
+        {/* PENANDA OFFLINE.
+            Muncul meski tidak ada satu pun transaksi menunggu. Aplikasi ini
+            online; offline adalah keadaan darurat, dan keadaan darurat yang
+            tidak terlihat adalah keadaan darurat yang tidak ditangani. Kasir
+            berhak tahu bahwa yang ia kerjakan sekarang belum sampai ke pusat
+            SEBELUM ia menutup toko, bukan sesudahnya. */}
+        {terputus && (
+          <div
+            title={
+              !jaringan.perangkatOnline
+                ? 'Tidak ada jaringan. Transaksi tetap dilayani dan disimpan di perangkat, lalu dikirim otomatis begitu internet kembali.'
+                : 'Jaringan ada, tetapi server tidak terjangkau. Transaksi tetap disimpan dan akan dikirim otomatis.'
+            }
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl border border-slate-300 bg-slate-100 text-slate-700 text-[11px] font-bold"
+          >
+            <CloudOff className="w-4 h-4" />
+            <span className="hidden sm:inline">Offline</span>
+          </div>
+        )}
+
         {/* Sync Status Indicator */}
         {/* Peringatan penyimpanan penuh harus muncul meski pending = 0 —
-            justru itu gejalanya: transaksinya tidak pernah masuk antrian. */}
+            justru itu gejalanya: transaksinya tidak pernah masuk antrian.
+            `adaYangTertunda` juga tidak punya angka: katalog yang gagal
+            terkirim tidak menambah `pending`, dan dulu tidak terlihat
+            di mana pun. */}
         {(syncStatus.pending > 0 ||
+          adaYangTertunda ||
           syncStatus.failures > 0 ||
           syncStatus.lastError === 'PENYIMPANAN_PENUH') && (
           <button
@@ -214,6 +251,8 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'Penyimpanan perangkat penuh. Transaksi TIDAK tersimpan untuk dikirim ke pusat — hubungi admin sebelum melanjutkan.'
                 : syncStatus.failures > 0
                 ? `Gagal mengirim (${syncStatus.lastError ?? 'tidak diketahui'}). ${syncStatus.pending} transaksi menunggu.`
+                : adaYangTertunda && syncStatus.pending === 0
+                ? 'Perubahan katalog atau cabang belum dikonfirmasi server. Klik untuk mengirim sekarang.'
                 : `${syncStatus.pending} transaksi sedang dikirim ke pusat.`
             }
             className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border text-xs font-bold transition-colors ${

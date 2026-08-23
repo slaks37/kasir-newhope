@@ -13,6 +13,8 @@
  * token: ia hanya berlaku untuk satu toko.
  */
 
+import { catatServerMenjawab, catatServerTakTerjangkau } from './jaringan';
+
 const KUNCI = 'newhope_token_toko_';
 
 export interface IdentitasToko {
@@ -68,12 +70,17 @@ export async function pastikanToken(id: IdentitasToko, paksaBaru = false): Promi
           sector: id.sector,
         }),
       });
+      // Server menjawab — apa pun kodenya. Ini bukti keterjangkauan, dan
+      // ditandai SEBELUM kode statusnya diperiksa: 401 dari server yang hidup
+      // tidak boleh terbaca sebagai jaringan mati.
+      catatServerMenjawab();
       if (!res.ok) return null;
       const data = await res.json();
       if (!data?.ok || !data?.token) return null;
       simpanToken(id.businessId, data.token);
       return data.token as string;
     } catch {
+      catatServerTakTerjangkau();
       return null;
     } finally {
       sedangAmbil.delete(id.businessId);
@@ -96,14 +103,25 @@ export async function fetchToko(
   init: RequestInit,
   id: IdentitasToko
 ): Promise<Response> {
-  const kirim = async (token: string | null) =>
-    fetch(url, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+  const kirim = async (token: string | null) => {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        headers: {
+          ...(init.headers ?? {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      // Setiap respons yang sampai adalah bukti jaringan hidup, termasuk 4xx
+      // dan 5xx. Inilah yang membuat aplikasi tidak perlu denyut buatan untuk
+      // tahu ia online: lalu lintas sinkronisasi biasa sudah menjadi buktinya.
+      catatServerMenjawab();
+      return res;
+    } catch (err) {
+      catatServerTakTerjangkau();
+      throw err;
+    }
+  };
 
   let res = await kirim(await pastikanToken(id));
   if (res.status === 401) {

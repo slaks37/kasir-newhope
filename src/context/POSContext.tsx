@@ -46,7 +46,18 @@ import {
   type SyncStatus,
   type SyncTarget,
   pushBranches,
+  setelBackoff,
 } from '../lib/sync/queue';
+import {
+  bacaKeadaan,
+  bolehMencoba,
+  tersambung,
+  ketuk,
+  langgananJaringan,
+  pasangPendengarJaringan,
+  type KeadaanJaringan,
+} from '../lib/sync/jaringan';
+import { adaTertunda } from '../lib/sync/tertunda';
 import {
   INITIAL_CATEGORIES,
   INITIAL_PRODUCTS,
@@ -221,6 +232,16 @@ interface POSContextType {
   voidOrder: (orderId: string, reason?: string) => void;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
   syncStatus: SyncStatus;
+  /**
+   * Keadaan jaringan sesungguhnya — tautan perangkat DAN keterjangkauan server.
+   *
+   * Ada di sini supaya layar bisa mengatakannya apa adanya. Aplikasi yang
+   * diam-diam beralih ke mode offline adalah aplikasi yang membuat kasir
+   * menutup toko sambil mengira semua angkanya sudah sampai ke pusat.
+   */
+  jaringan: KeadaanJaringan;
+  /** Katalog atau cabang yang belum dikonfirmasi server. */
+  adaYangTertunda: boolean;
   /** Memaksa pengiriman sekarang. Dipakai tombol "coba lagi". */
   forceSync: () => void;
   holdOrder: (notes?: string) => void;
@@ -485,32 +506,59 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // katalog di laptop lalu membuka aplikasi di ponsel menemukan tokonya kosong,
   // padahal seluruh datanya utuh di server.
   const [sedangMenarik, setSedangMenarik] = useState(false);
-  const sudahMenarik = useRef(false);
 
-  useEffect(() => {
-    if (sudahMenarik.current) return;
-    const bid = tenant.businessId;
-    if (!bid || !currentUser?.id) return;
-    sudahMenarik.current = true;
+  /*
+   * KAPAN PENARIKAN DIULANG.
+   *
+   * Sebelumnya persis sekali per sesi. Itu cukup untuk membuka aplikasi, tapi
+   * meninggalkan lubang yang justru paling sering terjadi di lapangan: kasir
+   * yang membuka aplikasi saat internetnya mati. Penarikan pertama gagal,
+   * penandanya terlanjur menyala, dan meskipun jaringan kembali sepuluh detik
+   * kemudian perangkat itu tidak akan pernah menarik apa pun sampai halamannya
+   * dimuat ulang — pemiliknya menyunting katalog di laptop dan tidak pernah
+   * melihat perubahannya sampai besok pagi.
+   *
+   * Sekarang yang dicatat adalah WAKTU penarikan terakhir yang BERHASIL.
+   * Penarikan yang gagal tidak meninggalkan jejak apa pun, sehingga percobaan
+   * berikutnya tetap terjadi.
+   */
+  const tarikBerhasilPada = useRef(0);
+  const sedangTarik = useRef(false);
 
-    let dibatalkan = false;
-    setSedangMenarik(true);
+  /** Batas kesegaran. Di bawah ini, penarikan ulang dianggap mubazir. */
+  const SEGAR_MS = 5 * 60_000;
 
-    void (async () => {
+  const tarikSekarang = React.useCallback(
+    async (paksa = false) => {
+      const bid = tenant.businessId;
+      if (!bid || !currentUser?.id) return;
+      if (sedangTarik.current) return;
+      if (!paksa && Date.now() - tarikBerhasilPada.current < SEGAR_MS) return;
+      // Tidak ada tautan jaringan: jangan dicoba, dan JANGAN catat apa pun.
+      // Percobaan berikutnya harus tetap terjadi begitu jaringannya kembali.
+      if (!bolehMencoba()) return;
+
+      sedangTarik.current = true;
+      setSedangMenarik(true);
+
       const hasil = await tarikDariCloud({
         businessId: bid,
         ownerRef: currentUser.id,
         storeName: settings.storeName,
         sector: activeSector,
       });
-      if (dibatalkan) return;
+
+      sedangTarik.current = false;
       setSedangMenarik(false);
 
       if (!hasil.ok) {
         // Offline atau ditolak: perangkat memakai salinan lokalnya. Tidak ada
-        // yang dihapus — kegagalan menarik tidak boleh mengosongkan layar.
+        // yang dihapus — kegagalan menarik tidak boleh mengosongkan layar, dan
+        // tidak boleh pula menghalangi percobaan berikutnya.
         return;
       }
+
+      tarikBerhasilPada.current = Date.now();
 
       const isi = hasil.isi;
       const sec = (isi.business.sector || activeSector) as BusinessSector;
@@ -534,13 +582,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } else if (isi.business.storeName) {
         setSettings((prev) => ({ ...prev, storeName: isi.business.storeName }));
       }
-    })();
-
-    return () => { dibatalkan = true; };
-    // Sengaja hanya bergantung pada identitas toko: penarikan terjadi sekali
-    // per sesi, bukan setiap kali pengaturan disunting.
+    },
+    // Sengaja hanya bergantung pada identitas toko. `settings.storeName` ikut
+    // dibaca di dalam, tapi ia hanya dipakai untuk mendaftarkan toko yang belum
+    // ada di server — memasukkannya ke daftar ini akan membuat fungsinya lahir
+    // ulang setiap huruf yang diketik pemilik di layar Pengaturan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant.businessId, currentUser?.id]);
+    [tenant.businessId, currentUser?.id, activeSector]
+  );
+
+  // Penarikan pertama saat toko dikenali. Penarikan berikutnya diurus penjaga
+  // koneksi di bawah — saat jaringan kembali, dan saat layar kembali dilihat.
+  useEffect(() => {
+    tarikBerhasilPada.current = 0;
+    void tarikSekarang();
+  }, [tarikSekarang]);
 
   /* ------------------------------------------------------------------------ */
   /* ENTITLEMENT PAKET                                                         */
@@ -625,7 +681,52 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const bizId = tenant.businessId;
   const storeNameForSync = settings.storeName;
 
+  /*
+   * PENGIRIM TERTUNDA — dipasang oleh efek katalog dan cabang di bawah.
+   *
+   * Disimpan di ref, bukan dipanggil langsung, karena penjaga koneksi hidup di
+   * atas keduanya dalam urutan berkas ini dan tetap harus bisa memanggil versi
+   * TERBARU dari masing-masing. Yang dikirim ulang selalu keadaan terkini di
+   * layar, bukan potret basi yang tersimpan saat kegagalan terjadi.
+   */
+  const kirimKatalogRef = useRef<() => void>(() => {});
+  const kirimCabangRef = useRef<() => void>(() => {});
+
+  const [jaringan, setJaringan] = useState<KeadaanJaringan>(() => bacaKeadaan());
+
+  /*
+   * PENJAGA KONEKSI.
+   *
+   * Aplikasi ini ONLINE. Offline hanya keadaan darurat yang berlaku selama
+   * jaringannya memang tidak ada, dan harus berakhir sendiri begitu jaringan
+   * kembali — tanpa memuat ulang halaman, tanpa ada yang menekan tombol.
+   *
+   * Satu efek ini yang menegakkannya, dan sengaja hanya satu: sebelumnya
+   * pemicunya tersebar (antrian punya event `online` sendiri, katalog tidak
+   * punya pemicu sama sekali, penarikan hanya sekali seumur sesi), sehingga
+   * "sudah tersambung lagi" berarti hal yang berbeda-beda di tiap bagian.
+   *
+   * Yang dikerjakan saat tersambung kembali, berurutan dan lengkap:
+   *
+   *   1. Backoff antrian disetel ulang — jeda lima menit itu menghukum
+   *      kegagalan yang penyebabnya sudah hilang.
+   *   2. Antrian transaksi dikirim.
+   *   3. Katalog dan cabang yang penandanya masih tertunda dikirim ulang.
+   *   4. Isi toko ditarik dari cloud.
+   *
+   * PEMICUNYA ADA EMPAT, dan masing-masing menutup lubang yang berbeda:
+   *
+   *   - perubahan keadaan jaringan  -> pemulihan yang sesungguhnya.
+   *   - layar kembali dilihat       -> ponsel yang dibangunkan dari saku tidak
+   *                                    selalu menyalakan event `online`.
+   *   - denyut 60 detik             -> server yang tadi mati lalu hidup lagi
+   *                                    tidak menghasilkan event apa pun di
+   *                                    browser.
+   *   - pemasangan pertama          -> apa pun yang tertinggal dari sesi lalu.
+   */
   useEffect(() => {
+    pasangPendengarJaringan();
+
     const target: SyncTarget = {
       businessId: bizId,
       sector: activeSector,
@@ -636,23 +737,71 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Berpindah pengguna atau sektor berarti antrian yang berbeda.
     setSyncStatus(getSyncStatus(bizId));
 
-    // 1. Saat dibuka — mengirim apa pun yang tertinggal dari sesi sebelumnya.
-    void runSync(target);
+    let hidup = true;
 
-    // 2. Saat jaringan kembali. Ini pemicu terpenting bagi kasir yang seharian
-    //    offline lalu masuk area ber-WiFi.
-    const onOnline = () => void runSync(target);
-    window.addEventListener('online', onOnline);
+    const susul = async (tersambungKembali: boolean) => {
+      if (!hidup) return;
+      if (tersambungKembali) setelBackoff(bizId);
+      await runSync(target);
+      if (!hidup) return;
+      // Hanya yang penandanya masih menyala. Katalog yang sudah dikonfirmasi
+      // server tidak perlu dikirim ulang hanya karena jaringan sempat putus.
+      if (adaTertunda(bizId, 'catalog')) kirimKatalogRef.current();
+      if (adaTertunda(bizId, 'branches')) kirimCabangRef.current();
+      await tarikSekarang(tersambungKembali);
+    };
 
-    // 3. Denyut berkala sebagai jaring pengaman. Event 'online' tidak selalu
-    //    menyala di semua perangkat, dan server bisa saja yang tadi mati.
-    const timer = window.setInterval(() => void runSync(target), 60_000);
+    // Perubahan keadaan jaringan. Pendengar dipanggil sekali saat dipasang,
+    // jadi ini sekaligus menjadi pemicu pemasangan pertama.
+    let sehatSebelumnya: boolean | null = null;
+    const lepas = langgananJaringan((k) => {
+      setJaringan(k);
+      const sehat = tersambung(k);
+      const pulih = sehat && sehatSebelumnya === false;
+      sehatSebelumnya = sehat;
+      // Yang menahan percobaan hanya hilangnya tautan perangkat. Server yang
+      // sedang bermasalah tetap dicoba — backoff antrian yang mengatur
+      // kecepatannya, bukan penolakan di sini.
+      if (bolehMencoba(k)) void susul(pulih);
+    });
+
+    // Layar kembali dilihat.
+    const onTampak = () => {
+      if (document.visibilityState !== 'visible') return;
+      void susul(false);
+    };
+    document.addEventListener('visibilitychange', onTampak);
+
+    // Denyut. Saat sedang terputus ia MENGETUK dulu — tanpa itu, status
+    // "server tidak terjangkau" tidak akan pernah bisa berubah kembali dengan
+    // sendirinya, dan perangkat akan terjebak offline meski jaringannya pulih.
+    const timer = window.setInterval(() => {
+      void (async () => {
+        // Tautan perangkat hilang: tidak ada yang bisa dikerjakan, dan event
+        // `online` akan membangunkan penjaga ini sendiri.
+        if (!bolehMencoba()) return;
+
+        // Ada tautan tapi server terakhir kali tidak terjangkau. Ketukan ini
+        // yang mengembalikan penanda di layar ke keadaan sebenarnya — tanpa
+        // ia, toko yang antriannya kosong akan terus tampak offline meski
+        // servernya sudah hidup lagi, karena tidak ada lalu lintas apa pun
+        // yang bisa membuktikan sebaliknya.
+        const sedangTerputus = !tersambung();
+        if (sedangTerputus) {
+          const hidupLagi = await ketuk();
+          if (!hidupLagi) return;
+        }
+        await susul(sedangTerputus);
+      })();
+    }, 60_000);
 
     return () => {
-      window.removeEventListener('online', onOnline);
+      hidup = false;
+      lepas();
+      document.removeEventListener('visibilitychange', onTampak);
       window.clearInterval(timer);
     };
-  }, [bizId, activeSector, storeNameForSync, currentUser.id, runSync]);
+  }, [bizId, activeSector, storeNameForSync, currentUser.id, runSync, tarikSekarang]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
     /*
@@ -841,11 +990,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * SETIAP penjualan karena stoknya berkurang; tanpa penundaan, satu jam sibuk
    * akan mengirim ratusan katalog identik.
    */
-  useEffect(() => {
+  const kirimKatalog = React.useCallback(() => {
     if (products.length === 0 && customers.length === 0 && bundles.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushCatalog(
+    void pushCatalog(
         {
           businessId: makeBusinessId(currentUser.id, activeSector),
           sector: activeSector,
@@ -873,10 +1020,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           bundles,
         }
       );
-    }, 8_000);
-
-    return () => window.clearTimeout(timer);
   }, [products, categories, customers, bundles, currentUser.id, activeSector, settings.storeName]);
+
+  // Penjaga koneksi memanggil lewat ref supaya yang dikirim ulang selalu isi
+  // layar SEKARANG, bukan potret saat kegagalannya terjadi.
+  useEffect(() => {
+    kirimKatalogRef.current = kirimKatalog;
+  }, [kirimKatalog]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(kirimKatalog, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [kirimKatalog]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -969,12 +1124,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const [cabangDitolak, setCabangDitolak] = useState<string[]>([]);
 
-  useEffect(() => {
+  const kirimCabang = React.useCallback(() => {
     const daftar = settings.branches || INITIAL_BRANCHES;
     if (daftar.length === 0) return;
 
-    const timer = window.setTimeout(() => {
-      void pushBranches(
+    void pushBranches(
         {
           businessId: makeBusinessId(currentUser.id, activeSector),
           sector: activeSector,
@@ -994,13 +1148,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         })),
         settings.activeBranchId
       ).then((hasil) => {
+        // Daftar penolakan hanya diperbarui bila server memang menjawab.
+        // Kegagalan jaringan mengembalikan `ok: false` dengan daftar kosong —
+        // memakainya akan MENGHAPUS peringatan batas outlet yang masih berlaku
+        // dari layar Pengaturan, dan pemilik menyangka masalahnya sudah beres.
+        if (!hasil.ok) return;
         setCabangDitolak(
           hasil.ditolak.map((d) => `${d.nama}: ${d.alasan}`)
         );
       });
-    }, 8000);
-
-    return () => window.clearTimeout(timer);
   }, [
     settings.branches,
     settings.activeBranchId,
@@ -1008,6 +1164,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     currentUser.id,
     activeSector,
   ]);
+
+  useEffect(() => {
+    kirimCabangRef.current = kirimCabang;
+  }, [kirimCabang]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(kirimCabang, 8000);
+    return () => window.clearTimeout(timer);
+  }, [kirimCabang]);
 
   const clockInStaff = (
     staffId: string,
@@ -2257,7 +2422,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         processPayment,
         voidOrder,
         syncStatus,
-        forceSync: () => void runSync(syncTarget),
+        jaringan,
+        adaYangTertunda: adaTertunda(bizId, 'catalog') || adaTertunda(bizId, 'branches'),
+        forceSync: () => {
+          /*
+           * "Coba lagi" berarti SEKARANG, bukan "nanti setelah backoff habis".
+           * Tombol yang ditekan lalu tidak melakukan apa pun selama lima menit
+           * membuat kasir menekannya berkali-kali dan menyimpulkan aplikasinya
+           * rusak. Backoff melindungi server dari mesin, bukan dari orang yang
+           * sedang menunggu di depan layar.
+           */
+          setelBackoff(bizId);
+          void (async () => {
+            // Ketukan dulu bila sedang terputus: tanpa bukti baru, seluruh
+            // jalur di bawah akan menolak berjalan.
+            if (!tersambung()) await ketuk();
+            await runSync(syncTarget);
+            if (adaTertunda(bizId, 'catalog')) kirimKatalogRef.current();
+            if (adaTertunda(bizId, 'branches')) kirimCabangRef.current();
+            await tarikSekarang(true);
+          })();
+        },
         holdOrder,
         recallHoldOrder,
         cancelHoldOrder,
