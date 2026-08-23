@@ -129,13 +129,39 @@ html, body {
 }
 
 /* ---------------------------------------------------------------------------
-   Thermal receipt printing: "Cetak Struk" must print only the receipt paper,
-   not the whole POS dashboard behind the modal.
+   Thermal receipt printing: "Cetak Struk" must strictly maintain standard
+   receipt paper dimensions (80mm standard or 58mm mini) and NEVER stretch
+   to full-page A4 width, regardless of browser or printer driver defaults.
    --------------------------------------------------------------------------- */
 
+@page {
+  /* Remove browser default margins, timestamps, URL headers and page footers */
+  size: auto;
+  margin: 0mm;
+}
+
 @media print {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box !important;
+  }
+
   body * {
     visibility: hidden;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   #receipt-paper,
@@ -144,13 +170,85 @@ html, body {
   }
 
   #receipt-paper {
-    position: absolute;
-    inset: 0 auto auto 0;
-    width: 100%;
-    max-width: none;
-    margin: 0;
-    padding: 0;
-    border: none;
-    box-shadow: none;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 3mm 2.5mm !important;
+    box-sizing: border-box !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace, 'Lucida Console', monospace !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: visible !important;
+  }
+
+  /* Standard 80mm POS Thermal Paper (Printable width 72mm - 76mm) */
+  #receipt-paper,
+  #receipt-paper.paper-80mm {
+    width: 76mm !important;
+    max-width: 76mm !important;
+    min-width: 76mm !important;
+  }
+
+  /* 58mm Mini / Bluetooth Mobile POS Thermal Paper (Printable width 48mm) */
+  #receipt-paper.paper-58mm {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    min-width: 48mm !important;
+    font-size: 9.5px !important;
+    padding: 2mm 1.5mm !important;
+    line-height: 1.2 !important;
+  }
+
+  #receipt-paper.paper-58mm .text-sm {
+    font-size: 11px !important;
+  }
+
+  #receipt-paper.paper-58mm .text-xs {
+    font-size: 9.5px !important;
+  }
+
+  #receipt-paper.paper-58mm .text-\[11px\] {
+    font-size: 9px !important;
+  }
+
+  #receipt-paper.paper-58mm .text-\[10px\] {
+    font-size: 8.5px !important;
+  }
+
+  #receipt-paper.paper-58mm .text-\[9px\] {
+    font-size: 8px !important;
+  }
+
+  /* High contrast pure black for thermal printer head */
+  #receipt-paper * {
+    color: #000000 !important;
+    text-shadow: none !important;
+  }
+
+  #receipt-paper .border-dashed {
+    border-bottom: 1px dashed #000000 !important;
+  }
+
+  #receipt-paper .border-t {
+    border-top: 1px solid #000000 !important;
+  }
+
+  #receipt-paper .border-b {
+    border-bottom: 1px solid #000000 !important;
+  }
+
+  #receipt-paper img {
+    filter: grayscale(100%) contrast(150%) !important;
+    max-width: 32mm !important;
+    height: auto !important;
   }
 }
+

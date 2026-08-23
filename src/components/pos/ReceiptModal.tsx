@@ -10,6 +10,17 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onClose }) => {
+  const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.receiptPaperSize || '80mm');
+
+  React.useEffect(() => {
+    if (settings.autoPrintReceipt) {
+      const timer = setTimeout(() => {
+        window.print();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [settings.autoPrintReceipt]);
+
   const handlePrint = () => {
     window.print();
   };
@@ -36,21 +47,85 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
         <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center space-x-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-            <h3 className="font-bold text-base text-slate-900">Pembayaran Sukses</h3>
+            <div>
+              <h3 className="font-bold text-base text-slate-900 leading-tight">Pembayaran Sukses</h3>
+              <p className="text-[10px] text-slate-500 font-medium">Struk siap dicetak (Format Termal {paperSize})</p>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* Quick Paper Format Selector */}
+            <div className="hidden sm:flex items-center space-x-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setPaperSize('80mm')}
+                className={`px-2 py-0.5 text-[10px] font-bold rounded-lg transition-all ${
+                  paperSize === '80mm'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Ukuran Struk Standar Toko/Resto 80mm"
+              >
+                80mm
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaperSize('58mm')}
+                className={`px-2 py-0.5 text-[10px] font-bold rounded-lg transition-all ${
+                  paperSize === '58mm'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Ukuran Struk Mini / Bluetooth 58mm"
+              >
+                58mm
+              </button>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Thermal Receipt Paper Layout */}
-        <div className="p-5 overflow-y-auto flex-1 bg-slate-100 flex justify-center">
+        <div className="p-5 overflow-y-auto flex-1 bg-slate-100 flex flex-col items-center">
+          {/* Mobile size selector */}
+          <div className="sm:hidden flex items-center justify-center space-x-1 bg-white p-1 rounded-xl border border-slate-200 mb-3 shadow-xs">
+            <span className="text-[10px] text-slate-500 px-1 font-semibold">Format Nota:</span>
+            <button
+              type="button"
+              onClick={() => setPaperSize('80mm')}
+              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                paperSize === '80mm'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              80mm (Standar)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaperSize('58mm')}
+              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                paperSize === '58mm'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              58mm (Mini)
+            </button>
+          </div>
+
           <div
             id="receipt-paper"
-            className="bg-white text-slate-900 font-mono text-xs p-6 rounded-xl shadow-md w-72 space-y-3 leading-tight select-text border border-slate-200 print:w-full print:shadow-none"
+            className={`bg-white text-slate-900 font-mono ${
+              paperSize === '58mm'
+                ? 'paper-58mm w-64 text-[11px] p-4'
+                : 'paper-80mm w-80 text-xs p-6'
+            } space-y-3 leading-tight select-text rounded-xl shadow-md border border-slate-200 transition-all`}
           >
             {/* Header Store */}
             <div className="text-center space-y-1 pb-2 border-b border-dashed border-slate-300">

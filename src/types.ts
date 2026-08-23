@@ -337,6 +337,7 @@ export interface StoreSettings {
   storeMode: StoreMode;
   businessSector?: BusinessSector;
   autoPrintReceipt: boolean;
+  receiptPaperSize?: '58mm' | '80mm';
   loyaltyEarnRate: number; // Rp 10.000 per 1 point
   loyaltyRedeemRate: number; // 1 point = Rp 100 discount
   /**

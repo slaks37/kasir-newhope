@@ -569,6 +569,7 @@ export const INITIAL_SETTINGS: StoreSettings = {
   receiptFooter: 'Semoga Harimu Menyenangkan!',
   storeMode: 'FNB',
   autoPrintReceipt: false,
+  receiptPaperSize: '80mm',
   loyaltyEarnRate: 10000,
   loyaltyRedeemRate: 100,
   branches: INITIAL_BRANCHES,
