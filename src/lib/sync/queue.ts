@@ -60,6 +60,14 @@ export interface SyncPayloadTxn {
   paymentMethod: string;
   paymentStatus: string;
   orderType?: string;
+  /**
+   * Dampak omzet. Tanpa ini, bill House Use terkirim sebagai penjualan biasa
+   * dan angka di database berbeda dengan angka di layar kasir.
+   */
+  revenueImpact?: string;
+  /** Jumlah tamu (*covers*) untuk segmen yang duduk di tempat. */
+  guestCount?: number;
+  tableName?: string;
   appModule?: string;
   createdAt?: string;
   items: SyncPayloadItem[];
@@ -178,6 +186,9 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
     paymentMethod: order.paymentMethod,
     paymentStatus: order.status === 'VOID' ? 'CANCELLED' : 'COMPLETED',
     orderType: order.orderType,
+    revenueImpact: order.revenueImpact || 'SALE',
+    guestCount: order.guestCount,
+    tableName: order.tableName,
     appModule: order.tableId ? 'TABLES' : 'POS',
     createdAt: order.date,
     items: order.items.map((i) => ({

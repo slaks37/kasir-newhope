@@ -1,7 +1,26 @@
 export type StoreMode = 'FNB' | 'RETAIL' | 'SERVICE';
 export type BusinessSector = 'FNB' | 'LAUNDRY' | 'RETAIL' | 'CARWASH' | 'BARBERSHOP';
 
-export type OrderType = 'DINE_IN' | 'TAKEAWAY' | 'DELIVERY' | 'ONLINE';
+/**
+ * Segmen penyajian. `EVENT` melengkapi tiga segmen harian dengan acara
+ * terjadwal (ulang tahun, gathering, paket rapat) — nilainya besar dan
+ * polanya beda, jadi mencampurnya ke DINE_IN membuat laporan per segmen
+ * menyesatkan.
+ */
+export type OrderType = 'DINE_IN' | 'TAKEAWAY' | 'DELIVERY' | 'ONLINE' | 'EVENT';
+
+/**
+ * Dampak sebuah bill terhadap omzet.
+ *
+ * Cermin dari `pos.transactions.revenue_impact` (migrasi 0037). Hanya `SALE`
+ * yang boleh dihitung sebagai penjualan. Bill non-pendapatan tetap memotong
+ * stok dan tetap tercatat — yang berubah hanya perlakuannya di laporan.
+ *
+ * Penandanya ada di level bill, bukan di metode pembayaran, karena
+ * `contract.merchant_revenue` menyaring berdasarkan status pesanan: kalau
+ * House Use hanya jadi metode bayar, angkanya tetap masuk omzet.
+ */
+export type RevenueImpact = 'SALE' | 'HOUSE_USE' | 'COMPLIMENT' | 'STAFF_MEAL';
 
 export type PaymentMethod = 'CASH' | 'QRIS' | 'DEBIT' | 'CREDIT' | 'SHOPEEPAY' | 'GOPAY' | 'OVO' | 'ONLINE';
 
@@ -257,6 +276,17 @@ export interface Order {
   onlineChannel?: string;
   tableId?: string;
   tableName?: string;
+  /**
+   * Jumlah tamu di satu bill (istilah POS klasik: *covers*). Dipakai untuk
+   * statistik belanja per orang, bukan sekadar per struk. Opsional karena
+   * hanya relevan untuk segmen yang duduk di tempat.
+   */
+  guestCount?: number;
+  /**
+   * Default `SALE` bila tidak diisi — order lama di localStorage tidak
+   * memilikinya, dan diamnya harus berarti "penjualan normal".
+   */
+  revenueImpact?: RevenueImpact;
   customer?: Customer;
   servedByStaffId?: string;
   servedByStaffName?: string;

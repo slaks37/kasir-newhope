@@ -11,6 +11,7 @@ import {
   InventoryLog,
   OrderType,
   PaymentMethod,
+  RevenueImpact,
   ProductVariant,
   SelectedModifier,
   User,
@@ -174,6 +175,12 @@ interface POSContextType {
   setSelectedTable: (table: Table | null) => void;
   orderType: OrderType;
   setOrderType: (type: OrderType) => void;
+  /** Jumlah tamu di bill berjalan (*covers*). */
+  guestCount: number;
+  setGuestCount: (count: number) => void;
+  /** Dampak omzet bill berjalan. Selain `SALE` = bill tidak dihitung penjualan. */
+  revenueImpact: RevenueImpact;
+  setRevenueImpact: (impact: RevenueImpact) => void;
   soundEnabled: boolean;
   toggleSound: () => void;
   
@@ -629,6 +636,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
+  /** Jumlah tamu di bill berjalan (*covers*). Direset bersama keranjang. */
+  const [guestCount, setGuestCount] = useState<number>(1);
+  /**
+   * Dampak omzet bill berjalan. Selain `SALE` butuh persetujuan Manager di UI
+   * dan sengaja direset setelah tiap transaksi — penanda yang menempel adalah
+   * cara paling mudah menghilangkan omzet satu shift penuh tanpa disadari.
+   */
+  const [revenueImpact, setRevenueImpact] = useState<RevenueImpact>('SALE');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   // Staff Members State & Selection
@@ -1278,6 +1293,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSelectedCustomer(null);
     setSelectedTable(null);
     setSelectedStaff(null);
+    setGuestCount(1);
+    setRevenueImpact('SALE');
   };
 
   // Process Payment & Create Order
@@ -1324,6 +1341,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       onlineChannel: (orderType === 'ONLINE' || orderType === 'DELIVERY') ? channel : undefined,
       tableId: selectedTable?.id,
       tableName: selectedTable?.name,
+      guestCount: orderType === 'DINE_IN' || orderType === 'EVENT' ? guestCount : undefined,
+      revenueImpact,
       customer: selectedCustomer || undefined,
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
@@ -1472,7 +1491,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // 4. Update Shift Sales Summary
+    //
+    // Bill non-pendapatan (House Use, compliment, jatah karyawan) tidak pernah
+    // menambah penjualan shift maupun expectedCash — tidak ada uang yang masuk
+    // laci, jadi menghitungnya di sini akan membuat kasir yang jujur terlihat
+    // kurang setor saat tutup shift.
     setShift((prevShift) => {
+      if (revenueImpact !== 'SALE') return prevShift;
+
       let cashSales = prevShift.cashSales;
       let qrisSales = prevShift.qrisSales;
       let cardSales = prevShift.cardSales;
@@ -1634,6 +1660,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       orderType,
       tableId: selectedTable?.id,
       tableName: selectedTable?.name,
+      guestCount: orderType === 'DINE_IN' || orderType === 'EVENT' ? guestCount : undefined,
       customer: selectedCustomer || undefined,
       subtotal,
       discountTotal: cart.reduce((s, i) => s + i.discountAmount, 0),
@@ -1664,6 +1691,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setCart(target.items);
     setOrderType(target.orderType);
+    // Jumlah tamu ikut kembali bersama bill-nya; kalau tidak, bill yang
+    // di-hold dan dipanggil lagi diam-diam kehilangan angka covers-nya.
+    setGuestCount(target.guestCount && target.guestCount > 0 ? target.guestCount : 1);
     if (target.customer) setSelectedCustomer(target.customer);
     if (target.tableId) {
       const tbl = tables.find((t) => t.id === target.tableId);
@@ -2060,6 +2090,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setSelectedTable,
         orderType,
         setOrderType,
+        guestCount,
+        setGuestCount,
+        revenueImpact,
+        setRevenueImpact,
         soundEnabled,
         toggleSound,
         addToCart,

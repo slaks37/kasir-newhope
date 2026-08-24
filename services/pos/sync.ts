@@ -75,6 +75,11 @@ interface SyncTxn {
   paymentMethod?: string;
   paymentStatus?: string;
   orderType?: string;
+  /** 'SALE' | 'HOUSE_USE' | 'COMPLIMENT' | 'STAFF_MEAL'. Divalidasi ulang di sini. */
+  revenueImpact?: string;
+  /** Jumlah tamu (*covers*) untuk segmen yang duduk di tempat. */
+  guestCount?: number;
+  tableName?: string;
   appModule?: string;
   createdAt?: string;
   businessDate?: string;
@@ -306,6 +311,18 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             ? String(x.appModule)
             : 'POS';
 
+          /*
+           * Klasifikasi omzet. Sengaja whitelist, bukan diteruskan apa adanya:
+           * pos.transactions.revenue_impact punya CHECK constraint, dan satu
+           * nilai asing dari klien akan menggagalkan seluruh batch sinkronisasi
+           * — termasuk transaksi lain yang sah di dalamnya.
+           */
+          const impactRaw = str(x.revenueImpact, 32);
+          const revenueImpact =
+            impactRaw && ['SALE', 'HOUSE_USE', 'COMPLIMENT', 'STAFF_MEAL'].includes(impactRaw)
+              ? impactRaw
+              : 'SALE';
+
           const paymentMethod = str(x.paymentMethod, 20) ?? 'CASH';
           const paymentStatus = str(x.paymentStatus, 20) ?? 'PAID';
           const isVoid = paymentStatus === 'CANCELLED';
@@ -316,9 +333,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
                 business_sector, business_id, app_module, order_type, invoice_number,
-                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at)
+                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at,
+                revenue_impact)
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP))
+                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP),
+                     $24)
              ON CONFLICT (tenant_id, client_txn_id) WHERE client_txn_id IS NOT NULL
                DO NOTHING
              RETURNING id`,
@@ -346,6 +365,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               x.cancelledAt ?? (isVoid ? x.createdAt : null),
               x.voidedAt ?? null,
               x.createdAt ?? null,
+              revenueImpact,
             ]
           );
 
@@ -442,6 +462,34 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
 
           const txnId: string = ins.rows[0].id;
+
+          /*
+           * KONTEKS OPERASIONAL F&B (meja + jumlah tamu).
+           *
+           * Ditulis terpisah dari pos.transactions karena transaksi adalah
+           * entitas keuangan universal lintas sektor, sementara "covers" hanya
+           * punya arti di meja restoran (migrasi 0030). Gagal di sini tidak
+           * boleh menjatuhkan transaksinya: uangnya sudah berpindah tangan,
+           * statistik jumlah tamu tidak sepadan untuk membatalkan itu.
+           */
+          const guestCount = Math.max(1, Math.trunc(num(x.guestCount, 1)));
+          const seatedSegment = str(x.orderType, 16) === 'DINE_IN' || str(x.orderType, 16) === 'EVENT';
+          if (sector === 'FNB' && seatedSegment) {
+            try {
+              await c.query(
+                `INSERT INTO pos.order_context_fnb (transaction_id, table_name, guest_count, order_type)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (transaction_id) DO UPDATE
+                    SET guest_count = EXCLUDED.guest_count,
+                        table_name  = EXCLUDED.table_name,
+                        order_type  = EXCLUDED.order_type,
+                        updated_at  = CURRENT_TIMESTAMP`,
+                [txnId, str(x.tableName, 64), guestCount, str(x.orderType, 16) ?? 'DINE_IN']
+              );
+            } catch {
+              // Konteks operasional bersifat pelengkap. Transaksinya tetap sah.
+            }
+          }
 
           const pStatus = isVoid ? 'REFUNDED' : (paymentStatus === 'PENDING' ? 'PENDING' : 'PAID');
           await c.query(

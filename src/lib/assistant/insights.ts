@@ -15,8 +15,9 @@
  *    is always the source of truth,
  *  - `Order.date` may be an ISO string without a timezone suffix (parsed as
  *    local time — consistently, everywhere),
- *  - only COMPLETED orders feed revenue/quantity maths; VOID orders only feed
- *    the void-rate metric,
+ *  - only COMPLETED orders with `revenueImpact === 'SALE'` feed revenue maths
+ *    (see `isSaleOrder`); VOID orders only feed the void-rate metric, and
+ *    House Use / staff-meal bills still feed stock consumption,
  *  - every division is guarded.
  */
 
@@ -260,6 +261,20 @@ function inWindow(o: DatedOrder, opt: ResolvedOptions): boolean {
   return o.dayTime >= opt.windowStart;
 }
 
+/**
+ * Apakah bill ini boleh dihitung sebagai penjualan.
+ *
+ * Cermin persis dari `contract.merchant_revenue` (migrasi 0037): COMPLETED,
+ * dan `revenue_impact = 'SALE'`. Bill House Use / Compliment / jatah makan
+ * karyawan sengaja dikeluarkan — kalau tidak, omzet di layar kasir dan omzet
+ * di admin panel berbeda, dan yang satu bohong.
+ *
+ * `revenueImpact` yang kosong berarti SALE: order lama tidak punya kolom ini.
+ */
+function isSaleOrder(order: Order): boolean {
+  return order.status === 'COMPLETED' && (order.revenueImpact || 'SALE') === 'SALE';
+}
+
 function linesOf(order: Order, catalog: Catalog): LineRef[] {
   const out: LineRef[] = [];
   for (const item of order?.items || []) {
@@ -413,6 +428,9 @@ function addConsumption(series: ConsumptionSeries, dayKeyValue: string, dayTime:
 function productConsumption(orders: DatedOrder[], catalog: Catalog): Map<string, ConsumptionSeries> {
   const map = new Map<string, ConsumptionSeries>();
   for (const o of orders) {
+    // Sengaja COMPLETED, bukan isSaleOrder: bill House Use / jatah karyawan
+    // tetap menghabiskan bahan baku. Menyaringnya di sini akan membuat
+    // ramalan stok memperkirakan pemakaian lebih rendah dari kenyataan.
     if (o.order.status !== 'COMPLETED') continue;
     for (const line of linesOf(o.order, catalog)) {
       if (!line.product) continue; // stock maths needs a catalog row
@@ -608,7 +626,7 @@ export function computeCrossSellInsight(
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
   const orders = datedOrders(snapshot.orders || []).filter(
-    (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
+    (o) => isSaleOrder(o.order) && inWindow(o, opt)
   );
 
   const nameByKey = new Map<string, string>();
@@ -822,7 +840,7 @@ function offerFor(segment: Segment, stat: CustomerStat): string {
 
 function buildCustomerStats(snapshot: MerchantSnapshot, opt: ResolvedOptions): CustomerStat[] {
   const catalog = buildCatalog(snapshot.products || []);
-  const completed = datedOrders(snapshot.orders || []).filter((o) => o.order.status === 'COMPLETED');
+  const completed = datedOrders(snapshot.orders || []).filter((o) => isSaleOrder(o.order));
 
   interface Agg {
     customer: Customer;
@@ -1011,7 +1029,7 @@ export function computePeakHoursInsight(
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
   const completed = datedOrders(snapshot.orders || []).filter(
-    (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
+    (o) => isSaleOrder(o.order) && inWindow(o, opt)
   );
   if (completed.length === 0) return null;
 
@@ -1163,11 +1181,11 @@ function stdDevOf(values: number[], mean: number): number {
   return Math.sqrt(Math.max(0, variance));
 }
 
-/** Revenue of COMPLETED orders falling in a given calendar month. */
+/** Revenue of billable SALE orders falling in a given calendar month. */
 function revenueOfMonth(orders: DatedOrder[], year: number, month: number): number {
   let total = 0;
   for (const o of orders) {
-    if (o.order.status !== 'COMPLETED') continue;
+    if (!isSaleOrder(o.order)) continue;
     if (o.date.getFullYear() === year && o.date.getMonth() === month) {
       total += Number(o.order.total) || 0;
     }
@@ -1460,7 +1478,7 @@ export function computeLayoutInsight(
 
   const noun = snapshot.slotNoun || 'Meja';
   const completed = datedOrders(snapshot.orders || []).filter(
-    (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
+    (o) => isSaleOrder(o.order) && inWindow(o, opt)
   );
 
   const byId = new Map<string, string>();
@@ -1596,7 +1614,7 @@ export function computeStaffBehaviourInsight(
 
   const catalog = buildCatalog(snapshot.products || []);
   const completed = datedOrders(snapshot.orders || []).filter(
-    (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
+    (o) => isSaleOrder(o.order) && inWindow(o, opt)
   );
   const records = attendanceInWindow(snapshot.attendance || [], opt);
 
@@ -1782,7 +1800,7 @@ export function computeAggregates(
   const catalog = buildCatalog(snapshot.products || []);
   const all = datedOrders(snapshot.orders || []);
   const windowed = all.filter((o) => inWindow(o, opt));
-  const completed = windowed.filter((o) => o.order.status === 'COMPLETED');
+  const completed = windowed.filter((o) => isSaleOrder(o.order));
   const voided = windowed.filter((o) => o.order.status === 'VOID');
 
   // Month-to-date is a calendar-month figure, deliberately independent of the
@@ -1868,7 +1886,7 @@ export function computeAggregates(
   // including products that never sold at all.
   const lastSaleByProduct = new Map<string, number>();
   for (const o of all) {
-    if (o.order.status !== 'COMPLETED') continue;
+    if (!isSaleOrder(o.order)) continue;
     for (const line of linesOf(o.order, catalog)) {
       if (!line.product) continue;
       const prev = lastSaleByProduct.get(line.product.id);
@@ -2011,7 +2029,7 @@ export function computeCalendarBehaviourInsight(
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
   const orders = datedOrders(snapshot.orders || []).filter(
-    (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
+    (o) => isSaleOrder(o.order) && inWindow(o, opt)
   );
   if (orders.length === 0) return null;
 

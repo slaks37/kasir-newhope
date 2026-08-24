@@ -19,6 +19,7 @@ import {
   Check,
   History,
   UserCheck,
+  Users,
   Scissors,
   Wrench,
 } from 'lucide-react';
@@ -53,6 +54,8 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     setSelectedCustomer,
     selectedTable,
     setSelectedTable,
+    guestCount,
+    setGuestCount,
     settings,
     shift,
     holdOrder,
@@ -64,6 +67,10 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   const [editingItemNotes, setEditingItemNotes] = useState<{ id: string; notes: string } | null>(null);
   const [editingItemDiscount, setEditingItemDiscount] = useState<{ id: string; percent: number; amount: number } | null>(null);
   const [showStaffModal, setShowStaffModal] = useState(false);
+
+  // Dine In dan Event sama-sama duduk di tempat: keduanya punya meja dan
+  // jumlah tamu. Takeaway/Delivery/Online tidak punya keduanya.
+  const isSeatedSegment = orderType === 'DINE_IN' || orderType === 'EVENT';
 
   const activePreset = BUSINESS_PRESETS[settings.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
   const slotNoun = activePreset.layoutTerm?.itemNoun || 'Meja';
@@ -121,12 +128,13 @@ export const CartPanel: React.FC<CartPanelProps> = ({
       {/* Header: Order Type & Customer/Table Details */}
       <div className="p-3 border-b border-slate-200 space-y-3 bg-white">
         {/* Order Type Tabs */}
-        <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1 rounded-xl">
+        <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1 rounded-xl">
           {[
             { id: 'DINE_IN', label: 'Dine In' },
             { id: 'TAKEAWAY', label: 'Takeaway' },
             { id: 'DELIVERY', label: 'Delivery' },
             { id: 'ONLINE', label: 'Online' },
+            { id: 'EVENT', label: 'Event' },
           ].map((type) => (
             <button
               key={type.id}
@@ -164,19 +172,19 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           {/* Table / Slot Selector */}
           <button
             onClick={() => {
-              if (orderType === 'DINE_IN') {
+              if (isSeatedSegment) {
                 const promptName = prompt(`Nomor / Nama ${slotNoun} (cth: ${activePreset.tables[0]?.name || slotNoun + ' 01'}):`, selectedTable?.name || '');
                 if (promptName) {
                   setSelectedTable({ id: newId('tbl'), name: promptName, capacity: 4, zone: activePreset.layoutTerm.zones[0] || 'Main Area', status: 'OCCUPIED' });
                 }
               }
             }}
-            disabled={orderType !== 'DINE_IN'}
+            disabled={!isSeatedSegment}
             className={`flex items-center space-x-2 p-2 rounded-xl border text-xs font-semibold transition-all ${
               selectedTable
                 ? 'bg-amber-50 border-amber-300 text-amber-900'
                 : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            } ${orderType !== 'DINE_IN' ? 'opacity-40 cursor-not-allowed' : ''}`}
+            } ${!isSeatedSegment ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Grid2X2 className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="truncate">{selectedTable ? selectedTable.name : `Pilih ${slotNoun}`}</span>
@@ -219,6 +227,46 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             )}
           </button>
         </div>
+
+        {/* Covers / Jumlah Tamu — hanya untuk segmen yang duduk di tempat.
+            Tanpa angka ini, laporan hanya tahu belanja per struk dan tidak
+            pernah tahu belanja per orang. */}
+        {isSeatedSegment && (
+          <div className="flex items-center justify-between p-2 rounded-xl border border-slate-200 bg-slate-50">
+            <div className="flex items-center space-x-2 text-xs font-semibold text-slate-700">
+              <Users className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Jumlah Tamu</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <button
+                type="button"
+                aria-label="Kurangi jumlah tamu"
+                onClick={() => setGuestCount(Math.max(1, guestCount - 1))}
+                disabled={guestCount <= 1}
+                className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                aria-label="Jumlah tamu"
+                value={guestCount}
+                onChange={(e) => setGuestCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                className="w-12 text-center text-xs font-extrabold font-mono bg-white border border-slate-200 rounded-lg py-1.5 text-slate-900"
+              />
+              <button
+                type="button"
+                aria-label="Tambah jumlah tamu"
+                onClick={() => setGuestCount(guestCount + 1)}
+                className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-100"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Operator Selection */}
         <button

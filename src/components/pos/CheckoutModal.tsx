@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { PaymentMethod, Order } from '../../types';
+import { PaymentMethod, Order, RevenueImpact } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import {
   Banknote,
@@ -10,8 +10,10 @@ import {
   CheckCircle2,
   X,
   RefreshCw,
+  Receipt,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { PinAuthorizationModal } from '../auth/PinAuthorizationModal';
 
 interface CheckoutModalProps {
   onClose: () => void;
@@ -26,6 +28,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     settings,
     processPayment,
     orderType,
+    guestCount,
+    revenueImpact,
+    setRevenueImpact,
   } = usePOS();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
@@ -63,6 +68,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [dropOffDateIso, setDropOffDateIso] = useState<string>(toDatetimeLocalStr(now));
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  /** Penanda bill non-omzet yang sedang menunggu persetujuan Manager. */
+  const [pendingImpact, setPendingImpact] = useState<RevenueImpact | null>(null);
 
   // Totals Calculation
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -144,15 +152,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
         {/* Header */}
         <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center flex-wrap gap-2">
               <h3 className="font-extrabold text-lg text-amber-900">Proses Pembayaran</h3>
               <span className="px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-100 text-amber-900 border border-amber-300 uppercase tracking-wide">
                 {orderType === 'DINE_IN'
                   ? `Dine In (${selectedTable ? selectedTable.name : 'Meja Kasir'})`
+                  : orderType === 'EVENT'
+                  ? `Event (${selectedTable ? selectedTable.name : 'Tanpa Meja'})`
                   : orderType === 'TAKEAWAY'
                   ? 'Takeaway / Bungkus'
+                  : orderType === 'ONLINE'
+                  ? 'Online / Marketplace'
                   : 'Delivery / Kirim'}
               </span>
+              {(orderType === 'DINE_IN' || orderType === 'EVENT') && (
+                <span className="px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-slate-100 text-slate-700 border border-slate-300 uppercase tracking-wide">
+                  {guestCount} Tamu
+                </span>
+              )}
+              {revenueImpact !== 'SALE' && (
+                <span className="px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-rose-600 text-white border border-rose-600 uppercase tracking-wide flex items-center gap-1">
+                  <Receipt className="w-3 h-3" />
+                  {revenueImpact === 'HOUSE_USE' ? 'House Use' : 'Compliment'}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               {cart.length} item pesanan • Total Tagihan:{' '}
@@ -201,6 +224,52 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                   </button>
                 );
               })}
+            </div>
+
+            {/* Klasifikasi Bill (House Use / Compliment).
+                Ada di sini, bukan di daftar metode pembayaran, karena ini soal
+                apakah bill dihitung sebagai omzet — bukan soal dari mana
+                uangnya datang. Menandainya sebagai metode bayar akan tetap
+                menggelembungkan laporan penjualan. */}
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+              <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                Klasifikasi Bill:
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { id: 'SALE', label: 'Penjualan' },
+                    { id: 'HOUSE_USE', label: 'House Use' },
+                    { id: 'COMPLIMENT', label: 'Compliment' },
+                  ] as { id: RevenueImpact; label: string }[]
+                ).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      // Kembali ke penjualan normal tidak perlu izin; menandai
+                      // bill jadi bukan-omzet perlu PIN Manager.
+                      if (option.id === 'SALE') setRevenueImpact('SALE');
+                      else if (revenueImpact !== option.id) setPendingImpact(option.id);
+                    }}
+                    className={`py-1.5 text-[10px] font-extrabold rounded-lg border transition-all ${
+                      revenueImpact === option.id
+                        ? option.id === 'SALE'
+                          ? 'bg-amber-500 border-amber-500 text-slate-950'
+                          : 'bg-rose-600 border-rose-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {revenueImpact !== 'SALE' && (
+                <p className="text-[10px] font-semibold text-rose-700 leading-relaxed">
+                  Bill ini tidak dihitung sebagai omzet dan tidak menambah kas shift. Stok
+                  bahan tetap terpotong dan transaksinya tetap tercatat untuk audit.
+                </p>
+              )}
             </div>
 
             {/* Total Summary Block */}
@@ -461,6 +530,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
           </button>
         </div>
       </div>
+
+      {/* Step-Up Authorization: menandai bill jadi bukan-omzet adalah cara
+          tercepat menghilangkan penjualan dari laporan, jadi butuh PIN
+          Manager persis seperti VOID. */}
+      {pendingImpact && (
+        <PinAuthorizationModal
+          title="Otorisasi Bill Non-Omzet"
+          description={
+            pendingImpact === 'HOUSE_USE'
+              ? 'Menandai bill sebagai House Use mengeluarkannya dari omzet dan dari kas shift. Perlu PIN Manager atau Admin.'
+              : 'Menandai bill sebagai Compliment mengeluarkannya dari omzet dan dari kas shift. Perlu PIN Manager atau Admin.'
+          }
+          onClose={() => setPendingImpact(null)}
+          onAuthorized={() => {
+            setRevenueImpact(pendingImpact);
+            setPendingImpact(null);
+          }}
+        />
+      )}
     </div>
   );
 };
