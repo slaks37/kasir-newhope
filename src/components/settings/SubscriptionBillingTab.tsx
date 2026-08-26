@@ -109,36 +109,43 @@ export const SubscriptionBillingTab: React.FC = () => {
   const [prorationData, setProrationData] = useState<any>(null);
 
   const fetchSubscriptionData = async () => {
-    setIsLoading(true);
     try {
       // Fetch Plans
       const plansRes = await fetch('/api/v1/subscription/plans');
-      const plansJson = await plansRes.json();
-      if (plansJson.plans) setPlans(plansJson.plans);
+      if (plansRes.ok) {
+        const contentType = plansRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const plansJson = await plansRes.json();
+          if (plansJson.plans && Array.isArray(plansJson.plans) && plansJson.plans.length > 0) {
+            setPlans(plansJson.plans);
+          }
+        }
+      }
 
       // Fetch Status
       const deviceId = await getDeviceId();
       const statusRes = await fetch(`/api/v1/subscription/status?tenantId=${currentUser?.id || 'tenant-default'}`, {
         headers: {
-          'x-device-id': deviceId
-        }
+          'x-device-id': deviceId,
+        },
       });
-      const statusJson = await statusRes.json();
-
-      if (statusJson.subscription) {
-        setSubscription(statusJson.subscription);
-        setDaysLeft(statusJson.daysLeft || 0);
-        if (statusJson.invoices) setInvoices(statusJson.invoices);
-
-        // Sync local settings subscription
-        updateSettings({ ...settings, subscription: statusJson.subscription });
+      if (statusRes.ok) {
+        const contentType = statusRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const statusJson = await statusRes.json();
+          if (statusJson.subscription) {
+            setSubscription(statusJson.subscription);
+            setDaysLeft(statusJson.daysLeft || 0);
+            if (statusJson.invoices) setInvoices(statusJson.invoices);
+            updateSettings({ ...settings, subscription: statusJson.subscription });
+          }
+        }
       }
     } catch (err) {
-      console.error('Gagal memuat data langganan SaaS:', err);
-    } finally {
-      setIsLoading(false);
+      console.warn('Gagal memuat data langganan SaaS dari server, menggunakan fallback default:', err);
     }
   };
+
 
   useEffect(() => {
     fetchSubscriptionData();
@@ -310,7 +317,8 @@ export const SubscriptionBillingTab: React.FC = () => {
     );
   }
 
-  const currentPlan = subscription?.plan || plans[1] || plans[0];
+  const currentPlan = subscription?.plan || plans[1] || plans[0] || DEFAULT_SAAS_PLANS[1];
+
 
   return (
     <div className="space-y-6 animate-fade-in">
