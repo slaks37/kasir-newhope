@@ -1,4 +1,5 @@
-import { createDokuCheckout, isDokuConfigured, type DokuWebhookNotification, verifyDokuWebhookSignature } from '../services/billing/doku';
+import { createDokuCheckout, isDokuConfigured, type DokuWebhookNotification, verifyDokuWebhookSignature } from './_doku';
+
 
 const SAAS_PLANS = [
   {
@@ -156,8 +157,70 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     return;
   }
 
-  // 4. DOKU Checkout Payment Flow
-  if (cleanPath === '/api/v1/subscription/checkout' || cleanPath === '/api/v1/subscription/prorated-upgrade') {
+  // 4. Kalkulasi Upgrade Paket Prorasi
+  if (cleanPath === '/api/v1/subscription/prorated-upgrade') {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const { targetPlanId } = body;
+    const targetPlan = SAAS_PLANS.find((p) => p.id === targetPlanId) || SAAS_PLANS[2];
+    const currentPlan = SAAS_PLANS[1]; // Tier Plus
+
+    const remainingDays = 25;
+    const diffMonth = Math.max(0, targetPlan.priceIdr - currentPlan.priceIdr);
+    const proratedAmountIdr = Math.round((diffMonth / 30) * remainingDays);
+    const invoiceNumber = `INV-${Date.now().toString().slice(-8)}`;
+
+    let paymentUrl = `https://checkout.example.test/pay/${invoiceNumber}`;
+    if (isDokuConfigured() && proratedAmountIdr > 0) {
+      try {
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'kasir.newhope.space';
+        const proto = req.headers['x-forwarded-proto'] || 'https';
+        const callbackUrl = `${proto}://${host}/#settings?payment_status=success&inv=${invoiceNumber}`;
+
+        const dokuRes = await createDokuCheckout({
+          order: {
+            invoice_number: invoiceNumber,
+            amount: proratedAmountIdr,
+            currency: 'IDR',
+            callback_url: callbackUrl,
+            auto_redirect: true,
+            line_items: [
+              {
+                name: `Prorasi Upgrade ke ${targetPlan.name} (${remainingDays} hari)`,
+                price: proratedAmountIdr,
+                quantity: 1,
+              },
+            ],
+          },
+          payment: {
+            payment_due_date: 60,
+          },
+        });
+        paymentUrl = dokuRes.paymentUrl;
+      } catch (err) {
+        console.error('DOKU Proration checkout error:', err);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      ok: true,
+      currentPlan,
+      targetPlan,
+      remainingDays,
+      proratedAmountIdr,
+      paymentUrl,
+      invoice: {
+        id: invoiceNumber,
+        invoiceNumber,
+        amountIdr: proratedAmountIdr,
+        status: 'UNPAID',
+      },
+    });
+    return;
+  }
+
+  // 5. DOKU Checkout Payment Flow
+  if (cleanPath === '/api/v1/subscription/checkout') {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const { planId, targetPlanId, billingCycle } = body;
     const chosenPlanId = targetPlanId || planId || 'plan-pro-monthly';
@@ -170,6 +233,7 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     if (amount === 0) {
       res.status(200).json({
         ok: true,
+        success: true,
         message: 'Paket gratis aktif.',
         invoice: {
           id: invoiceNumber,
@@ -211,6 +275,7 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
 
         res.status(200).json({
           ok: true,
+          success: true,
           paymentUrl: dokuRes.paymentUrl,
           invoice: {
             id: invoiceNumber,
@@ -235,6 +300,7 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
       // Fallback dev simulator
       res.status(200).json({
         ok: true,
+        success: true,
         paymentUrl: `https://checkout.example.test/pay/${invoiceNumber}`,
         invoice: {
           id: invoiceNumber,
