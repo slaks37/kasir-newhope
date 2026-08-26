@@ -1,4 +1,4 @@
-/** Adapter Vercel: semua route lama hanya meneruskan ke gateway kanonik. */
+/** Adapter Vercel: semua route hanya meneruskan ke gateway kanonik. */
 export async function proxyToGateway(req: any, res: any): Promise<void> {
   const base = (process.env.GATEWAY_URL || '').replace(/\/$/, '');
   if (!base) {
@@ -14,8 +14,14 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     else if (Array.isArray(value)) headers[name] = value.join(', ');
   }
 
+  let requestUrl = req.url || '/';
+  // Jika Vercel memotong /api dari req.url pada catch-all, pastikan prefix /api tetap ada
+  if (!requestUrl.startsWith('/api')) {
+    requestUrl = `/api${requestUrl.startsWith('/') ? '' : '/'}${requestUrl}`;
+  }
+
   try {
-    const response = await fetch(`${base}${req.url || '/'}`, {
+    const response = await fetch(`${base}${requestUrl}`, {
       method: req.method,
       headers,
       body: req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body ?? {}),
@@ -31,3 +37,4 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     res.status(502).json({ ok: false, error: 'GATEWAY_UNAVAILABLE' });
   }
 }
+
