@@ -15,22 +15,12 @@
   ],
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/[...path]"
-    },
-
-    {
-      "source": "/(.*)",
-      "has": [
-        {
-          "type": "host",
-          "value": "admin\\.(.*)"
-        }
-      ],
+      "source": "/admin(.*)",
       "destination": "/admin.html"
     },
-    { "source": "/admin(.*)", "destination": "/admin.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api|admin).*)",
+      "destination": "/index.html"
+    }
   ]
 }
-
