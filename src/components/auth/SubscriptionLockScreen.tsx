@@ -23,6 +23,43 @@ export const SubscriptionLockScreen: React.FC<SubscriptionLockScreenProps> = ({ 
 
   const sub = settings.subscription;
 
+  const handleRenewPayment = async () => {
+    setIsProcessing(true);
+    try {
+      const deviceId = await getDeviceId();
+      const planId = sub?.planId || 'plan-pro-monthly';
+      const res = await fetch('/api/v1/subscription/checkout', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-device-id': deviceId 
+        },
+        body: JSON.stringify({
+          tenantId: currentUser?.id || 'tenant-default',
+          planId,
+        }),
+      });
+
+      const data = await res.json();
+      setIsProcessing(false);
+
+      if (data.ok && data.paymentUrl) {
+        if (data.paymentUrl.startsWith('https://checkout.example.test')) {
+          if (confirm(`[Mode Dev] DOKU_CLIENT_ID belum dikonfigurasi di .env.\nApakah ingin mensimulasikan pembayaran lunas?`)) {
+            await handleSimulatePayment();
+          }
+        } else {
+          window.location.href = data.paymentUrl;
+        }
+      } else {
+        alert('Gagal membuat checkout DOKU: ' + (data.detail || data.error || 'Terjadi kesalahan'));
+      }
+    } catch (err) {
+      setIsProcessing(false);
+      alert('Terjadi kendala koneksi saat memproses checkout.');
+    }
+  };
+
   const handleSimulatePayment = async () => {
     setIsProcessing(true);
     try {
@@ -92,12 +129,12 @@ export const SubscriptionLockScreen: React.FC<SubscriptionLockScreenProps> = ({ 
 
         <div className="space-y-3 pt-2">
           <button
-            onClick={handleSimulatePayment}
+            onClick={handleRenewPayment}
             disabled={isProcessing}
-            className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-2xl shadow-lg flex items-center justify-center space-x-2 transition-all transform hover:scale-[1.02]"
+            className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-2xl shadow-lg flex items-center justify-center space-x-2 transition-all transform hover:scale-[1.02] disabled:opacity-50"
           >
             <Zap className="w-5 h-5" />
-            <span>{isProcessing ? 'Memproses Pembayaran...' : 'Perpanjang & Buka Kunci Kasir'}</span>
+            <span>{isProcessing ? 'Menyiapkan Checkout...' : 'Bayar & Buka Kunci Kasir (DOKU)'}</span>
           </button>
 
           <div className="flex items-center justify-center space-x-2 text-xs text-slate-500 font-medium">

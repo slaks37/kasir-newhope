@@ -97,6 +97,70 @@ export const SubscriptionBillingTab: React.FC = () => {
     }
   };
 
+  const handleDokuCheckout = async (planId?: string, isProrated = false) => {
+    setIsProcessingPayment(true);
+    try {
+      const targetPlanId = planId || selectedPlanForUpgrade?.id || subscription?.planId || 'plan-pro-monthly';
+      const deviceId = await getDeviceId();
+
+      let data: any;
+      if (isProrated && prorationData?.paymentUrl) {
+        data = prorationData;
+      } else if (isProrated) {
+        const res = await fetch('/api/v1/subscription/prorated-upgrade', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-device-id': deviceId,
+          },
+          body: JSON.stringify({
+            tenantId: currentUser?.id || 'tenant-default',
+            targetPlanId,
+          }),
+        });
+        data = await res.json();
+      } else {
+        const res = await fetch('/api/v1/subscription/checkout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-device-id': deviceId,
+          },
+          body: JSON.stringify({
+            tenantId: currentUser?.id || 'tenant-default',
+            planId: targetPlanId,
+            billingCycle: isYearly ? 'YEARLY' : 'MONTHLY',
+          }),
+        });
+        data = await res.json();
+      }
+
+      setIsProcessingPayment(false);
+      setShowProrationModal(false);
+
+      if (data.ok && data.paymentUrl) {
+        if (data.paymentUrl.startsWith('https://checkout.example.test')) {
+          // Fallback lokal ketika kredensial DOKU belum diisi di .env
+          if (confirm(`[Mode Dev] DOKU_CLIENT_ID belum dikonfigurasi di .env.\nApakah ingin langsung mensimulasikan pembayaran lunas?`)) {
+            await handleSimulatePayment(targetPlanId, data.invoice?.id);
+          }
+        } else {
+          // Buka halaman pembayaran DOKU Checkout
+          window.location.href = data.paymentUrl;
+        }
+      } else if (data.ok && data.invoice) {
+        alert('Invoice berhasil dibuat!');
+        fetchSubscriptionData();
+      } else {
+        alert('Gagal memproses checkout: ' + (data.detail || data.error || 'Terjadi kesalahan'));
+      }
+    } catch (err) {
+      setIsProcessingPayment(false);
+      console.error('Gagal checkout DOKU:', err);
+      alert('Terjadi kesalahan koneksi saat memproses checkout.');
+    }
+  };
+
   const handleSimulatePayment = async (planId?: string, invoiceId?: string) => {
     setIsProcessingPayment(true);
     try {
@@ -225,10 +289,11 @@ export const SubscriptionBillingTab: React.FC = () => {
               </span>
             </div>
             <button
-              onClick={() => handleSimulatePayment(currentPlan.id)}
-              className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0"
+              onClick={() => handleDokuCheckout(currentPlan.id)}
+              disabled={isProcessingPayment}
+              className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0 disabled:opacity-50"
             >
-              Bayar Perpanjangan
+              Bayar Perpanjangan (DOKU)
             </button>
           </div>
         )}
@@ -242,10 +307,11 @@ export const SubscriptionBillingTab: React.FC = () => {
               </span>
             </div>
             <button
-              onClick={() => handleSimulatePayment(currentPlan.id)}
-              className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0"
+              onClick={() => handleDokuCheckout(currentPlan.id)}
+              disabled={isProcessingPayment}
+              className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-xs shrink-0 disabled:opacity-50"
             >
-              Aktifkan Kembali Sekarang
+              Aktifkan Kembali (DOKU)
             </button>
           </div>
         )}
@@ -264,9 +330,9 @@ export const SubscriptionBillingTab: React.FC = () => {
           </div>
 
           <button
-            onClick={() => handleSimulatePayment(currentPlan.id)}
+            onClick={() => handleDokuCheckout(currentPlan.id)}
             disabled={isProcessingPayment}
-            className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-md flex items-center space-x-2 transition-all"
+            className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold rounded-xl shadow-md flex items-center space-x-2 transition-all disabled:opacity-50"
           >
             <Zap className="w-4 h-4" />
             <span>{isProcessingPayment ? 'Memproses...' : 'Perpanjang Paket Sekarang'}</span>
@@ -512,12 +578,12 @@ export const SubscriptionBillingTab: React.FC = () => {
                 Batal
               </button>
               <button
-                onClick={() => handleSimulatePayment(selectedPlanForUpgrade.id)}
+                onClick={() => handleDokuCheckout(selectedPlanForUpgrade.id, true)}
                 disabled={isProcessingPayment}
-                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs flex items-center space-x-1.5"
+                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs flex items-center space-x-1.5 disabled:opacity-50"
               >
                 <Zap className="w-4 h-4" />
-                <span>Bayar Upgrade Prorasi</span>
+                <span>{isProcessingPayment ? 'Memproses...' : 'Bayar Upgrade (DOKU)'}</span>
               </button>
             </div>
           </div>

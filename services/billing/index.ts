@@ -23,6 +23,12 @@ import type { SaaSPlan } from '../../src/types';
 import { newDocumentNumber } from '../../src/lib/ids';
 import * as store from './store';
 import { tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import {
+  createDokuCheckout,
+  verifyDokuWebhookSignature,
+  isDokuConfigured,
+  type DokuWebhookNotification,
+} from './doku';
 
 const SAAS_PLANS: SaaSPlan[] = [
   {
@@ -204,19 +210,76 @@ startService({
       const plan = cariPaket(String(req.body?.planId || ''));
       if (!plan) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
+      const isYearly = req.body?.billingCycle === 'YEARLY';
+      const amount = isYearly && plan.priceYearlyIdr !== undefined ? plan.priceYearlyIdr * 12 : plan.priceIdr;
+
+      const sub = await store.ambilAtauBuatLangganan(
+        svc.db,
+        tenantId,
+        SAAS_PLANS[0].id,
+        TRIAL_DAYS,
+        req.headers['x-device-id'] as string,
+        req.ip
+      );
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
+
+      const invoiceNumber = newDocumentNumber('INV');
+      let paymentUrl: string | undefined = undefined;
+
+      const callbackUrl = `${process.env.GATEWAY_URL || 'http://localhost:3000'}/settings?tab=subscription`;
+
+      if (isDokuConfigured() && amount > 0) {
+        try {
+          const dokuRes = await createDokuCheckout({
+            order: {
+              invoice_number: invoiceNumber,
+              amount,
+              currency: 'IDR',
+              callback_url: callbackUrl,
+              auto_redirect: true,
+              line_items: [
+                {
+                  name: `Paket ${plan.name} (${isYearly ? 'Tahunan' : 'Bulanan'})`,
+                  price: amount,
+                  quantity: 1,
+                },
+              ],
+            },
+            payment: {
+              payment_due_date: 60, // 60 menit
+            },
+            customer: {
+              id: tenantId,
+              name: `Merchant ${tenantId.slice(0, 8)}`,
+              email: req.headers['x-auth-email']
+                ? String(req.headers['x-auth-email'])
+                : 'merchant@newhopepos.id',
+            },
+          });
+          paymentUrl = dokuRes.paymentUrl;
+        } catch (err: any) {
+          svc.log.error('gagal memanggil DOKU checkout:', { err: err.message, tenantId, planId: plan.id });
+          return res.status(500).json({
+            ok: false,
+            error: 'DOKU_CHECKOUT_FAILED',
+            detail: err.message,
+          });
+        }
+      } else {
+        paymentUrl = `https://checkout.example.test/pay/${encodeURIComponent(tenantId)}?inv=${invoiceNumber}`;
+      }
+
       const faktur = await store.buatFaktur(svc.db, {
-        nomor: newDocumentNumber('INV'),
+        nomor: invoiceNumber,
         subscriptionId: sub.id,
         tenantId,
-        amount: plan.priceIdr,
+        amount,
         dueDate: new Date(Date.now() + 3 * HARI_MS).toISOString(),
-        linkUrl: `https://checkout.example.test/pay/${encodeURIComponent(tenantId)}`,
+        linkUrl: paymentUrl,
       });
 
-      svc.log.info('checkout dibuat', { tenantId, planId: plan.id, invoice: faktur.id });
-      res.json({ ok: true, invoice: faktur, plan });
+      svc.log.info('checkout dibuat', { tenantId, planId: plan.id, invoice: faktur.id, paymentUrl });
+      res.json({ ok: true, invoice: faktur, plan, paymentUrl });
     });
 
     /**
@@ -234,12 +297,18 @@ startService({
       const tenantId = await tenantDari(req);
       if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       const invoiceId = String(req.body?.invoiceId || '');
-      const planId = String(req.body?.planId || '');
+      const planId = String(req.body?.targetPlanId || req.body?.planId || '');
 
-      const lunas = await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED', tenantId);
-      if (!lunas) return res.status(404).json({ ok: false, error: 'INVOICE_NOT_FOUND_OR_PAID' });
+      let lunas = invoiceId ? await store.tandaiFakturLunas(svc.db, invoiceId, 'SIMULATED', tenantId) : null;
 
-      const sub = await store.ambilAtauBuatLangganan(svc.db, tenantId, SAAS_PLANS[0].id, TRIAL_DAYS, req.headers['x-device-id'] as string, req.ip);
+      const sub = await store.ambilAtauBuatLangganan(
+        svc.db,
+        tenantId,
+        SAAS_PLANS[0].id,
+        TRIAL_DAYS,
+        req.headers['x-device-id'] as string,
+        req.ip
+      );
       if (!sub) return res.status(409).json({ ok: false, error: 'MERCHANT_BELUM_SINKRON' });
       if (planId && cariPaket(planId)) await store.gantiPaket(svc.db, sub.id, planId);
 
@@ -249,51 +318,176 @@ startService({
         selesai: new Date(mulai.getTime() + 30 * HARI_MS).toISOString(),
       });
 
-      svc.log.info('pembayaran tersimulasi diterima', { tenantId, invoiceId });
-      res.json({ ok: true, subscription: diperbarui, invoice: lunas });
+      if (!lunas) {
+        // Buat faktur lunas dummy bila belum ada invoiceId
+        const plan = cariPaket(planId) || SAAS_PLANS[1];
+        const newInv = await store.buatFaktur(svc.db, {
+          nomor: newDocumentNumber('INV'),
+          subscriptionId: sub.id,
+          tenantId,
+          amount: plan.priceIdr,
+          dueDate: new Date().toISOString(),
+        });
+        lunas = await store.tandaiFakturLunas(svc.db, newInv.id, 'SIMULATED', tenantId);
+      }
+
+      svc.log.info('pembayaran tersimulasi diterima', { tenantId, invoiceId: lunas?.id });
+      res.json({
+        ok: true,
+        success: true,
+        message: 'Pembayaran langganan berhasil disimulasikan! Paket sekarang aktif.',
+        subscription: diperbarui,
+        invoice: lunas,
+      });
     });
 
     app.post('/api/v1/subscription/prorated-upgrade', async (req, res) => {
       const tenantId = await tenantDari(req);
       if (!tenantId) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
-      const planBaru = cariPaket(String(req.body?.planId || ''));
+      const targetPlanId = String(req.body?.targetPlanId || req.body?.planId || '');
+      const planBaru = cariPaket(targetPlanId);
       if (!planBaru) return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
 
       const sub = await store.ambilLangganan(svc.db, tenantId);
       if (!sub) return res.status(404).json({ ok: false, error: 'NO_SUBSCRIPTION' });
 
-      const lama = cariPaket(sub.planId);
+      const lama = cariPaket(sub.planId) || SAAS_PLANS[0];
       const sisaHari = Math.max(
         0,
         Math.ceil((new Date(sub.currentPeriodEnd).getTime() - Date.now()) / HARI_MS)
       );
       // Sisa periode paket LAMA dikreditkan; hanya selisihnya yang ditagih.
-      // Menagih harga penuh saat upgrade di tengah periode berarti merchant
-      // membayar dua kali untuk hari yang sama.
       const kreditSisa = Math.round(((lama?.priceIdr ?? 0) / 30) * sisaHari);
       const ditagih = Math.max(0, planBaru.priceIdr - kreditSisa);
 
+      const invoiceNumber = newDocumentNumber('INV');
+      let paymentUrl: string | undefined = undefined;
+
+      if (isDokuConfigured() && ditagih > 0) {
+        const callbackUrl = `${process.env.GATEWAY_URL || 'http://localhost:3000'}/settings?tab=subscription`;
+        try {
+          const dokuRes = await createDokuCheckout({
+            order: {
+              invoice_number: invoiceNumber,
+              amount: ditagih,
+              currency: 'IDR',
+              callback_url: callbackUrl,
+              auto_redirect: true,
+              line_items: [
+                {
+                  name: `Upgrade Prorasi: ${lama.name} -> ${planBaru.name}`,
+                  price: ditagih,
+                  quantity: 1,
+                },
+              ],
+            },
+            payment: {
+              payment_due_date: 60,
+            },
+            customer: {
+              id: tenantId,
+              name: `Merchant ${tenantId.slice(0, 8)}`,
+              email: req.headers['x-auth-email']
+                ? String(req.headers['x-auth-email'])
+                : 'merchant@newhopepos.id',
+            },
+          });
+          paymentUrl = dokuRes.paymentUrl;
+        } catch (err: any) {
+          svc.log.error('gagal memanggil DOKU checkout untuk upgrade prorasi:', err);
+        }
+      }
+
       const faktur = await store.buatFaktur(svc.db, {
-        nomor: newDocumentNumber('INV'),
+        nomor: invoiceNumber,
         subscriptionId: sub.id,
         tenantId,
         amount: ditagih,
         dueDate: new Date(Date.now() + 3 * HARI_MS).toISOString(),
+        linkUrl: paymentUrl,
       });
 
       res.json({
         ok: true,
         invoice: faktur,
+        paymentUrl,
+        currentPlan: lama,
+        targetPlan: planBaru,
+        remainingDays: sisaHari,
+        unusedCredit: kreditSisa,
+        netProratedAmount: ditagih,
         breakdown: { hargaPaketBaru: planBaru.priceIdr, kreditSisa, sisaHari, ditagih },
       });
     });
 
     /**
-     * Webhook payment gateway — IDEMPOTEN lewat event_id.
+     * Webhook DOKU Payment Gateway — IDEMPOTEN & TERVERIFIKASI HMAC-SHA256.
      *
-     * Gateway mengirim ulang event yang tidak di-ACK tepat waktu; itu perilaku
-     * normal, bukan kasus tepi. Tanpa penjaga ini satu pembayaran memperpanjang
-     * langganan dua kali.
+     * Menangani notifikasi pembayaran sukses dari DOKU Checkout / Jokul.
+     */
+    app.post('/api/v1/webhooks/doku', async (req, res) => {
+      const rawBody = (req as any).rawBody || JSON.stringify(req.body ?? {});
+      const isSignatureValid = verifyDokuWebhookSignature(
+        req.headers,
+        rawBody,
+        '/api/v1/webhooks/doku'
+      );
+
+      if (!isSignatureValid && isDokuConfigured() && process.env.NODE_ENV === 'production') {
+        svc.log.warn('Webhook DOKU ditolak: Signature HMAC-SHA256 tidak valid', {
+          headers: req.headers,
+        });
+        return res.status(401).json({ ok: false, error: 'INVALID_SIGNATURE' });
+      }
+
+      const body = (req.body ?? {}) as DokuWebhookNotification;
+      const invoiceNumber = String(body.order?.invoice_number || body.invoice_number || '');
+      const transactionStatus = String(body.transaction?.status || body.status || 'UNKNOWN').toUpperCase();
+      const eventId = String(
+        req.headers['request-id'] ||
+        body.transaction?.original_request_id ||
+        `${invoiceNumber}-${Date.now()}`
+      );
+
+      if (!invoiceNumber) {
+        svc.log.warn('Webhook DOKU tanpa nomor invoice', { body });
+        return res.status(400).json({ ok: false, error: 'INVOICE_NUMBER_REQUIRED' });
+      }
+
+      // Idempotensi: Catat event ke database agar tidak diproses berulang
+      const baru = await store.catatWebhookBaru(svc.db, eventId, `DOKU_${transactionStatus}`, body);
+      if (!baru) {
+        svc.log.info('Webhook DOKU duplikat dilewati', { eventId, invoiceNumber });
+        return res.status(200).json({ status: 'SUCCESS', replayed: true });
+      }
+
+      if (transactionStatus === 'SUCCESS') {
+        const lunas = await store.tandaiFakturLunas(svc.db, invoiceNumber, eventId);
+        if (lunas) {
+          const sub = await store.ambilLangganan(svc.db, lunas.tenantId);
+          if (sub) {
+            const mulai = new Date();
+            await store.ubahStatusLangganan(svc.db, sub.id, 'ACTIVE', {
+              mulai: mulai.toISOString(),
+              selesai: new Date(mulai.getTime() + 30 * HARI_MS).toISOString(),
+            });
+            svc.log.info('Langganan berhasil diaktifkan via DOKU Webhook', {
+              invoiceNumber,
+              tenantId: lunas.tenantId,
+              amount: lunas.amount,
+            });
+          }
+        } else {
+          svc.log.warn('Faktur tidak ditemukan atau sudah lunas', { invoiceNumber });
+        }
+      }
+
+      // DOKU mewajibkan HTTP 200 sebagai acknowledgment
+      res.status(200).json({ status: 'SUCCESS' });
+    });
+
+    /**
+     * Webhook payment gateway umum — IDEMPOTEN lewat event_id.
      */
     app.post('/api/v1/webhooks/payment-gateway', async (req, res) => {
       const secret = process.env.PAYMENT_WEBHOOK_SECRET;
@@ -307,8 +501,6 @@ startService({
 
       const baru = await store.catatWebhookBaru(svc.db, eventId, eventType, body);
       if (!baru) {
-        // 200, bukan error. Bagi gateway ini "sudah berhasil diproses";
-        // menjawab error membuatnya mengirim ulang tanpa henti.
         svc.log.info('webhook diulang, dilewati', { eventId, eventType });
         return res.json({ ok: true, replayed: true });
       }

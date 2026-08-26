@@ -58,7 +58,14 @@ export const SERVICE_URL = {
 export async function startService(opts: ServiceOptions): Promise<void> {
   const app = express();
   const log = buatLogger(opts.name);
-  app.use(express.json({ limit: '10mb' }));
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    })
+  );
 
   /*
    * Correlation ID mengalir dari gateway.

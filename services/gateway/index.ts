@@ -74,6 +74,7 @@ const PUBLIC_API_PATHS = new Set([
   '/api/v1/assistant/quick-chips',
   // Webhook punya secret terpisah yang diperiksa billing-service.
   '/api/v1/webhooks/payment-gateway',
+  '/api/v1/webhooks/doku',
 ]);
 
 function isPublicApi(url: string): boolean {
