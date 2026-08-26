@@ -8,30 +8,29 @@ export default function handler(req: any, res: any) {
   }
 
   const now = new Date();
-  const periodEnd = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+  const periodEnd = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
   return res.status(200).json({
     ok: true,
     subscription: {
-      id: 'sub-trial-active',
+      id: 'sub-free-active',
       tenantId: req.query?.tenantId || 'tenant-default',
-      planId: 'plan-pro-monthly',
+      planId: 'plan-free',
       plan: {
-        id: 'plan-pro-monthly',
-        name: 'Tier Pro',
-        tierLevel: 3,
+        id: 'plan-free',
+        name: 'Free Tier',
+        tierLevel: 1,
         billingCycle: 'MONTHLY',
-        priceIdr: 299000,
+        priceIdr: 0,
         currency: 'IDR',
-        maxOutlets: 4,
+        maxOutlets: 1,
         isActive: true,
       },
-      status: 'TRIAL',
+      status: 'ACTIVE',
       currentPeriodStart: now.toISOString(),
       currentPeriodEnd: periodEnd.toISOString(),
-      trialEndsAt: periodEnd.toISOString(),
     },
-    daysLeft: 90,
+    daysLeft: 365,
     invoices: [],
   });
 }
