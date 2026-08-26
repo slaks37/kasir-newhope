@@ -73,6 +73,7 @@ const SAAS_PLANS = [
 /** Serverless API Handler untuk Vercel: Mendukung Gateway Proxy & Serverless Billing/DOKU secara langsung */
 export async function proxyToGateway(req: any, res: any): Promise<void> {
   const base = (process.env.GATEWAY_URL || '').replace(/\/$/, '');
+  const isSelf = base.includes('kasir.newhope.space') || base.includes('vercel.app');
 
   let requestUrl = req.url || '/';
   if (!requestUrl.startsWith('/api')) {
@@ -90,8 +91,9 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     return;
   }
 
-  // JIKA ADA GATEWAY_URL EKSTERNAL: Teruskan request ke gateway tersebut
-  if (base) {
+  // JIKA ADA GATEWAY_URL EKSTERNAL: Teruskan request ke gateway tersebut (hanya jika bukan domain sendiri)
+  if (base && !isSelf) {
+
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers || {})) {
       const normalized = name.toLowerCase();
