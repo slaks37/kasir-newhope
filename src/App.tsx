@@ -128,6 +128,13 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const totalCartAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
+  React.useEffect(() => {
+    const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan');
+    if (pendingPlan) {
+      setActiveTab('settings');
+    }
+  }, [setActiveTab]);
+
   const handleProductSelect = (product: Product) => {
     if (
       (product.variants && product.variants.length > 0) ||

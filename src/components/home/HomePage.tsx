@@ -1543,7 +1543,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
 
             <button
-              onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
+              onClick={() => {
+                sessionStorage.setItem('nhpos_pending_checkout_plan', 'plan-free');
+                onOpenRegister ? onOpenRegister() : handleOpenPOS();
+              }}
               className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-xs transition-all cursor-pointer"
             >
               Mulai Gratis Sekarang
@@ -1588,7 +1591,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
 
             <button
-              onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
+              onClick={() => {
+                sessionStorage.setItem('nhpos_pending_checkout_plan', 'plan-plus-monthly');
+                onOpenRegister ? onOpenRegister() : handleOpenPOS();
+              }}
               className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/25 transition-all cursor-pointer transform hover:scale-[1.02]"
             >
               Pilih Paket Tier Plus
@@ -1629,7 +1635,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
 
             <button
-              onClick={() => onOpenRegister ? onOpenRegister() : handleOpenPOS()}
+              onClick={() => {
+                sessionStorage.setItem('nhpos_pending_checkout_plan', 'plan-pro-monthly');
+                onOpenRegister ? onOpenRegister() : handleOpenPOS();
+              }}
               className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-xs transition-all cursor-pointer"
             >
               Mulai Tier Pro

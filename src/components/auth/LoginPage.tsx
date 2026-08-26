@@ -190,6 +190,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {/* Card */}
         <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5">
+          {sessionStorage.getItem('nhpos_pending_checkout_plan') && (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-amber-300">
+              <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <strong>Langkah 1/2:</strong> Buat akun toko Anda untuk melanjutkan ke pembayaran & aktivasi paket langganan.
+              </span>
+            </div>
+          )}
+
           {/* Tab Mode Switcher: Login / Register */}
           <div className="grid grid-cols-2 gap-1 bg-slate-950/80 p-1 rounded-2xl border border-slate-800">
             <button
