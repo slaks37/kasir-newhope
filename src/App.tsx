@@ -96,10 +96,11 @@ class AIErrorBoundary extends React.Component<
 }
 
 interface POSAppContentProps {
-  onBackToHome?: () => void;
+  onGoToHome?: () => void;
+  onLogout?: () => void;
 }
 
-const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
+const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) => {
   const {
     activeTab,
     setActiveTab,
@@ -130,8 +131,10 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 
   React.useEffect(() => {
     const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan');
-    if (pendingPlan) {
-      setActiveTab('settings');
+    const pendingTab = sessionStorage.getItem('nhpos_pending_tab');
+    if (pendingPlan || pendingTab) {
+      sessionStorage.removeItem('nhpos_pending_tab');
+      setActiveTab((pendingTab as any) || 'settings');
     }
   }, [setActiveTab]);
 
@@ -169,7 +172,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
         onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
         onOpenClockIn={() => setShowClockInModal(true)}
-        onLogout={onBackToHome}
+        onLogout={onLogout}
       />
 
       {/* Main Container */}
@@ -180,7 +183,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
             onOpenAiCopilot={() => setActiveTab('ai')}
             onOpenEndShift={() => setShowShiftModal(true)}
             onOpenClockIn={() => setShowClockInModal(true)}
-            onGoToHome={onBackToHome}
+            onGoToHome={onGoToHome}
           />
         </div>
 
@@ -223,11 +226,11 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
           ) : (
             <>
               {activeTab === 'home' && (
-                <OverviewPage onBackToHome={onBackToHome} />
+                <OverviewPage onBackToHome={onGoToHome} />
               )}
 
               {activeTab === 'overview' && (
-                <OverviewPage onBackToHome={onBackToHome} />
+                <OverviewPage onBackToHome={onGoToHome} />
               )}
 
               {activeTab === 'pos' && (
@@ -243,54 +246,67 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
                           onClick={() => setShowMobileCartSheet(true)}
                           className="w-full bg-slate-900 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between border border-slate-700/80 active:scale-[0.98] transition-all"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 font-extrabold text-xs flex items-center justify-center shadow-xs">
+                          <div className="flex items-center space-x-2.5">
+                            <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 text-xs font-black flex items-center justify-center">
                               {totalCartCount}
-                            </div>
-                            <div className="text-left">
-                              <span className="text-[10px] text-slate-400 block leading-tight">Total Pesanan</span>
-                              <span className="text-sm font-extrabold text-amber-400 leading-tight">{formatRupiah(totalCartAmount)}</span>
-                            </div>
+                            </span>
+                            <span className="text-xs font-bold text-slate-200">Lihat Keranjang</span>
                           </div>
-                          <div className="flex items-center gap-1.5 text-xs font-extrabold bg-amber-500 text-slate-950 px-3.5 py-1.5 rounded-xl shadow-xs">
-                            <span>Buka Keranjang</span>
-                            <span className="text-sm font-bold">➔</span>
-                          </div>
+                          <span className="font-mono font-black text-sm text-amber-400">
+                            {formatRupiah(totalCartAmount)}
+                          </span>
                         </button>
                       </div>
                     )}
                   </div>
 
-                  {/* Desktop Right Order Cart Panel */}
-                  <CartPanel
-                    onOpenCustomerSelect={() => setShowCustomerModal(true)}
-                    onOpenCheckout={() => setShowCheckoutModal(true)}
-                    onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
-                    onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
-                  />
+                  {/* Desktop Right Cart Column */}
+                  <div className="hidden lg:flex w-[380px] xl:w-[420px] 2xl:w-[460px] shrink-0 border-l border-slate-200 bg-white">
+                    <CartPanel
+                      onOpenCheckout={() => setShowCheckoutModal(true)}
+                      onOpenCustomerSelect={() => setShowCustomerModal(true)}
+                      onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
+                      onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
+                    />
+                  </div>
                 </>
               )}
 
               {activeTab === 'tables' && <TableManager />}
+
+              {activeTab === 'inventory' && (
+                <Suspense fallback={<TabLoading />}>
+                  <InventoryManager />
+                </Suspense>
+              )}
+
               {activeTab === 'customers' && <CustomerManager />}
 
-              {/* Lazily loaded tabs — see the code-splitting note above. */}
-              <Suspense fallback={<TabLoading />}>
-                {activeTab === 'inventory' && <InventoryManager />}
-                {activeTab === 'reports' && <ReportsDashboard />}
-                {activeTab === 'ai' && (
-                  <AIErrorBoundary>
+              {activeTab === 'reports' && (
+                <Suspense fallback={<TabLoading />}>
+                  <ReportsDashboard />
+                </Suspense>
+              )}
+
+              {activeTab === 'ai' && (
+                <AIErrorBoundary>
+                  <Suspense fallback={<TabLoading />}>
                     <AIAssistant />
-                  </AIErrorBoundary>
-                )}
-                {activeTab === 'settings' && <SettingsManager />}
-              </Suspense>
+                  </Suspense>
+                </AIErrorBoundary>
+              )}
+
+              {activeTab === 'settings' && (
+                <Suspense fallback={<TabLoading />}>
+                  <SettingsManager />
+                </Suspense>
+              )}
             </>
           )}
         </main>
       </div>
 
-      {/* Global Modals */}
+      {/* Product Variant & Modifiers Modal */}
       {selectedProductForVariant && (
         <VariantModal
           product={selectedProductForVariant}
@@ -299,31 +315,28 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
         />
       )}
 
-      {/* Mobile Cart Bottom Sheet Drawer */}
+      {/* Mobile Cart Sheet Modal */}
       {showMobileCartSheet && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up border-t border-slate-200">
-            <div className="flex items-center justify-between p-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5 text-amber-500" />
-                <h3 className="font-extrabold text-sm text-slate-900">Keranjang Pesanan ({totalCartCount})</h3>
-              </div>
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm animate-fade-in flex flex-col justify-end">
+          <div className="bg-white rounded-t-3xl max-h-[85vh] h-[85vh] flex flex-col shadow-2xl animate-slide-up">
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+              <span className="font-extrabold text-sm text-slate-800">Keranjang Kasir</span>
               <button
                 onClick={() => setShowMobileCartSheet(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm"
+                className="text-xs font-bold text-slate-500 p-1.5 rounded-lg hover:bg-slate-100"
               >
-                ✕
+                Tutup ✕
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-hidden">
               <CartPanel
-                onOpenCustomerSelect={() => {
-                  setShowMobileCartSheet(false);
-                  setShowCustomerModal(true);
-                }}
                 onOpenCheckout={() => {
                   setShowMobileCartSheet(false);
                   setShowCheckoutModal(true);
+                }}
+                onOpenCustomerSelect={() => {
+                  setShowMobileCartSheet(false);
+                  setShowCustomerModal(true);
                 }}
                 onOpenHoldOrders={() => {
                   setShowMobileCartSheet(false);
@@ -345,7 +358,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
         onOpenEndShift={() => setShowShiftModal(true)}
         onOpenClockIn={() => setShowClockInModal(true)}
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
-        onGoToHome={onBackToHome}
+        onGoToHome={onGoToHome}
       />
 
       {showCustomerModal && (
@@ -386,7 +399,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
       {showSwitchUserModal && (
         <SwitchUserModal
           onClose={() => setShowSwitchUserModal(false)}
-          onLogout={onBackToHome}
+          onLogout={onLogout}
         />
       )}
 
@@ -411,11 +424,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 
 export function App() {
   const { user, loading, signOut } = useAuth();
-  const [authView, setAuthView] = useState<'home' | 'login' | 'register' | 'blog'>(() => {
+  const [authView, setAuthView] = useState<'pos' | 'home' | 'login' | 'register' | 'blog'>(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash === 'login' || hash === 'register') return hash;
     if (hash.startsWith('blog')) return 'blog';
-    return 'home';
+    if (hash === 'home' || hash === 'landing') return 'home';
+    return 'pos';
   });
   const [blogSlug, setBlogSlug] = useState<string | null>(() => {
     const hash = window.location.hash.replace('#', '');
@@ -431,14 +445,17 @@ export function App() {
       } else if (hash.startsWith('blog')) {
         setAuthView('blog');
         setBlogSlug(hash.startsWith('blog/') ? hash.replace('blog/', '') : null);
-      } else if (hash === '' || hash === 'home') {
+      } else if (hash === 'home' || hash === 'landing') {
         setAuthView('home');
+        setBlogSlug(null);
+      } else if (hash === '' || hash === 'pos') {
+        setAuthView(user ? 'pos' : 'home');
         setBlogSlug(null);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [user]);
 
   // Loading spinner saat mengecek sesi awal
   if (loading) {
@@ -452,7 +469,29 @@ export function App() {
     );
   }
 
-  // JIKA BELUM LOGIN: Pengguna WAJIB Login atau Registrasi Toko Baru untuk dapat masuk ke POS.
+  // Aksi Logout Bersih
+  const handleLogout = async () => {
+    window.location.hash = '';
+    setAuthView('home');
+    await signOut();
+  };
+
+  // Navigasi ke Halaman Depan / Landing Page (Tanpa Logout!)
+  const handleGoToLanding = () => {
+    window.location.hash = 'home';
+    setAuthView('home');
+  };
+
+  // Navigasi ke POS (Untuk user yang sudah login)
+  const handleOpenPOS = (targetTab?: string) => {
+    window.location.hash = '';
+    setAuthView('pos');
+    if (targetTab) {
+      sessionStorage.setItem('nhpos_pending_tab', targetTab);
+    }
+  };
+
+  // JIKA BELUM LOGIN:
   if (!user) {
     if (authView === 'login' || authView === 'register') {
       return (
@@ -478,22 +517,38 @@ export function App() {
           isStandaloneLanding={true}
           onOpenLogin={() => { window.location.hash = 'login'; }}
           onOpenRegister={() => { window.location.hash = 'register'; }}
+          onOpenPOS={handleOpenPOS}
         />
       </div>
     );
   }
 
-  // JIKA SUDAH LOGIN: Tampilkan Aplikasi POS
-  const handleSignOutAndGoHome = async () => {
-    window.location.hash = '';
-    setAuthView('home');
-    await signOut();
-  };
+  // JIKA SUDAH LOGIN:
+  if (authView === 'home') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <HomePage
+          isStandaloneLanding={false}
+          onOpenPOS={handleOpenPOS}
+        />
+      </div>
+    );
+  }
+
+  if (authView === 'blog') {
+    return (
+      <BlogHarapanBaru
+        initialSlug={blogSlug}
+        onBackToHome={() => { window.location.hash = ''; setAuthView('pos'); }}
+        onOpenLogin={() => handleOpenPOS()}
+        onOpenRegister={() => handleOpenPOS()}
+      />
+    );
+  }
 
   return (
-    <POSAppContent onBackToHome={handleSignOutAndGoHome} />
+    <POSAppContent onGoToHome={handleGoToLanding} onLogout={handleLogout} />
   );
 }
 
 export default App;
-
