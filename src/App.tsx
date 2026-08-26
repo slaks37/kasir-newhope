@@ -484,10 +484,9 @@ export function App() {
   };
 
   return (
-    <POSProvider>
-      <POSAppContent onBackToHome={handleSignOutAndGoHome} />
-    </POSProvider>
+    <POSAppContent onBackToHome={handleSignOutAndGoHome} />
   );
 }
 
 export default App;
+
