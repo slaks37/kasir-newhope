@@ -151,22 +151,38 @@ async function resolveInternalIdentity(
   return claimed.rows.length ? { who: asIdentity(claimed.rows[0]), justBound: true } : null;
 }
 
-const SEED_INTERNAL = [
+/** Kotak surat peran, bukan orang. Aman berada di dalam repo. */
+const SEED_INTERNAL: ReadonlyArray<{ email: string; fullName: string; role: string }> = [
   { email: 'ops@newhopepos.id', fullName: 'Platform Root', role: 'ROLE_SUPERADMIN' },
   { email: 'growth@newhopepos.id', fullName: 'Growth Analyst', role: 'ROLE_INTERNAL_GROWTH' },
   { email: 'support@newhopepos.id', fullName: 'Support Agent', role: 'ROLE_INTERNAL_SUPPORT' },
-] as const;
+];
 
 /**
- * Memastikan ketiga kursi internal ada.
+ * Memastikan kursi internal ada.
  *
  * Barisnya dibuat TANPA sso_subject: kursi masih kosong sampai orangnya login
  * pertama kali dengan alamat email itu (lihat resolveInternalIdentity). Jadi
  * seed ini memberi peran, bukan akses — dan alamatnya wajib berada pada domain
  * yang benar-benar Anda kuasai.
+ *
+ * INTERNAL_ROOT_EMAIL menambahkan satu kursi SUPERADMIN untuk alamat pribadi
+ * pemilik platform. Sengaja lewat environment variable server, BUKAN konstanta
+ * di kode klien: sebelumnya alamat itu ada di src/admin/api.ts dan ikut
+ * terkirim ke setiap pengunjung di dalam bundle JavaScript.
  */
 export async function ensureInternalUsers(db: Db): Promise<void> {
-  for (const u of SEED_INTERNAL) {
+  const rootEmail = String(process.env.INTERNAL_ROOT_EMAIL || '').trim().toLowerCase();
+  const seeds = [...SEED_INTERNAL];
+  if (rootEmail) {
+    seeds.push({
+      email: rootEmail,
+      fullName: process.env.INTERNAL_ROOT_NAME || 'Platform Owner',
+      role: 'ROLE_SUPERADMIN',
+    });
+  }
+
+  for (const u of seeds) {
     await db.query(
       `INSERT INTO internal.internal_users (id, email, full_name, role)
        VALUES (uuidv7(), $1, $2, $3::internal_role_enum)

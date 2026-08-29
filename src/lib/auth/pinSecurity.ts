@@ -40,33 +40,60 @@ function writeState(state: PinSecurityState): void {
   }
 }
 
-/** Menghasilkan random salt hex string (16 bytes = 32 hex chars) */
-export function generateSalt(bytes = 16): string {
-  const arr = new Uint8Array(bytes);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(arr);
-  } else {
-    for (let i = 0; i < bytes; i++) arr[i] = Math.floor(Math.random() * 256);
+/**
+ * Dilempar ketika Web Crypto tidak tersedia.
+ *
+ * `crypto.subtle` hanya ada di *secure context*: HTTPS, atau localhost. Diakses
+ * lewat http:// biasa — misalnya terminal kasir yang dibuka lewat IP LAN —
+ * nilainya undefined.
+ */
+export class PinCryptoUnavailableError extends Error {
+  constructor() {
+    super(
+      'Web Crypto tidak tersedia. Halaman ini harus diakses lewat HTTPS (atau localhost) ' +
+        'agar PIN dapat di-hash dengan aman.'
+    );
+    this.name = 'PinCryptoUnavailableError';
   }
+}
+
+/**
+ * Menghasilkan random salt hex string (16 bytes = 32 hex chars).
+ *
+ * MELEMPAR kalau CSPRNG tidak ada. Math.random() BUKAN penggantinya: nilainya
+ * bisa diprediksi, dan salt yang bisa diprediksi tidak menyulitkan siapa pun.
+ * Sama seperti sha256() di bawah — lebih baik gagal terlihat daripada diam-diam
+ * menghasilkan kredensial lemah.
+ */
+export function generateSalt(bytes = 16): string {
+  if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
+    throw new PinCryptoUnavailableError();
+  }
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
   return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Menghitung SHA-256 hash dari string */
+/**
+ * Menghitung SHA-256 hash dari string.
+ *
+ * MELEMPAR, bukan mundur ke algoritma lain.
+ *
+ * Sebelumnya ada fallback FNV 64-bit yang dipakai diam-diam saat crypto.subtle
+ * tidak ada. Akibatnya: di halaman non-HTTPS, PIN dan kata sandi tersimpan
+ * dengan hash 64-bit non-kriptografis, dan tidak ada satu pun tanda di layar
+ * bahwa itu terjadi. Hash lemah yang tidak diketahui siapa pun lebih berbahaya
+ * daripada kegagalan yang terlihat — kegagalan bisa diperbaiki, hash lemah yang
+ * terlanjur tersimpan tidak pernah diperiksa ulang.
+ */
 export async function sha256(message: string): Promise<string> {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const msgBuffer = new TextEncoder().encode(message);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new PinCryptoUnavailableError();
   }
-  // Fallback FNV/Simple bitwise jika di environment tanpa crypto.subtle
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < message.length; i++) {
-    const ch = message.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  return `fallback_${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -92,8 +119,17 @@ export async function verifyPinHash(inputPin: string, storedPinOrHash: string): 
     if (parts.length !== 3) return false;
     const salt = parts[1];
     const expectedHash = parts[2];
-    const computedHash = await sha256(`${inputPin}:${salt}`);
-    
+
+    // Gagal tertutup. Tanpa Web Crypto, hash tidak bisa dihitung — dan menebak
+    // "mungkin cocok" pada jalur otorisasi adalah jawaban yang salah.
+    let computedHash: string;
+    try {
+      computedHash = await sha256(`${inputPin}:${salt}`);
+    } catch (err) {
+      console.error('[pinSecurity] verifikasi PIN gagal:', (err as Error).message);
+      return false;
+    }
+
     // Constant time comparison
     if (computedHash.length !== expectedHash.length) return false;
     let diff = 0;

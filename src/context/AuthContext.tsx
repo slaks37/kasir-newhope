@@ -48,6 +48,31 @@ const AuthCtx = createContext<AuthContextType | undefined>(undefined);
 const LOCAL_SESSION_KEY = 'nhpos_local_session';
 const LOCAL_USERS_KEY = 'nhpos_local_auth_users';
 
+/**
+ * Apakah jalur autentikasi LOKAL boleh dipakai.
+ *
+ * Jalur itu memverifikasi kata sandi terhadap hash yang tersimpan di
+ * localStorage, lalu MENGARANG sesi (`createLocalSession`) tanpa server mana
+ * pun terlibat. Berguna saat mengembangkan tanpa Supabase — dan merupakan
+ * pintu belakang di produksi:
+ *
+ *   - `signUpWithEmail` dulu selalu menulis hash kata sandi ke localStorage
+ *     lebih dulu, lalu membuat sesi tanpa syarat kalau jaringan gagal. Artinya
+ *     memutus koneksi ke Supabase sudah cukup untuk mendapat sesi atas email
+ *     APA PUN.
+ *   - `signInWithEmail` jatuh ke jalur yang sama setiap kali Supabase melempar
+ *     exception, dan siapa pun bisa memicu exception itu dengan memblokir satu
+ *     domain di perangkatnya sendiri.
+ *
+ * Token yang dikarang ditolak gateway, jadi data di server tetap aman. Yang
+ * terbuka adalah layar POS dan seluruh isi localStorage terminal itu — pada
+ * terminal bersama atau perangkat yang hilang, itu berarti layar login tidak
+ * berfungsi sebagai kunci sama sekali.
+ *
+ * Karena itu jalur ini dikurung ke build pengembangan.
+ */
+const LOCAL_AUTH_ALLOWED = import.meta.env.DEV;
+
 interface LocalUserRecord {
   email: string;
   passwordHash?: string;
@@ -71,6 +96,10 @@ async function saveLocalUser(
   storeName?: string,
   sector?: string
 ): Promise<void> {
+  // Di produksi, kata sandi tidak pernah menyentuh perangkat. Yang tidak
+  // disimpan tidak bisa dicuri dari perangkat yang hilang.
+  if (!LOCAL_AUTH_ALLOWED) return;
+
   const users = getLocalUsers();
   const hashedPassword = await hashPin(pass);
   users[email.toLowerCase()] = {
@@ -116,16 +145,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    // Sesi lokal yang tersimpan tidak pernah dipulihkan di produksi, dan yang
+    // terlanjur ada dibersihkan: sesi karangan tidak boleh bertahan hanya
+    // karena sempat dibuat pada build lama.
+    if (!LOCAL_AUTH_ALLOWED) {
       try {
-        const saved = localStorage.getItem(LOCAL_SESSION_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          setUser(parsed.user);
-          setSession(parsed.session);
+        localStorage.removeItem(LOCAL_SESSION_KEY);
+        localStorage.removeItem(LOCAL_USERS_KEY);
+      } catch {
+        /* localStorage bisa diblokir; tidak ada yang perlu diselamatkan. */
+      }
+    }
+
+    if (!isSupabaseConfigured) {
+      if (LOCAL_AUTH_ALLOWED) {
+        try {
+          const saved = localStorage.getItem(LOCAL_SESSION_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setUser(parsed.user);
+            setSession(parsed.session);
+          }
+        } catch (e) {
+          console.error('Failed to restore local session', e);
         }
-      } catch (e) {
-        console.error('Failed to restore local session', e);
+      } else {
+        console.error(
+          '[auth] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY belum diisi. ' +
+            'Tanpa itu tidak ada autentikasi sama sekali, jadi build produksi menolak login.'
+        );
       }
       setLoading(false);
       return;
@@ -151,6 +199,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = useCallback(async () => {
     if (!isSupabaseConfigured) {
+      if (!LOCAL_AUTH_ALLOWED) {
+        return {
+          error: { message: 'Login Google belum tersedia: konfigurasi Supabase belum diisi.' } as AuthError,
+        };
+      }
       const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
       setUser(sess.user);
@@ -206,7 +259,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           // Jika jaringan offline / Supabase down, cek verifikasi hash lokal
-          if (userRecord && userRecord.passwordHash) {
+          if (LOCAL_AUTH_ALLOWED && userRecord && userRecord.passwordHash) {
             const isMatch = await verifyPinHash(password, userRecord.passwordHash);
             if (isMatch) {
               const sess = createLocalSession(cleanEmail, userRecord.fullName, userRecord.storeName);
@@ -219,12 +272,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { error };
         }
       } catch (err: any) {
+        /*
+         * Supabase tidak terjangkau.
+         *
+         * Di produksi ini BERHENTI di sini. Jatuh ke verifikasi lokal berarti
+         * memberi jalan masuk kepada siapa pun yang bisa membuat permintaan ke
+         * Supabase gagal — dan memblokir satu domain di perangkat sendiri
+         * adalah hal yang bisa dilakukan siapa saja.
+         */
+        if (!LOCAL_AUTH_ALLOWED) {
+          console.error('[auth] Supabase tidak terjangkau:', err);
+          return {
+            error: {
+              message: 'Tidak dapat menghubungi server autentikasi. Periksa koneksi Anda lalu coba lagi.',
+            } as AuthError,
+          };
+        }
         console.warn('[auth] Supabase network error, verifying local salted hash credentials:', err);
       }
     }
 
     // Offline / Local verification (Verifikasi ketat hash password, TIDAK ADA backdoor)
-    if (userRecord && userRecord.passwordHash) {
+    if (LOCAL_AUTH_ALLOWED && userRecord && userRecord.passwordHash) {
       const isMatch = await verifyPinHash(password, userRecord.passwordHash);
       if (isMatch) {
         const sess = createLocalSession(cleanEmail, userRecord.fullName, userRecord.storeName);
@@ -333,7 +402,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 2. Resilient local session fallback
+      /*
+       * 2. Sesi lokal cadangan — PENGEMBANGAN SAJA.
+       *
+       * Ini dulu berjalan tanpa syarat. Karena blok Supabase di atas hanya
+       * `return` pada jalur suksesnya, setiap kegagalan jaringan sampai ke
+       * sini dan menghasilkan sesi untuk email apa pun yang diketik — termasuk
+       * email yang sudah terdaftar milik orang lain. Mendaftar sambil offline
+       * adalah cara termurah masuk ke aplikasi ini.
+       */
+      if (!LOCAL_AUTH_ALLOWED) {
+        return {
+          error: {
+            message: 'Pendaftaran gagal: server tidak dapat dihubungi. Periksa koneksi Anda lalu coba lagi.',
+          } as AuthError,
+        };
+      }
+
       const sess = createLocalSession(cleanEmail, fullName, storeName);
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
       setUser(sess.user);

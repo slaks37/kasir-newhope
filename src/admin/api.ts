@@ -31,51 +31,22 @@ export const ROLE_LABEL: Record<InternalRole, string> = {
   ROLE_INTERNAL_SUPPORT: 'Support (Operasional Merchant)',
 };
 
-const DEFAULT_SUPERADMIN: Identity = {
-  email: 'stefenlaksana.sl@gmail.com',
-  full_name: 'Stefen Laksana (Superadmin)',
-  role: 'ROLE_SUPERADMIN',
-};
-
-const IDENTITIES_LIST: Identity[] = [
-  DEFAULT_SUPERADMIN,
-  {
-    email: 'ops@newhopepos.id',
-    full_name: 'Platform Operations Root',
-    role: 'ROLE_SUPERADMIN',
-  },
-  {
-    email: 'growth@newhopepos.id',
-    full_name: 'Growth & Business Intelligence',
-    role: 'ROLE_INTERNAL_GROWTH',
-  },
-  {
-    email: 'support@newhopepos.id',
-    full_name: 'Customer Support Lead',
-    role: 'ROLE_INTERNAL_SUPPORT',
-  },
-];
+/*
+ * TIDAK ADA DAFTAR IDENTITAS DI SINI — dan itu disengaja.
+ *
+ * Dulu file ini memuat daftar staf internal, lengkap dengan alamat email
+ * pribadi pemilik platform. Bundle JavaScript dikirim ke SETIAP pengunjung,
+ * jadi daftar itu terbaca siapa pun yang membuka DevTools — sekaligus menjadi
+ * satu-satunya "allowlist" yang menentukan siapa boleh masuk konsol penyedia.
+ *
+ * Sekarang jawabannya datang dari server: GET /api/admin/me mencocokkan sesi
+ * terverifikasi ke internal.internal_users. Kursi tambahan untuk alamat pribadi
+ * diseed lewat environment variable INTERNAL_ROOT_EMAIL di sisi server, yang
+ * tidak pernah ikut ke browser.
+ */
 
 export function getIdentity(): string | null {
   return sessionStorage.getItem(IDENTITY_KEY) || localStorage.getItem(IDENTITY_KEY);
-}
-
-/**
- * Satu-satunya tempat yang memutuskan "apakah email ini staf internal".
- *
- * Mengembalikan null untuk email yang tidak terdaftar — TIDAK PERNAH sebuah
- * identitas cadangan. Sebelumnya fungsi pemanggilnya memberi role SUPERADMIN
- * kepada email yang tidak dikenal, sehingga menulis satu string apa pun ke
- * localStorage sudah cukup untuk membuka konsol internal.
- *
- * Ini pertahanan sisi klien, jadi ia hanya menutup jalur "buka /admin lalu
- * ubah localStorage". Otorisasi yang sesungguhnya tetap harus ditegakkan
- * server pada /api/admin/* (lihat guard() di src/server/adminRoutes.ts).
- */
-function internalIdentityFor(email: string | null | undefined): Identity | null {
-  const wanted = String(email || '').trim().toLowerCase();
-  if (!wanted) return null;
-  return IDENTITIES_LIST.find((i) => i.email.toLowerCase() === wanted) || null;
 }
 
 export function setIdentity(email: string | null): void {
@@ -1181,18 +1152,11 @@ export const api = {
      * Kata sandi benar TIDAK sama dengan berhak masuk konsol internal.
      *
      * Login di sini memverifikasi ke Supabase Auth — tempat yang sama dengan
-     * akun merchant. Tanpa pemeriksaan kedua ini, siapa pun yang bisa mendaftar
-     * akun merchant gratis lolos ke konsol penyedia. Karena itu keanggotaan
-     * staf internal diperiksa terpisah dari kredensialnya.
+     * akun merchant. Yang memutuskan apakah akun itu staf internal adalah
+     * SERVER, lewat api.me() di bawah: ia mencocokkan sesi ke
+     * internal.internal_users. Daftar di sisi klien tidak akan pernah bisa
+     * dipercaya untuk itu, karena klien yang memegangnya.
      */
-    const denyNonInternal = () => {
-      throw new ApiError(
-        403,
-        'NOT_AN_INTERNAL_IDENTITY',
-        'Akun ini bukan identitas staf internal. Konsol penyedia hanya untuk tim New Hope POS.'
-      );
-    };
-
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -1204,10 +1168,15 @@ export const api = {
           throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi administrator salah.');
         }
 
-        if (!internalIdentityFor(cleanEmail)) denyNonInternal();
-
+        // Sesi Supabase sudah aktif. me() menanyakan ke server apakah pemilik
+        // sesi ini benar-benar staf internal; kalau bukan, ia melempar.
         setIdentity(cleanEmail);
-        return api.me();
+        try {
+          return await api.me();
+        } catch (err) {
+          setIdentity(null);
+          throw err;
+        }
       } catch (err: any) {
         if (err instanceof ApiError) throw err;
         console.warn('[admin-auth] Supabase signIn error, checking local fallback:', err);
@@ -1221,9 +1190,13 @@ export const api = {
       if (u && u.passwordHash) {
         const isMatch = await verifyPinHash(pass, u.passwordHash);
         if (isMatch) {
-          if (!internalIdentityFor(cleanEmail)) denyNonInternal();
           setIdentity(cleanEmail);
-          return api.me();
+          try {
+            return await api.me();
+          } catch (err) {
+            setIdentity(null);
+            throw err;
+          }
         }
       }
     } catch (err) {
@@ -1234,38 +1207,83 @@ export const api = {
   },
 
   identities: async (): Promise<{ identities: Identity[] }> => {
-    return { identities: IDENTITIES_LIST };
+    const res = await fetch('/api/admin/identities');
+    if (!res.ok) {
+      throw new ApiError(res.status, 'IDENTITIES_UNAVAILABLE', 'Daftar identitas internal tidak dapat dibaca.');
+    }
+    const data = await res.json();
+    return { identities: Array.isArray(data?.identities) ? data.identities : [] };
   },
 
+  /**
+   * Siapa saya — dijawab SERVER, bukan daftar di dalam bundle ini.
+   *
+   * Ini pembalikan yang penting. Sebelumnya fungsi ini mencocokkan email di
+   * localStorage terhadap konstanta di file ini, dan email yang tidak dikenal
+   * malah diberi ROLE_SUPERADMIN. Sekarang keputusannya milik
+   * /api/admin/me, yang mencocokkan sesi terverifikasi gateway ke
+   * internal.internal_users dan menurunkan capability dari role di database.
+   *
+   * Konsekuensi operasional yang harus disadari: konsol penyedia sekarang
+   * MEMBUTUHKAN backoffice API. Kalau ia tidak terjangkau, tidak ada yang bisa
+   * masuk — dan itu memang jawaban yang benar, karena tanpa server tidak ada
+   * yang bisa membuktikan siapa pun staf internal.
+   */
   me: async (): Promise<Session> => {
-    const currentEmail = getIdentity();
-    if (!currentEmail) {
+    if (!getIdentity()) {
       throw new ApiError(401, 'UNAUTHORIZED', 'Sesi login admin belum aktif.');
     }
 
-    // Gagal tertutup. Email yang tidak terdaftar sebagai staf internal ditolak,
-    // bukan diberi identitas cadangan — apalagi identitas SUPERADMIN.
-    const found = internalIdentityFor(currentEmail);
-    if (!found) {
-      setIdentity(null);
+    let res: Response;
+    try {
+      res = await fetch('/api/admin/me');
+    } catch {
       throw new ApiError(
-        403,
-        'NOT_AN_INTERNAL_IDENTITY',
-        'Identitas tidak dikenali sebagai staf internal. Silakan login ulang.'
+        503,
+        'BACKOFFICE_UNREACHABLE',
+        'Server konsol penyedia tidak dapat dihubungi. Konsol tidak bisa dibuka tanpa verifikasi server.'
       );
     }
 
+    if (res.status === 404) {
+      // Route hanya hidup di lingkungan penyedia. Diakses dari domain merchant
+      // atau tanpa backoffice yang terpasang, jawabannya memang 404.
+      throw new ApiError(
+        404,
+        'BACKOFFICE_UNAVAILABLE',
+        'Konsol penyedia hanya tersedia di domain admin (mis. admin.domainanda.com) dengan backoffice aktif.'
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      setIdentity(null);
+      throw new ApiError(
+        res.status,
+        'NOT_AN_INTERNAL_IDENTITY',
+        'Akun ini bukan identitas staf internal. Konsol penyedia hanya untuk tim New Hope POS.'
+      );
+    }
+    if (!res.ok) {
+      throw new ApiError(res.status, 'BACKOFFICE_ERROR', 'Server konsol penyedia sedang bermasalah.');
+    }
+
+    const data = await res.json().catch(() => null);
+    if (!data?.ok || !data.user?.role) {
+      throw new ApiError(502, 'BACKOFFICE_ERROR', 'Jawaban server konsol penyedia tidak dikenali.');
+    }
+
+    setIdentity(data.user.email);
     return {
       user: {
-        email: found.email,
-        fullName: found.full_name,
-        role: found.role,
+        email: data.user.email,
+        fullName: data.user.fullName,
+        role: data.user.role,
       },
-      // Diturunkan dari role, bukan daftar tetap. Sebelumnya setiap identitas
-      // — termasuk Growth dan Support — menerima capability lengkap, sehingga
-      // pembatasan peran di environments.ts tidak berpengaruh apa pun di sini.
-      capabilities: internalCapabilities(found.role),
-      environment: 'production',
+      // Server sudah menurunkannya dari role; internalCapabilities() di sini
+      // hanya jaring pengaman kalau jawabannya tidak membawa daftar itu.
+      capabilities: Array.isArray(data.capabilities)
+        ? data.capabilities
+        : internalCapabilities(data.user.role),
+      environment: String(data.environment || 'PROVIDER_BO'),
     };
   },
 
@@ -1622,8 +1640,8 @@ export const api = {
       {
         id: 'aud-1',
         accessed_at: new Date().toISOString(),
-        internal_name: 'Stefen Laksana (Superadmin)',
-        internal_email: 'stefenlaksana.sl@gmail.com',
+        internal_name: 'Platform Root',
+        internal_email: 'ops@newhopepos.id',
         internal_role: 'ROLE_SUPERADMIN',
         action: 'VIEW_EXECUTIVE_OVERVIEW',
         merchant_name: null,
@@ -1633,8 +1651,8 @@ export const api = {
       {
         id: 'aud-2',
         accessed_at: new Date(Date.now() - 1800000).toISOString(),
-        internal_name: 'Stefen Laksana (Superadmin)',
-        internal_email: 'stefenlaksana.sl@gmail.com',
+        internal_name: 'Platform Root',
+        internal_email: 'ops@newhopepos.id',
         internal_role: 'ROLE_SUPERADMIN',
         action: 'EXPORT_MERCHANT_FINANCIALS',
         merchant_name: 'Kopi Kenangan Senopati',

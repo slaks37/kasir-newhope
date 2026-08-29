@@ -41,8 +41,8 @@ interface ClientUser {
 const ADMIN_USERS_DATA: AdminUser[] = [
   {
     id: 'adm-01',
-    fullName: 'Stefen Laksana',
-    email: 'stefenlaksana.sl@gmail.com',
+    fullName: 'Platform Root',
+    email: 'ops@newhopepos.id',
     role: 'ROLE_SUPERADMIN',
     scope: 'Seluruh Ekosistem Platform & Database Cloud',
     status: 'ACTIVE',

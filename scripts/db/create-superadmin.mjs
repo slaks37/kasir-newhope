@@ -9,9 +9,37 @@ const client = new pg.Client({
 
 async function main() {
   await client.connect();
-  const email = 'stefenlaksana.sl@gmail.com';
-  const password = 'Stefen2012';
-  const fullName = 'Stefen Laksana (Superadmin)';
+
+  /*
+   * Kredensial datang dari environment, tidak pernah dari berkas ini.
+   *
+   * Sebelumnya email dan kata sandi superadmin tertulis langsung di sini.
+   * Berkas ini ada di dalam repositori, jadi kata sandinya ikut tersimpan di
+   * riwayat git — terbaca siapa pun yang punya akses ke repo, sekarang maupun
+   * nanti, dan tetap ada walau barisnya dihapus hari ini.
+   *
+   * Kata sandi yang pernah tertulis di sini WAJIB dianggap bocor dan diganti.
+   */
+  const email = String(process.env.INTERNAL_ROOT_EMAIL || '').trim().toLowerCase();
+  const password = process.env.INTERNAL_ROOT_PASSWORD || '';
+  const fullName = process.env.INTERNAL_ROOT_NAME || 'Platform Owner';
+
+  if (!email || !password) {
+    console.error(
+      'INTERNAL_ROOT_EMAIL dan INTERNAL_ROOT_PASSWORD wajib diisi.\n' +
+        'Contoh:\n' +
+        '  INTERNAL_ROOT_EMAIL="anda@domain.com" INTERNAL_ROOT_PASSWORD="..." npm run db:superadmin'
+    );
+    process.exitCode = 1;
+    await client.end();
+    return;
+  }
+  if (password.length < 12) {
+    console.error('INTERNAL_ROOT_PASSWORD terlalu pendek. Gunakan minimal 12 karakter.');
+    process.exitCode = 1;
+    await client.end();
+    return;
+  }
 
   console.log(`[1] Ensuring pgcrypto extension is active...`);
   await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);

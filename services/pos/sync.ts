@@ -26,6 +26,7 @@ const MAX_BATCH = 500;
 
 class SyncAccessError extends Error {}
 class ProductLimitError extends Error {}
+class SubscriptionExpiredError extends Error {}
 
 async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubject: string): Promise<void> {
   if (ownerSubject === 'local-development') return;
@@ -42,12 +43,40 @@ async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubje
   }
 }
 
-async function productLimitForTenant(db: Db, tenantId: string): Promise<number> {
+interface Entitlement {
+  productLimit: number;
+  /** TRIAL | ACTIVE | PAST_DUE | EXPIRED | CANCELED */
+  subscriptionStatus: string;
+}
+
+async function entitlementForTenant(db: Db, tenantId: string): Promise<Entitlement> {
   const { rows } = await db.query(
-    `SELECT product_limit FROM contract.merchant_product_entitlement WHERE tenant_id = $1`,
+    `SELECT product_limit, subscription_status
+       FROM contract.merchant_product_entitlement WHERE tenant_id = $1`,
     [tenantId]
   );
-  return rows.length ? Number(rows[0].product_limit) : 30;
+  if (!rows.length) return { productLimit: 30, subscriptionStatus: 'TRIAL' };
+  return {
+    productLimit: Number(rows[0].product_limit),
+    subscriptionStatus: String(rows[0].subscription_status || 'TRIAL'),
+  };
+}
+
+/**
+ * Penegakan langganan yang sesungguhnya — di server, bukan di layar.
+ *
+ * Layar kunci di aplikasi kasir membaca status dari localStorage, jadi ia bisa
+ * dilewati siapa pun yang mau mengubahnya. Ini penjaganya yang nyata.
+ *
+ * Dan sengaja hanya menjaga PENAMBAHAN produk baru. Pencatatan penjualan TIDAK
+ * pernah diblokir: transaksi yang gagal masuk hilang selamanya dari pembukuan
+ * merchant, dan kerugian itu jauh melebihi satu bulan langganan yang tertunggak.
+ * Menolak tumbuh berbeda dari menolak mencatat kenyataan.
+ */
+function assertSubscriptionAllowsNewProducts(entitlement: Entitlement): void {
+  if (entitlement.subscriptionStatus === 'EXPIRED' || entitlement.subscriptionStatus === 'CANCELED') {
+    throw new SubscriptionExpiredError('SUBSCRIPTION_EXPIRED');
+  }
 }
 
 interface SyncItem {
@@ -201,7 +230,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
         const productCache = new Map<string, string>();
-        const productLimit = await productLimitForTenant(c, tenantId);
+        const entitlement = await entitlementForTenant(c, tenantId);
+        const productLimit = entitlement.productLimit;
         const existingProductCount = await c.query(
           `SELECT COUNT(*)::int AS count FROM pos.products WHERE tenant_id = $1`,
           [tenantId]
@@ -257,6 +287,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (found.rows.length) {
             id = found.rows[0].id;
           } else {
+            assertSubscriptionAllowsNewProducts(entitlement);
             if (productLimit >= 0 && productCount >= productLimit) {
               throw new ProductLimitError('PRODUCT_LIMIT_EXCEEDED');
             }
@@ -429,7 +460,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   await c.query(
                     `INSERT INTO pos.inventory_transactions
                        (id, tenant_id, merchant_id, outlet_id, location_id,
-                        inventory_item_id, quantity_delta, movement_type,
+                        inventory_item_id, quantity_delta, reference_type,
                         reference_id, reason, created_at)
                      VALUES (
                        uuidv7(), $1, $2, $3,
@@ -543,7 +574,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               await c.query(
                 `INSERT INTO pos.inventory_transactions
                    (id, tenant_id, merchant_id, outlet_id, location_id,
-                    inventory_item_id, quantity_delta, movement_type,
+                    inventory_item_id, quantity_delta, reference_type,
                     reference_id, reason, created_at)
                  SELECT
                    uuidv7(), p.tenant_id, p.merchant_id, p.outlet_id,
@@ -551,7 +582,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                      WHERE ib.inventory_item_id = p.inventory_item_id
                        AND ib.outlet_id = p.outlet_id LIMIT 1),
                    p.inventory_item_id,
-                   -$2,
+                   -- Cast eksplisit: tanpa itu PostgreSQL tidak bisa menyimpulkan
+                   -- tipe $2 di balik tanda minus dan menolak dengan
+                   -- "operator is not unique: - unknown".
+                   -($2::numeric),
                    'SALE_DEDUCT',
                    $3,
                    'Penjualan POS',
@@ -597,6 +631,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       console.error('[sync] gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
+      if (err instanceof SubscriptionExpiredError) {
+        return res.status(402).json({
+          ok: false,
+          error: 'SUBSCRIPTION_EXPIRED',
+          detail: 'Langganan tidak aktif. Penjualan tetap tercatat, tapi produk baru tidak bisa ditambahkan.',
+        });
+      }
       res.status(500).json({ ok: false, error: 'SYNC_FAILED' });
     }
   });
@@ -661,7 +702,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         );
         const merchantId: string = m.rows[0].id;
 
-        const productLimit = await productLimitForTenant(c, tenantId);
+        const entitlement = await entitlementForTenant(c, tenantId);
+        const productLimit = entitlement.productLimit;
+        // Katalog dikirim utuh, jadi penambahan produk tidak terlihat sebagai
+        // satu baris baru — pemeriksaannya di sini, di depan seluruh batch.
+        assertSubscriptionAllowsNewProducts(entitlement);
         if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
           throw new ProductLimitError('PRODUCT_LIMIT_EXCEEDED');
         }
@@ -761,6 +806,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       console.error('[sync] katalog gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
+      if (err instanceof SubscriptionExpiredError) {
+        return res.status(402).json({
+          ok: false,
+          error: 'SUBSCRIPTION_EXPIRED',
+          detail: 'Langganan tidak aktif. Penjualan tetap tercatat, tapi produk baru tidak bisa ditambahkan.',
+        });
+      }
       res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED' });
     }
   });

@@ -123,6 +123,26 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
   const [showMobileCartSheet, setShowMobileCartSheet] = useState(false);
   const [completedOrderForReceipt, setCompletedOrderForReceipt] = useState<Order | null>(null);
 
+  /*
+   * PAYWALL — GERBANG, BUKAN TIRAI.
+   *
+   * Sebelumnya layar kunci dirender sebagai overlay di ATAS aplikasi yang tetap
+   * ter-mount, jadi menghapus satu node di DevTools sudah cukup untuk memakai
+   * kasir seperti biasa. Sekarang ia mengembalikan lebih awal: yang di
+   * belakangnya memang tidak ada.
+   *
+   * Yang ini TIDAK menjadikannya kontrol keamanan. `settings` dibaca dari
+   * localStorage, jadi mengubah status langganan di sana tetap melewatinya.
+   * Penegakan yang sesungguhnya ada di server — pos-service menolak penambahan
+   * produk baru untuk langganan EXPIRED (lihat entitlementForTenant di
+   * services/pos/sync.ts). Pencatatan penjualan sengaja TIDAK diblokir:
+   * kehilangan data transaksi merchant jauh lebih mahal daripada satu bulan
+   * langganan yang belum dibayar.
+   */
+  if (settings.subscription?.status === 'EXPIRED') {
+    return <SubscriptionLockScreen onRenewSuccess={() => {}} />;
+  }
+
   const isTabAllowed = hasPermission(activeTab as PermissionFeature);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -366,10 +386,6 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onBackToHome }) => {
 
       {showRecentTransactionsModal && (
         <RecentTransactionsModal onClose={() => setShowRecentTransactionsModal(false)} />
-      )}
-
-      {settings.subscription?.status === 'EXPIRED' && (
-        <SubscriptionLockScreen onRenewSuccess={() => {}} />
       )}
 
       {showShiftModal && (

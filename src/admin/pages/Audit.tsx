@@ -115,8 +115,10 @@ export default function Audit() {
                 const isDenied = actionStr.startsWith('DENIED_') || actionStr.startsWith('BLOCKED_');
                 const isSuperadmin = String(r.internal_role || '').includes('SUPERADMIN') || String(r.role || '').includes('SUPERADMIN');
                 const timeStr = r.accessed_at || r.created_at || r.timestamp || new Date().toISOString();
-                const staffName = r.internal_name || r.user_name || r.full_name || 'Stefen Laksana';
-                const staffEmail = r.internal_email || r.user_email || r.email || 'stefenlaksana.sl@gmail.com';
+                // Baris audit tanpa nama ditampilkan apa adanya. Mengisinya dengan
+                // identitas seseorang membuat jejak audit menuduh orang yang salah.
+                const staffName = r.internal_name || r.user_name || r.full_name || 'Tidak diketahui';
+                const staffEmail = r.internal_email || r.user_email || r.email || '—';
                 const roleDisplay = String(r.internal_role || r.role || 'ROLE_SUPERADMIN').replace('ROLE_', '');
 
                 return (
