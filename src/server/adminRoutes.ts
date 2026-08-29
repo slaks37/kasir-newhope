@@ -58,6 +58,24 @@ interface AdminRequest extends express.Request {
   environment?: AppEnvironment | null;
 }
 
+/**
+ * Konsol penyedia hanya hidup di lingkungan penyedia.
+ *
+ * MERCHANT_BO sengaja TIDAK diterima. environments.ts menyatakan invariannya
+ * dengan jelas — "internal staff never touch a merchant environment" — tapi
+ * pemeriksaan sebelumnya meloloskan keduanya, sehingga API konsol internal ikut
+ * terbuka di domain back-office merchant.
+ *
+ * resolveEnvironment() memetakan localhost ke MERCHANT_BO, jadi pengembangan
+ * lokal tetap perlu jalan. Kelonggaran itu diikat ke AUTH_ALLOW_LOCAL_DEVELOPMENT
+ * — flag yang SUDAH dipakai services/shared/auth.ts untuk tujuan yang sama —
+ * bukan kelonggaran baru yang berdiri sendiri. Tanpa flag itu, jawabannya tidak.
+ */
+function isProviderEnvironment(env: AppEnvironment | null): boolean {
+  if (env === 'PROVIDER_BO') return true;
+  return env === 'MERCHANT_BO' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
+}
+
 const SEED_INTERNAL = [
   { email: 'ops@newhopepos.id', fullName: 'Platform Root', role: 'ROLE_SUPERADMIN' },
   { email: 'growth@newhopepos.id', fullName: 'Growth Analyst', role: 'ROLE_INTERNAL_GROWTH' },
@@ -109,14 +127,21 @@ async function recordAccess(
 
 export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>): void {
   /**
-   * SECURITY: identitas diambil dari header `x-internal-user`, tanpa password
-   * dan tanpa token. Siapa pun yang bisa mengirim HTTP ke server ini bisa
-   * mengaku sebagai SUPERADMIN.
+   * SECURITY — CELAH YANG MASIH TERBUKA.
    *
-   * Itu dapat diterima SEKARANG karena panel hanya dilayani di localhost dan
-   * belum ada data produksi. Sebelum admin.domainanda.com menyala, header ini
-   * WAJIB diganti dengan SSO (kolom internal_users.sso_subject sudah disiapkan
-   * untuk menampung subject claim-nya). Jangan deploy tanpa itu.
+   * Identitas diambil dari header `x-internal-user`, tanpa password dan tanpa
+   * token. Siapa pun yang bisa mengirim HTTP ke service ini, dengan email staf
+   * internal yang benar, dianggap staf internal.
+   *
+   * Yang SUDAH dipersempit: route hanya hidup di PROVIDER_BO (lihat
+   * isProviderEnvironment), dan /api/admin/identities tidak lagi membocorkan
+   * daftar email yang dibutuhkan untuk menebak nilai header itu.
+   *
+   * Yang BELUM: header itu sendiri. Sebelum admin.domainanda.com menyala ia
+   * WAJIB diganti dengan principal terverifikasi gateway (`x-auth-sub`) yang
+   * dicocokkan ke internal_users.sso_subject — kolomnya sudah disiapkan. Selama
+   * itu belum ada, gateway juga harus membuang `x-internal-user` dan
+   * `x-env-override` dari kiriman klien. Jangan deploy tanpa keduanya.
    */
   function guard(capability: InternalCapability) {
     return async (req: AdminRequest, res: express.Response, next: express.NextFunction) => {
@@ -128,7 +153,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       // Gagal tertutup: host yang tidak dikenal menghasilkan null dan ditolak,
       // bukan ditebak. Menebak salah berarti konsol internal muncul di domain
       // merchant.
-      if (env !== 'PROVIDER_BO' && env !== 'MERCHANT_BO') {
+      if (!isProviderEnvironment(env)) {
         return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
       }
 
@@ -226,7 +251,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       hostKlien(req),
       (req.headers['x-env-override'] as string) || undefined
     );
-    if (env !== 'PROVIDER_BO' && env !== 'MERCHANT_BO') {
+    if (!isProviderEnvironment(env)) {
       return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
     }
 
@@ -257,19 +282,28 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     });
   });
 
-  // Daftar akun yang tersedia untuk memilih identitas di layar masuk. Hanya
-  // email, nama, dan role — tidak ada rahasia, karena memang belum ada.
-  app.get('/api/admin/identities', async (_req, res) => {
-    try {
-      const db = await getDb();
+  /**
+   * Daftar akun internal beserta rolenya.
+   *
+   * Dulu tanpa guard sama sekali, untuk mengisi pemilih identitas di layar
+   * masuk. Justru itu masalahnya: layar masuk yang belum terautentikasi
+   * membocorkan email dan role setiap staf internal — persis daftar target
+   * yang dibutuhkan penyerang untuk menyalahgunakan header `x-internal-user`.
+   *
+   * Sekarang tertutup di balik VIEW_ACCESS_AUDIT (hanya SUPERADMIN). Pemilih
+   * identitas pra-login sengaja dihilangkan; siapa dirinya diketikkan sendiri
+   * oleh staf, tidak disodorkan sistem.
+   */
+  app.get(
+    '/api/admin/identities',
+    guard('VIEW_ACCESS_AUDIT'),
+    wrap(async (_req, res, db) => {
       const { rows } = await db.query(
         `SELECT email, full_name, role FROM internal.internal_users WHERE is_active ORDER BY role`
       );
       res.json({ ok: true, identities: rows });
-    } catch {
-      res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-    }
-  });
+    })
+  );
 
   /* ---------------------------------------------------------------------- */
   /* RINGKASAN PER SEKTOR                                                    */

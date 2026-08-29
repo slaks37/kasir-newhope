@@ -7,6 +7,7 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { verifyPinHash } from '../lib/auth/pinSecurity';
+import { internalCapabilities } from '../lib/rbac/environments';
 
 const IDENTITY_KEY = 'nhpos_internal_identity';
 
@@ -57,6 +58,24 @@ const IDENTITIES_LIST: Identity[] = [
 
 export function getIdentity(): string | null {
   return sessionStorage.getItem(IDENTITY_KEY) || localStorage.getItem(IDENTITY_KEY);
+}
+
+/**
+ * Satu-satunya tempat yang memutuskan "apakah email ini staf internal".
+ *
+ * Mengembalikan null untuk email yang tidak terdaftar — TIDAK PERNAH sebuah
+ * identitas cadangan. Sebelumnya fungsi pemanggilnya memberi role SUPERADMIN
+ * kepada email yang tidak dikenal, sehingga menulis satu string apa pun ke
+ * localStorage sudah cukup untuk membuka konsol internal.
+ *
+ * Ini pertahanan sisi klien, jadi ia hanya menutup jalur "buka /admin lalu
+ * ubah localStorage". Otorisasi yang sesungguhnya tetap harus ditegakkan
+ * server pada /api/admin/* (lihat guard() di src/server/adminRoutes.ts).
+ */
+function internalIdentityFor(email: string | null | undefined): Identity | null {
+  const wanted = String(email || '').trim().toLowerCase();
+  if (!wanted) return null;
+  return IDENTITIES_LIST.find((i) => i.email.toLowerCase() === wanted) || null;
 }
 
 export function setIdentity(email: string | null): void {
@@ -1158,6 +1177,22 @@ export const api = {
       throw new ApiError(400, 'INVALID_INPUT', 'Email dan kata sandi administrator wajib diisi.');
     }
 
+    /*
+     * Kata sandi benar TIDAK sama dengan berhak masuk konsol internal.
+     *
+     * Login di sini memverifikasi ke Supabase Auth — tempat yang sama dengan
+     * akun merchant. Tanpa pemeriksaan kedua ini, siapa pun yang bisa mendaftar
+     * akun merchant gratis lolos ke konsol penyedia. Karena itu keanggotaan
+     * staf internal diperiksa terpisah dari kredensialnya.
+     */
+    const denyNonInternal = () => {
+      throw new ApiError(
+        403,
+        'NOT_AN_INTERNAL_IDENTITY',
+        'Akun ini bukan identitas staf internal. Konsol penyedia hanya untuk tim New Hope POS.'
+      );
+    };
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -1168,6 +1203,8 @@ export const api = {
         if (error || !data.user) {
           throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi administrator salah.');
         }
+
+        if (!internalIdentityFor(cleanEmail)) denyNonInternal();
 
         setIdentity(cleanEmail);
         return api.me();
@@ -1184,11 +1221,14 @@ export const api = {
       if (u && u.passwordHash) {
         const isMatch = await verifyPinHash(pass, u.passwordHash);
         if (isMatch) {
+          if (!internalIdentityFor(cleanEmail)) denyNonInternal();
           setIdentity(cleanEmail);
           return api.me();
         }
       }
-    } catch {}
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+    }
 
     throw new ApiError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi administrator salah.');
   },
@@ -1202,11 +1242,18 @@ export const api = {
     if (!currentEmail) {
       throw new ApiError(401, 'UNAUTHORIZED', 'Sesi login admin belum aktif.');
     }
-    const found = IDENTITIES_LIST.find((i) => i.email.toLowerCase() === currentEmail.toLowerCase()) || {
-      email: currentEmail,
-      full_name: 'Administrator Platform',
-      role: 'ROLE_SUPERADMIN' as InternalRole,
-    };
+
+    // Gagal tertutup. Email yang tidak terdaftar sebagai staf internal ditolak,
+    // bukan diberi identitas cadangan — apalagi identitas SUPERADMIN.
+    const found = internalIdentityFor(currentEmail);
+    if (!found) {
+      setIdentity(null);
+      throw new ApiError(
+        403,
+        'NOT_AN_INTERNAL_IDENTITY',
+        'Identitas tidak dikenali sebagai staf internal. Silakan login ulang.'
+      );
+    }
 
     return {
       user: {
@@ -1214,15 +1261,10 @@ export const api = {
         fullName: found.full_name,
         role: found.role,
       },
-      capabilities: [
-        'VIEW_SECTOR_ANALYTICS',
-        'VIEW_MERCHANT_HEALTH',
-        'VIEW_TRANSACTION_LOG',
-        'VIEW_PRODUCT_SALES',
-        'VIEW_ACTIVITY_LOG',
-        'VIEW_ACCESS_AUDIT',
-        'MANAGE_SYSTEM',
-      ],
+      // Diturunkan dari role, bukan daftar tetap. Sebelumnya setiap identitas
+      // — termasuk Growth dan Support — menerima capability lengkap, sehingga
+      // pembatasan peran di environments.ts tidak berpengaruh apa pun di sini.
+      capabilities: internalCapabilities(found.role),
       environment: 'production',
     };
   },

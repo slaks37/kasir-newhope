@@ -314,6 +314,52 @@ function checkChurnWeightParity() {
 }
 checkChurnWeightParity();
 
+/**
+ * Konsol internal tidak boleh punya role cadangan.
+ *
+ * Ini pernah terjadi: `api.me()` memberi ROLE_SUPERADMIN kepada email yang
+ * TIDAK terdaftar sebagai staf internal, sehingga menulis satu string apa pun
+ * ke localStorage sudah cukup untuk membuka konsol penyedia. Bentuknya
+ * sederhana — sebuah `||` di belakang pencarian identitas — dan itu justru
+ * yang membuatnya mudah kembali tanpa ada yang menyadari saat review.
+ *
+ * Aturannya: di src/admin/api.ts, string role hanya boleh muncul sebagai data
+ * (daftar identitas, label peran), tidak pernah sebagai nilai jatuhan.
+ */
+function checkNoDefaultAdminRole() {
+  const file = 'src/admin/api.ts';
+  let text;
+  try {
+    text = readFileSync(join(ROOT, file), 'utf8');
+  } catch {
+    problems.push(`${file} tidak terbaca — pemeriksaan role cadangan konsol internal dilewati`);
+    return;
+  }
+
+  // `|| { ... role: 'ROLE_*' }` atau `?? { ... role: 'ROLE_*' }` — identitas
+  // jatuhan yang membawa role sendiri.
+  const fallbackIdentity = /(\|\||\?\?)\s*\{[^{}]*\brole\s*:\s*['"]ROLE_/s;
+  if (fallbackIdentity.test(text)) {
+    problems.push(
+      `${file}: identitas cadangan dengan role bawaan terdeteksi — email yang tidak terdaftar harus DITOLAK, bukan diberi role`
+    );
+  }
+
+  // Capability wajib diturunkan dari role, bukan daftar tetap yang sama untuk
+  // semua orang; kalau tidak, pembatasan Growth/Support di environments.ts
+  // tidak berpengaruh apa pun.
+  if (!text.includes('internalCapabilities(')) {
+    problems.push(
+      `${file}: capability tidak diturunkan lewat internalCapabilities() — setiap role akan menerima hak yang sama`
+    );
+  }
+
+  if (!problems.some((p) => p.startsWith(file))) {
+    console.log('Admin console roles: OK (tidak ada role cadangan; capability diturunkan dari role)');
+  }
+}
+checkNoDefaultAdminRole();
+
 if (problems.length === 0) {
   console.log('Source hygiene: OK');
   process.exit(0);
