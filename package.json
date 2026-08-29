@@ -22,6 +22,7 @@
     "db:seed": "tsx scripts/db/seed.ts",
     "db:test:bills": "node scripts/db/test-bill-operations.mjs",
     "db:test:admin-auth": "tsx scripts/db/test-admin-authorization.mjs",
+    "db:test:pin": "tsx scripts/db/test-pin-authorization.mjs",
     "db:reseed": "tsx scripts/db/seed.ts --force",
     "db:reset": "node -e \"require('fs').rmSync('.pgdata',{recursive:true,force:true})\" && tsx scripts/db/seed.ts",
     "services": "node services/dev.mjs",

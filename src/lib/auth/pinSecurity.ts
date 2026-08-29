@@ -205,6 +205,63 @@ export function recordFailedPinAttempt(): {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* VERIFIKASI SISI SERVER                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface RemotePinResult {
+  /** false berarti server menjawab "PIN salah", bukan "server tak terjangkau". */
+  ok: boolean;
+  lockedOut: boolean;
+  remainingSec: number;
+  attemptsLeft: number;
+  authorizedBy?: { name: string; role: string };
+}
+
+/**
+ * Meminta server memverifikasi PIN.
+ *
+ * Mengembalikan `null` — dan HANYA null — ketika servernya tidak bisa
+ * dihubungi. Perbedaan antara "PIN salah" dan "server tidak menjawab" penting:
+ * yang pertama harus menolak otorisasi, yang kedua adalah keputusan kebijakan
+ * milik pemanggil (lihat POSContext.verifyPin).
+ *
+ * Hash PIN tidak pernah ikut dalam jawaban. Yang kembali hanya keputusan,
+ * sisa percobaan, dan sisa detik lockout.
+ */
+export async function verifyPinRemote(
+  businessId: string,
+  pin: string,
+  requiredRoles?: string[]
+): Promise<RemotePinResult | null> {
+  if (typeof fetch !== 'function') return null;
+  try {
+    const res = await fetch('/api/v1/pos/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId, pin, requiredRoles }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    // 5xx berarti server ada tapi sedang rusak — diperlakukan sama dengan
+    // tidak terjangkau, supaya kasir tidak tertahan oleh masalah kami.
+    if (res.status >= 500) return null;
+
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data.ok !== 'boolean') return null;
+
+    return {
+      ok: data.ok === true,
+      lockedOut: data.lockedOut === true,
+      remainingSec: Number(data.remainingSec) || 0,
+      attemptsLeft: Number.isFinite(data.attemptsLeft) ? Number(data.attemptsLeft) : 0,
+      authorizedBy: data.authorizedBy,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Me-reset counter kesalahan setelah PIN berhasil diverifikasi.
  */

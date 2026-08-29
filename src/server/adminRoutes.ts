@@ -21,6 +21,7 @@ import {
   requiresJustification,
   resolveEnvironment,
 } from '../lib/rbac/environments';
+import { trustedPrincipal } from '../../services/shared/auth';
 import type { Db } from './db';
 import * as repo from './repo';
 
@@ -76,6 +77,80 @@ function isProviderEnvironment(env: AppEnvironment | null): boolean {
   return env === 'MERCHANT_BO' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
 }
 
+const LOCAL_DEV_SUBJECT = 'local-development';
+
+/**
+ * Siapa pemanggilnya — dijawab oleh sesi, bukan oleh header yang diketik klien.
+ *
+ * Sebelumnya identitas diambil mentah dari `x-internal-user`, sehingga cukup
+ * mengetahui satu alamat email staf untuk menjadi staf. Sekarang sumbernya
+ * `x-auth-sub`: subject sesi Supabase yang sudah diverifikasi gateway ke Auth
+ * API, dan yang sejak sekarang dibuang gateway kalau datang dari klien.
+ *
+ * PENGIKATAN PERTAMA (trust on first use). Baris internal_users diseed dengan
+ * email tapi tanpa sso_subject. Pengikatan terjadi sekali, dan hanya cocok
+ * kalau orang itu benar-benar memegang akun email tersebut — email di sini
+ * datang dari sesi terverifikasi, bukan dari kiriman klien. Sesudah terikat,
+ * email tidak lagi dipakai untuk mencocokkan apa pun.
+ *
+ * Konsekuensi yang harus disadari: siapa pun yang berhasil login dengan alamat
+ * email staf yang belum terikat akan mengklaim kursinya. Jadi seed
+ * internal_users hanya boleh berisi alamat pada domain yang benar-benar Anda
+ * kuasai, dan pengikatannya tercatat di internal_access_log sebagai SSO_BIND.
+ */
+async function resolveInternalIdentity(
+  db: Db,
+  req: express.Request
+): Promise<{ who: InternalIdentity; justBound: boolean } | null> {
+  const principal = trustedPrincipal(req);
+  if (!principal) return null;
+
+  const asIdentity = (row: any): InternalIdentity => ({
+    id: row.id,
+    email: row.email,
+    fullName: row.full_name,
+    role: row.role,
+  });
+
+  /*
+   * Jalur pengembangan lokal. AUTH_ALLOW_LOCAL_DEVELOPMENT=1 sudah berarti
+   * "tidak ada autentikasi sama sekali" di services/shared/auth.ts, jadi
+   * menerima x-internal-user di sini tidak menambah kelemahan baru — ia
+   * mengurung mekanisme lama itu ke satu mode yang memang tanpa auth.
+   */
+  if (principal.subject === LOCAL_DEV_SUBJECT) {
+    const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
+    if (!email) return null;
+    const { rows } = await db.query(
+      `SELECT id, email, full_name, role FROM internal.internal_users
+        WHERE lower(email) = $1 AND is_active`,
+      [email]
+    );
+    return rows.length ? { who: asIdentity(rows[0]), justBound: false } : null;
+  }
+
+  const bound = await db.query(
+    `SELECT id, email, full_name, role FROM internal.internal_users
+      WHERE sso_subject = $1 AND is_active`,
+    [principal.subject]
+  );
+  if (bound.rows.length) return { who: asIdentity(bound.rows[0]), justBound: false };
+
+  const email = String(principal.email || '').trim().toLowerCase();
+  if (!email) return null;
+
+  // Klaim kursi sekali. Kondisi `sso_subject IS NULL` yang membuatnya sekali:
+  // kursi yang sudah dipegang orang lain tidak bisa direbut lewat email.
+  const claimed = await db.query(
+    `UPDATE internal.internal_users
+        SET sso_subject = $1, last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE lower(email) = $2 AND is_active AND sso_subject IS NULL
+      RETURNING id, email, full_name, role`,
+    [principal.subject, email]
+  );
+  return claimed.rows.length ? { who: asIdentity(claimed.rows[0]), justBound: true } : null;
+}
+
 const SEED_INTERNAL = [
   { email: 'ops@newhopepos.id', fullName: 'Platform Root', role: 'ROLE_SUPERADMIN' },
   { email: 'growth@newhopepos.id', fullName: 'Growth Analyst', role: 'ROLE_INTERNAL_GROWTH' },
@@ -83,12 +158,12 @@ const SEED_INTERNAL = [
 ] as const;
 
 /**
- * Memastikan ketiga akun internal ada.
+ * Memastikan ketiga kursi internal ada.
  *
- * Ini BUKAN autentikasi. Belum ada SSO di deployment ini, jadi panel
- * mengidentifikasi dirinya lewat header `x-internal-user` berisi email. Cukup
- * untuk pengembangan, dan jelas tidak cukup untuk produksi — lihat catatan
- * SECURITY di bawah.
+ * Barisnya dibuat TANPA sso_subject: kursi masih kosong sampai orangnya login
+ * pertama kali dengan alamat email itu (lihat resolveInternalIdentity). Jadi
+ * seed ini memberi peran, bukan akses — dan alamatnya wajib berada pada domain
+ * yang benar-benar Anda kuasai.
  */
 export async function ensureInternalUsers(db: Db): Promise<void> {
   for (const u of SEED_INTERNAL) {
@@ -127,21 +202,18 @@ async function recordAccess(
 
 export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>): void {
   /**
-   * SECURITY — CELAH YANG MASIH TERBUKA.
+   * Tiga lapis, dan ketiganya harus lolos:
    *
-   * Identitas diambil dari header `x-internal-user`, tanpa password dan tanpa
-   * token. Siapa pun yang bisa mengirim HTTP ke service ini, dengan email staf
-   * internal yang benar, dianggap staf internal.
+   *   1. LINGKUNGAN  isProviderEnvironment() — konsol penyedia tidak hidup di
+   *                  domain merchant.
+   *   2. IDENTITAS   resolveInternalIdentity() — dari sesi terverifikasi
+   *                  gateway, bukan dari header yang diketik klien.
+   *   3. CAPABILITY  role harus benar-benar memilikinya; penolakannya dicatat.
    *
-   * Yang SUDAH dipersempit: route hanya hidup di PROVIDER_BO (lihat
-   * isProviderEnvironment), dan /api/admin/identities tidak lagi membocorkan
-   * daftar email yang dibutuhkan untuk menebak nilai header itu.
-   *
-   * Yang BELUM: header itu sendiri. Sebelum admin.domainanda.com menyala ia
-   * WAJIB diganti dengan principal terverifikasi gateway (`x-auth-sub`) yang
-   * dicocokkan ke internal_users.sso_subject — kolomnya sudah disiapkan. Selama
-   * itu belum ada, gateway juga harus membuang `x-internal-user` dan
-   * `x-env-override` dari kiriman klien. Jangan deploy tanpa keduanya.
+   * Yang masih perlu diperhatikan saat produksi menyala: pengikatan kursi
+   * bersifat trust-on-first-use, jadi seed internal_users hanya boleh memuat
+   * alamat email pada domain yang Anda kuasai. Sesudah semua kursi terikat,
+   * pertimbangkan menonaktifkan pengikatan otomatis itu.
    */
   function guard(capability: InternalCapability) {
     return async (req: AdminRequest, res: express.Response, next: express.NextFunction) => {
@@ -164,22 +236,15 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
       }
 
-      const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
-      const { rows } = await db.query(
-        `SELECT id, email, full_name, role FROM internal.internal_users
-          WHERE lower(email) = $1 AND is_active`,
-        [email]
-      );
+      const resolved = await resolveInternalIdentity(db, req);
 
       // 404, bukan 401: pemanggil tanpa identitas tidak perlu tahu route ini ada.
-      if (!rows.length) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+      if (!resolved) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
 
-      const who: InternalIdentity = {
-        id: rows[0].id,
-        email: rows[0].email,
-        fullName: rows[0].full_name,
-        role: rows[0].role,
-      };
+      const who = resolved.who;
+      if (resolved.justBound) {
+        await recordAccess(db, who, 'SSO_BIND', req.path, null, null, req.ip || null);
+      }
       if (!isInternalRole(who.role)) {
         return res.status(403).json({ ok: false, error: 'NOT_AN_INTERNAL_IDENTITY' });
       }
@@ -262,22 +327,17 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
     }
 
-    const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
-    const { rows } = await db.query(
-      `SELECT id, email, full_name, role FROM internal.internal_users
-        WHERE lower(email) = $1 AND is_active`,
-      [email]
-    );
-    if (!rows.length) return res.status(401).json({ ok: false, error: 'UNKNOWN_IDENTITY' });
+    const resolved = await resolveInternalIdentity(db, req);
+    if (!resolved) return res.status(401).json({ ok: false, error: 'UNKNOWN_IDENTITY' });
 
     res.json({
       ok: true,
       user: {
-        email: rows[0].email,
-        fullName: rows[0].full_name,
-        role: rows[0].role,
+        email: resolved.who.email,
+        fullName: resolved.who.fullName,
+        role: resolved.who.role,
       },
-      capabilities: internalCapabilities(rows[0].role),
+      capabilities: internalCapabilities(resolved.who.role),
       environment: env,
     });
   });

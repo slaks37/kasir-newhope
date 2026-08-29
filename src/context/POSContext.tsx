@@ -54,6 +54,7 @@ import {
   verifyPinHash,
   getPinLockoutStatus,
   recordFailedPinAttempt,
+  verifyPinRemote,
   resetPinAttempts,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
@@ -158,7 +159,18 @@ interface POSContextType {
     requiredRoles?: UserRole[]
   ) => Promise<{
     success: boolean;
+    /**
+     * Staf lokal yang cocok. BISA KOSONG walau otorisasinya berhasil: server
+     * memverifikasi terhadap internal.memberships, dan manajer yang menyetujui
+     * belum tentu ada di daftar staf yang tersimpan di perangkat ini.
+     * Pemakai WAJIB menyiapkan diri untuk itu — pakai authorizedByRole /
+     * authorizedByName sebagai sumber yang selalu terisi saat success.
+     */
     user?: User;
+    authorizedByName?: string;
+    authorizedByRole?: UserRole;
+    /** true = diloloskan jalur offline yang tidak diverifikasi server. */
+    offline?: boolean;
     message?: string;
     attemptsLeft?: number;
     isLockedOut?: boolean;
@@ -1102,7 +1114,68 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return allowed.includes(feature);
   };
 
+  /**
+   * Step-Up Authorization (PIN Manager).
+   *
+   * SERVER YANG BERWENANG. Pemeriksaan pertama dikirim ke pos-service, tempat
+   * hash PBKDF2 dan penghitung lockout berada — keduanya di luar jangkauan
+   * DevTools kasir.
+   *
+   * Jalur lokal di bawahnya HANYA dipakai kalau server tidak terjangkau, dan
+   * itu keputusan produk yang disengaja: aplikasi ini offline-first, dan
+   * menolak VOID selama internet mati akan melumpuhkan kasir pada saat mereka
+   * paling tidak bisa menunggu.
+   *
+   * Yang harus disadari tentang jalur itu: verifikasi di browser TIDAK bisa
+   * dijadikan kontrol keamanan — siapa pun yang bisa membuka DevTools bisa
+   * melewatinya. Karena itu otorisasi offline ditandai `offline: true`, dicatat
+   * sebagai peristiwa audit tersendiri, dan sebaiknya ditinjau berkala. Ia
+   * bersifat pencatatan, bukan penjagaan.
+   */
   const verifyPin = async (pinInput: string, requiredRoles?: UserRole[]) => {
+    /** Peran di bidang identitas (OWNER/MANAGER/…) -> peran di UI kasir. */
+    const toUserRole = (role?: string): UserRole => {
+      const key = String(role || '').toUpperCase();
+      if (key === 'OWNER' || key === 'ADMIN') return 'ADMIN';
+      if (key === 'MANAGER') return 'MANAGER';
+      return 'CASHIER';
+    };
+
+    const remote = await verifyPinRemote(tenant.businessId, pinInput, requiredRoles);
+
+    if (remote) {
+      // Server menjawab: jawabannya final, lokal tidak diberi kesempatan.
+      if (remote.lockedOut) {
+        return {
+          success: false,
+          isLockedOut: true,
+          remainingSec: remote.remainingSec,
+          attemptsLeft: 0,
+          message: `🔒 Terminal Terkunci: Terlalu banyak percobaan salah. Tunggu ${remote.remainingSec} detik.`,
+        };
+      }
+      if (!remote.ok) {
+        return {
+          success: false,
+          isLockedOut: false,
+          attemptsLeft: remote.attemptsLeft,
+          message: `PIN Salah! Sisa ${remote.attemptsLeft} kesempatan sebelum terminal terkunci.`,
+        };
+      }
+
+      resetPinAttempts();
+      const named = users.find((u) => u.name === remote.authorizedBy?.name);
+      return {
+        success: true,
+        user: named,
+        authorizedByName: remote.authorizedBy?.name || named?.name,
+        authorizedByRole: toUserRole(remote.authorizedBy?.role),
+        message: 'Otorisasi Berhasil',
+      };
+    }
+
+    // ---- Server tidak terjangkau. Mulai jalur offline yang tidak menjaga. ----
+
     // 1. Cek status lockout terlebih dahulu
     const lockout = getPinLockoutStatus();
     if (lockout.isLockedOut) {
@@ -1179,7 +1252,34 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 5. Sukses -> Reset counter percobaan gagal
     resetPinAttempts();
-    return { success: true, user: matchedUser, message: 'Otorisasi Berhasil' };
+
+    // Otorisasi offline dicatat terpisah. Ini yang membuatnya bisa ditinjau
+    // belakangan: "aksi berisiko apa saja yang lolos saat server tak terjangkau?"
+    setInventoryLogs((prev) => [
+      {
+        id: newId('log'),
+        productId: 'SEC-PIN-OFFLINE',
+        productName: '[SECURITY AUDIT] Otorisasi PIN Mode Offline',
+        type: 'ADJUSTMENT',
+        quantity: 0,
+        previousStock: 0,
+        newStock: 0,
+        reason: `Otorisasi diberikan tanpa verifikasi server (${matchedUser.name} / ${matchedUser.role}) — server tidak terjangkau`,
+        timestamp: new Date().toISOString(),
+        user: currentUser.name,
+        businessSector: settings.businessSector,
+      },
+      ...prev,
+    ]);
+
+    return {
+      success: true,
+      user: matchedUser,
+      authorizedByName: matchedUser.name,
+      authorizedByRole: matchedUser.role,
+      offline: true,
+      message: 'Otorisasi Berhasil (mode offline — tanpa verifikasi server)',
+    };
   };
 
 

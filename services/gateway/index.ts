@@ -36,6 +36,7 @@ import { PORTS, SERVICE_URL } from '../shared/service';
 import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
 import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
+import { HEADER_TIDAK_DITERUSKAN } from '../shared/proxyHeaders';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -50,6 +51,7 @@ const ROUTES: Array<{ prefix: string; target: string; name: keyof typeof SERVICE
   { prefix: '/api/ai', target: SERVICE_URL.ai, name: 'ai' },
   { prefix: '/api/v1/subscription', target: SERVICE_URL.billing, name: 'billing' },
   { prefix: '/api/v1/webhooks', target: SERVICE_URL.billing, name: 'billing' },
+  { prefix: '/api/v1/pos', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/sync', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/orders', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/transactions', target: SERVICE_URL.pos, name: 'pos' },
@@ -147,19 +149,9 @@ app.use('/api', async (req, res, next) => {
     const t0 = Date.now();
 
     try {
-      const DIBUANG = new Set([
-        'host', 'connection', 'content-length', 'transfer-encoding',
-        'keep-alive', 'upgrade',
-        // x-forwarded-* dari klien SELALU dibuang lalu diisi ulang di bawah.
-        // Kalau diteruskan, siapa pun bisa mengirim
-        // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
-        // di lingkungan internal.
-        'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
-      ]);
-
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.headers)) {
-        if (DIBUANG.has(k.toLowerCase())) continue;
+        if (HEADER_TIDAK_DITERUSKAN.has(k.toLowerCase())) continue;
         if (typeof v === 'string') headers[k] = v;
         else if (Array.isArray(v)) headers[k] = v.join(', ');
       }

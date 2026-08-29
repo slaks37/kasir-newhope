@@ -16,6 +16,7 @@ import '../shared/env';
 import express from 'express';
 import { startService, PORTS } from '../shared/service';
 import { registerSyncRoutes } from './sync';
+import { registerPinRoutes } from './pinAuth';
 
 startService({
   name: 'pos',
@@ -23,6 +24,7 @@ startService({
   schema: 'pos',
   register: (app, ctx) => {
     registerSyncRoutes(app, ctx.db);
+    registerPinRoutes(app, ctx.db);
 
     /**
      * Agregat internal untuk ai-service.

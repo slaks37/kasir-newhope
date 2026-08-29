@@ -88,14 +88,25 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
         return;
       }
 
-      if (!result.success || !result.user) {
+      if (!result.success) {
         setAttemptsLeft(result.attemptsLeft ?? 0);
         setErrorMessage(result.message || 'PIN Salah atau Otorisasi Ditolak!');
         setPinInput('');
         return;
       }
 
-      onAuthorized(result.user.role, result.user.name);
+      /*
+       * Sengaja TIDAK menuntut result.user.
+       *
+       * Otorisasi diverifikasi server terhadap internal.memberships, dan
+       * manajer yang menyetujui belum tentu ada di daftar staf yang tersimpan
+       * di perangkat ini. Menuntut kecocokan lokal akan menolak otorisasi yang
+       * justru sah — persis kasus yang paling sering terjadi di cabang baru.
+       */
+      onAuthorized(
+        result.authorizedByRole || result.user?.role || 'MANAGER',
+        result.authorizedByName || result.user?.name || 'Manajer'
+      );
     } finally {
       setIsVerifying(false);
     }
