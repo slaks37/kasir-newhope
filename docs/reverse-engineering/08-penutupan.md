@@ -263,6 +263,44 @@ mengatakan bahwa angkanya bisa lebih kecil dari kenyataan.
 Batas riwayat lokal juga dinaikkan 50 → 500. Alasan adanya batas tetap benar;
 angkanya yang salah — kafe ramai melewati 50 sebelum makan siang.
 
+### Permukaan serverless menjawab "berhasil" tanpa menulis apa pun
+
+Cacat paling parah di seluruh pekerjaan ini, dan ia berada di jalur CADANGAN —
+tempat yang paling jarang dilihat orang.
+
+`api/_gateway.ts` menjawab `{ ok: true, synced: true }` untuk setiap
+`/api/v1/sync/*` tanpa menulis ke mana pun. Rantai lengkapnya:
+
+```
+1. kasir menyinkronkan antrian transaksinya
+2. permukaan itu menjawab ok: true
+3. klien melihat ok, lalu MENGHAPUS transaksi itu dari antriannya
+4. transaksinya hilang dari kedua sisi
+```
+
+Blok itu adalah cadangan ketika gateway sungguhan tidak terjangkau. Artinya
+penjualan mulai lenyap **persis ketika backend sedang bermasalah** — tanpa satu
+pun pesan kesalahan, karena semua pihak mengira semuanya baik-baik saja.
+
+Ditutup di dua tempat, karena satu saja tidak cukup:
+
+- permukaan itu kini menjawab `503 SYNC_UNAVAILABLE`, dan jalur yang tidak
+  dikenal menjawab `404` — bukan `200 ok: true`;
+- klien kini menuntut PENGAKUAN sebelum memangkas antrian. `ok: true` saja
+  tidak cukup; server yang jujur selalu melaporkan berapa yang diterima,
+  diputar ulang, atau dilewati.
+
+Perbaikan kedua yang lebih penting: yang salah bukan hanya satu permukaan itu,
+melainkan menganggap `ok: true` sebagai bukti. Pemangkasan antrian adalah
+satu-satunya tempat di seluruh aplikasi yang menghapus catatan penjualan.
+
+`scripts/dev/audit/t-jujur.ts` menguji enam keadaan, dan diperiksa gagal lebih
+dulu dengan penjaganya dimatikan: pada perilaku lama, antrian 2 transaksi
+menjadi 0 setelah jawaban yang bohong.
+
+> **Kegagalan yang jujur menyimpan datanya; keberhasilan yang bohong
+> menghapusnya.**
+
 ### Seed mendahului Model B
 
 `scripts/db/seed.ts` tidak membuat `merchants`/`outlets`/`memberships`, dan
@@ -282,12 +320,6 @@ tidak bisa dipisahkan begitu saja karena `enqueueSync` dipanggil dari DALAM
 ketergantungan itu lebih dulu, dan itu perubahan perilaku — bukan penataan
 ulang. Dilakukan sebagai pekerjaan tersendiri, dengan uji E2E yang sekarang
 sudah ada sebagai jaring pengaman.
-
-**Permukaan serverless di `api/_gateway.ts` masih rintisan.** Ia menjawab
-`{ ok: true, synced: true }` untuk setiap `/api/v1/sync/*` tanpa menulis apa
-pun. Permukaan microservice adalah yang sungguh dipakai; yang rintisan ini
-perlu dihapus atau diselesaikan, karena permukaan yang berpura-pura berhasil
-adalah cara paling halus kehilangan transaksi.
 
 **Integrasi peripheral belum diuji dengan perangkat keras.** Byte-nya benar
 menurut spesifikasi; bahwa printer merek tertentu menerimanya adalah hal lain,

@@ -64,6 +64,12 @@ jobs:
       - name: Peripheral dan antrian cetak
         run: npx tsx scripts/dev/audit/t-peripheral.ts
 
+      # Antrian sinkronisasi adalah satu-satunya tempat di aplikasi ini yang
+      # MENGHAPUS catatan penjualan. Uji ini memastikan ia hanya melakukannya
+      # atas pengakuan server yang sungguh-sungguh, bukan atas `ok: true`.
+      - name: Antrian sinkronisasi tidak membuang atas jawaban yang bohong
+        run: npx tsx scripts/dev/audit/t-jujur.ts
+
   e2e:
     name: E2E jalur kasir
     runs-on: ubuntu-latest

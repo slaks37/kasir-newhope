@@ -367,6 +367,31 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
     const data = await res.json();
     if (!data?.ok) throw new Error(data?.error || 'SYNC_FAILED');
 
+    /*
+     * `ok: true` SAJA TIDAK CUKUP untuk membuang transaksi.
+     *
+     * Pemangkasan antrian adalah satu-satunya tempat di seluruh aplikasi yang
+     * MENGHAPUS catatan penjualan. Ia hanya boleh terjadi kalau server
+     * benar-benar mengakui apa yang ia terima.
+     *
+     * Ini bukan kehati-hatian teoretis. Permukaan serverless di
+     * `api/_gateway.ts` pernah menjawab `{ ok: true, synced: true }` untuk
+     * setiap `/api/v1/sync/*` tanpa menulis apa pun — dan blok itu adalah
+     * jalur CADANGAN ketika gateway sungguhan tidak terjangkau. Hasilnya:
+     * penjualan mulai lenyap tepat ketika backend sedang bermasalah, karena
+     * baris di bawah ini menghapusnya atas dasar jawaban yang bohong.
+     *
+     * Permukaan itu sudah diperbaiki. Pemeriksaan ini tetap dipasang karena
+     * yang salah bukan hanya satu permukaan itu, melainkan menganggap
+     * `ok: true` sebagai bukti. Server yang jujur SELALU melaporkan berapa
+     * yang diterima, diputar ulang, atau dilewati.
+     */
+    const diakui =
+      Number(data.accepted ?? 0) + Number(data.voided ?? 0) + Number(data.skipped ?? 0);
+    if (data.replayed !== true && diakui <= 0) {
+      throw new Error('SERVER_TIDAK_MENGAKUI_TRANSAKSI');
+    }
+
     // Baru sekarang aman memangkas — dan hanya baris yang benar-benar dikirim.
     // Transaksi yang masuk antrian SELAMA pengiriman berlangsung harus tetap
     // tinggal, jadi antrian dibaca ulang, bukan memakai `all` yang sudah basi.

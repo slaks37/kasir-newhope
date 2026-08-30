@@ -271,14 +271,52 @@ export async function proxyToGateway(req: any, res: any): Promise<void> {
     return;
   }
 
-  // 6. Sync Catalog & Device Sync
+  /*
+   * 6. SINKRONISASI — DITOLAK DENGAN JUJUR, BUKAN DIJAWAB "BERHASIL".
+   *
+   * CACAT YANG DITUTUP DI SINI, dan ia yang paling parah di seluruh
+   * permukaan ini.
+   *
+   * Sebelumnya blok ini menjawab `{ ok: true, synced: true }` untuk SETIAP
+   * `/api/v1/sync/*` tanpa menulis apa pun ke mana pun. Rantai lengkapnya:
+   *
+   *   1. kasir menyinkronkan antrian transaksinya
+   *   2. permukaan ini menjawab ok: true
+   *   3. klien melihat ok, lalu MENGHAPUS transaksi itu dari antriannya
+   *      (src/lib/sync/queue.ts — pemangkasan hanya terjadi setelah "berhasil")
+   *   4. transaksinya hilang dari kedua sisi. Tidak ada di server, tidak ada
+   *      lagi di perangkat.
+   *
+   * Dan ia menyala tepat pada saat terburuk: blok ini adalah JALUR CADANGAN
+   * ketika gateway sungguhan tidak terjangkau. Artinya penjualan mulai lenyap
+   * persis ketika backend sedang bermasalah — dan tanpa satu pun pesan
+   * kesalahan, karena semua pihak mengira semuanya baik-baik saja.
+   *
+   * Kegagalan yang jujur menyimpan datanya; keberhasilan yang bohong
+   * menghapusnya. Karena itu jawabannya sekarang 503: klien menahan antrian
+   * dan mencoba lagi nanti, yang memang perilaku yang dirancang untuk keadaan
+   * offline.
+   */
   if (cleanPath.startsWith('/api/v1/sync')) {
-    res.status(200).json({ ok: true, synced: true, message: 'Sync catalog ready' });
+    res.status(503).json({
+      ok: false,
+      error: 'SYNC_UNAVAILABLE',
+      detail:
+        'Sinkronisasi tidak dilayani permukaan serverless. Transaksi tetap ' +
+        'tersimpan di perangkat dan akan terkirim ketika gateway kembali.',
+    });
     return;
   }
 
-  // Fallback untuk route API lainnya
-  res.status(200).json({ ok: true, path: cleanPath, message: 'New Hope POS Serverless Engine' });
+  /*
+   * Fallback: 404, bukan 200.
+   *
+   * Alasan yang sama seperti di atas dalam bentuk yang lebih umum. Menjawab
+   * `ok: true` untuk jalur yang tidak dikenali berarti setiap salah ketik
+   * endpoint, dan setiap endpoint baru yang belum dipasang di sini, terbaca
+   * sebagai berhasil oleh pemanggilnya.
+   */
+  res.status(404).json({ ok: false, error: 'NOT_FOUND', path: cleanPath });
 }
 
 export default proxyToGateway;
