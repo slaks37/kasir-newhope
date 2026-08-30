@@ -1,0 +1,895 @@
+openapi: 3.1.0
+
+info:
+  title: New Hope POS — API
+  version: "1.0.0"
+  description: |
+    API New Hope POS: sinkronisasi kasir, langganan, dan AI Copilot.
+
+    ## Yang perlu dipahami sebelum memakai API ini
+
+    ### Aplikasi kasir bekerja OFFLINE-FIRST
+
+    Sistem pencatatan aplikasi kasir adalah penyimpanan di perangkat, bukan
+    API ini. Transaksi dicatat secara lokal lebih dulu, lalu dikirim ke sini
+    ketika jaringan tersedia — bisa beberapa detik kemudian, bisa besok pagi.
+
+    Akibatnya, dua hal yang biasanya benar tentang API menjadi TIDAK benar di
+    sini:
+
+    - **Urutan kedatangan bukan urutan kejadian.** Transaksi bertanggal kemarin
+      bisa tiba sesudah transaksi hari ini. Pakai `createdAt` dari muatan, bukan
+      waktu penerimaan.
+    - **Kiriman ganda adalah hal biasa, bukan kesalahan.** Jaringan yang buruk
+      membuat aplikasi mengulang kiriman yang sebenarnya berhasil. Karena itu
+      setiap tulisan bersifat idempoten — lihat di bawah.
+
+    ### Idempotensi
+
+    `POST /api/v1/sync/transactions` menerima `idempotencyKey`. Kunci yang
+    sudah pernah diproses menjawab `replayed: true` tanpa mencatat apa pun lagi.
+
+    Kunci ini di-scope ke **(tenant, unit usaha)**, bukan global. Dua merchant
+    boleh memakai kunci yang sama tanpa saling menimpa.
+
+    Di bawahnya masih ada lapisan kedua: `UNIQUE (tenant_id, client_txn_id)`.
+    Jadi transaksi yang sama tidak bisa tercatat dua kali bahkan bila
+    `idempotencyKey`-nya berbeda.
+
+    ### Pembatalan transaksi memerlukan otorisasi SERVER
+
+    Void tidak bisa dilakukan hanya dengan menyatakan peran di muatan. Lihat
+    `POST /api/v1/sync/transactions` dan skema `OtorisasiVoid`.
+
+    ### Katalog memakai nomor revisi
+
+    `POST /api/v1/sync/catalog` mengirim katalog UTUH, dan server memakai
+    `baseRevision` untuk mengetahui apa yang sudah dilihat perangkat pengirim.
+    Perangkat yang lama tidak tersambung karena itu tidak bisa memensiunkan
+    produk yang dibuat perangkat lain. Klien WAJIB menyimpan `revision` dari
+    jawaban dan mengirimkannya kembali.
+
+    ## Batas dan kesalahan
+
+    Seluruh jawaban memakai bentuk `{ ok: boolean, ... }`. Kesalahan membawa
+    `error` berupa kode yang stabil (bukan kalimat), dan kadang `detail` yang
+    bisa ditampilkan ke pengguna.
+
+servers:
+  - url: https://app.newhopepos.id
+    description: Produksi (lewat gateway)
+  - url: http://127.0.0.1:3000
+    description: Gateway lokal
+
+tags:
+  - name: Sinkronisasi
+    description: 'Jalur tulis dari aplikasi kasir. Idempoten, tahan kiriman ganda.'
+  - name: Laporan
+    description: Pembacaan riwayat dari server, untuk rentang yang melampaui penyimpanan perangkat.
+  - name: Langganan
+    description: Paket, status, checkout, dan webhook pembayaran.
+  - name: AI Copilot
+    description: Tanya-jawab analitik dan dompet kredit.
+  - name: Operasional
+    description: Kesehatan, circuit breaker, dan konfigurasi lingkungan.
+
+security:
+  - BearerAuth: []
+
+paths:
+
+  /api/v1/sync/transactions:
+    post:
+      tags: [Sinkronisasi]
+      summary: Mengirim transaksi dari antrian perangkat
+      description: |
+        Menerima satu kiriman berisi beberapa transaksi. Aman diulang.
+
+        **Pembatalan (void).** Transaksi dengan `paymentStatus: CANCELLED`
+        adalah pembatalan, dan server memeriksa otorisasinya sendiri — peran
+        yang dinyatakan klien tidak dipercaya, karena di terminal bersama
+        seluruh staf memakai sesi yang sama.
+
+        Ada dua jalur otorisasi yang sah:
+
+        - `authorizationPin` — PIN manajer, dikirim saat perangkat online.
+        - `authorizationProof` — `sha256(<pin_hash>:<clientTxnId>)`, dipakai
+          saat pembatalan terjadi offline. Buktinya terikat pada SATU transaksi,
+          jadi ia tidak bisa dipakai ulang untuk membatalkan transaksi lain.
+
+        Keduanya menuntut `authorizedByRef` yang sudah terdaftar lewat
+        `POST /api/v1/sync/staff`.
+      operationId: syncTransactions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KirimanTransaksi' }
+            examples:
+              penjualan:
+                summary: Dua penjualan tunai
+                value:
+                  businessId: usr-budi_FNB
+                  sector: FNB
+                  storeName: Kopi Senja Kemang
+                  ownerRef: usr-budi
+                  idempotencyKey: dev-a1b2c3-batch-17
+                  transactions:
+                    - clientTxnId: INV-20260830-001
+                      invoiceNumber: INV-20260830-001
+                      cashierName: Barista Andi
+                      subtotal: 79000
+                      discountAmount: 5000
+                      taxAmount: 8140
+                      serviceChargeAmount: 3700
+                      totalAmount: 85840
+                      paymentMethod: CASH
+                      paymentStatus: COMPLETED
+                      createdAt: '2026-08-30T07:22:11.000Z'
+                      items:
+                        - productName: Kopi Susu Gula Aren
+                          unitPrice: 22000
+                          quantity: 2
+                          totalPrice: 44000
+              pembatalan:
+                summary: Pembatalan dengan bukti terikat-transaksi (offline)
+                value:
+                  businessId: usr-budi_FNB
+                  sector: FNB
+                  storeName: Kopi Senja Kemang
+                  ownerRef: usr-budi
+                  idempotencyKey: dev-a1b2c3-void-4
+                  transactions:
+                    - clientTxnId: INV-20260830-001
+                      invoiceNumber: INV-20260830-001
+                      cashierName: Barista Andi
+                      totalAmount: 85840
+                      paymentMethod: CASH
+                      paymentStatus: CANCELLED
+                      authorizedByRef: staf-manajer-rina
+                      authorizationProof: 9f2b1c…
+                      items: []
+      responses:
+        '200':
+          description: Diterima, atau diputar ulang karena kuncinya sudah pernah dipakai.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HasilSinkronisasi' }
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403':
+          description: |
+            Bukan pemilik unit usaha ini (`FORBIDDEN`), atau otorisasi
+            pembatalan ditolak. Kode otorisasi: `AUTHORIZATION_REQUIRED`,
+            `STAFF_NOT_FOUND`, `ROLE_FORBIDDEN`, `INVALID_PIN`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+        '409':
+          description: Melebihi batas produk paket langganan (`PRODUCT_LIMIT_EXCEEDED`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+        '413':
+          description: Kiriman terlalu besar (`BATCH_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  /api/v1/sync/catalog:
+    post:
+      tags: [Sinkronisasi]
+      summary: Mengirim katalog produk (utuh, bukan yang berubah saja)
+      description: |
+        Katalog dikirim UTUH. Produk yang tidak ada dalam kiriman ditandai
+        tidak tersedia — tidak dihapus, karena baris struk lama menunjuk
+        kepadanya.
+
+        **`baseRevision` WAJIB diperhatikan klien.** Ia adalah `revision`
+        terakhir yang diterima dari server. Dari situ server tahu produk mana
+        yang belum pernah dilihat perangkat ini, dan menolak memensiunkannya.
+
+        `baseRevision: 0` (perangkat baru, atau metadata lokal hilang) mematikan
+        pemensiunan sepenuhnya: perangkat yang tidak tahu isi server tidak boleh
+        menyimpulkan bahwa yang tidak ia kirim berarti sudah dihapus.
+
+        Produk yang DITOLAK karena versi server lebih baru dilaporkan di
+        `konflik` — tidak ditelan diam-diam.
+      operationId: syncCatalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KirimanKatalog' }
+      responses:
+        '200':
+          description: Katalog diterima.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HasilKatalog' }
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+        '409':
+          description: Jumlah produk melebihi batas paket (`PRODUCT_LIMIT_EXCEEDED`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+        '413':
+          description: Lebih dari 2000 produk (`CATALOG_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  /api/v1/sync/staff:
+    post:
+      tags: [Sinkronisasi]
+      summary: Mendaftarkan staf dan PIN otorisasinya
+      description: |
+        Mendaftarkan staf beserta hash PIN-nya. **PIN apa adanya tidak pernah
+        dikirim** — klien mengirim `pinHash` berformat
+        `sha256$<salt>$<sha256(pin:salt)>`.
+
+        Staf yang hilang dari kiriman DINONAKTIFKAN, bukan dihapus: baris audit
+        dan transaksi lama menunjuk kepadanya.
+
+        Hanya peran `OWNER`, `ADMIN`, dan `MANAGER` yang boleh mengotorisasi
+        pembatalan transaksi.
+      operationId: syncStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KirimanStaf' }
+      responses:
+        '200':
+          description: Staf tersimpan.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  tersimpan: { type: integer, description: 'Jumlah staf yang di-upsert.' }
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+        '413':
+          description: Daftar staf terlalu panjang (`STAFF_LIST_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  /api/v1/sync/activity:
+    post:
+      tags: [Sinkronisasi]
+      summary: Mencatat satu kejadian operasional
+      operationId: syncActivity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Kejadian' }
+      responses:
+        '200':
+          description: Tercatat.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  id: { type: string, format: uuid }
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+        '404':
+          description: Unit usaha belum pernah tersinkron (`MERCHANT_NOT_SYNCED`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  /api/v1/sync/status:
+    get:
+      tags: [Sinkronisasi]
+      summary: Ringkasan apa yang sudah sampai ke server
+      description: 'Dipakai indikator sinkronisasi di aplikasi kasir.'
+      operationId: syncStatus
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+      responses:
+        '200':
+          description: 'Ringkasan. `synced: false` berarti unit usaha belum pernah mengirim apa pun.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  synced: { type: boolean }
+                  name: { type: string }
+                  business_sector: { $ref: '#/components/schemas/Sektor' }
+                  synced_transactions: { type: integer }
+                  synced_revenue: { type: string, description: 'NUMERIC, dikirim sebagai string.' }
+                  last_transaction_at: { type: string, format: date-time, nullable: true }
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+
+  /api/v1/reports/orders:
+    get:
+      tags: [Laporan]
+      summary: Riwayat transaksi untuk satu rentang tanggal
+      description: |
+        Aplikasi kasir hanya menyimpan sebagian riwayat di perangkat. Endpoint
+        ini adalah jalan pulangnya: rentang yang lebih panjang dibaca dari
+        server.
+
+        Rentang WAJIB dan dibatasi **400 hari**. Hasil yang menyentuh batas
+        baris dilaporkan lewat `terpotong: true` — jangan menampilkannya sebagai
+        keseluruhan.
+      operationId: reportOrders
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 5000, minimum: 1, maximum: 20000 }
+      responses:
+        '200':
+          description: Riwayat, terbaru lebih dulu.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HasilLaporan' }
+        '400':
+          description: Rentang hilang, tidak terbaca, atau terbalik (`BAD_RANGE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+        '413':
+          description: Rentang melebihi 400 hari (`RANGE_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  /api/v1/subscription/plans:
+    get:
+      tags: [Langganan]
+      summary: Katalog paket langganan
+      description: |
+        Terbuka tanpa autentikasi — halaman harga publik membacanya.
+
+        Ini SATU-SATUNYA sumber harga yang boleh ditampilkan. Frontend tidak
+        boleh menuliskan angka harga sendiri; pemeriksa higiene repositori
+        menolaknya.
+      operationId: listPlans
+      security: []
+      responses:
+        '200':
+          description: Daftar paket.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  plans:
+                    type: array
+                    items: { $ref: '#/components/schemas/Paket' }
+
+  /api/v1/subscription/status:
+    get:
+      tags: [Langganan]
+      summary: Status langganan merchant
+      operationId: subscriptionStatus
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+      responses:
+        '200':
+          description: Status langganan berjalan.
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+
+  /api/v1/subscription/checkout:
+    post:
+      tags: [Langganan]
+      summary: Memulai pembayaran langganan
+      operationId: subscriptionCheckout
+      responses:
+        '200': { description: Tautan atau instruksi pembayaran. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/v1/subscription/prorated-upgrade:
+    post:
+      tags: [Langganan]
+      summary: Naik paket dengan perhitungan prorata
+      operationId: proratedUpgrade
+      responses:
+        '200': { description: Rincian prorata dan instruksi pembayaran. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/v1/subscription/simulate-payment:
+    post:
+      tags: [Langganan]
+      summary: Menandai pembayaran berhasil (hanya lingkungan non-produksi)
+      description: |
+        Jalan pintas untuk pengembangan dan demo. **Tidak tersedia di
+        produksi** — permintaannya ditolak di sana.
+      operationId: simulatePayment
+      responses:
+        '200': { description: Langganan diaktifkan. }
+        '403': { description: Dipanggil di produksi. }
+
+  /api/v1/webhooks/doku:
+    post:
+      tags: [Langganan]
+      summary: Notifikasi pembayaran DOKU
+      description: |
+        Tanda tangan diverifikasi dan **gagal-tertutup**: permintaan tanpa
+        tanda tangan yang sah DITOLAK, bukan diterima dengan catatan.
+        Cap waktu di luar jendela 5 menit juga ditolak, supaya notifikasi lama
+        tidak bisa diputar ulang.
+
+        Tidak memakai autentikasi bearer; keamanannya dari tanda tangan.
+      operationId: dokuWebhook
+      security: []
+      parameters:
+        - { name: Signature, in: header, required: true, schema: { type: string } }
+        - { name: Request-Id, in: header, required: true, schema: { type: string } }
+        - { name: Request-Timestamp, in: header, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: Diterima. }
+        '401': { description: Tanda tangan tidak sah atau cap waktu kedaluwarsa. }
+
+  /api/v1/webhooks/payment-gateway:
+    post:
+      tags: [Langganan]
+      summary: Notifikasi payment gateway umum
+      operationId: paymentGatewayWebhook
+      security: []
+      responses:
+        '200': { description: Diterima. }
+        '401': { description: Tanda tangan tidak sah. }
+
+  /api/v1/auth/send-welcome:
+    post:
+      tags: [Langganan]
+      summary: Mengirim surel sambutan merchant baru
+      operationId: sendWelcome
+      responses:
+        '200': { description: Terkirim atau diabaikan bila surel tidak dikonfigurasi. }
+
+  /api/v1/assistant/query:
+    post:
+      tags: [AI Copilot]
+      summary: Bertanya kepada AI Copilot
+      description: |
+        Pertanyaan dijawab lewat tiga lapisan, berurutan dari yang paling murah:
+
+        1. **Wawasan batch** yang sudah dihitung semalam;
+        2. **Mesin aturan intent** — 22 intent yang menjawab dari data merchant
+           tanpa memanggil model bahasa sama sekali;
+        3. **Model bahasa**, hanya bila keduanya tidak cukup, dan hanya bila
+           dompet kredit merchant masih berisi.
+
+        Sebagian intent tertutup untuk peran `CASHIER` (mis. margin laba dan
+        kinerja staf); jawabannya `403`, bukan angka yang disamarkan.
+      operationId: assistantQuery
+      responses:
+        '200': { description: Jawaban asisten. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '402': { description: Kredit AI habis (`INSUFFICIENT_CREDITS`). }
+        '403': { description: Peran ini tidak berhak atas intent tersebut. }
+
+  /api/v1/assistant/credits:
+    get:
+      tags: [AI Copilot]
+      summary: Sisa kredit AI
+      operationId: assistantCredits
+      responses:
+        '200': { description: Saldo kredit dan kuota paket. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/v1/assistant/credits/topup:
+    post:
+      tags: [AI Copilot]
+      summary: Menambah kredit AI
+      operationId: assistantTopup
+      responses:
+        '200': { description: Saldo sesudah penambahan. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/v1/assistant/quick-chips:
+    get:
+      tags: [AI Copilot]
+      summary: Pertanyaan pintasan menurut sektor
+      operationId: quickChips
+      security: []
+      responses:
+        '200': { description: Daftar pertanyaan siap-klik. }
+
+  /api/v1/assistant/audit:
+    get:
+      tags: [AI Copilot]
+      summary: Riwayat pertanyaan dan biayanya
+      operationId: assistantAudit
+      responses:
+        '200': { description: Riwayat pemakaian AI. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/ai/generate-promo:
+    post:
+      tags: [AI Copilot]
+      summary: Menyusun teks promosi
+      operationId: generatePromo
+      responses:
+        '200': { description: Teks promosi. }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+
+  /api/health:
+    get:
+      tags: [Operasional]
+      summary: Kesehatan gateway dan seluruh service di belakangnya
+      operationId: health
+      security: []
+      responses:
+        '200': { description: Semua service sehat. }
+        '503': { description: Ada service yang tidak menjawab. }
+
+  /api/breakers:
+    get:
+      tags: [Operasional]
+      summary: Keadaan circuit breaker per service
+      operationId: breakers
+      security: []
+      responses:
+        '200': { description: Keadaan tiap breaker. }
+
+  /api/environment:
+    get:
+      tags: [Operasional]
+      summary: Konfigurasi lingkungan yang aman ditampilkan
+      operationId: environment
+      security: []
+      responses:
+        '200': { description: Nama lingkungan dan bendera fitur. Tidak memuat rahasia. }
+
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Token sesi Supabase. Gateway memverifikasinya, lalu meneruskan identitas
+        ke service di belakangnya sebagai header internal.
+
+        Service TIDAK bisa dipanggil langsung dari luar: setiap service menuntut
+        `x-newhope-gateway-token`, sehingga header identitas tidak bisa
+        dipalsukan dengan menembak portnya langsung.
+
+  parameters:
+    BusinessId:
+      name: businessId
+      in: query
+      required: true
+      description: |
+        Kunci partisi unit usaha, berbentuk `${userId}_${SEKTOR}`.
+
+        Satu pemilik bisa menjalankan beberapa unit usaha (mis. kafe DAN
+        laundry) dengan `businessId` berbeda, dan datanya tidak boleh saling
+        terlihat.
+      schema: { type: string, maxLength: 96, example: usr-budi_FNB }
+
+  responses:
+    BelumTerautentikasi:
+      description: Token sesi tidak ada atau tidak sah (`UNAUTHENTICATED`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Kesalahan' }
+    Terlarang:
+      description: Unit usaha ini bukan milik pemanggil (`FORBIDDEN`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Kesalahan' }
+    PermintaanTidakValid:
+      description: Medan wajib hilang atau tidak terbaca (`BAD_REQUEST`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Kesalahan' }
+
+  schemas:
+
+    Kesalahan:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, enum: [false] }
+        error:
+          type: string
+          description: 'Kode stabil, aman dibandingkan di kode klien.'
+        detail:
+          type: string
+          description: 'Keterangan yang boleh ditampilkan ke pengguna. Tidak selalu ada.'
+
+    Sektor:
+      type: string
+      enum: [FNB, LAUNDRY, RETAIL, CARWASH, BARBERSHOP]
+
+    TargetSinkronisasi:
+      type: object
+      required: [businessId, sector, storeName, ownerRef]
+      properties:
+        businessId: { type: string, maxLength: 96, example: usr-budi_FNB }
+        sector: { $ref: '#/components/schemas/Sektor' }
+        storeName: { type: string, maxLength: 100 }
+        ownerRef:
+          type: string
+          description: 'Identitas pemilik. Diverifikasi terhadap sesi, bukan dipercaya apa adanya.'
+
+    BarisStruk:
+      type: object
+      required: [productName, unitPrice, quantity, totalPrice]
+      properties:
+        productName: { type: string, maxLength: 100 }
+        unitPrice:
+          type: integer
+          description: |
+            Rupiah BULAT. Seluruh nilai uang di API ini bilangan bulat —
+            rupiah tidak punya pecahan, dan pecahan mengambang hanya
+            menghasilkan selisih yang tidak bisa direkonsiliasi.
+        quantity: { type: number }
+        totalPrice: { type: integer }
+        categoryName: { type: string, maxLength: 100 }
+        unitCost:
+          type: integer
+          description: |
+            HPP satuan SAAT transaksi terjadi, bukan HPP hari ini. Menaikkan
+            harga modal besok tidak boleh menulis ulang margin penjualan
+            kemarin.
+
+    TransaksiKasir:
+      type: object
+      required: [clientTxnId, totalAmount, paymentMethod, paymentStatus, items]
+      properties:
+        clientTxnId:
+          type: string
+          maxLength: 96
+          description: |
+            Nomor transaksi milik perangkat. UNIK per tenant — inilah lapisan
+            anti-ganda terakhir, bekerja bahkan bila `idempotencyKey` berbeda.
+        invoiceNumber: { type: string, maxLength: 96 }
+        cashierName: { type: string, maxLength: 100 }
+        cashierRole:
+          type: string
+          description: |
+            Informatif saja. Server TIDAK memakainya untuk otorisasi — di
+            terminal bersama, semua staf memakai satu sesi, jadi peran yang
+            dinyatakan klien tidak membuktikan apa pun.
+        subtotal: { type: integer }
+        discountAmount: { type: integer }
+        taxAmount: { type: integer }
+        serviceChargeAmount: { type: integer }
+        totalAmount: { type: integer }
+        paymentMethod:
+          type: string
+          enum: [CASH, QRIS, DEBIT, CREDIT, SHOPEEPAY, GOPAY, OVO, ONLINE]
+        paymentStatus:
+          type: string
+          enum: [COMPLETED, CANCELLED]
+          description: '`CANCELLED` berarti pembatalan, dan menuntut otorisasi.'
+        orderType: { type: string, enum: [DINE_IN, TAKEAWAY, DELIVERY, ONLINE] }
+        appModule: { type: string, enum: [POS, TABLES] }
+        createdAt:
+          type: string
+          format: date-time
+          description: 'Waktu transaksi di PERANGKAT, bukan waktu tiba di server.'
+        authorizedByRef:
+          type: string
+          description: '`externalRef` staf pengotorisasi. Wajib untuk pembatalan.'
+        authorizationPin:
+          type: string
+          description: PIN manajer. Hanya untuk pembatalan saat online.
+        authorizationProof:
+          type: string
+          description: |
+            `sha256(<pin_hash>:<clientTxnId>)`. Untuk pembatalan offline.
+            Terikat pada satu transaksi sehingga tidak bisa dipakai ulang.
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BarisStruk' }
+
+    KirimanTransaksi:
+      allOf:
+        - $ref: '#/components/schemas/TargetSinkronisasi'
+        - type: object
+          required: [transactions]
+          properties:
+            idempotencyKey:
+              type: string
+              maxLength: 128
+              description: |
+                Di-scope ke (tenant, unit usaha). Kunci yang sudah diproses
+                menjawab `replayed: true` tanpa mencatat apa pun.
+            transactions:
+              type: array
+              maxItems: 500
+              items: { $ref: '#/components/schemas/TransaksiKasir' }
+
+    HasilSinkronisasi:
+      type: object
+      properties:
+        ok: { type: boolean }
+        replayed:
+          type: boolean
+          description: '`true` berarti kiriman ini sudah pernah diproses. Bukan kesalahan.'
+        accepted: { type: integer }
+        voided: { type: integer }
+        skipped: { type: integer }
+
+    ProdukKatalog:
+      type: object
+      required: [id, name, price]
+      properties:
+        id: { type: string, maxLength: 96, description: 'Id produk di perangkat.' }
+        name: { type: string, maxLength: 100 }
+        sku: { type: string, maxLength: 50 }
+        price: { type: integer }
+        costPrice: { type: integer }
+        unit: { type: string, maxLength: 20 }
+        description: { type: string, maxLength: 300 }
+        categoryName: { type: string, maxLength: 100 }
+        isAvailable: { type: boolean, default: true }
+
+    KirimanKatalog:
+      allOf:
+        - $ref: '#/components/schemas/TargetSinkronisasi'
+        - type: object
+          required: [products]
+          properties:
+            baseRevision:
+              type: integer
+              default: 0
+              description: |
+                `revision` terakhir yang diterima dari server. **0 mematikan
+                pemensiunan produk sepenuhnya** — pakai 0 hanya bila perangkat
+                benar-benar belum pernah menerima revisi.
+            products:
+              type: array
+              maxItems: 2000
+              items: { $ref: '#/components/schemas/ProdukKatalog' }
+
+    HasilKatalog:
+      type: object
+      properties:
+        ok: { type: boolean }
+        upserted: { type: integer }
+        retired:
+          type: integer
+          description: 'Produk yang ditandai tidak tersedia karena hilang dari kiriman.'
+        revision:
+          type: integer
+          description: |
+            Revisi baru. Klien WAJIB menyimpannya dan mengirimkannya sebagai
+            `baseRevision` berikutnya. Tanpa itu, penjaga revisi tidak pernah
+            menyala.
+        konflik:
+          type: array
+          items: { type: string }
+          description: |
+            Id produk yang TIDAK diperbarui karena versi server lebih baru
+            daripada yang diketahui perangkat ini.
+
+    Staf:
+      type: object
+      required: [externalRef, name, role]
+      properties:
+        externalRef: { type: string, maxLength: 96 }
+        name: { type: string, maxLength: 100 }
+        role:
+          type: string
+          enum: [OWNER, ADMIN, MANAGER, CASHIER, STAFF]
+          description: 'Hanya OWNER, ADMIN, dan MANAGER yang boleh mengotorisasi pembatalan.'
+        pinHash:
+          type: string
+          description: |
+            `sha256$<salt>$<sha256(pin:salt)>`. PIN apa adanya TIDAK pernah
+            dikirim. Menghilangkan medan ini mempertahankan hash yang sudah ada.
+
+    KirimanStaf:
+      allOf:
+        - $ref: '#/components/schemas/TargetSinkronisasi'
+        - type: object
+          required: [staff]
+          properties:
+            staff:
+              type: array
+              maxItems: 200
+              items: { $ref: '#/components/schemas/Staf' }
+
+    Kejadian:
+      type: object
+      required: [businessId, eventType, summary]
+      properties:
+        businessId: { type: string, maxLength: 96 }
+        appModule: { type: string, default: POS }
+        eventType: { type: string }
+        severity: { type: string, enum: [INFO, WARNING, CRITICAL], default: INFO }
+        actorName: { type: string, maxLength: 100 }
+        actorRole: { type: string, maxLength: 24 }
+        amountIdr: { type: integer, nullable: true }
+        summary: { type: string }
+        detail: { type: object, additionalProperties: true }
+        occurredAt: { type: string, format: date-time }
+
+    HasilLaporan:
+      type: object
+      properties:
+        ok: { type: boolean }
+        synced:
+          type: boolean
+          description: '`false` berarti unit usaha ini belum pernah mengirim apa pun.'
+        terpotong:
+          type: boolean
+          description: |
+            `true` berarti hasilnya menyentuh batas baris dan BELUM lengkap.
+            Jangan menampilkannya sebagai keseluruhan; persempit rentangnya.
+        total: { type: integer }
+        orders:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              client_txn_id: { type: string }
+              receipt_number: { type: string }
+              created_at: { type: string, format: date-time }
+              subtotal: { type: string, description: 'NUMERIC, dikirim sebagai string.' }
+              discount_amount: { type: string }
+              tax_amount: { type: string }
+              service_charge_amount: { type: string }
+              total_amount: { type: string }
+              payment_method: { type: string }
+              payment_status: { type: string }
+              order_status: { type: string }
+              order_type: { type: string, nullable: true }
+              cashier_name: { type: string }
+              business_sector: { $ref: '#/components/schemas/Sektor' }
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    qty: { type: string }
+                    price: { type: string }
+                    total: { type: string }
+
+    Paket:
+      type: object
+      properties:
+        id: { type: string, example: plan-pro-monthly }
+        name: { type: string }
+        tierLevel: { type: integer, description: '1 Free, 2 Plus, 3 Pro.' }
+        priceIdr: { type: integer }
+        priceYearlyIdr: { type: integer }
+        currency: { type: string, default: IDR }
+        maxOutlets: { type: integer }
+        productLimit: { type: integer, description: '-1 berarti tanpa batas.' }
+        aiQuotaMonthly: { type: integer }
+        dashboardAccessLevel: { type: string, enum: [BASIC, FULL, ADVANCED] }
+        extraOutletPriceIdr: { type: integer }
+        isActive: { type: boolean }
+        features:
+          type: array
+          items: { type: string }

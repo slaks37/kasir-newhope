@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { extname, join, relative, sep } from 'node:path';
 import process from 'node:process';
 
@@ -474,6 +475,69 @@ function checkContractViewCount() {
   console.log(`Contract views: OK (README dan migrasi sama-sama ${hidup.size})`);
 }
 checkContractViewCount();
+
+/**
+ * Spesifikasi OpenAPI harus memuat SETIAP rute yang benar-benar ada, dan tidak
+ * memuat rute yang sudah tidak ada.
+ *
+ * KENAPA PEMERIKSAAN INI ADA. Dokumentasi API yang ditulis tangan selalu
+ * benar pada hari ia ditulis, lalu meleset diam-diam. Yang membuatnya
+ * berbahaya bukan ketiadaan dokumentasi, melainkan dokumentasi yang SALAH:
+ * integrator membangun di atasnya, dan kesalahannya baru terlihat di produksi
+ * milik orang lain.
+ *
+ * Yang diperiksa hanya keberadaan jalur — bentuk muatannya tidak bisa
+ * diverifikasi tanpa menjalankan servernya, dan pemeriksaan yang mengaku lebih
+ * daripada yang ia lakukan lebih buruk daripada tidak ada.
+ */
+function checkOpenApiCoverage() {
+  const spec = 'docs/api/openapi.yaml';
+  if (!existsSync(spec)) {
+    problems.push(`${spec} tidak ada — dokumentasi API hilang.`);
+    return;
+  }
+  const teks = readFileSync(spec, 'utf8');
+
+  // Jalur di spec: kunci dua-spasi di bawah `paths:`.
+  const didokumentasikan = new Set(
+    [...teks.matchAll(/^ {2}(\/[^\s:]*):\s*$/gm)].map((m) => m[1])
+  );
+
+  // Rute nyata dari sumber. Rute internal antar-service dan penangkap SPA
+  // sengaja dikecualikan: keduanya bukan API publik.
+  const kode = execSync(
+    `grep -rhoE "app\\.(get|post|put|patch|delete)\\('[^']+'" services/ 2>/dev/null || true`,
+    { encoding: 'utf8' }
+  );
+  const nyata = new Set();
+  for (const baris of kode.split('\n')) {
+    const m = /app\.\w+\('([^']+)'/.exec(baris);
+    if (!m) continue;
+    const jalur = m[1];
+    if (jalur === '*' || jalur === '/health' || jalur === '/ready') continue;
+    if (jalur.startsWith('/internal/')) continue;
+    if (jalur.startsWith('/api/admin/')) continue;
+    nyata.add(jalur);
+  }
+
+  const hilang = [...nyata].filter((r) => !didokumentasikan.has(r)).sort();
+  const hantu = [...didokumentasikan].filter((r) => !nyata.has(r)).sort();
+
+  if (hilang.length) {
+    problems.push(
+      `${spec} tidak memuat ${hilang.length} rute yang ada di kode: ${hilang.join(', ')}`
+    );
+  }
+  if (hantu.length) {
+    problems.push(
+      `${spec} memuat ${hantu.length} rute yang tidak ada di kode: ${hantu.join(', ')}`
+    );
+  }
+  if (!hilang.length && !hantu.length) {
+    console.log(`OpenAPI: OK (${nyata.size} rute publik terdokumentasi, tidak ada yang meleset)`);
+  }
+}
+checkOpenApiCoverage();
 
 if (problems.length === 0) {
   console.log('Source hygiene: OK');
