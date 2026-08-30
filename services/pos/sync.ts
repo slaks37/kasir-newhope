@@ -1128,6 +1128,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
     const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 20_000);
 
+    try {
     const t = await db.query(`SELECT id FROM internal.tenants WHERE external_ref = $1`, [businessId]);
     if (!t.rows.length) return res.json({ ok: true, synced: false, orders: [] });
     const tenantId = t.rows[0].id;
@@ -1188,5 +1189,18 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       total: rows.length,
       orders: rows,
     });
+    } catch (err) {
+      /*
+       * Laporan yang gagal adalah laporan yang gagal — bukan alasan untuk
+       * memutus kasir yang sedang melayani pelanggan.
+       *
+       * Sejak bungkusHandlerAsync() di services/shared/service.ts, rejection
+       * dari handler async sudah tidak lagi mematikan proses. Penangkap di
+       * sini tetap ada karena ia bisa menjawab dengan sebab yang berguna
+       * alih-alih INTERNAL_ERROR yang generik.
+       */
+      console.error('[laporan] gagal:', (err as Error).message);
+      res.status(500).json({ ok: false, error: 'REPORT_FAILED' });
+    }
   });
 }

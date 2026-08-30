@@ -21,6 +21,8 @@ const probes = [
   ['Kelengkapan laporan merchant', 't-laporan.mjs'],
   // Tidak butuh database maupun service — murni byte dan antrian.
   ['Peripheral: ESC/POS, laci kasir, antrian cetak', 't-peripheral.ts'],
+  // Paling lambat, ditaruh terakhir supaya temuan lain terbaca lebih dulu.
+  ['Beban puncak & ketahanan', 't-beban.mjs'],
 ];
 
 let gagal = 0;

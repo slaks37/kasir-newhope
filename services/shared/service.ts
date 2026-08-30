@@ -55,6 +55,48 @@ export const SERVICE_URL = {
   backoffice: process.env.URL_BACKOFFICE || `http://127.0.0.1:${PORTS.backoffice}`,
 } as const;
 
+/** Kata kerja HTTP yang mendaftarkan handler pada aplikasi Express. */
+const METODE_RUTE = ['get', 'post', 'put', 'patch', 'delete', 'all', 'use'] as const;
+
+/**
+ * Membuat rejection dari handler `async` sampai ke middleware penangkap error.
+ *
+ * Express 4 memanggil handler dan mengabaikan nilai kembaliannya. Untuk
+ * handler async, nilai itu adalah Promise — jadi kalau ia ditolak, tidak ada
+ * yang menangkapnya dan Node melaporkannya sebagai unhandled rejection.
+ *
+ * Pembungkus ini menyambungkan `.catch(next)` ke setiap handler yang
+ * mengembalikan Promise. Handler biasa (bukan async) dilewatkan apa adanya:
+ * membungkusnya tidak berbahaya, tapi juga tidak ada gunanya, dan lapisan
+ * yang tidak perlu hanya mempersulit pembacaan jejak tumpukan.
+ *
+ * Middleware penanganan error milik Express dikenali dari JUMLAH ARGUMENNYA
+ * (empat). Membungkusnya akan mengubah jumlah itu dan membuat Express berhenti
+ * memperlakukannya sebagai penangkap error — karena itu yang berarity 4
+ * sengaja dilewati.
+ */
+function bungkusHandlerAsync(app: express.Express): void {
+  for (const metode of METODE_RUTE) {
+    const asli = (app as any)[metode].bind(app);
+    (app as any)[metode] = (...args: any[]) =>
+      asli(...args.map((a: any) => {
+        if (typeof a !== 'function' || a.length >= 4) return a;
+        const bungkus = (req: any, res: any, next: any) => {
+          try {
+            const hasil = a(req, res, next);
+            if (hasil && typeof hasil.then === 'function') hasil.catch(next);
+            return hasil;
+          } catch (err) {
+            next(err);
+          }
+        };
+        // Nama dipertahankan supaya jejak tumpukan tetap menyebut handler asli.
+        Object.defineProperty(bungkus, 'name', { value: a.name || 'handler' });
+        return bungkus;
+      }));
+  }
+}
+
 export async function startService(opts: ServiceOptions): Promise<void> {
   const app = express();
   const log = buatLogger(opts.name);
@@ -135,11 +177,43 @@ export async function startService(opts: ServiceOptions): Promise<void> {
     ready = true;
   }
 
+  /*
+   * ================================================================
+   * SATU KUERI GAGAL TIDAK BOLEH MEMATIKAN SELURUH SERVICE
+   * ================================================================
+   *
+   * Express 4 TIDAK meneruskan rejection dari handler `async` ke middleware
+   * penangkap error di bawah. Handler async yang melempar menghasilkan
+   * unhandled rejection, dan kebijakan di bagian bawah berkas ini
+   * mematikan proses ketika itu terjadi.
+   *
+   * Akibatnya: satu kueri yang gagal pada SATU permintaan memutus koneksi
+   * SETIAP kasir yang sedang tersambung. Terekam dari uji beban
+   * (scripts/dev/audit/t-beban.mjs): saat laporan dibaca bersamaan dengan
+   * transaksi yang masuk, satu galat basis data menjatuhkan pos-service dan
+   * 39 checkout yang sedang berjalan ikut gagal dengan "fetch failed".
+   *
+   * Middleware penangkap error itu sudah ada — ia hanya tidak pernah bisa
+   * dicapai oleh handler async, yang berarti seluruh rute di service ini.
+   *
+   * Pembungkus di bawah menyambungkan keduanya: rejection apa pun dari
+   * handler async diteruskan ke `next(err)`, sehingga permintaan ITU dijawab
+   * 500 dan sisanya berjalan terus.
+   *
+   * Dipasang di sini, bukan di setiap rute, karena aturan yang harus diingat
+   * di lima puluh tempat adalah aturan yang cepat atau lambat terlupakan di
+   * tempat kelima puluh satu — dan yang terlupakan itu yang akan mematikan
+   * kasir saat jam ramai.
+   */
+  bungkusHandlerAsync(app);
+
   await opts.register(app, { db: db as Db, name: opts.name, log });
 
   // Penangkap error terakhir. Tanpa ini, error yang tidak tertangani di handler
   // async membuat Express menjawab dengan stack trace HTML — yang membocorkan
   // nama tabel dan jalur berkas ke siapa pun yang memanggil.
+  //
+  // Bisa dicapai oleh handler async HANYA karena bungkusHandlerAsync() di atas.
   app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
     log.error('handler gagal', { method: req.method, path: req.path, sebab: err?.message || String(err) });
     if (res.headersSent) return;
