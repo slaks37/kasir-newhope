@@ -16,7 +16,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 
-const MIGRATIONS = [
+/*
+ * Urutan penerapan.
+ *
+ * Sebelas berkas pertama disebut EKSPLISIT karena urutannya tidak bisa
+ * diturunkan dari nama: `schema.sql` dan `schema_hybrid_pos.sql` tidak
+ * bernomor, tapi harus berjalan setelah penambal kompatibilitas dan sebelum
+ * migrasi bernomor mana pun. Sisanya ditemukan otomatis supaya migrasi baru
+ * cukup dijatuhkan ke `migrations/` tanpa menyunting berkas ini.
+ *
+ * DEDUPLIKASI WAJIB. Penemuan otomatis ikut mengembalikan 0003-0010 yang sudah
+ * disebut eksplisit di atas, sehingga daftarnya memuat delapan entri kembar.
+ * Tanpa `dedupe`, kedelapan berkas itu diterapkan DUA KALI pada database yang
+ * masih kosong — dan yang kedua gagal:
+ *
+ *   GAGAL migrations/0003_smart_assistant.sql:
+ *         function name "consume_ai_credit" is not unique
+ *
+ * Penyebabnya 0010 sudah menambahkan varian UUID dari fungsi itu, jadi
+ * pemanggilan tanpa tipe di 0003 menjadi ambigu saat diulang. Akibatnya
+ * `npm run dev` pada checkout bersih berhenti di tengah — kegagalan yang hanya
+ * muncul pada database baru, sehingga tidak pernah terlihat oleh siapa pun yang
+ * `.pgdata`-nya sudah terisi.
+ */
+function dedupe(files: string[]): string[] {
+  const seen = new Set<string>();
+  return files.filter((file) => (seen.has(file) ? false : (seen.add(file), true)));
+}
+
+const MIGRATIONS = dedupe([
   // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
   // PostgreSQL < 18 (Supabase, RDS, Cloud SQL umumnya masih 15-17).
   'migrations/0001_compat.sql',
@@ -34,7 +62,7 @@ const MIGRATIONS = [
     .filter((file) => /^\d{4}_.*\.sql$/.test(file) && file !== '0001_compat.sql')
     .sort()
     .map((file) => `migrations/${file}`),
-];
+]);
 
 async function main() {
   console.log(`[migrate] ${ringkasEnv()}`);
@@ -102,6 +130,11 @@ async function main() {
       await client.query(sql);
       await client.query('INSERT INTO public.schema_migrations (filename) VALUES ($1)', [file]);
       await client.query('COMMIT');
+      // `done` diisi sekali sebelum loop, jadi tanpa baris ini ia tidak tahu
+      // apa yang baru saja diterapkan pada jalannya sendiri. Deduplikasi di
+      // atas sudah cukup hari ini; ini menjaga entri kembar berikutnya tetap
+      // tidak berbahaya.
+      done.add(file);
       console.log(`  OK     ${file} (${Date.now() - t0}ms)`);
       applied++;
     } catch (err) {

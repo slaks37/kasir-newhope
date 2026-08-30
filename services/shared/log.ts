@@ -42,6 +42,45 @@ export function buatRequestId(): string {
 
 type Level = 'info' | 'warn' | 'error';
 
+/**
+ * Kunci yang nilainya TIDAK PERNAH boleh sampai ke log.
+ *
+ * Dipasang setelah kejadian nyata: handler webhook mencatat `req.headers` utuh
+ * saat menolak tanda tangan yang tidak sah. Objek itu memuat `signature`,
+ * `client-id`, dan — karena request lewat gateway — `x-newhope-gateway-token`,
+ * yaitu shared secret yang membedakan pemanggil tepercaya dari yang bukan.
+ * Siapa pun yang bisa membaca log jadi bisa memanggil port service internal
+ * langsung dengan `x-auth-sub` pilihan sendiri.
+ *
+ * Diperiksa di sini, bukan di setiap pemanggil, karena satu pemanggil yang lupa
+ * sudah cukup untuk membocorkannya lagi. Pencocokan dilakukan pada nama kunci
+ * apa pun kedalamannya — `{ headers: { ... } }` ikut tersaring.
+ */
+const KUNCI_RAHASIA = [
+  'authorization', 'cookie', 'set-cookie',
+  'x-newhope-gateway-token', 'x-ai-topup-secret', 'x-payment-webhook-secret',
+  'signature', 'apikey', 'api-key', 'x-api-key',
+  'password', 'passwordhash', 'secret', 'token', 'access_token', 'refresh_token',
+];
+
+const rahasia = (kunci: string): boolean => {
+  const k = kunci.toLowerCase();
+  return KUNCI_RAHASIA.some((r) => k === r || k.endsWith(r));
+};
+
+/** Kedalaman dibatasi: struktur melingkar tidak boleh menggantung proses. */
+function sunting(nilai: unknown, sisaKedalaman = 4): unknown {
+  if (nilai === null || typeof nilai !== 'object') return nilai;
+  if (sisaKedalaman <= 0) return '[dalam]';
+  if (Array.isArray(nilai)) return nilai.map((v) => sunting(v, sisaKedalaman - 1));
+
+  const keluar: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(nilai as Record<string, unknown>)) {
+    keluar[k] = rahasia(k) ? '[disunting]' : sunting(v, sisaKedalaman - 1);
+  }
+  return keluar;
+}
+
 function keluarkan(level: Level, service: string, pesan: string, data?: Record<string, unknown>) {
   const ctx = penyimpanan.getStore();
   const baris: Record<string, unknown> = {
@@ -51,7 +90,7 @@ function keluarkan(level: Level, service: string, pesan: string, data?: Record<s
     msg: pesan,
   };
   if (ctx?.requestId) baris.req = ctx.requestId;
-  if (data) Object.assign(baris, data);
+  if (data) Object.assign(baris, sunting(data) as Record<string, unknown>);
 
   // JSON di produksi (bisa di-ingest agregator log), teks berwarna di
   // pengembangan (bisa dibaca manusia). Log yang tidak terbaca tidak akan

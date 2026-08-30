@@ -433,15 +433,80 @@ startService({
         '/api/v1/webhooks/doku'
       );
 
-      if (!isSignatureValid && isDokuConfigured() && process.env.NODE_ENV === 'production') {
-        svc.log.warn('Webhook DOKU ditolak: Signature HMAC-SHA256 tidak valid', {
-          headers: req.headers,
-        });
-        return res.status(401).json({ ok: false, error: 'INVALID_SIGNATURE' });
-      }
-
       const body = (req.body ?? {}) as DokuWebhookNotification;
       const invoiceNumber = String(body.order?.invoice_number || body.invoice_number || '');
+
+      /*
+       * TANDA TANGAN DITOLAK TANPA SYARAT.
+       *
+       * Endpoint ini publik — ada di PUBLIC_API_PATHS gateway, jadi tidak ada
+       * Bearer token yang menjaganya. Tanda tangan HMAC adalah SATU-SATUNYA
+       * pembeda antara notifikasi DOKU dan siapa pun yang tahu URL-nya.
+       *
+       * Syaratnya dulu berbunyi:
+       *
+       *   if (!valid && isDokuConfigured() && NODE_ENV === 'production')
+       *
+       * yang berarti penolakan hanya terjadi bila KETIGANYA benar. Di staging,
+       * di `npm start` tanpa Docker, atau di mana pun NODE_ENV tidak persis
+       * 'production', request tak bertanda tangan yang membawa nomor faktur
+       * yang benar akan MENGAKTIFKAN LANGGANAN 30 HARI. Menumpangkan keputusan
+       * keamanan pada NODE_ENV membuat celahnya berpindah-pindah mengikuti cara
+       * proses dijalankan — bukan mengikuti keputusan siapa pun.
+       *
+       * Sekarang gerbangnya fail-closed. Kelonggaran untuk pengembangan lokal
+       * harus diminta eksplisit lewat DOKU_WEBHOOK_INSECURE=1, yang menyebut
+       * dirinya sendiri apa adanya dan tidak mungkin aktif tanpa sengaja.
+       */
+      if (!isSignatureValid) {
+        if (process.env.DOKU_WEBHOOK_INSECURE === '1') {
+          svc.log.warn('Webhook DOKU tanpa tanda tangan sah DITERIMA — DOKU_WEBHOOK_INSECURE=1', {
+            invoiceNumber,
+          });
+        } else {
+          // Header TIDAK ikut dicatat. Isinya memuat Signature, Client-Id, dan
+          // — karena request lewat gateway — x-newhope-gateway-token. Menulis
+          // seluruh header ke log berarti membocorkan token yang membedakan
+          // pemanggil tepercaya dari yang bukan ke setiap agregator log.
+          svc.log.warn('Webhook DOKU ditolak: tanda tangan HMAC-SHA256 tidak sah', {
+            invoiceNumber,
+            clientId: String(req.headers['client-id'] || ''),
+            requestId: String(req.headers['request-id'] || ''),
+            dokuTerkonfigurasi: isDokuConfigured(),
+          });
+          return res.status(401).json({ ok: false, error: 'INVALID_SIGNATURE' });
+        }
+      }
+
+      /*
+       * KESEGARAN TIMESTAMP.
+       *
+       * Tanda tangan membuktikan pesannya asli, bukan bahwa ia BARU. Notifikasi
+       * sah yang pernah lewat kabel tetap sah selamanya, jadi siapa pun yang
+       * berhasil merekamnya bisa mengirim ulang kapan saja.
+       *
+       * Idempotensi `eventId` di bawah sudah menahan pengulangan event YANG
+       * SAMA; jendela ini menahan pengulangan yang datang dengan Request-Id
+       * baru. Lima menit mengikuti anjuran DOKU dan cukup longgar untuk selisih
+       * jam antar-server yang wajar.
+       *
+       * Dilewati kalau header waktunya tidak ada — beberapa jenis notifikasi
+       * memang tidak membawanya, dan menolak semuanya berarti pembayaran yang
+       * sah tidak pernah tercatat.
+       */
+      const stempel = String(req.headers['request-timestamp'] || '').trim();
+      if (isSignatureValid && stempel) {
+        const selisihMs = Math.abs(Date.now() - Date.parse(stempel));
+        if (Number.isFinite(selisihMs) && selisihMs > 5 * 60_000) {
+          svc.log.warn('Webhook DOKU ditolak: stempel waktu kedaluwarsa', {
+            invoiceNumber,
+            stempel,
+            selisihDetik: Math.round(selisihMs / 1000),
+          });
+          return res.status(401).json({ ok: false, error: 'STALE_TIMESTAMP' });
+        }
+      }
+
       const transactionStatus = String(body.transaction?.status || body.status || 'UNKNOWN').toUpperCase();
       const eventId = String(
         req.headers['request-id'] ||

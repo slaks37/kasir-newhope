@@ -63,9 +63,50 @@ function konfigurasiSsl(connectionString: string) {
   return { rejectUnauthorized: false };
 }
 
+/**
+ * Kredensial untuk satu service.
+ *
+ * KENAPA INI ADA. Migrasi 0009 membuat peran `svc_pos`, `svc_ai`, `svc_billing`,
+ * dan `svc_internal`, lengkap dengan hak akses yang mengurung tiap service di
+ * skemanya sendiri. Tapi keempatnya dibuat NOLOGIN, tidak ada satu pun `SET
+ * ROLE` di seluruh basis kode, dan fungsi ini dulu selalu memakai satu
+ * `DATABASE_URL`. Artinya isolasi yang dijanjikan README ada di DDL tapi TIDAK
+ * PERNAH AKTIF saat sistem berjalan: kelima proses berbagi satu identitas
+ * dengan hak penuh atas kelima skema.
+ *
+ * Sekarang tiap service mencari kredensialnya sendiri lebih dulu:
+ *
+ *   DATABASE_URL_POS, DATABASE_URL_AI, DATABASE_URL_BILLING, DATABASE_URL_INTERNAL
+ *
+ * dan jatuh ke `DATABASE_URL` kalau tidak ada. Cadangan itu disengaja — tanpa
+ * itu, setiap pemasangan yang sudah ada berhenti bekerja begitu berkas ini
+ * diperbarui, dan perubahan keamanan yang memaksa downtime cenderung ditunda
+ * atau dibatalkan.
+ *
+ * Mengaktifkan isolasinya: `node scripts/db/setup-service-roles.mjs --live`,
+ * lalu isi keempat variabel di atas. Verifikasinya ada di skrip yang sama.
+ */
+function kredensialService(schema: string): { url: string; peran: boolean } {
+  const khusus = (process.env[`DATABASE_URL_${schema.toUpperCase()}`] || '').trim();
+  if (khusus) return { url: khusus, peran: true };
+  return {
+    url: process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres',
+    peran: false,
+  };
+}
+
 export async function connectDb(opts: DbOptions): Promise<Db> {
-  const connectionString =
-    opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
+  const dipilih = kredensialService(opts.schema);
+  const connectionString = opts.connectionString || dipilih.url;
+
+  if (!opts.connectionString) {
+    // Nama peran saja, tidak pernah URL-nya: URL memuat kata sandi.
+    console.log(
+      dipilih.peran
+        ? `[db] skema ${opts.schema}: memakai peran khusus (DATABASE_URL_${opts.schema.toUpperCase()})`
+        : `[db] skema ${opts.schema}: memakai DATABASE_URL bersama — isolasi peran TIDAK aktif`
+    );
+  }
 
   const pool = new pg.Pool({
     connectionString,

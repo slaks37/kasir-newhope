@@ -19,6 +19,40 @@ import { config } from 'dotenv';
 
 const hasil = config();
 
+/*
+ * KOMBINASI YANG DITOLAK SAAT MENYALA.
+ *
+ * `AUTH_ALLOW_LOCAL_DEVELOPMENT=1` mematikan EMPAT pemeriksaan sekaligus:
+ *
+ *   shared/auth.ts:authenticateBearer      -> principal palsu tanpa token
+ *   shared/auth.ts:requireTrustedGateway   -> port internal terbuka
+ *   shared/auth.ts:canAccessBusiness       -> akses ke SEMUA unit usaha
+ *   pos/sync.ts:assertBusinessCanBeClaimed -> klaim kepemilikan tidak diperiksa
+ *
+ * Itu tepat untuk pengembangan lokal dan bencana di produksi. Nilai bawaannya
+ * memang aman, tapi "aman selama tidak ada yang salah setel" bukan jaminan —
+ * flag ini persis jenis yang tersalin ke berkas env produksi bersama sisanya.
+ *
+ * Proses menolak menyala, bukan menyala sambil memperingatkan: peringatan di
+ * log hanya terbaca kalau ada yang membacanya, dan kalau sudah dibaca pun
+ * servicenya sudah terlanjur melayani trafik tanpa autentikasi.
+ */
+if (process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1' && process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'AUTH_ALLOW_LOCAL_DEVELOPMENT=1 tidak boleh aktif saat NODE_ENV=production. ' +
+      'Flag itu mematikan seluruh autentikasi dan pemeriksaan kepemilikan tenant. ' +
+      'Kosongkan atau setel "0" di lingkungan produksi.'
+  );
+}
+
+/** Peringatan berulang selama flag aktif, supaya tidak ada yang lupa. */
+if (process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1') {
+  console.warn(
+    '[env] PERINGATAN: AUTH_ALLOW_LOCAL_DEVELOPMENT=1 — autentikasi dan pemeriksaan ' +
+      'kepemilikan tenant DIMATIKAN. Hanya untuk pengembangan lokal.'
+  );
+}
+
 /**
  * Ringkasan yang aman dicetak: hanya NAMA variabel yang terbaca, tidak pernah
  * nilainya. Tanpa ini, "kenapa .env-ku tidak terbaca" hanya bisa dijawab dengan

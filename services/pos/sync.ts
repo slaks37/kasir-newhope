@@ -203,37 +203,52 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         );
         let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
 
-        const resolveCashier = async (ref: string | null, name: string | null, role: string | null) => {
+        const resolveCashier = async (ref: string | null, name: string | null) => {
           const key = ref || name;
           if (!key) return null;
           if (cashierCache.has(key)) return cashierCache.get(key)!;
 
-          const found = await c.query(
-            `SELECT id FROM internal.memberships WHERE tenant_id = $1 AND (external_ref = $2 OR role = $3) LIMIT 1`,
-            [tenantId, ref, role]
+          /*
+           * Kasir perangkat kasir BUKAN akun terdaftar.
+           *
+           * `pos.transactions.cashier_user_id` menunjuk `internal.users`, jadi
+           * setiap kasir butuh satu baris di sana. Kasir sendiri tidak pernah
+           * mendaftar — ia hanya nama yang diketik di perangkat — sehingga
+           * barisnya dibuat di sini, dengan alamat sintetis di domain
+           * `.pos.local` yang memang tidak bisa menerima surat.
+           *
+           * IDENTITASNYA HARUS STABIL LINTAS KIRIMAN. Versi sebelumnya MENCARI
+           * `${ref}@pos.local` tetapi MENYIMPAN `${ref}_${Date.now()}@pos.local`
+           * — dua kunci yang tidak akan pernah sama. Karena kolom email UNIQUE,
+           * tiap INSERT selalu berhasil dengan alamat baru, jadi setiap batch
+           * sinkronisasi melahirkan satu baris kasir lagi. Satu toko dengan tiga
+           * kasir yang menyinkron dua puluh kali sehari menambah enam puluh
+           * baris per hari, dan setiap laporan performa per kasir memecah satu
+           * orang menjadi puluhan identitas.
+           *
+           * Sekarang kuncinya satu, dan keunikannya ditegakkan database lewat
+           * ON CONFLICT — bukan lewat SELECT lalu INSERT, yang tetap bisa
+           * kalah balapan dengan kiriman lain dari perangkat yang sama.
+           *
+           * tenantId ikut masuk ke alamat: dua merchant berbeda yang sama-sama
+           * punya kasir "budi" adalah dua orang, dan tanpa itu keduanya akan
+           * berbagi satu baris.
+           *
+           * Alamatnya diturunkan dari `key` yang sama dengan cache — bukan dari
+           * `ref` saja. Perangkat lama mengirim nama tanpa ref; memakai `ref`
+           * saja membuat SEMUA kasir tanpa ref jatuh ke satu alamat `kasir@…`
+           * dan menggabungkan orang-orang yang berbeda menjadi satu.
+           */
+          const slug = key.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'kasir';
+          const email = `${slug.slice(0, 64)}@${tenantId}.pos.local`;
+          const insUser = await c.query(
+            `INSERT INTO internal.users (id, email, full_name)
+             VALUES (uuidv7(), $1, $2)
+             ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
+             RETURNING id`,
+            [email.slice(0, 160), name || 'Kasir']
           );
-          // Wait, resolving cashier is currently difficult because internal.users isn't easily created with dummy emails.
-          // For now, return a placeholder or handle cashier matching via external_ref.
-          // In the new architecture, POS transactions just link to internal.users via cashier_user_id.
-          // We will use a fallback logic here that assumes user is created elsewhere, or we create a dummy internal user.
-          // Actually, internal.users doesn't need to be populated in offline sync if they aren't registered. 
-          // We'll insert a dummy user if not found just to satisfy the foreign key.
-          
-          let userId: string;
-          const userCheck = await c.query(
-            `SELECT id FROM internal.users WHERE email = $1 LIMIT 1`,
-            [`${ref || 'kasir'}@pos.local`]
-          );
-          
-          if (userCheck.rows.length) {
-            userId = userCheck.rows[0].id;
-          } else {
-            const insUser = await c.query(
-              `INSERT INTO internal.users (id, email, full_name) VALUES (uuidv7(), $1, $2) RETURNING id`,
-              [`${ref || 'kasir'}_${Date.now()}@pos.local`, name || 'Kasir']
-            );
-            userId = insUser.rows[0].id;
-          }
+          const userId: string = insUser.rows[0].id;
 
           cashierCache.set(key, userId);
           return userId;
@@ -291,11 +306,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           const clientId = str(x.clientTxnId, 64);
           if (!clientId || !Array.isArray(x.items) || !x.items.length) continue;
 
-          const cashierId = await resolveCashier(
-            str(x.cashierRef, 96),
-            str(x.cashierName, 100),
-            str(x.cashierRole, 24)
-          );
+          const cashierId = await resolveCashier(str(x.cashierRef, 96), str(x.cashierName, 100));
 
           const subtotal = num(x.subtotal);
           const discount = num(x.discountAmount);
