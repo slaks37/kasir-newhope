@@ -313,14 +313,28 @@ yang dipakai service, dan tiernya beragam supaya batas paket ikut teruji.
 
 ## Yang masih terbuka
 
-**`POSContext.tsx` masih 2.100+ baris dengan fan-in 26.** Pemecahannya
-sempat dicoba dan ditunda dengan alasan yang masih berlaku: irisan sinkronisasi
-tidak bisa dipisahkan begitu saja karena `enqueueSync` dipanggil dari DALAM
-`processPayment` dan `voidOrder`. Memecahnya menuntut membalik arah
-ketergantungan itu lebih dulu, dan itu perubahan perilaku — bukan penataan
-ulang. Dilakukan sebagai pekerjaan tersendiri, dengan uji E2E yang sekarang
-sudah ada sebagai jaring pengaman.
+**Irisan sinkronisasi di `POSContext.tsx` belum dipecah.** Lapisan
+penyimpanan sudah dikeluarkan ke `src/context/penyimpananPOS.ts` — irisan yang
+paling layak didahulukan, karena di situlah cacat penghapus data lahir, dan
+sekarang penjaganya struktural alih-alih diingat di tiga belas tempat
+(2.292 → 2.114 baris).
+
+Irisan sinkronisasi tetap di dalam, dengan alasan yang masih sama:
+`enqueueSync` dipanggil dari DALAM `processPayment` dan `voidOrder`, jadi
+memisahkannya menuntut membalik arah ketergantungan itu lebih dulu — perubahan
+perilaku, bukan penataan ulang. Uji E2E yang sekarang ada membuatnya jauh lebih
+aman dikerjakan daripada sebelumnya.
 
 **Integrasi peripheral belum diuji dengan perangkat keras.** Byte-nya benar
 menurut spesifikasi; bahwa printer merek tertentu menerimanya adalah hal lain,
 dan hanya bisa dibuktikan dengan printer sungguhan.
+
+**Barcode scanner belum tersentuh.** Sebagian besar scanner bekerja sebagai
+papan ketik dan tidak menuntut integrasi apa pun, tapi itu belum diverifikasi —
+dan barcode yang DIBANGKITKAN aplikasi masih memakai `Math.random()`, yang
+berarti tabrakan hanya soal waktu.
+
+**Permukaan serverless masih rintisan untuk hal lain selain sinkronisasi.** Ia
+kini menolak dengan jujur alih-alih berpura-pura berhasil, sehingga tidak lagi
+bisa menghapus data — tetapi endpoint yang belum dipasang di sana tetap
+menjawab 404, bukan melayani permintaannya.
