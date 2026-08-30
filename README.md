@@ -33,7 +33,7 @@ gateway :3000  ──┬─ pos        :3101  skema pos       transaksi, katalog
                  ├─ billing    :3103  skema billing   langganan, faktur, webhook
                  └─ backoffice :3104  skema internal  konsol penyedia
                         ↓
-                 contract.*  ← 30 view, satu-satunya permukaan lintas service
+                 contract.*  ← 31 view, satu-satunya permukaan lintas service
 ```
 
 ### Batas antar service ditegakkan database, bukan kesepakatan

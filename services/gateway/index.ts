@@ -52,6 +52,7 @@ const ROUTES: Array<{ prefix: string; target: string; name: keyof typeof SERVICE
   { prefix: '/api/v1/webhooks', target: SERVICE_URL.billing, name: 'billing' },
   { prefix: '/api/v1/sync', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/reports', target: SERVICE_URL.pos, name: 'pos' },
+  { prefix: '/api/v1/flags', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/orders', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/transactions', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/analytics', target: SERVICE_URL.pos, name: 'pos' },

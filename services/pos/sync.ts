@@ -20,6 +20,7 @@ import type express from 'express';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
+import { benderaUntukTenant } from '../shared/flags';
 import { daftarkanStaf, pastikanVoidDiotorisasi, VoidAuthError, type StafMasuk } from './staff';
 
 const SECTOR_SET = new Set<string>(SECTORS);
@@ -1202,5 +1203,35 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       console.error('[laporan] gagal:', (err as Error).message);
       res.status(500).json({ ok: false, error: 'REPORT_FAILED' });
     }
+  });
+
+  /**
+   * GET /api/v1/flags
+   *
+   * Bendera fitur yang BERLAKU untuk unit usaha ini, sudah dinilai di server.
+   *
+   * Yang dikirim hanya jawaban ya/tidak. Aturannya — persentase peluncuran,
+   * siapa yang ada di daftar putih — tidak ikut: itu bukan urusan perangkat
+   * kasir, dan mengirimkannya berarti setiap merchant bisa membaca siapa saja
+   * yang sedang menguji apa.
+   *
+   * Jawaban selalu 200, termasuk ketika penilaiannya gagal — dengan objek
+   * kosong, yang berarti "tidak ada fitur baru yang menyala". Bendera yang
+   * gagal dibaca tidak boleh menghentikan kasir; ia hanya berarti kasir
+   * memakai perilaku lama, dan perilaku lama itu yang sudah berjalan selama
+   * ini.
+   */
+  app.get('/api/v1/flags', async (req, res) => {
+    const businessId = str(req.query.businessId, 96);
+    if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) {
+      return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+    }
+
+    const t = await db.query(`SELECT id FROM internal.tenants WHERE external_ref = $1`, [businessId]);
+    const flags = await benderaUntukTenant(db, t.rows[0]?.id ?? null);
+    res.json({ ok: true, flags });
   });
 }

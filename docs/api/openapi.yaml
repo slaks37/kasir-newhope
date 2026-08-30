@@ -362,6 +362,48 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Kesalahan' }
 
+  /api/v1/flags:
+    get:
+      tags: [Operasional]
+      summary: Bendera fitur yang berlaku untuk unit usaha ini
+      description: |
+        Peluncuran bertahap (canary). Bendera dinilai di SERVER dan dikirim
+        sebagai jawaban ya/tidak.
+
+        Aturannya — persentase peluncuran, siapa yang ada di daftar putih —
+        TIDAK ikut dikirim: itu bukan urusan perangkat kasir, dan
+        mengirimkannya berarti setiap merchant bisa membaca siapa saja yang
+        sedang menguji apa.
+
+        Jawaban selalu `200`, termasuk ketika penilaiannya gagal — dengan objek
+        kosong, yang berarti "tidak ada fitur baru yang menyala". Bendera yang
+        gagal dibaca tidak boleh menghentikan kasir; ia hanya berarti perilaku
+        lama, dan perilaku lama itu yang sudah berjalan selama ini.
+
+        Bendera yang tidak dikenal SELALU mati. Salah ketik nama bendera tidak
+        pernah menyalakan apa pun.
+      operationId: featureFlags
+      parameters:
+        - $ref: '#/components/parameters/BusinessId'
+      responses:
+        '200':
+          description: Peta nama bendera ke keadaannya.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  flags:
+                    type: object
+                    additionalProperties: { type: boolean }
+                    example:
+                      struk-esc-pos: true
+                      laporan-server: false
+        '400': { $ref: '#/components/responses/PermintaanTidakValid' }
+        '401': { $ref: '#/components/responses/BelumTerautentikasi' }
+        '403': { $ref: '#/components/responses/Terlarang' }
+
   /api/v1/subscription/plans:
     get:
       tags: [Langganan]
