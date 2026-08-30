@@ -17,6 +17,7 @@ const probes = [
   ['Isolasi tenant', 't-isolasi.mjs'],
   // Butuh pos-service menyala di :3101 — dilewati dengan pesan jelas bila tidak.
   ['Otorisasi void & idempotensi', 't-rbac.mjs'],
+  ['Konflik katalog antar perangkat', 't-katalog.mjs'],
 ];
 
 let gagal = 0;

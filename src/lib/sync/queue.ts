@@ -77,6 +77,16 @@ export interface SyncStatus {
   lastErrorAt: string | null;
   /** Percobaan gagal berturut-turut. 0 berarti sehat. */
   failures: number;
+  /**
+   * Revisi katalog terakhir yang diterima dari server, 0 kalau belum pernah.
+   *
+   * Dikirim balik sebagai `baseRevision` pada pengiriman berikutnya supaya
+   * server tahu apa yang sudah dan belum dilihat perangkat ini. Selama nilai
+   * ini 0, server menolak memensiunkan produk apa pun atas permintaan
+   * perangkat ini — sengaja, karena perangkat yang tidak tahu isi server tidak
+   * boleh menyimpulkan bahwa yang tidak ia kirim berarti sudah dihapus.
+   */
+  catalogRevision: number;
   inFlight: boolean;
 }
 
@@ -123,9 +133,13 @@ function readMeta(businessId: string): SyncMeta {
       lastError: m.lastError ?? null,
       lastErrorAt: m.lastErrorAt ?? null,
       failures: Number(m.failures) || 0,
+      catalogRevision: Number(m.catalogRevision) || 0,
     };
   } catch {
-    return { lastSyncedAt: null, lastError: null, lastErrorAt: null, failures: 0 };
+    return {
+      lastSyncedAt: null, lastError: null, lastErrorAt: null,
+      failures: 0, catalogRevision: 0,
+    };
   }
 }
 
@@ -227,6 +241,13 @@ export function getStatus(businessId: string, inFlight = false): SyncStatus {
  * belakang katalog yang gagal terkirim.
  *
  * Karena itu kegagalannya ditelan diam-diam: tidak ada yang bisa hilang.
+ *
+ * SATU HAL YANG TIDAK BOLEH DITELAN adalah nomor revisi dari server. Ia
+ * dikirim balik pada pengiriman berikutnya sebagai `baseRevision`, dan dari
+ * situlah server tahu produk mana yang belum pernah dilihat perangkat ini —
+ * satu-satunya hal yang menghalangi tablet yang seharian offline memensiunkan
+ * seluruh produk yang dibuat perangkat lain hari itu. Selama revisinya masih
+ * 0, server menolak memensiunkan apa pun atas permintaan perangkat ini.
  */
 export async function pushCatalog(
   target: SyncTarget,
@@ -251,10 +272,29 @@ export async function pushCatalog(
         sector: target.sector,
         storeName: target.storeName,
         ownerRef: target.ownerRef,
+        baseRevision: readMeta(target.businessId).catalogRevision,
         products,
       }),
     });
-    return res.ok;
+    if (!res.ok) return false;
+
+    const hasil = await res.json().catch(() => null);
+    const revisi = Number(hasil?.revision);
+    // Hanya maju, tidak pernah mundur. Jawaban yang datang tidak berurutan —
+    // dua pengiriman yang saling menyusul — tidak boleh menurunkan revisi dan
+    // membuat perangkat ini kembali dianggap tidak tahu apa-apa.
+    if (Number.isSafeInteger(revisi) && revisi > readMeta(target.businessId).catalogRevision) {
+      writeMeta(target.businessId, { catalogRevision: revisi });
+    }
+    if (Array.isArray(hasil?.konflik) && hasil.konflik.length) {
+      // Tidak fatal, tapi juga tidak normal: perubahan perangkat ini kalah oleh
+      // versi server yang lebih baru. Kalau ini sering muncul, artinya penjaga
+      // revisinya terlalu ketat dan perlu ditinjau — bukan didiamkan.
+      console.warn(
+        `[sync] ${hasil.konflik.length} produk tidak diperbarui: versi server lebih baru`
+      );
+    }
+    return true;
   } catch {
     return false;
   }

@@ -677,6 +677,34 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
    *
    * Produk yang HILANG dari kiriman ditandai tidak tersedia, bukan dihapus.
    * Menghapusnya akan memutus baris struk yang menunjuk produk itu.
+   *
+   * PERANGKAT BASI TIDAK BOLEH MENGHAPUS PEKERJAAN PERANGKAT LAIN.
+   *
+   * "Kiriman terakhir selalu benar" hanya berlaku kalau perangkatnya satu.
+   * Dengan dua perangkat dan aplikasi offline-first, tablet yang seharian mati
+   * akan mengirim katalog kemarin — dan tanpa penjaga, seluruh produk yang
+   * dibuat hari ini ikut dipensiunkan serta setiap harga yang naik hari ini
+   * kembali ke nilai lama. Tanpa pesan kesalahan.
+   *
+   * Karena itu setiap perangkat mengirim `baseRevision`: nomor revisi terakhir
+   * yang PERNAH ia terima dari server. Nomornya milik server, bukan cap waktu
+   * klien — jam tablet kasir tidak bisa dipakai mengurutkan kejadian antar
+   * perangkat. Dari nomor itu server tahu persis apa yang belum dilihat si
+   * perangkat:
+   *
+   *   revision <= baseRevision   perangkat pernah melihat baris ini, jadi
+   *                              ketidakhadirannya berarti DIHAPUS
+   *   revision >  baseRevision   baris ini muncul SETELAH perangkat terakhir
+   *                              menyimak; ketidakhadirannya tidak berarti
+   *                              apa-apa, dan menimpanya berarti membuang
+   *                              perubahan yang lebih baru
+   *
+   * `baseRevision` 0 berarti perangkat belum pernah tahu revisi apa pun (mis.
+   * pemasangan baru, atau metadata lokalnya hilang). Untuk kasus itu penjaga
+   * pensiun DIMATIKAN sepenuhnya — perangkat yang tidak tahu apa-apa tidak
+   * boleh menghapus apa pun — sementara pembaruan tetap diterima supaya
+   * perangkat tunggal yang kehilangan metadata tidak terkunci dari katalognya
+   * sendiri. Lihat migrasi 0045.
    */
   app.post('/api/v1/sync/catalog', async (req, res) => {
     const b = req.body ?? {};
@@ -687,6 +715,17 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
     const ownerRef = principal.subject;
     const products: any[] = Array.isArray(b.products) ? b.products : [];
+
+    /*
+     * Nilai yang tidak masuk akal (negatif, bukan angka, melebihi revisi yang
+     * ada) diperlakukan sebagai 0 — yaitu "tidak tahu apa-apa". Penjaga di sini
+     * hanya berguna kalau ia gagal ke arah yang aman: perangkat yang mengaku
+     * tahu lebih banyak daripada yang mungkin ia tahu adalah persis perangkat
+     * yang tidak boleh dipercaya menghapus.
+     */
+    const baseRevisionKlaim = Number(b.baseRevision);
+    const baseRevision =
+      Number.isSafeInteger(baseRevisionKlaim) && baseRevisionKlaim > 0 ? baseRevisionKlaim : 0;
 
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
@@ -743,8 +782,30 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             );
             outletId = outins.rows[0].id;
         }
+        /*
+         * Satu nomor revisi untuk SELURUH pengiriman ini, diambil sekali di
+         * awal. UPDATE ... RETURNING mengunci baris tenant, jadi dua perangkat
+         * yang mengirim bersamaan mendapat nomor berbeda dan berurutan — bukan
+         * dua-duanya membaca nilai yang sama lalu menulis nomor yang sama.
+         */
+        const revq = await c.query(
+          `UPDATE internal.tenants
+              SET catalog_revision = catalog_revision + 1
+            WHERE id = $1
+        RETURNING catalog_revision`,
+          [tenantId]
+        );
+        const revisi: number = Number(revq.rows[0]?.catalog_revision ?? 0);
+
         const seen: string[] = [];
         let upserted = 0;
+        /*
+         * Produk yang DITOLAK karena versi server lebih baru. Dilaporkan balik,
+         * tidak ditelan: perangkat yang perubahannya tidak jadi dipakai berhak
+         * tahu, dan angka ini yang akan memberi tahu kita kalau penjaga ini
+         * ternyata terlalu ketat.
+         */
+        const konflik: string[] = [];
 
         for (const p of products) {
           const ref = str(p.id, 96);
@@ -761,13 +822,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
            * (di endpoint /api/v1/sync/transactions), bukan melalui snapshot
            * overwrite dari klien.
            */
-          await c.query(
+          const hasil = await c.query(
             `INSERT INTO pos.products
                (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price, is_available,
                 business_sector, business_id, category_name, description,
-                unit, external_ref, catalog_synced_at)
+                unit, external_ref, revision, catalog_synced_at)
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                     $13, $14, CURRENT_TIMESTAMP)
+                     $13, $14, $16::bigint, CURRENT_TIMESTAMP)
              ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET
                name              = EXCLUDED.name,
@@ -778,7 +839,22 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                category_name     = EXCLUDED.category_name,
                description       = EXCLUDED.description,
                unit              = EXCLUDED.unit,
-               catalog_synced_at = CURRENT_TIMESTAMP`,
+               revision          = EXCLUDED.revision,
+               catalog_synced_at = CURRENT_TIMESTAMP
+             /*
+              * Penjaganya ada DI SINI, bukan di aplikasi.
+              *
+              * Memeriksa lebih dulu lalu menulis akan mengulang kesalahan yang
+              * sama seperti pada stok: dua pengiriman bersamaan sama-sama
+              * membaca revisi lama, sama-sama lolos. Di dalam DO UPDATE,
+              * pemeriksaan dan penulisan berada pada baris yang sudah terkunci.
+              *
+              * baseRevision 0 mematikan penjaga ini (0 >= revision selalu benar
+              * untuk baris berevisi 0, dan untuk baris yang lebih baru penjaga
+              * memang harus menolak) — lihat penjelasan di atas endpoint.
+              */
+             WHERE $15::bigint = 0 OR pos.products.revision <= $15::bigint
+           RETURNING id`,
             [
               tenantId,
               merchantId,
@@ -794,28 +870,56 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               str(p.description, 300),
               str(p.unit, 20),
               ref,
+              baseRevision,
+              revisi,
             ]
           );
-          upserted++;
+          if (hasil.rows.length) upserted++;
+          else konflik.push(ref);
         }
 
-        // Produk yang tidak ada lagi di perangkat: disembunyikan, bukan dibuang.
+        /*
+         * Produk yang tidak ada lagi di perangkat: disembunyikan, bukan dibuang.
+         *
+         * Ini operasi yang MERUSAK, dan satu-satunya di endpoint ini yang bisa
+         * menghapus pekerjaan perangkat lain, jadi penjaganya paling ketat:
+         *
+         *   baseRevision = 0   tidak memensiunkan apa pun. Perangkat yang tidak
+         *                      tahu revisi apa pun tidak tahu apa yang ada di
+         *                      server, jadi "tidak saya kirim" tidak bisa
+         *                      diartikan "sudah dihapus".
+         *
+         *   baseRevision > 0   hanya baris yang PERNAH dilihat perangkat itu
+         *                      (revision <= baseRevision). Produk yang dibuat
+         *                      perangkat lain setelahnya tidak tersentuh.
+         *
+         * Kiriman katalog KOSONG juga tidak pernah memensiunkan apa pun
+         * (`seen.length > 0`). Katalog kosong hampir selalu berarti state lokal
+         * yang belum dimuat, bukan pemilik yang menghapus seluruh dagangannya.
+         */
         let retired = 0;
-        if (seen.length > 0) {
+        if (seen.length > 0 && baseRevision > 0) {
           const r = await c.query(
             `UPDATE pos.products
-                SET is_available = FALSE
+                SET is_available = FALSE,
+                    revision     = $4::bigint
               WHERE tenant_id = $1
                 AND external_ref IS NOT NULL
                 AND NOT (external_ref = ANY($2::text[]))
                 AND is_available
+                AND revision <= $3::bigint
               RETURNING id`,
-            [tenantId, seen]
+            [tenantId, seen, baseRevision, revisi]
           );
           retired = r.rows.length;
         }
 
-        return { tenantId, upserted, retired };
+        /*
+         * `revision` dikembalikan supaya perangkat menyimpannya dan mengirimnya
+         * kembali sebagai baseRevision berikutnya. Tanpa langkah itu perangkat
+         * selamanya mengirim 0 dan penjaga di atas tidak pernah menyala.
+         */
+        return { tenantId, upserted, retired, revision: revisi, konflik };
       });
 
       res.json({ ok: true, ...out });

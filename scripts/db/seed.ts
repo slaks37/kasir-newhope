@@ -14,7 +14,10 @@
  */
 
 import 'dotenv/config';
+import { createHash } from 'node:crypto';
 import pg from 'pg';
+import { SAAS_PLANS } from '../../src/data/saasPlans';
+import { pastikanPaket } from '../../services/billing/store';
 
 /**
  * Seeder terhubung lewat jaringan seperti service lain, BUKAN dengan membuka
@@ -138,16 +141,28 @@ type Sector = keyof typeof CATALOG;
  * `owner` menentukan business_id (`${owner}_${sector}`). Dua baris dengan owner
  * yang sama adalah SATU pemilik yang menjalankan dua usaha berbeda.
  */
-const MERCHANTS: Array<{ owner: string; sector: Sector; name: string; days: number; perDay: [number, number] }> = [
-  { owner: 'usr-budi',  sector: 'FNB',        name: 'Kopi Senja Kemang',        days: 60, perDay: [8, 22] },
-  { owner: 'usr-budi',  sector: 'LAUNDRY',    name: 'Senja Laundry Kemang',     days: 60, perDay: [4, 12] },
-  { owner: 'usr-siti',  sector: 'RETAIL',     name: 'Toko Berkah Siti',         days: 60, perDay: [10, 26] },
-  { owner: 'usr-agus',  sector: 'CARWASH',    name: 'Agus Auto Wash',           days: 45, perDay: [3, 11] },
-  { owner: 'usr-rina',  sector: 'BARBERSHOP', name: 'Rina Beauty Lounge',       days: 38, perDay: [4, 14] },
+/**
+ * `tier` menunjuk ke `tier_level` di katalog paket (src/data/saasPlans.ts):
+ * 1 = Free, 2 = Plus, 3 = Pro. Sengaja BERAGAM, bukan semuanya tier tertinggi.
+ *
+ * Kalau semua merchant contoh memakai Pro, tidak ada satu pun batas paket yang
+ * pernah tersentuh oleh data demo — batas produk, batas outlet, dan kuota AI
+ * hanya akan ketahuan rusak di produksi, pada merchant Free yang justru paling
+ * banyak jumlahnya.
+ */
+const MERCHANTS: Array<{
+  owner: string; sector: Sector; name: string;
+  days: number; perDay: [number, number]; tier: 1 | 2 | 3;
+}> = [
+  { owner: 'usr-budi',  sector: 'FNB',        name: 'Kopi Senja Kemang',        days: 60, perDay: [8, 22], tier: 3 },
+  { owner: 'usr-budi',  sector: 'LAUNDRY',    name: 'Senja Laundry Kemang',     days: 60, perDay: [4, 12], tier: 2 },
+  { owner: 'usr-siti',  sector: 'RETAIL',     name: 'Toko Berkah Siti',         days: 60, perDay: [10, 26], tier: 3 },
+  { owner: 'usr-agus',  sector: 'CARWASH',    name: 'Agus Auto Wash',           days: 45, perDay: [3, 11], tier: 2 },
+  { owner: 'usr-rina',  sector: 'BARBERSHOP', name: 'Rina Beauty Lounge',       days: 38, perDay: [4, 14], tier: 1 },
   // Merchant yang berhenti berjualan 26 hari lalu — bahan uji skor churn.
   // days harus melampaui ambang vakum di bawah, kalau tidak SEMUA harinya
   // terlewat dan merchant ini tidak punya transaksi sama sekali.
-  { owner: 'usr-doni',  sector: 'FNB',        name: 'Warung Doni (Vakum)',      days: 60, perDay: [2, 6] },
+  { owner: 'usr-doni',  sector: 'FNB',        name: 'Warung Doni (Vakum)',      days: 60, perDay: [2, 6], tier: 2 },
 ];
 
 const STAFF_BY_SECTOR: Record<Sector, string[]> = {
@@ -189,6 +204,18 @@ async function alreadySeeded(db: Db) {
  * Menyaring lebih dulu membuat seed tetap jalan setelah migrasi berikutnya
  * memindahkan atau membuang tabel lagi, tanpa harus menyunting berkas ini.
  */
+/**
+ * PIN contoh `0000`, ter-hash dengan format yang sama seperti aplikasi
+ * (`sha256$<salt>$<sha256(pin:salt)>`, lihat src/lib/auth/pinSecurity.ts).
+ *
+ * Ditulis tetap, bukan diacak, supaya data contoh bisa direproduksi. Ini
+ * HANYA untuk seed pengembangan — merchant sungguhan menetapkan PIN-nya lewat
+ * POST /api/v1/sync/staff, dan PIN apa adanya tidak pernah sampai ke server.
+ */
+const PIN_HASH_CONTOH =
+  'sha256$00112233445566778899aabbccddeeff$' +
+  createHash('sha256').update('0000:00112233445566778899aabbccddeeff').digest('hex');
+
 async function wipe(db: Db) {
   // Urutan mengikuti arah foreign key: yang menunjuk lebih dulu, yang ditunjuk
   // belakangan. CASCADE menutup sisanya.
@@ -251,6 +278,21 @@ async function main() {
     await wipe(db);
   }
 
+  /*
+   * Katalog paket, dari SUMBER YANG SAMA dengan yang dipakai billing-service
+   * saat menyala. Seeder tidak boleh menuliskan harganya sendiri: seed yang
+   * memasang harga versinya sendiri adalah cara paling halus untuk membuat
+   * data uji tidak lagi mewakili produksi.
+   *
+   * Sebelum ini seeder MENGANDALKAN billing-service pernah dijalankan lebih
+   * dulu. Kalau belum, `billing.plans` kosong, `SELECT ... LIMIT 1` tidak
+   * mengembalikan baris, dan blok langganan dilewati diam-diam — hasilnya
+   * enam merchant tanpa satu pun langganan, dan seluruh alur billing tidak
+   * pernah tersentuh data demo. Persis itu yang terjadi.
+   */
+  await pastikanPaket(db, SAAS_PLANS);
+  console.log(`  paket langganan: ${SAAS_PLANS.length} tier`);
+
   const now = Date.now();
   let txnTotal = 0;
   let itemTotal = 0;
@@ -274,17 +316,52 @@ async function main() {
     );
     const tenantId: string = tRows[0].id;
 
-    // Staf — terpisah per sektor, persis seperti di aplikasi.
+    /*
+     * MODEL B: TENANT -> MERCHANT -> OUTLET.
+     *
+     * Seed ini ditulis sebelum migrasi 0015 memecah hierarkinya, dan sempat
+     * berhenti bekerja sama sekali: `pos.products.merchant_id` dan `outlet_id`
+     * kini wajib, dan `users` sudah pindah ke `internal.users`. Bentuk di bawah
+     * mengikuti jalur yang sama persis dengan `services/pos/sync.ts`, supaya
+     * data contoh tidak pernah berbeda bentuk dari data sungguhan.
+     */
+    const { rows: mRows } = await db.query(
+      `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+       VALUES (uuidv7(), $1, $2, $3, $4) RETURNING id`,
+      [tenantId, m.name, m.sector, businessId]
+    );
+    const merchantId: string = mRows[0].id;
+
+    const { rows: oRows } = await db.query(
+      `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
+       VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
+      [tenantId, merchantId, `${m.name} (Cabang Utama)`]
+    );
+    const outletId: string = oRows[0].id;
+
+    // Staf — di internal.users + internal.memberships, bukan lagi pos.users.
+    // PIN disimpan sebagai hash; lihat migrasi 0042.
     const staffIds: Array<{ id: string; name: string; role: string }> = [];
     const names = STAFF_BY_SECTOR[m.sector];
     for (let i = 0; i < names.length; i++) {
       const role = i === 0 ? 'MANAGER' : 'CASHIER';
+      const ref = `${m.owner}.${m.sector.toLowerCase()}.${i}`;
       const { rows } = await db.query(
-        `INSERT INTO users (id, tenant_id, name, username, pin, role)
-         VALUES (uuidv7(), $1, $2, $3, $4, $5) RETURNING id`,
-        [tenantId, names[i], `${m.owner}.${m.sector.toLowerCase()}.${i}`, '0000', role]
+        `INSERT INTO internal.users (id, email, full_name)
+         VALUES (uuidv7(), $1, $2)
+         ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
+         RETURNING id`,
+        [`${ref}@${tenantId}.pos.local`, names[i]]
       );
-      staffIds.push({ id: rows[0].id, name: names[i], role });
+      const userId: string = rows[0].id;
+      await db.query(
+        `INSERT INTO internal.memberships
+           (id, user_id, tenant_id, merchant_id, scope_type, role, external_ref, display_name, pin_hash)
+         VALUES (uuidv7(), $1, $2, $3, 'MERCHANT', $4, $5, $6, $7)
+         ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL DO NOTHING`,
+        [userId, tenantId, merchantId, role, ref, names[i], PIN_HASH_CONTOH]
+      );
+      staffIds.push({ id: userId, name: names[i], role });
     }
 
     // Katalog produk — juga terpisah per sektor.
@@ -293,13 +370,18 @@ async function main() {
     }> = [];
     for (const [name, category, price, cost, desc] of cat.items) {
       const { rows } = await db.query(
-        `INSERT INTO products (id, tenant_id, name, sku, price, cost_price, is_available,
+        // `stock` sudah tidak ada di pos.products sejak domain inventori
+        // dipisah (0027). Stok kini milik pos.inventory_balances.
+        `INSERT INTO pos.products (id, tenant_id, merchant_id, outlet_id, name, sku,
+                               price, cost_price, is_available,
                                business_sector, business_id, category_name, description,
-                               stock, min_stock_alert, unit, catalog_synced_at)
-         VALUES (uuidv7(), $1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, $10, $11, $12,
+                               unit, catalog_synced_at)
+         VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, $10, $11, $12,
                  CURRENT_TIMESTAMP) RETURNING id`,
         [
           tenantId,
+          merchantId,
+          outletId,
           name,
           `${m.sector.slice(0, 3)}-${name.replace(/[^A-Za-z]/g, '').slice(0, 6).toUpperCase()}`,
           price,
@@ -308,8 +390,6 @@ async function main() {
           businessId,
           category,
           desc,
-          between(0, 80),
-          10,
           m.sector === 'LAUNDRY' ? 'kg' : 'pcs',
         ]
       );
@@ -317,10 +397,13 @@ async function main() {
     }
 
     // Langganan.
-    const { rows: planRows } = await db.query(`SELECT id FROM plans ORDER BY tier_level DESC LIMIT 1`);
+    const { rows: planRows } = await db.query(
+      `SELECT id FROM billing.plans WHERE tier_level = $1 LIMIT 1`,
+      [m.tier]
+    );
     if (planRows.length) {
       await db.query(
-        `INSERT INTO subscriptions (id, tenant_id, plan_id, status,
+        `INSERT INTO billing.subscriptions (id, tenant_id, plan_id, status,
                                     current_period_start, current_period_end)
          VALUES (uuidv7(), $1, $2, $3,
                  CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')`,
@@ -358,16 +441,24 @@ async function main() {
         const appModule = pickOne(cat.modules);
 
         const { rows: xRows } = await db.query(
-          `INSERT INTO transactions
-             (id, tenant_id, cashier_user_id, subtotal, discount_amount, tax_amount,
-              total_amount, payment_method, payment_status, business_sector, business_id,
-              app_module, order_type, invoice_number, created_at)
-           VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'COMPLETED', $8, $9, $10, $11, $12,
-                   (CURRENT_DATE - ($13::int))::timestamptz
-                     + ($14::int || ' hours')::interval + ($15::int || ' minutes')::interval)
+          // order_status = 'COMPLETED' adalah yang dibaca contract.merchant_revenue;
+          // payment_status di tabel ini warisan sebelum 0020 memisahkan pembayaran.
+          `INSERT INTO pos.transactions
+             (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal,
+              discount_amount, tax_amount, service_charge_amount,
+              total_amount, payment_method, payment_status, order_status,
+              business_sector, business_id, app_module, order_type, invoice_number,
+              business_date, completed_at, created_at)
+           VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, 'PAID', 'COMPLETED',
+                   $10, $11, $12, $13, $14,
+                   (CURRENT_DATE - ($15::int))::date,
+                   (CURRENT_DATE - ($15::int))::timestamptz
+                     + ($16::int || ' hours')::interval + ($17::int || ' minutes')::interval,
+                   (CURRENT_DATE - ($15::int))::timestamptz
+                     + ($16::int || ' hours')::interval + ($17::int || ' minutes')::interval)
            RETURNING id, created_at`,
           [
-            tenantId, staff.id, subtotal, discount, tax, grand,
+            tenantId, merchantId, outletId, staff.id, subtotal, discount, tax, grand,
             pickOne(PAYMENTS), m.sector, businessId, appModule,
             pickOne(cat.orderTypes),
             `INV-${m.sector.slice(0, 3)}-${String(txnTotal + 1).padStart(6, '0')}`,
@@ -379,7 +470,7 @@ async function main() {
 
         for (const l of lines) {
           await db.query(
-            `INSERT INTO transaction_items
+            `INSERT INTO pos.transaction_items
                (id, transaction_id, tenant_id, product_id, product_name, unit_price,
                 quantity, total_price, business_sector, category_name, unit_cost,
                 product_description)
@@ -394,12 +485,12 @@ async function main() {
         // supaya log tidak menjadi salinan tabel transaksi.
         if (rnd() < 0.25) {
           await db.query(
-            `INSERT INTO merchant_activity_log
+            `INSERT INTO pos.merchant_activity_log
                (merchant_id, tenant_id, business_sector, business_id, app_module,
                 event_type, severity, actor_user_id, actor_name, actor_role,
                 transaction_id, amount_idr, summary, detail, occurred_at)
              VALUES ($1, $1, $2, $3, $4, 'SALE', 'INFO', $5, $6, $7, $8, $9, $10, $11::jsonb,
-                     (SELECT created_at FROM transactions WHERE id = $8))`,
+                     (SELECT created_at FROM pos.transactions WHERE id = $8))`,
             [
               tenantId, m.sector, businessId, appModule, staff.id, staff.name, staff.role,
               txnId, grand,
@@ -428,7 +519,7 @@ async function main() {
     for (const [type, mod, sev, summary, detail] of events) {
       const staff = pickOne(staffIds);
       await db.query(
-        `INSERT INTO merchant_activity_log
+        `INSERT INTO pos.merchant_activity_log
            (merchant_id, tenant_id, business_sector, business_id, app_module,
             event_type, severity, actor_user_id, actor_name, actor_role,
             summary, detail, occurred_at)
