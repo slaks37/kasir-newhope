@@ -28,7 +28,8 @@
     "start:pos": "node dist/services/pos/index.js",
     "start:ai": "node dist/services/ai/index.js",
     "start:billing": "node dist/services/billing/index.js",
-    "start:backoffice": "node dist/services/backoffice/index.js"
+    "start:backoffice": "node dist/services/backoffice/index.js",
+    "audit:prod": "node scripts/dev/audit/run-all.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

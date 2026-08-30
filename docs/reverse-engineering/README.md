@@ -13,6 +13,7 @@ Dibuat dengan empat teknik yang saling melengkapi:
 | **Automated Code Visualization** | Call graph, DFD, flowchart, state machine | [03](03-alur-proses.md) |
 | **Codebase Auditing & Architecture Discovery** | Pola desain, celah keamanan, drift dokumentasi | [05](05-audit-temuan.md) |
 | **Pelaksanaan perbaikan** | Apa yang diperbaiki, buktinya, dan apa yang sengaja ditunda | [06](06-perbaikan.md) |
+| **Kesiapan produksi** | 15 area operasional POS — idempotensi, konkurensi, ACID, RBAC, peripheral, beban | [07](07-kesiapan-produksi.md) |
 
 ---
 
