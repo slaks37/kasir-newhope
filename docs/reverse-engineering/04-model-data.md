@@ -7,7 +7,14 @@ skema.
 
 > Dokumen `docs/erd.md` yang ada menyebut *"24 tabel dan 8 view"*. Angka itu
 > benar untuk migrasi 0001–0006; sejak 0009 dan seterusnya jumlahnya menjadi
-> **±58 tabel dan 29 view kontrak**. Lihat T-12.
+> **±68 tabel dan 29 view kontrak** — diverifikasi dengan menjalankan seluruh
+> migrasi, bukan dihitung dari DDL saja.
+>
+> **Catatan pasca-perbaikan.** Saat pertama dijalankan, database hanya berisi
+> **25** view: empat di antaranya hilang tanpa suara lewat `DROP ... CASCADE`
+> di migrasi 0020 dan 0023/0024. Migrasi `0040` memulihkannya, dan
+> `npm run hygiene` kini menolak drift jumlah view. Lihat
+> [06-perbaikan.md](06-perbaikan.md).
 
 ---
 
@@ -157,7 +164,7 @@ graph TB
 |---|---|
 | **`pos.tenants`** | Dibuat 0009 (dari `public.tenants`). **Tidak pernah di-DROP.** Tidak pernah ditulis lagi setelah 0014. |
 | **`internal.tenants`** | Dibuat 0014, disempurnakan 0015. Satu-satunya tabel yang ditulis `sync.ts`. |
-| **Menunjuk `pos.tenants`** | `billing.subscriptions` · `billing.invoices` (0011:45,53) · `internal.memberships` (0013:38) · `ai.merchant_ai_credits`, `daily_merchant_insights`, `merchant_targets`, `merchant_health_logs`, `feature_usage_events` (0006:34-46, lewat `REFERENCES tenants(id)` tanpa prefiks) |
+| **Menunjuk `pos.tenants`** | **23 foreign key** — jauh lebih banyak daripada yang terbaca dari migrasi. Selain langganan, faktur, keanggotaan, dan kredit AI, termasuk juga **`pos.transactions`, `pos.products`, dan `pos.sync_receipts`**. Sebagian dipasang loop dinamis di 0006 yang menyebut nama tabel dari array, sehingga tidak muncul sebagai `REFERENCES` literal yang bisa di-grep. |
 | **Menunjuk `internal.tenants`** | ±28 tabel dari 0018 sampai 0034 |
 | **Yang menjembatani** | Hanya penyalinan satu kali di `0014:41-56`. Tidak ada trigger, tidak ada view, tidak ada penulisan ganda. |
 
@@ -171,7 +178,12 @@ Konsekuensinya bisa dilacak sampai ke kode yang menanganinya:
 
 Kedua penanganan itu benar sebagai perlindungan, tapi keduanya menangani
 **gejala**. Akar masalahnya adalah FK yang masih menunjuk tabel yang sudah
-ditinggalkan. Lihat **T-09**.
+ditinggalkan.
+
+> **Sudah diperbaiki** oleh migrasi `0037` (tenant) dan `0039` (users, split-brain
+> kedua dengan pola identik). Pada database bersih, sebelum perbaikan, SELURUH
+> jalur tulis gagal `23503` — sistem tidak bisa menulis satu baris pun. Lihat
+> [06-perbaikan.md](06-perbaikan.md).
 
 ---
 

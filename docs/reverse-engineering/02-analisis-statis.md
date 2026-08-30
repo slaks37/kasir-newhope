@@ -20,7 +20,7 @@ node docs/reverse-engineering/tools/endpoint-map.mjs
 |---|---:|---:|---:|
 | `src/components` | 32 | 17.210 | 30,0 % |
 | `src/lib` | 13 | 8.553 | 14,9 % |
-| `migrations` | 35 | 7.321 | 12,8 % |
+| `migrations` | 41 | 8.200 | 13,9 % |
 | `src/admin` | 13 | 5.537 | 9,7 % |
 | `scripts` | 52 | 5.055 | 8,8 % |
 | `src/context` | 3 | 2.633 | 4,6 % |

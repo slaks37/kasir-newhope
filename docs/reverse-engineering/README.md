@@ -12,6 +12,7 @@ Dibuat dengan empat teknik yang saling melengkapi:
 | **Static Code Analysis** | Peta modul, graf dependensi, metrik, kode mati | [02](02-analisis-statis.md) |
 | **Automated Code Visualization** | Call graph, DFD, flowchart, state machine | [03](03-alur-proses.md) |
 | **Codebase Auditing & Architecture Discovery** | Pola desain, celah keamanan, drift dokumentasi | [05](05-audit-temuan.md) |
+| **Pelaksanaan perbaikan** | Apa yang diperbaiki, buktinya, dan apa yang sengaja ditunda | [06](06-perbaikan.md) |
 
 ---
 
@@ -39,8 +40,16 @@ tersebar di 162 berkas TypeScript/JavaScript dan 35 migrasi SQL.
 
 ### Yang perlu perhatian
 
-Enam temuan berdampak tertinggi dari **15 yang tercatat**, diurutkan menurut
-dampak — register lengkapnya di [05-audit-temuan.md](05-audit-temuan.md):
+> **Status: sudah diperbaiki.** 20 dari 21 temuan selesai dan diverifikasi;
+> satu ditunda dengan alasan. Enam temuan tambahan (T-16…T-21) baru muncul
+> ketika perbaikannya diuji dengan menjalankan sistemnya — tidak satu pun
+> terlihat dari pembacaan kode. Lihat [06-perbaikan.md](06-perbaikan.md).
+>
+> Tabel di bawah menggambarkan keadaan **sebelum** perbaikan, dan sengaja
+> dipertahankan apa adanya sebagai catatan temuan.
+
+Enam temuan berdampak tertinggi dari **15 yang tercatat saat itu**, diurutkan
+menurut dampak — register lengkapnya di [05-audit-temuan.md](05-audit-temuan.md):
 
 | # | Temuan | Dampak |
 |---|---|---|
