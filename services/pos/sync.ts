@@ -1078,4 +1078,115 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
   });
+
+  /**
+   * GET /api/v1/reports/orders
+   *
+   * Riwayat transaksi dari SERVER, untuk layar Laporan.
+   *
+   * KENAPA ENDPOINT INI ADA.
+   *
+   * Aplikasi kasir menyimpan order di localStorage dan sengaja memangkasnya
+   * ke 50 terbaru (POSContext) — batas 5 MB localStorage tidak muat sebulan
+   * penjualan, dan JSON.stringify seluruh riwayat pada setiap transaksi akan
+   * menahan kasir di depan pelanggan.
+   *
+   * Pemangkasan itu benar untuk penyimpanan, dan menjadi salah begitu layar
+   * Laporan hanya membaca state lokal. Sesudah muat ulang halaman, filter
+   * "Bulan Ini" menjumlahkan paling banyak 50 transaksi lalu menampilkan
+   * hasilnya sebagai omzet bulan itu. Tidak ada tanda apa pun bahwa angkanya
+   * potongan — merchant membaca omzet yang lebih kecil dari yang sebenarnya
+   * dan tidak punya cara tahu.
+   *
+   * Datanya sendiri tidak pernah hilang: antrian sinkronisasi sudah
+   * mengirimnya. Yang belum ada adalah jalan pulangnya.
+   *
+   * Rentang tanggal WAJIB dan dibatasi 400 hari. Laporan tanpa batas rentang
+   * pada merchant yang ramai berarti satu permintaan menarik ratusan ribu
+   * baris; batasnya di sini supaya kegagalannya jelas dan lebih awal, bukan
+   * berupa layar yang menggantung.
+   */
+  app.get('/api/v1/reports/orders', async (req, res) => {
+    const businessId = str(req.query.businessId, 96);
+    if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) {
+      return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+    }
+
+    const dari = str(req.query.from, 32);
+    const sampai = str(req.query.to, 32);
+    const tDari = dari ? Date.parse(dari) : NaN;
+    const tSampai = sampai ? Date.parse(sampai) : NaN;
+    if (!Number.isFinite(tDari) || !Number.isFinite(tSampai) || tSampai < tDari) {
+      return res.status(400).json({ ok: false, error: 'BAD_RANGE' });
+    }
+    if (tSampai - tDari > 400 * 86_400_000) {
+      return res.status(413).json({ ok: false, error: 'RANGE_TOO_LARGE' });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 20_000);
+
+    const t = await db.query(`SELECT id FROM internal.tenants WHERE external_ref = $1`, [businessId]);
+    if (!t.rows.length) return res.json({ ok: true, synced: false, orders: [] });
+    const tenantId = t.rows[0].id;
+
+    /*
+     * Dibaca lewat `contract.transaction_log`, bukan langsung dari
+     * `pos.transactions`. Itulah gunanya skema contract: nama kasir sudah
+     * ter-join dari internal.users di sana, jadi endpoint ini tidak perlu tahu
+     * bahwa identitas hidup di skema lain — dan tidak ikut rusak kalau
+     * tempatnya pindah lagi.
+     *
+     * `client_txn_id` tidak ada di view itu dan memang tidak perlu: view
+     * memakai `invoice_number`, yang diisi dari `clientTxnId` yang sama oleh
+     * jalur sinkronisasi (`orderToPayload` mengirim keduanya dari `order.id`).
+     *
+     * Item diambil sebagai JSON teragregasi dalam satu kueri, bukan satu kueri
+     * per transaksi. Bentuk kedua itu terlihat baik-baik saja pada data demo
+     * dan berubah menjadi ribuan perjalanan bolak-balik pada merchant
+     * sungguhan.
+     */
+    const { rows } = await db.query(
+      `SELECT x.id,
+              x.invoice_number       AS receipt_number,
+              x.invoice_number       AS client_txn_id,
+              x.created_at,
+              x.subtotal, x.discount_amount, x.tax_amount, x.service_charge_amount,
+              x.total_amount, x.payment_method, x.payment_status, x.order_status,
+              x.order_type, x.cashier_name, x.business_sector,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                         'name',     i.product_name,
+                         'qty',      i.quantity,
+                         'price',    i.unit_price,
+                         'total',    i.total_price
+                       ) ORDER BY i.id)
+                  FROM pos.transaction_items i
+                 WHERE i.transaction_id = x.id
+              ), '[]'::json) AS items
+         FROM contract.transaction_log x
+        WHERE x.tenant_id = $1
+          AND x.business_id = $2
+          AND x.created_at >= $3::timestamptz
+          AND x.created_at <= $4::timestamptz
+        ORDER BY x.created_at DESC
+        LIMIT $5`,
+      [tenantId, businessId, new Date(tDari).toISOString(), new Date(tSampai).toISOString(), limit]
+    );
+
+    /*
+     * `terpotong` dilaporkan APA ADANYA. Layar yang menampilkan sebagian data
+     * sebagai kalau itu keseluruhan adalah persis cacat yang sedang diperbaiki
+     * endpoint ini; mengulanginya di sini akan konyol.
+     */
+    res.json({
+      ok: true,
+      synced: true,
+      terpotong: rows.length >= limit,
+      total: rows.length,
+      orders: rows,
+    });
+  });
 }

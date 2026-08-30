@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ambilRiwayat, type HasilRiwayat } from '../../lib/sync/riwayat';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
@@ -62,6 +63,7 @@ import {
 export const ReportsDashboard: React.FC = () => {
   const {
     orders,
+    tenant,
     products,
     shift,
     shiftHistory,
@@ -103,6 +105,38 @@ export const ReportsDashboard: React.FC = () => {
   const [showEndShiftModal, setShowEndShiftModal] = useState(false);
   const [actualCashInput, setActualCashInput] = useState<string>(String(shift.expectedCash || 0));
   const [shiftSummary, setShiftSummary] = useState<any>(null);
+
+  /*
+   * RIWAYAT DARI SERVER.
+   *
+   * `orders` dari konteks hanya memuat apa yang tersisa di localStorage, yang
+   * sengaja dipangkas ke 50 terbaru. Untuk "Hari Ini" itu hampir selalu cukup
+   * dan jawabannya harus instan, jadi rentang itu tetap dilayani state lokal.
+   *
+   * Untuk rentang yang lebih panjang, state lokal BUKAN jawaban yang benar:
+   * sesudah muat ulang halaman ia berisi 50 baris, dan menjumlahkannya sebagai
+   * omzet sebulan menghasilkan angka yang salah tanpa satu pun tanda. Rentang
+   * itu diambil dari server dan digabung dengan yang lokal (transaksi yang
+   * masih mengantri belum ada di server).
+   */
+  const [riwayat, setRiwayat] = useState<HasilRiwayat | null>(null);
+  const [memuatRiwayat, setMemuatRiwayat] = useState(false);
+
+  useEffect(() => {
+    if (dateFilter === 'today') { setRiwayat(null); return; }
+
+    let dibatalkan = false;
+    setMemuatRiwayat(true);
+    void ambilRiwayat(tenant.businessId, dateFilter, orders).then((h) => {
+      // Filter bisa berubah sebelum jawaban datang. Tanpa penjaga ini, jawaban
+      // untuk "Bulan Ini" bisa mendarat di layar yang sudah pindah ke "Minggu".
+      if (!dibatalkan) { setRiwayat(h); setMemuatRiwayat(false); }
+    });
+    return () => { dibatalkan = true; };
+  }, [dateFilter, tenant.businessId, orders]);
+
+  /** Sumber order untuk seluruh perhitungan di bawah. */
+  const sumberOrders = riwayat?.orders ?? orders;
 
   // 1. TODAY'S SPECIAL METRICS (Real-time Live Omzet & Cash Flow)
   const todayMetrics = useMemo(() => {
@@ -182,7 +216,7 @@ export const ReportsDashboard: React.FC = () => {
 
   // 2. Filtered orders based on selected period and query
   const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
+    return sumberOrders.filter((o) => {
       if (o.status !== 'COMPLETED') return false;
       const orderDate = new Date(o.date);
       const now = new Date();
@@ -213,7 +247,7 @@ export const ReportsDashboard: React.FC = () => {
 
       return true;
     });
-  }, [orders, dateFilter, selectedPaymentMethod, searchQuery]);
+  }, [sumberOrders, dateFilter, selectedPaymentMethod, searchQuery]);
 
   const dateFilterLabel = useMemo(() => {
     if (dateFilter === 'today') return 'Hari Ini';
@@ -916,7 +950,32 @@ export const ReportsDashboard: React.FC = () => {
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Menampilkan {filteredOrders.length} transaksi selesai pada periode {dateFilterLabel}
+                  {memuatRiwayat && <span className="ml-1 text-slate-400">• memuat riwayat server…</span>}
                 </p>
+                {/*
+                  * Laporan yang tidak lengkap HARUS mengatakannya.
+                  *
+                  * Selama layar ini hanya membaca state lokal, filter "Bulan
+                  * Ini" menampilkan paling banyak 50 transaksi sebagai kalau
+                  * itu omzet sebulan penuh — angka yang salah, tanpa satu pun
+                  * tanda. Sekarang datanya diambil dari server; kalau server
+                  * tidak terjangkau atau hasilnya terpotong, itu dikatakan di
+                  * sini alih-alih dibiarkan terlihat seperti laporan yang
+                  * baik-baik saja.
+                  */}
+                {riwayat && !riwayat.dariServer && (
+                  <p className="text-xs font-bold text-amber-700 mt-1">
+                    Hanya data di perangkat ini ({riwayat.error}). Transaksi lama yang sudah
+                    tersinkron belum ikut terhitung — angka di bawah bisa lebih kecil dari
+                    omzet sebenarnya.
+                  </p>
+                )}
+                {riwayat?.terpotong && (
+                  <p className="text-xs font-bold text-amber-700 mt-1">
+                    Riwayat dipotong pada batas baris server. Persempit rentang tanggalnya
+                    untuk angka yang lengkap.
+                  </p>
+                )}
               </div>
 
               {/* Filters */}
