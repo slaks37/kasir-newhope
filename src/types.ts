@@ -364,6 +364,16 @@ export interface StoreSettings {
   businessSector?: BusinessSector;
   autoPrintReceipt: boolean;
   receiptPaperSize?: '58mm' | '80mm';
+  /**
+   * Jalur ke printer. 'browser' adalah dialog cetak peramban — SELALU tersedia,
+   * tapi bukan printer termal: ia tidak memotong kertas dan tidak membuka laci
+   * kasir. Lihat src/lib/peripheral/transport.ts.
+   */
+  printerJalur?: 'bluetooth' | 'usb' | 'lan' | 'browser';
+  /** Alamat jembatan HTTP ke printer LAN. Peramban tidak bisa membuka port 9100 langsung. */
+  printerLanUrl?: string;
+  /** Kirim pulsa pembuka laci kasir bersama struk tunai. */
+  bukaLaciSaatTunai?: boolean;
   loyaltyEarnRate: number; // Rp 10.000 per 1 point
   loyaltyRedeemRate: number; // 1 point = Rp 100 discount
   /**

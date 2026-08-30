@@ -2,6 +2,9 @@ import React from 'react';
 import { Order, StoreSettings } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { Printer, Share2, CheckCircle2, Download, ShoppingBag, X } from 'lucide-react';
+import { bangunStruk } from '../../lib/peripheral/escpos';
+import { Spooler } from '../../lib/peripheral/spooler';
+import { pilihJalur } from '../../lib/peripheral/transport';
 
 interface ReceiptModalProps {
   order: Order;
@@ -12,18 +15,89 @@ interface ReceiptModalProps {
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onClose }) => {
   const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.receiptPaperSize || '80mm');
 
+  const [statusCetak, setStatusCetak] = React.useState<string | null>(null);
+
+  /**
+   * MENCETAK.
+   *
+   * Sebelum ini isinya satu baris: `window.print()`. Itu dialog cetak
+   * peramban — ia tidak memotong kertas, tidak membuka laci kasir, dan
+   * hasilnya tidak pernah diperiksa. Kalau printer mati, kasir tetap melihat
+   * "Pembayaran Sukses" dan tidak ada yang tahu strukmya tidak keluar.
+   *
+   * Sekarang strukmya dibangun sebagai byte ESC/POS lalu masuk ANTRIAN, yang
+   * punya batas waktu dan percobaan ulang (src/lib/peripheral/spooler.ts).
+   * Kegagalan tetap kegagalan, tapi ia terlihat dan bisa dicetak ulang.
+   *
+   * Jalur 'browser' tetap ada dan tetap dipakai sebagai cadangan — bukan
+   * karena ia setara, melainkan karena struk lewat dialog lebih baik daripada
+   * tidak ada struk sama sekali.
+   */
+  const cetak = React.useCallback(async () => {
+    setStatusCetak('menyiapkan…');
+    const jalurPilihan = settings.printerJalur || 'browser';
+
+    // Laci hanya dibuka untuk pembayaran TUNAI. Membuka laci pada pembayaran
+    // QRIS atau kartu memberi setiap staf alasan yang sah untuk membukanya
+    // kapan saja, dan itu meniadakan gunanya laci terkunci.
+    const bukaLaci = settings.bukaLaciSaatTunai !== false && order.paymentMethod === 'CASH';
+
+    const bytes = bangunStruk(
+      {
+        namaToko: settings.storeName,
+        alamat: settings.address,
+        telepon: settings.phone,
+        nomorStruk: order.id,
+        tanggal: formatDateTime(order.date),
+        kasir: order.cashierName,
+        items: order.items.map((i) => ({
+          nama: i.name,
+          jumlah: i.quantity,
+          hargaSatuan: i.unitPrice,
+          total: i.totalPrice,
+        })),
+        subtotal: order.subtotal,
+        diskon: order.discountTotal,
+        pajak: order.taxTotal,
+        serviceCharge: order.serviceChargeTotal || 0,
+        total: order.total,
+        metodePembayaran: order.paymentMethod,
+        tunaiDiterima: order.cashReceived,
+        kembalian: order.changeAmount,
+        catatanKaki: settings.receiptFooter,
+      },
+      paperSize,
+      bukaLaci
+    );
+
+    const { jalur, turunKe, alasan } = await pilihJalur(jalurPilihan, {
+      lanUrl: settings.printerLanUrl,
+    });
+
+    const spooler = new Spooler(jalur.kirim);
+    spooler.antre(bytes, order.id);
+    const hasil = await spooler.jalankan();
+
+    if (hasil.gagal > 0) {
+      setStatusCetak(`gagal mencetak — struk tersimpan di antrian, coba lagi setelah printer siap`);
+    } else if (turunKe) {
+      // Penurunan jalur DIKATAKAN. Merchant yang mengira laci kasirnya bekerja
+      // padahal strukmya lewat dialog peramban akan menemukan sendiri di depan
+      // pelanggan.
+      setStatusCetak(`dicetak lewat dialog peramban (${alasan}) — laci kasir tidak terbuka`);
+    } else {
+      setStatusCetak(`tercetak lewat ${jalur.nama}`);
+    }
+  }, [order, settings, paperSize]);
+
   React.useEffect(() => {
     if (settings.autoPrintReceipt) {
-      const timer = setTimeout(() => {
-        window.print();
-      }, 300);
+      const timer = setTimeout(() => { void cetak(); }, 300);
       return () => clearTimeout(timer);
     }
-  }, [settings.autoPrintReceipt]);
+  }, [settings.autoPrintReceipt, cetak]);
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => { void cetak(); };
 
   const handleShareWhatsApp = () => {
     const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nFaktur: ${order.id}\nTanggal: ${formatDateTime(
@@ -49,7 +123,20 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             <div>
               <h3 className="font-bold text-base text-slate-900 leading-tight">Pembayaran Sukses</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Struk siap dicetak (Format Termal {paperSize})</p>
+              {/*
+                * Hasil cetak DIKATAKAN, tidak diam.
+                *
+                * Sebelum ini `window.print()` dipanggil dan hasilnya tidak
+                * pernah diperiksa: kasir melihat "Pembayaran Sukses" apa pun
+                * yang terjadi pada printernya.
+                */}
+              <p className={`text-[10px] font-medium ${
+                statusCetak?.startsWith('gagal') ? 'text-red-600'
+                : statusCetak?.startsWith('dicetak lewat dialog') ? 'text-amber-700'
+                : 'text-slate-500'
+              }`}>
+                {statusCetak || `Struk siap dicetak (Format Termal ${paperSize})`}
+              </p>
             </div>
           </div>
           <div className="flex items-center space-x-2">

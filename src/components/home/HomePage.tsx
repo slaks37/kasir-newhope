@@ -594,7 +594,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     },
     {
       q: 'Apakah saya bisa menggunakan tablet, HP Android, atau laptop yang sudah saya miliki?',
-      a: 'Bisa banget! Anda tidak wajib membeli perangkat baru. New Hope POS kompatibel dengan HP Android, Tablet, iPad, Laptop/PC Windows, hingga mesin Android POS profesional (Sunmi, iMin) serta printer termal Bluetooth.',
+      a: 'Bisa banget! Anda tidak wajib membeli perangkat baru. Aplikasi kasirnya berjalan di HP Android, Tablet, iPad, Laptop/PC Windows, maupun mesin Android POS profesional (Sunmi, iMin). Satu catatan jujur soal printer: pencetakan termal langsung — potong kertas dan buka laci kasir — memakai Web Bluetooth/USB yang hanya tersedia di Chrome dan Edge. Di Safari (iPhone/iPad) struk tetap bisa dicetak, tetapi lewat dialog cetak sistem, tanpa kendali potong kertas dan laci.',
     },
     {
       q: 'Apakah paket Coba Gratis 45 Hari benar-benar tanpa biaya dan tanpa kartu kredit?',
@@ -1396,12 +1396,14 @@ export const HomePage: React.FC<HomePageProps> = ({
             <div className="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
               <Printer className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-black text-white">Sunmi & Printer Termal</h3>
+            <h3 className="text-lg font-black text-white">Sunmi &amp; Printer Termal</h3>
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Kompatibel dengan perangkat Android POS all-in-one (Sunmi/iMin), printer Bluetooth 58/80mm, dan laci kasir otomatis.
+              Perintah ESC/POS langsung ke printer Bluetooth atau USB 58/80mm — termasuk potong
+              kertas dan pulsa pembuka laci kasir. Berjalan di Chrome/Edge (Android &amp; desktop),
+              termasuk mesin Android POS all-in-one seperti Sunmi dan iMin.
             </p>
             <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30 inline-block">
-              Plug & Play
+              ESC/POS Native
             </span>
           </div>
         </div>

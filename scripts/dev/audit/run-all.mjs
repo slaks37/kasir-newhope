@@ -19,6 +19,8 @@ const probes = [
   ['Otorisasi void & idempotensi', 't-rbac.mjs'],
   ['Konflik katalog antar perangkat', 't-katalog.mjs'],
   ['Kelengkapan laporan merchant', 't-laporan.mjs'],
+  // Tidak butuh database maupun service — murni byte dan antrian.
+  ['Peripheral: ESC/POS, laci kasir, antrian cetak', 't-peripheral.ts'],
 ];
 
 let gagal = 0;

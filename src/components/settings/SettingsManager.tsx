@@ -28,6 +28,13 @@ import {
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
+import { dukungan } from '../../lib/peripheral/transport';
+
+/**
+ * Diperiksa sekali per muat halaman: hasilnya tidak berubah selama peramban
+ * yang sama masih terbuka.
+ */
+const dukunganPrinter = dukungan();
 
 export const SettingsManager: React.FC = () => {
   const {
@@ -663,9 +670,35 @@ export const SettingsManager: React.FC = () => {
                     />
                   </div>
 
-                  <div className="text-[11px] text-emerald-700 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center space-x-1.5 font-medium">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
-                    <span>Kompatibel: Printer USB, Bluetooth, LAN, Sunmi, iMin, PDF</span>
+                  {/*
+                    * Kemampuan PERAMBAN INI, bukan daftar merek printer.
+                    *
+                    * "Kompatibel: Bluetooth" yang dibaca pengguna Safari lalu
+                    * gagal menyambung akan disimpulkan sebagai aplikasi yang
+                    * rusak — padahal peramban itu memang tidak punya API-nya.
+                    * dukungan() memeriksanya sungguhan.
+                    */}
+                  <div className={`text-[11px] p-2.5 rounded-xl border flex items-start space-x-1.5 font-medium ${
+                    dukunganPrinter.bluetooth || dukunganPrinter.usb
+                      ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                      : 'text-amber-800 bg-amber-50 border-amber-200'
+                  }`}>
+                    <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                      dukunganPrinter.bluetooth || dukunganPrinter.usb ? 'text-emerald-600' : 'text-amber-600'
+                    }`} />
+                    <div className="space-y-0.5">
+                      <div>
+                        Di peramban ini: {[
+                          dukunganPrinter.bluetooth && 'Bluetooth',
+                          dukunganPrinter.usb && 'USB',
+                          'LAN (lewat jembatan)',
+                          'Dialog cetak',
+                        ].filter(Boolean).join(' • ')}
+                      </div>
+                      {dukunganPrinter.catatan.map((c) => (
+                        <div key={c} className="text-[10px] opacity-80">{c}</div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
