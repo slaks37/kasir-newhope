@@ -417,17 +417,28 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   [voidedTxnId]
                 );
                 for (const vi of voidedItems.rows) {
+                  // Kolomnya `reference_type` — lihat catatan di jalur
+                  // pengurangan stok. Bug yang sama ada di kedua tempat, jadi
+                  // pengembalian stok saat void juga tidak pernah berjalan.
+                  //
+                  // SELECT … WHERE EXISTS, bukan VALUES: kalau item itu belum
+                  // punya saldo di outlet ini, barisnya dilewati alih-alih
+                  // menggagalkan pembatalan. Void yang gagal berarti uang yang
+                  // sudah dikembalikan ke pelanggan tetap terhitung sebagai
+                  // omzet — kerusakan yang jauh lebih mahal daripada stok yang
+                  // meleset.
                   await c.query(
                     `INSERT INTO pos.inventory_transactions
                        (id, tenant_id, merchant_id, outlet_id, location_id,
-                        inventory_item_id, quantity_delta, movement_type,
+                        inventory_item_id, quantity_delta, reference_type,
                         reference_id, reason, created_at)
-                     VALUES (
-                       uuidv7(), $1, $2, $3,
-                       (SELECT location_id FROM pos.inventory_balances
-                         WHERE inventory_item_id = $5 AND outlet_id = $3 LIMIT 1),
-                       $5, $4, 'VOID_RESTORE', $6,
-                       'Pengembalian stok — transaksi dibatalkan', CURRENT_TIMESTAMP)`,
+                     SELECT
+                       uuidv7(), $1, $2, $3, ib.location_id,
+                       $5, $4::numeric, 'VOID_RESTORE', $6,
+                       'Pengembalian stok — transaksi dibatalkan', CURRENT_TIMESTAMP
+                       FROM pos.inventory_balances ib
+                      WHERE ib.inventory_item_id = $5 AND ib.outlet_id = $3
+                      LIMIT 1`,
                     [tenantId, vi.merchant_id, vi.outlet_id, vi.quantity, vi.inventory_item_id, voidedTxnId]
                   );
                 }
@@ -503,10 +514,33 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
              *    pos.transactions (L280), loop ini tidak dimasuki sama sekali
              */
             if (!isVoid) {
+              /*
+               * KOLOMNYA `reference_type`, BUKAN `movement_type`.
+               *
+               * Kode ini menulis `movement_type` — kolom yang tidak pernah ada
+               * di `pos.inventory_transactions`. Setiap penjualan produk yang
+               * terhubung ke inventory karenanya menggagalkan SELURUH batch
+               * sinkronisasi:
+               *
+               *   [sync] gagal: column "movement_type" of relation
+               *          "inventory_transactions" does not exist
+               *
+               * Artinya pengurangan stok otomatis tidak pernah sekali pun
+               * berjalan, dan transaksinya ikut hilang bersama batch yang
+               * gagal. Tidak terlihat selama produk belum dihubungkan ke item
+               * inventori, karena baris ini hanya dieksekusi kalau
+               * `inventory_item_id` terisi.
+               *
+               * `location_id` NOT NULL, dan subquery-nya bisa mengembalikan
+               * NULL bila item itu belum punya saldo di outlet ini. Karena itu
+               * ada `AND EXISTS` di bawah: lebih baik penjualannya tercatat
+               * tanpa mutasi stok daripada seluruh batch ditolak. Stok yang
+               * meleset bisa disesuaikan; transaksi yang hilang tidak.
+               */
               await c.query(
                 `INSERT INTO pos.inventory_transactions
                    (id, tenant_id, merchant_id, outlet_id, location_id,
-                    inventory_item_id, quantity_delta, movement_type,
+                    inventory_item_id, quantity_delta, reference_type,
                     reference_id, reason, created_at)
                  SELECT
                    uuidv7(), p.tenant_id, p.merchant_id, p.outlet_id,
@@ -514,14 +548,22 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                      WHERE ib.inventory_item_id = p.inventory_item_id
                        AND ib.outlet_id = p.outlet_id LIMIT 1),
                    p.inventory_item_id,
-                   -$2,
+                   -- Cast eksplisit. Tanpa itu PostgreSQL tidak bisa memilih
+                   -- operator unary minus untuk parameter yang belum bertipe:
+                   --   operator is not unique: - unknown
+                   (-1) * $2::numeric,
                    'SALE_DEDUCT',
                    $3,
                    'Penjualan POS',
                    CURRENT_TIMESTAMP
                  FROM pos.products p
                  WHERE p.id = $1
-                   AND p.inventory_item_id IS NOT NULL`,
+                   AND p.inventory_item_id IS NOT NULL
+                   AND EXISTS (
+                     SELECT 1 FROM pos.inventory_balances ib
+                      WHERE ib.inventory_item_id = p.inventory_item_id
+                        AND ib.outlet_id = p.outlet_id
+                   )`,
                 [productId, qty, txnId]
               );
             }

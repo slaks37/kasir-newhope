@@ -353,6 +353,24 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     })
   );
 
+  // Bahan mentah dan komposisinya. Kapabilitasnya sama dengan produk terjual:
+  // keduanya data katalog merchant, bukan data finansial.
+  app.get(
+    '/api/admin/raw-materials',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, ...(await repo.rawMaterials(db, req.query as repo.ListFilter)) });
+    })
+  );
+
+  app.get(
+    '/api/admin/recipes',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, ...(await repo.recipes(db, req.query as repo.ListFilter)) });
+    })
+  );
+
   /* ---------------------------------------------------------------------- */
   /* JEJAK AKTIVITAS                                                         */
   /* ---------------------------------------------------------------------- */
@@ -387,7 +405,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
                 t.name AS merchant_name
            FROM internal.internal_access_log l
            JOIN internal.internal_users u ON u.id = l.internal_user_id
-           LEFT JOIN tenants t ON t.id = l.merchant_id
+           LEFT JOIN internal.merchants t ON t.id = l.merchant_id
           ORDER BY l.accessed_at DESC
           LIMIT 200`
       );

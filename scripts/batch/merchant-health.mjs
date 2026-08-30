@@ -132,7 +132,7 @@ SELECT te.id                                    AS merchant_id,
        COALESCE(fe.payload, '{}'::jsonb)        AS feature_payload,
        s.status                                 AS subscription_status,
        COALESCE(p.price_idr, 0)                 AS mrr_idr
-  FROM tenants te
+  FROM internal.tenants te
   LEFT JOIN windowed w  ON w.merchant_id  = te.id
   LEFT JOIN recent   r  ON r.merchant_id  = te.id
   LEFT JOIN today    td ON td.merchant_id = te.id

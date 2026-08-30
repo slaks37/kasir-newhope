@@ -165,17 +165,77 @@ async function alreadySeeded(db: Db) {
   return (rows[0]?.n ?? 0) > 0;
 }
 
+/**
+ * Mengosongkan data contoh.
+ *
+ * NAMA TABEL DISEBUT LENGKAP DENGAN SKEMANYA, dan daftarnya disaring terhadap
+ * apa yang benar-benar ada. Dua alasan, keduanya ditemukan dengan cara yang
+ * mahal:
+ *
+ *   1. Nama tanpa prefiks bergantung pada search_path, dan `users` ADA DI DUA
+ *      SKEMA sekaligus (`pos.users` warisan, `internal.users` yang dipakai
+ *      sekarang). Yang mana yang terkena bergantung pada urutan search_path —
+ *      persis jenis ketidakpastian yang tidak boleh ada di perintah TRUNCATE.
+ *
+ *   2. Skema bergerak. `inventory_logs` dihapus migrasi 0027 saat domain
+ *      inventori dipisah, dan `merchant_targets` menjadi VIEW di 0016. Daftar
+ *      tetap yang menyebut keduanya membuat seluruh perintah gagal:
+ *
+ *        SEED GAGAL: relation "inventory_logs" does not exist
+ *
+ *      Artinya `npm run db:reseed` dan `npm run db:reset` — keduanya
+ *      diiklankan README — berhenti sebelum menghapus apa pun.
+ *
+ * Menyaring lebih dulu membuat seed tetap jalan setelah migrasi berikutnya
+ * memindahkan atau membuang tabel lagi, tanpa harus menyunting berkas ini.
+ */
 async function wipe(db: Db) {
-  // Urutan mengikuti arah foreign key. merchant_activity_log lebih dulu karena
-  // menunjuk transactions.
-  await db.exec(`
-    TRUNCATE merchant_activity_log, sync_receipts, transaction_items, transactions,
-             inventory_logs, product_recipes, products, ingredients,
-             merchant_health_logs, feature_usage_events, daily_merchant_insights,
-             merchant_ai_credits, merchant_targets, ai_query_logs,
-             invoices, subscriptions, users, tenants
-    RESTART IDENTITY CASCADE
-  `);
+  // Urutan mengikuti arah foreign key: yang menunjuk lebih dulu, yang ditunjuk
+  // belakangan. CASCADE menutup sisanya.
+  const kandidat = [
+    'pos.merchant_activity_log',
+    'pos.sync_receipts',
+    'pos.transaction_items',
+    'pos.payments',
+    'pos.transactions',
+    'pos.inventory_transactions',
+    'pos.inventory_balances',
+    'pos.inventory_items',
+    'pos.product_recipes',
+    'pos.products',
+    'pos.ingredients',
+    'internal.merchant_health_logs',
+    'internal.feature_usage_events',
+    'ai.daily_merchant_insights',
+    'ai.merchant_ai_credits',
+    'ai.ai_query_logs',
+    'billing.invoices',
+    'billing.subscriptions',
+    'internal.memberships',
+    'internal.outlets',
+    'internal.merchants',
+    'internal.users',
+    'internal.tenants',
+  ];
+
+  const { rows } = await db.query(
+    `SELECT format('%I.%I', table_schema, table_name) AS nama
+       FROM information_schema.tables
+      WHERE table_type = 'BASE TABLE'
+        AND format('%s.%s', table_schema, table_name) = ANY($1::text[])`,
+    [kandidat]
+  );
+
+  const ada = new Set(rows.map((r: any) => r.nama.replace(/"/g, '')));
+  const urut = kandidat.filter((t) => ada.has(t));
+
+  const hilang = kandidat.filter((t) => !ada.has(t));
+  if (hilang.length) {
+    console.log(`  (lewat, sudah tidak ada: ${hilang.join(', ')})`);
+  }
+
+  if (!urut.length) return;
+  await db.exec(`TRUNCATE ${urut.join(', ')} RESTART IDENTITY CASCADE`);
 }
 
 async function main() {
@@ -205,7 +265,7 @@ async function main() {
     // endpoint sinkronisasi maupun AI Copilot. Tenant tanpa external_ref hanya
     // terlihat di admin panel dan tidak akan pernah bisa dijangkau copilot.
     const { rows: tRows } = await db.query(
-      `INSERT INTO tenants (id, name, business_sector, is_active, created_at,
+      `INSERT INTO internal.tenants (id, name, business_sector, is_active, created_at,
                             external_ref, owner_user_ref)
        VALUES (uuidv7(), $1, $2, TRUE, CURRENT_TIMESTAMP - ($3::int || ' days')::interval,
                $4, $5)

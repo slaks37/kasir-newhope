@@ -14,8 +14,9 @@ import {
   Eye,
   Info,
 } from 'lucide-react';
-import { Card, Chip } from '../ui';
-import { SECTOR_LABEL, type Sector } from '../api';
+import { Card, Chip, Empty, ErrorBox, Loading } from '../ui';
+import { api, SECTOR_LABEL, type Sector } from '../api';
+import { useAsync } from '../ui';
 
 interface AdminUser {
   id: string;
@@ -26,6 +27,13 @@ interface AdminUser {
   status: 'ACTIVE' | 'SUSPENDED';
   createdAt: string;
 }
+
+/** Cakupan akses per role — diturunkan dari kapabilitas, bukan dikarang. */
+const ROLE_SCOPE: Record<AdminUser['role'], string> = {
+  ROLE_SUPERADMIN: 'Seluruh konsol internal, termasuk jejak akses',
+  ROLE_INTERNAL_GROWTH: 'Analitik agregat dan kesehatan merchant',
+  ROLE_INTERNAL_SUPPORT: 'Operasional merchant (wajib menyertakan alasan)',
+};
 
 interface ClientUser {
   id: string;
@@ -38,44 +46,18 @@ interface ClientUser {
   status: 'ACTIVE' | 'INACTIVE';
 }
 
-const ADMIN_USERS_DATA: AdminUser[] = [
-  {
-    id: 'adm-01',
-    fullName: 'Stefen Laksana',
-    email: 'stefenlaksana.sl@gmail.com',
-    role: 'ROLE_SUPERADMIN',
-    scope: 'Seluruh Ekosistem Platform & Database Cloud',
-    status: 'ACTIVE',
-    createdAt: '2026-08-14',
-  },
-  {
-    id: 'adm-02',
-    fullName: 'Platform Operations Root',
-    email: 'ops@newhopepos.id',
-    role: 'ROLE_SUPERADMIN',
-    scope: 'Infrastruktur Server & Gateway API',
-    status: 'ACTIVE',
-    createdAt: '2026-08-01',
-  },
-  {
-    id: 'adm-03',
-    fullName: 'Growth & Business Intelligence',
-    email: 'growth@newhopepos.id',
-    role: 'ROLE_INTERNAL_GROWTH',
-    scope: 'Analisis Metrik Agregat 5 Sektor Usaha',
-    status: 'ACTIVE',
-    createdAt: '2026-08-05',
-  },
-  {
-    id: 'adm-04',
-    fullName: 'Customer Support Lead',
-    email: 'support@newhopepos.id',
-    role: 'ROLE_INTERNAL_SUPPORT',
-    scope: 'Bantuan Merchant & Investigasi Sesi Kasir',
-    status: 'ACTIVE',
-    createdAt: '2026-08-08',
-  },
-];
+/*
+ * DAFTAR ADMIN PLATFORM DIBACA DARI SERVER.
+ *
+ * Empat akun — termasuk satu alamat pribadi — dulu ter-hardcode di berkas ini
+ * dan dirender apa adanya, sehingga layar "User Admin Platform" menampilkan
+ * daftar yang tidak ada hubungannya dengan isi `internal.internal_users`.
+ * Menambah atau mencabut staf internal di database tidak mengubah apa pun di
+ * layar ini.
+ *
+ * Sumbernya sekarang GET /api/admin/identities. Kolom yang tidak dimiliki
+ * endpoint itu (scope, createdAt) tidak dikarang — lihat catatan di bawah.
+ */
 
 function getRegisteredClientUsers(): ClientUser[] {
   try {
@@ -102,6 +84,28 @@ export default function UserManagement() {
   const [activeTab, setActiveTab] = useState<'ADMIN_USERS' | 'CLIENT_USERS'>('ADMIN_USERS');
   const [sectorFilter, setSectorFilter] = useState<string>('ALL');
   const [clientUsersList] = useState<ClientUser[]>(() => getRegisteredClientUsers());
+
+  // internal.internal_users lewat guard server — bukan konstanta di browser.
+  const { data: identData, loading: identLoading, error: identError } = useAsync(
+    () => api.identities(),
+    []
+  );
+
+  /*
+   * `scope` dan `createdAt` TIDAK ada di endpoint identities, dan sengaja tidak
+   * dikarang di sini. Yang ditampilkan hanyalah yang benar-benar diketahui:
+   * nama, email, dan role. Kolom scope diisi label role — yang memang
+   * menentukan cakupan aksesnya — bukan kalimat karangan tentang infrastruktur.
+   */
+  const adminUsers: AdminUser[] = (identData?.identities ?? []).map((i, idx) => ({
+    id: `adm-${idx + 1}`,
+    fullName: i.full_name,
+    email: i.email,
+    role: i.role,
+    scope: ROLE_SCOPE[i.role] ?? '—',
+    status: 'ACTIVE' as const,
+    createdAt: '',
+  }));
 
   const filteredClientUsers =
     sectorFilter === 'ALL'
@@ -131,7 +135,7 @@ export default function UserManagement() {
             }`}
           >
             <ShieldCheck className="w-4 h-4" />
-            <span>User Admin Platform ({ADMIN_USERS_DATA.length})</span>
+            <span>User Admin Platform ({adminUsers.length})</span>
           </button>
 
           <button
@@ -172,7 +176,7 @@ export default function UserManagement() {
         <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 text-xs space-y-2 shrink-0 w-full md:w-64">
           <div className="flex items-center justify-between text-slate-300">
             <span>Admin Platform:</span>
-            <span className="font-mono text-amber-400 font-bold">{ADMIN_USERS_DATA.length} Akun</span>
+            <span className="font-mono text-amber-400 font-bold">{adminUsers.length} Akun</span>
           </div>
           <div className="flex items-center justify-between text-slate-300">
             <span>Merchant Staf:</span>
@@ -203,6 +207,12 @@ export default function UserManagement() {
             </span>
           </div>
 
+          {identLoading && <Loading />}
+          {identError && <ErrorBox error={identError} />}
+          {!identLoading && !identError && adminUsers.length === 0 && (
+            <Empty label="Belum ada staf internal terdaftar di internal.internal_users." />
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-100/90 text-[11px] text-slate-700 font-black uppercase tracking-wider border-b border-slate-200">
@@ -211,11 +221,10 @@ export default function UserManagement() {
                   <th className="p-4">Role Platform</th>
                   <th className="p-4">Lingkup Wewenang (Scope)</th>
                   <th className="p-4">Status</th>
-                  <th className="p-4">Terdaftar</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {ADMIN_USERS_DATA.map((adm) => (
+                {adminUsers.map((adm) => (
                   <tr key={adm.id} className="hover:bg-amber-50/30 transition-colors">
                     <td className="p-4">
                       <div className="font-black text-slate-950 text-sm">{adm.fullName}</div>
@@ -243,9 +252,6 @@ export default function UserManagement() {
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                         <span>{adm.status}</span>
                       </span>
-                    </td>
-                    <td className="p-4 font-mono font-bold text-slate-600">
-                      {adm.createdAt}
                     </td>
                   </tr>
                 ))}

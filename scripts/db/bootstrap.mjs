@@ -51,7 +51,7 @@ INSERT INTO plans (id, name, tier_level, billing_cycle, price_idr, features) VAL
   ('plan-enterprise-monthly', 'Enterprise Ultra', 3, 'MONTHLY', 699000, '[]'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO tenants (id, name, business_sector, created_at) VALUES
+INSERT INTO internal.tenants (id, name, business_sector, created_at) VALUES
   (legacy_uuid('tenant-warung'),  'Warung Sehat',   'FNB',     CURRENT_TIMESTAMP - INTERVAL '120 days'),
   (legacy_uuid('tenant-kopi'),    'Kopi Senja',     'FNB',     CURRENT_TIMESTAMP - INTERVAL '90 days'),
   (legacy_uuid('tenant-laundry'), 'Laundry Bersih', 'LAUNDRY', CURRENT_TIMESTAMP - INTERVAL '200 days')
@@ -126,7 +126,7 @@ WITH agg AS (
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'), 0)  AS rev_7d,
          COALESCE(SUM(t.total_amount) FILTER (WHERE t.created_at <  CURRENT_DATE - INTERVAL '7 days'
                                                AND t.created_at >= CURRENT_DATE - INTERVAL '30 days'), 0)  AS rev_prior
-    FROM tenants te
+    FROM internal.tenants te
     LEFT JOIN transactions t
            ON t.tenant_id = te.id AND t.payment_status = 'COMPLETED'
    GROUP BY te.id

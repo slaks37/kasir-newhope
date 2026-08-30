@@ -382,6 +382,110 @@ export async function catalog(db: Db, f: ListFilter = {}) {
   };
 }
 
+/**
+ * Bahan mentah dan stoknya — `contract.stock_status`.
+ *
+ * Konsol dulu melayani tampilan ini dari konstanta di browser. Dibaca dari
+ * kontrak, angkanya menjadi angka yang sama dengan yang dilihat merchant di
+ * aplikasinya sendiri.
+ */
+export async function rawMaterials(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const w = new Where();
+  w.add((p) => `v.business_sector = ${p}`, c.sector);
+  w.add((p) => `v.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add(
+    (p) => `(v.item_name ILIKE ${p} OR v.sku ILIKE ${p} OR v.merchant_name ILIKE ${p})`,
+    c.search ? `%${c.search}%` : null
+  );
+
+  const { rows } = await db.query(
+    `SELECT v.merchant_id, v.merchant_name, v.business_sector,
+            v.outlet_name, v.location_name,
+            v.inventory_item_id, v.item_name, v.sku, v.unit, v.item_type,
+            v.cost_per_unit, v.current_stock, v.min_stock_alert,
+            v.is_low_stock, v.updated_at
+       FROM contract.stock_status v
+       ${w.sql()}
+      ORDER BY v.is_low_stock DESC, v.item_name
+      LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
+    [...w.params, c.limit, c.offset]
+  );
+
+  const { rows: agg } = await db.query(
+    `SELECT COUNT(*)::int                              AS total,
+            COUNT(*) FILTER (WHERE is_low_stock)::int  AS low_stock
+       FROM contract.stock_status v ${w.sql()}`,
+    w.params
+  );
+
+  return {
+    rows,
+    total: agg[0]?.total ?? 0,
+    lowStock: agg[0]?.low_stock ?? 0,
+    limit: c.limit,
+    offset: c.offset,
+  };
+}
+
+/**
+ * Komposisi bahan per produk — `contract.bom_explosion`.
+ *
+ * View-nya sudah rata (satu baris per komponen, dengan `bom_level` untuk resep
+ * bertingkat), jadi komponen dikelompokkan kembali per produk di sini.
+ * Mengelompokkan di SQL akan menuntut agregat JSON yang berbeda dukungannya
+ * antara PostgreSQL dan PGlite — dan jumlah barisnya kecil.
+ */
+export async function recipes(db: Db, f: ListFilter = {}) {
+  const c = cleanFilter(f);
+  const w = new Where();
+  w.add((p) => `v.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add(
+    (p) => `(v.root_product_name ILIKE ${p} OR v.component_item_name ILIKE ${p})`,
+    c.search ? `%${c.search}%` : null
+  );
+
+  const { rows } = await db.query(
+    `SELECT v.merchant_id, v.root_product_id, v.root_product_name,
+            v.recipe_id, v.recipe_name,
+            v.component_item_name, v.component_sku, v.component_item_type,
+            v.step_quantity, v.total_effective_quantity, v.unit,
+            v.wastage_percentage, v.bom_level
+       FROM contract.bom_explosion v
+       ${w.sql()}
+      ORDER BY v.root_product_name, v.bom_level, v.component_item_name
+      LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
+    [...w.params, Math.min(c.limit * 12, 2000), c.offset]
+  );
+
+  const perProduk = new Map<string, any>();
+  for (const r of rows) {
+    const kunci = String(r.root_product_id);
+    if (!perProduk.has(kunci)) {
+      perProduk.set(kunci, {
+        product_id: r.root_product_id,
+        product_name: r.root_product_name,
+        merchant_id: r.merchant_id,
+        recipe_id: r.recipe_id,
+        recipe_name: r.recipe_name,
+        ingredients: [],
+      });
+    }
+    perProduk.get(kunci).ingredients.push({
+      name: r.component_item_name,
+      sku: r.component_sku,
+      item_type: r.component_item_type,
+      quantity: r.total_effective_quantity ?? r.step_quantity,
+      unit: r.unit,
+      wastage_percentage: r.wastage_percentage,
+      bom_level: r.bom_level,
+    });
+  }
+
+  const daftar = [...perProduk.values()];
+  return { rows: daftar, total: daftar.length, limit: c.limit, offset: c.offset };
+}
+
 /* -------------------------------------------------------------------------- */
 /* JEJAK AKTIVITAS                                                             */
 /* -------------------------------------------------------------------------- */
