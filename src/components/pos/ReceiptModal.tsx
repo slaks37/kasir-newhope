@@ -2,6 +2,7 @@ import React from 'react';
 import { Order, StoreSettings } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { Printer, Share2, CheckCircle2, Download, ShoppingBag, X } from 'lucide-react';
+import { useTutupDenganEscape } from '../../lib/useTutupDenganEscape';
 import { bangunStruk } from '../../lib/peripheral/escpos';
 import { Spooler } from '../../lib/peripheral/spooler';
 import { pilihJalur } from '../../lib/peripheral/transport';
@@ -13,6 +14,7 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onClose }) => {
+  useTutupDenganEscape(onClose);
   const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.receiptPaperSize || '80mm');
 
   const [statusCetak, setStatusCetak] = React.useState<string | null>(null);
@@ -170,6 +172,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
 
             <button
               onClick={onClose}
+              aria-label="Tutup"
               className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
             >
               <X className="w-5 h-5" />

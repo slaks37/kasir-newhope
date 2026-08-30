@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTutupDenganEscape } from '../../lib/useTutupDenganEscape';
 import { usePOS } from '../../context/POSContext';
 import { Shift } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -27,6 +28,7 @@ interface ShiftManagerModalProps {
 }
 
 export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose }) => {
+  useTutupDenganEscape(onClose);
   const { shift, shiftHistory, startShift, endShift, orders } = usePOS();
 
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
@@ -100,6 +102,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
           <button
             onClick={onClose}
+            aria-label="Tutup"
             className="p-2 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-colors"
           >
             <X className="w-5 h-5" />

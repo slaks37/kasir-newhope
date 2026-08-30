@@ -13,10 +13,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onSelect }) =
   const isOutOfStock = product.stock <= 0;
   const hasVariants = (product.variants && product.variants.length > 0) || (product.modifierGroups && product.modifierGroups.length > 0);
 
+  const pilih = () => { if (!isOutOfStock) onSelect(product); };
+
+  /*
+   * Kartu produk adalah TOMBOL, bukan div yang kebetulan bisa diklik.
+   *
+   * Sebelum ini ia `<div onClick>`: tidak bisa dijangkau Tab, tidak bereaksi
+   * pada Enter atau Spasi, dan tidak diumumkan sebagai sesuatu yang bisa
+   * ditekan. Ketahuan saat menulis uji E2E, yang tidak menemukan satu pun
+   * tombol produk di layar kasir.
+   *
+   * Yang menanggung akibatnya kasir: di jam sibuk, memilih produk lewat papan
+   * ketik jauh lebih cepat daripada mengarahkan kursor, dan itu tidak mungkin
+   * dilakukan pada elemen yang tidak bisa difokus.
+   */
   return (
     <div
-      onClick={() => !isOutOfStock && onSelect(product)}
-      className={`group relative bg-white border border-slate-200/90 rounded-2xl p-3 flex flex-col justify-between transition-all duration-200 cursor-pointer hover:border-amber-400 hover:shadow-md shadow-xs ${
+      role="button"
+      tabIndex={isOutOfStock ? -1 : 0}
+      aria-disabled={isOutOfStock}
+      onClick={pilih}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pilih(); }
+      }}
+      className={`group relative bg-white border border-slate-200/90 rounded-2xl p-3 flex flex-col justify-between transition-all duration-200 cursor-pointer hover:border-amber-400 hover:shadow-md shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
         isOutOfStock ? 'opacity-60 cursor-not-allowed bg-slate-50 border-slate-200' : ''
       }`}
     >

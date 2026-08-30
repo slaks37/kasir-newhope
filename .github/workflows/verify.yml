@@ -57,3 +57,51 @@ jobs:
       # berubah, karena jawabannya tetap terlihat masuk akal saat salah.
       - name: Regresi AI Copilot
         run: npm run smoke
+
+      # Peripheral: byte ESC/POS, urutan pulsa laci kasir, dan perilaku antrian
+      # cetak saat printer menggantung atau kehabisan kertas. Tidak butuh
+      # database maupun perangkat keras.
+      - name: Peripheral dan antrian cetak
+        run: npx tsx scripts/dev/audit/t-peripheral.ts
+
+  e2e:
+    name: E2E jalur kasir
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # KENAPA TERPISAH DARI job verify.
+    #
+    # Job ini memasang peramban (~150 MB) dan menjalankan build produksi, jadi
+    # ia berukuran menit sementara verify berukuran detik. Digabung, seluruh
+    # gerbang menjadi selambat bagian yang paling lambat — dan gerbang yang
+    # lambat adalah gerbang yang cepat atau lambat dimatikan orang.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pasang Chromium
+        run: npx playwright install --with-deps chromium
+
+      # playwright.config.ts memeriksa sendiri apakah Chromium lokal ada; di
+      # runner ini tidak ada, jadi ia memakai yang baru dipasang di atas.
+      - name: Jalur kasir dari ujung ke ujung
+        run: npm run e2e
+
+      - name: Simpan jejak kalau gagal
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

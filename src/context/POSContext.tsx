@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useRef, ReactNode } from 'react';
 import {
   hitungDiskonBaris,
   hitungKembalian,
@@ -278,6 +278,30 @@ const loadScopedData = <T,>(entity: string, userId: string, sector: BusinessSect
     console.error(`Failed to load scoped data for ${entity}:`, e);
   }
   return fallback;
+};
+
+/**
+ * Menyimpan sebanyak yang muat, bukan menyerah pada percobaan pertama.
+ *
+ * `localStorage` melempar QuotaExceededError ketika penuh, dan kalau itu
+ * dibiarkan lewat sebagai kegagalan, riwayat lokal berhenti diperbarui
+ * SELAMANYA tanpa ada yang tahu — kasir terus berjualan, penyimpanannya diam.
+ *
+ * Jadi kuota yang penuh dijawab dengan menyimpan lebih sedikit: 500 baris,
+ * lalu 200, lalu 50. Riwayat yang terpotong masih jauh lebih berguna daripada
+ * riwayat yang membeku, dan uangnya sendiri tidak bergantung pada ini — ia
+ * sudah ada di antrian sinkronisasi.
+ */
+const simpanBerjenjang = <T,>(kunci: string, baris: T[], jenjang: number[]): void => {
+  for (const n of jenjang) {
+    try {
+      localStorage.setItem(kunci, JSON.stringify(baris.slice(0, n)));
+      return;
+    } catch {
+      /* coba jenjang berikutnya yang lebih kecil */
+    }
+  }
+  console.error(`[penyimpanan] ${kunci}: gagal menyimpan bahkan pada ${jenjang.at(-1)} baris.`);
 };
 
 const loadGlobalUserData = <T,>(entity: string, userId: string, fallback: T): T => {
@@ -669,8 +693,96 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('attendance_logs', currentUser.id, activeSector, seedAttendanceFor(activeSector));
   });
 
+  /*
+   * ================================================================
+   * PENJAGA IDENTITAS PENYIMPANAN
+   * ================================================================
+   *
+   * CACAT YANG DITUTUP DI SINI — dan ia MENGHAPUS DATA MERCHANT.
+   *
+   * Setiap efek penyimpanan di bawah menulis ke kunci yang diturunkan dari
+   * `currentUser.id`, dan `currentUser.id` ADA DI DAFTAR DEPENDENSINYA. Jadi
+   * ketika id itu berubah, efeknya berjalan lagi — dan menulis state yang masih
+   * milik pengguna LAMA ke kunci pengguna BARU.
+   *
+   * Itu persis yang terjadi pada setiap muat ulang halaman. Terekam dari
+   * peramban sungguhan (uji E2E e2e/kasir.spec.ts):
+   *
+   *   t+0ms    render pertama, currentUser = defaultOwnerUser ('usr-owner')
+   *            -> useState memuat orders dari kunci usr-owner  = []
+   *            -> efek menulis []                              ke usr-owner
+   *   t+74ms   sesi Supabase selesai dimuat, currentUser.id berubah
+   *            -> efek berjalan lagi dengan orders yang MASIH []
+   *            -> menulis [] ke kunci pengguna sungguhan
+   *
+   *   dan penjualan yang tersimpan di sana LENYAP.
+   *
+   * Yang menyelamatkan uang merchant selama ini hanyalah antrian sinkronisasi,
+   * yang menulis transaksinya ke berkas lain dan mengirimkannya ke server.
+   * Yang hilang adalah riwayat lokal: layar "Transaksi Terakhir" kosong, struk
+   * tidak bisa dicetak ulang, dan laporan "Hari Ini" — yang memang sengaja
+   * dilayani state lokal — menampilkan nol setelah kasir menyegarkan halaman.
+   *
+   * Cacatnya berlaku untuk SELURUH koleksi ber-scope, bukan hanya orders:
+   * katalog produk, pelanggan, stok, riwayat shift, absensi.
+   *
+   * CARA MENUTUPNYA.
+   *
+   * Menyimpan aturannya di setiap efek berarti tiga belas tempat yang harus
+   * ingat aturan yang sama, dan yang keempat belas akan lupa. Sebagai gantinya
+   * dicatat SATU hal: kunci mana yang sedang diwakili oleh state di memori.
+   *
+   *   kunci sama      -> state ini memang milik kunci itu, boleh disimpan
+   *   kunci berbeda   -> state ini milik SIAPA PUN kecuali pemilik kunci baru.
+   *                      Muat ulang dari penyimpanan, JANGAN menimpa.
+   */
+  const kunciTerpasang = useRef(makeBusinessId(currentUser.id, activeSector));
+  const kunciSekarang = makeBusinessId(currentUser?.id || 'usr-admin', settings.businessSector || 'FNB');
+
+  /*
+   * useLayoutEffect, bukan useEffect.
+   *
+   * Ia berjalan SEBELUM efek penyimpanan di bawah pada pass render yang sama.
+   * Dengan useEffect biasa, urutannya mengikuti urutan deklarasi — dan efek
+   * penyimpanan yang dideklarasikan lebih dulu akan menimpa data sebelum
+   * pemuatan ulang ini sempat berjalan. Itu tepat cacat yang sedang ditutup.
+   */
+  useLayoutEffect(() => {
+    if (kunciTerpasang.current === kunciSekarang) return;
+
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    const preset = BUSINESS_PRESETS[sec] || BUSINESS_PRESETS.FNB;
+
+    setCategories(loadScopedData('categories', uId, sec, preset.categories));
+    setProducts(loadScopedData('products', uId, sec, preset.products));
+    setTables(loadScopedData('tables', uId, sec, preset.tables));
+    setStockItems(loadScopedData('stock_items', uId, sec, INITIAL_STOCK_ITEMS));
+    setBundles(loadScopedData('bundles', uId, sec, INITIAL_BUNDLES));
+    setOrders(loadScopedData('orders', uId, sec, []));
+    setHeldOrders(loadScopedData('held_orders', uId, sec, []));
+    setInventoryLogs(loadScopedData('inventory_logs', uId, sec, []));
+    setShift(loadScopedData('shift', uId, sec, INITIAL_SHIFT));
+    setShiftHistory(loadScopedData('shift_history', uId, sec, []));
+    setCustomers(loadScopedData('customers', uId, sec, seedCustomersFor(sec)));
+    setAttendanceLogs(loadScopedData('attendance_logs', uId, sec, seedAttendanceFor(sec)));
+    setPromoCodes(loadScopedData('promo_codes', uId, sec, seedPromosFor(sec)));
+    setCashMovements(loadScopedData('cash_movements', uId, sec, []));
+
+    kunciTerpasang.current = kunciSekarang;
+  }, [kunciSekarang, currentUser?.id, settings.businessSector]);
+
+  /**
+   * Boleh menyimpan HANYA kalau state di memori memang milik kunci ini.
+   *
+   * Dibaca dari ref, bukan dari state, supaya nilainya sudah benar pada pass
+   * render yang sama tempat useLayoutEffect di atas memperbaruinya.
+   */
+  const bolehSimpan = () => kunciTerpasang.current === kunciSekarang;
+
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('categories', uId, sec), JSON.stringify(categories));
@@ -679,6 +791,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Debounce: products berubah SETIAP transaksi (stok berkurang). Tanpa
   // penundaan, satu jam sibuk menghasilkan ratusan JSON.stringify katalog penuh.
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     const timer = window.setTimeout(() => {
@@ -688,6 +801,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [products, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('tables', uId, sec), JSON.stringify(tables));
@@ -695,6 +809,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Debounce: sama seperti products — bahan baku terpotong setiap transaksi.
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     const timer = window.setTimeout(() => {
@@ -704,21 +819,48 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [stockItems, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('bundles', uId, sec), JSON.stringify(bundles));
   }, [bundles, currentUser.id, settings.businessSector]);
 
-  // Cap 50 order terbaru. Order lama sudah aman di server lewat sync queue —
-  // menyimpan semuanya membengkakkan localStorage (limit 5 MB) dan memperlambat
-  // JSON.stringify di setiap transaksi.
+  /*
+   * BATAS RIWAYAT LOKAL: 500 order, bukan 50.
+   *
+   * Alasan adanya batas tetap benar — localStorage dibatasi 5 MB dan menulis
+   * seluruh riwayat pada setiap transaksi menahan kasir di depan pelanggan.
+   * Yang salah adalah ANGKANYA.
+   *
+   * 50 order tidak cukup untuk satu hari. Kafe yang ramai melewatinya sebelum
+   * makan siang, dan begitu terlewat, layar "Transaksi Terakhir" serta laporan
+   * "Hari Ini" kehilangan transaksi paling awal hari itu — tepat yang dicari
+   * ketika ada pelanggan kembali membawa struk pagi.
+   *
+   * 500 order kira-kira 500 KB, jauh di dalam anggaran 5 MB, dan menutupi hari
+   * tersibuk yang masuk akal untuk satu outlet. Rentang yang lebih panjang
+   * dibaca dari server (lihat src/lib/sync/riwayat.ts) — itu memang tempatnya.
+   *
+   * TIDAK ditunda, tidak seperti katalog produk.
+   *
+   * Penundaan sempat dipasang di sini dengan alasan biaya JSON.stringify, lalu
+   * dicabut: biayanya beberapa milidetik untuk 500 baris, sementara akibat
+   * penundaannya adalah jendela 1,5 detik di mana penjualan yang baru saja
+   * dibayar belum ada di penyimpanan. Tablet yang mati di jendela itu
+   * kehilangan struk terakhirnya.
+   *
+   * Katalog produk boleh ditunda karena ia berubah tanpa kehilangan apa pun
+   * bila tulisan terakhir terlewat. Penjualan tidak.
+   */
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('orders', uId, sec), JSON.stringify(orders.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('orders', uId, sec), orders, [500, 200, 50]);
   }, [orders, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('held_orders', uId, sec), JSON.stringify(heldOrders));
@@ -726,12 +868,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Cap 50 log terbaru — alasan sama dengan orders di atas.
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
-    localStorage.setItem(getScopedKey('inventory_logs', uId, sec), JSON.stringify(inventoryLogs.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('inventory_logs', uId, sec), inventoryLogs, [500, 200, 50]);
   }, [inventoryLogs, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('shift', uId, sec), JSON.stringify(shift));
@@ -739,6 +883,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Cap 30 shift terbaru (kurang-lebih 1 bulan harian).
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('shift_history', uId, sec), JSON.stringify(shiftHistory.slice(0, 30)));
@@ -750,6 +895,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [settings, currentUser.id]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('customers', uId, sec), JSON.stringify(customers));
@@ -761,12 +907,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [staffMembers, currentUser.id]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('attendance_logs', uId, sec), JSON.stringify(attendanceLogs));
   }, [attendanceLogs, currentUser.id, settings.businessSector]);
 
   useEffect(() => {
+    if (!bolehSimpan()) return;
     const uId = currentUser?.id || 'usr-admin';
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('promo_codes', uId, sec), JSON.stringify(promoCodes));
@@ -1018,6 +1166,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => { localStorage.setItem('newhope_users', JSON.stringify(users)); }, [users]);
   useEffect(() => { localStorage.setItem('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
   useEffect(() => {
+    if (!bolehSimpan()) return;
     localStorage.setItem(
       getScopedKey('cash_movements', authUser?.id || currentUser.id, activeSector),
       JSON.stringify(cashMovements)
@@ -1033,9 +1182,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('products', oldUId, currentSec), JSON.stringify(products));
     localStorage.setItem(getScopedKey('tables', oldUId, currentSec), JSON.stringify(tables));
     localStorage.setItem(getScopedKey('stock_items', oldUId, currentSec), JSON.stringify(stockItems));
-    localStorage.setItem(getScopedKey('orders', oldUId, currentSec), JSON.stringify(orders.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('orders', oldUId, currentSec), orders, [500, 200, 50]);
     localStorage.setItem(getScopedKey('held_orders', oldUId, currentSec), JSON.stringify(heldOrders));
-    localStorage.setItem(getScopedKey('inventory_logs', oldUId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('inventory_logs', oldUId, currentSec), inventoryLogs, [500, 200, 50]);
     localStorage.setItem(getScopedKey('shift', oldUId, currentSec), JSON.stringify(shift));
     localStorage.setItem(getScopedKey('shift_history', oldUId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
     localStorage.setItem(getScopedKey('customers', oldUId, currentSec), JSON.stringify(customers));
@@ -1820,9 +1969,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('products', uId, currentSec), JSON.stringify(products));
     localStorage.setItem(getScopedKey('tables', uId, currentSec), JSON.stringify(tables));
     localStorage.setItem(getScopedKey('stock_items', uId, currentSec), JSON.stringify(stockItems));
-    localStorage.setItem(getScopedKey('orders', uId, currentSec), JSON.stringify(orders.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('orders', uId, currentSec), orders, [500, 200, 50]);
     localStorage.setItem(getScopedKey('held_orders', uId, currentSec), JSON.stringify(heldOrders));
-    localStorage.setItem(getScopedKey('inventory_logs', uId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
+    simpanBerjenjang(getScopedKey('inventory_logs', uId, currentSec), inventoryLogs, [500, 200, 50]);
     localStorage.setItem(getScopedKey('shift', uId, currentSec), JSON.stringify(shift));
     localStorage.setItem(getScopedKey('shift_history', uId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
     localStorage.setItem(getScopedKey('customers', uId, currentSec), JSON.stringify(customers));
