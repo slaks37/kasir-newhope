@@ -145,23 +145,34 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
     document.body.removeChild(link);
   };
 
-  const executeVoidTransaction = () => {
+  const executeVoidTransaction = (
+    authorizedBy: { id: string; name: string; pinHash: string }
+  ) => {
     if (!voidingOrder) return;
     const finalReason = customReason.trim() || voidReason;
-    voidOrder(voidingOrder.id, finalReason);
+    void voidOrder(voidingOrder.id, finalReason, authorizedBy);
     setVoidingOrder(null);
     setVoidReason('Salah Input Menu / Kasir');
     setCustomReason('');
     setShowAuthModal(false);
   };
 
+  /*
+   * PIN SELALU DIMINTA, bahkan untuk pengguna yang sudah punya izin void.
+   *
+   * Sebelumnya blok ini melewati modal sepenuhnya bila `hasPermission` bernilai
+   * benar. Itu masuk akal ketika otorisasi hanya urusan browser — tapi server
+   * sekarang menuntut bukti otorisasi yang hanya bisa dibuat setelah PIN
+   * diverifikasi, jadi melewatinya berarti voidnya ditolak server dan
+   * transaksinya tetap terhitung sebagai omzet.
+   *
+   * Meminta PIN kepada manajer yang memang berwenang juga bukan gesekan yang
+   * sia-sia: ia yang membedakan "manajer membatalkan" dari "seseorang memakai
+   * terminal yang ditinggal manajer dalam keadaan login".
+   */
   const handleConfirmVoid = () => {
     if (!voidingOrder) return;
-    if (!hasPermission('void_order')) {
-      setShowAuthModal(true);
-      return;
-    }
-    executeVoidTransaction();
+    setShowAuthModal(true);
   };
 
   return (
@@ -586,9 +597,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
           description="Aksi pembatalan transaksi kasir memerlukan PIN Manager atau Admin."
           requiredRoles={['ADMIN', 'MANAGER']}
           onClose={() => setShowAuthModal(false)}
-          onAuthorized={(role, name) => {
-            executeVoidTransaction();
-          }}
+          onAuthorized={(authorizedBy) => executeVoidTransaction(authorizedBy)}
         />
       )}
     </div>

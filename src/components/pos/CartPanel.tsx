@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { hitungTotal, rupiahPositif } from '../../lib/money';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
@@ -77,12 +78,22 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     ? 'Operator Laundry' 
     : 'Petugas / Staf';
 
-  // Totals Calculation
-  const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  const totalDiscount = cart.reduce((sum, item) => sum + item.discountAmount, 0);
-  const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
-  const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-  const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+  /*
+   * Rumus yang SAMA PERSIS dengan processPayment.
+   *
+   * Layar ini yang dilihat kasir dan pelanggan sebelum membayar. Menghitungnya
+   * ulang di sini dengan rumus terpisah berarti angka yang ditampilkan bisa
+   * berbeda dari angka yang ditagihkan — dan yang salah selalu terlihat benar,
+   * karena keduanya tampak masuk akal. Keduanya kini lewat src/lib/money.ts.
+   */
+  const totalDiscount = rupiahPositif(cart.reduce((sum, item) => sum + item.discountAmount, 0));
+  const { subtotal, pajak: taxTotal, service: serviceChargeTotal, total: grandTotal } = hitungTotal({
+    subtotal: cart.reduce((sum, item) => sum + item.totalPrice, 0),
+    pakaiPajak: settings.enableTax,
+    pajakPersen: settings.taxRate,
+    pakaiService: settings.enableService,
+    servicePersen: settings.serviceRate,
+  });
 
   const handleSaveNotes = () => {
     if (editingItemNotes) {

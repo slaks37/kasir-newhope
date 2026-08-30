@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import {
+  hitungDiskonBaris,
+  hitungKembalian,
+  hitungTotal,
+  persenDari,
+  rupiahPositif,
+} from '../lib/money';
+import { buatBuktiOtorisasi } from '../lib/auth/voidAuthorization';
+import {
   Category,
   Product,
   Table,
@@ -201,7 +209,16 @@ interface POSContextType {
     dropOffDate?: string,
     completionDate?: string
   ) => Order | null;
-  voidOrder: (orderId: string, reason?: string) => void;
+  voidOrder: (
+    orderId: string,
+    reason?: string,
+    /**
+     * Manajer yang mengotorisasi. WAJIB agar server menerima pembatalannya —
+     * lihat services/pos/staff.ts. Tanpa ini void hanya berlaku di perangkat
+     * dan transaksinya tetap terhitung sebagai omzet di pusat.
+     */
+    authorizedBy?: { id: string; name: string; pinHash: string }
+  ) => Promise<void>;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
   syncStatus: SyncStatus;
   /** Memaksa pengiriman sekarang. Dipakai tombol "coba lagi". */
@@ -1196,7 +1213,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updated[existingIndex] = {
           ...item,
           quantity: newQty,
-          totalPrice: unitPrice * newQty - item.discountAmount,
+          totalPrice: rupiahPositif(unitPrice * newQty - item.discountAmount),
         };
         return updated;
       }
@@ -1217,7 +1234,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         itemNotes: notes,
         discountPercent: 0,
         discountAmount: 0,
-        totalPrice: unitPrice * quantity,
+        totalPrice: rupiahPositif(unitPrice * quantity),
       };
       return [...prevCart, newItem];
     });
@@ -1231,13 +1248,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCart((prev) =>
       prev.map((item) => {
         if (item.id === cartItemId) {
-          const rawTotal = item.unitPrice * newQty;
-          const disc = item.discountPercent > 0 ? (rawTotal * item.discountPercent) / 100 : item.discountAmount;
-          return {
-            ...item,
-            quantity: newQty,
-            totalPrice: Math.max(0, rawTotal - disc),
-          };
+          // Seluruh aritmetika uang lewat src/lib/money.ts. Sebelumnya diskon
+          // dihitung tanpa pembulatan di sini, sehingga satu baris berpecahan
+          // merambat sampai ke kembalian yang diserahkan kasir.
+          const { diskon, neto } = hitungDiskonBaris(
+            item.unitPrice, newQty, item.discountPercent, item.discountAmount);
+          return { ...item, quantity: newQty, discountAmount: diskon, totalPrice: neto };
         }
         return item;
       })
@@ -1254,14 +1270,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCart((prev) =>
       prev.map((item) => {
         if (item.id === cartItemId) {
-          const rawTotal = item.unitPrice * item.quantity;
-          const disc = discountPercent > 0 ? (rawTotal * discountPercent) / 100 : discountAmount;
-          return {
-            ...item,
-            discountPercent,
-            discountAmount: disc,
-            totalPrice: Math.max(0, rawTotal - disc),
-          };
+          const { diskon, neto } = hitungDiskonBaris(
+            item.unitPrice, item.quantity, discountPercent, discountAmount);
+          return { ...item, discountPercent, discountAmount: diskon, totalPrice: neto };
         }
         return item;
       })
@@ -1292,14 +1303,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Order | null => {
     if (cart.length === 0) return null;
 
-    const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-    const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
-    const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-    const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+    // Subtotal dijumlahkan dari baris yang SUDAH bulat, jadi hasilnya bulat.
+    // hitungTotal membulatkan pajak dan service dengan aturan yang sama.
+    const { subtotal, pajak: taxTotal, service: serviceChargeTotal, total: grandTotal } = hitungTotal({
+      subtotal: cart.reduce((sum, item) => sum + item.totalPrice, 0),
+      pakaiPajak: settings.enableTax,
+      pajakPersen: settings.taxRate,
+      pakaiService: settings.enableService,
+      servicePersen: settings.serviceRate,
+    });
 
     let changeAmount = 0;
     if (paymentMethod === 'CASH' && cashReceived) {
-      changeAmount = Math.max(0, cashReceived - grandTotal);
+      changeAmount = hitungKembalian(cashReceived, grandTotal);
     }
 
     const invoiceNum = generateInvoiceNumber(orders.length);
@@ -1328,7 +1344,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
       subtotal,
-      discountTotal: cart.reduce((sum, i) => sum + i.discountAmount, 0),
+      discountTotal: rupiahPositif(cart.reduce((sum, i) => sum + i.discountAmount, 0)),
       taxTotal,
       serviceChargeTotal,
       total: grandTotal,
@@ -1516,7 +1532,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Void / Cancel Order
-  const voidOrder = (orderId: string, reason = 'Kesalahan Input Kasir') => {
+  const voidOrder = async (
+    orderId: string,
+    reason = 'Kesalahan Input Kasir',
+    authorizedBy?: { id: string; name: string; pinHash: string }
+  ) => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'VOID') return;
 
@@ -1543,9 +1563,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // memperlakukan tabrakan berstatus CANCELLED sebagai pembaruan, bukan
     // duplikat — kalau tidak, uang yang sudah dikembalikan ke pelanggan akan
     // terus terhitung sebagai omzet di admin panel.
+    // Bukti otorisasi dibuat DI SINI, terikat ke clientTxnId transaksi ini.
+    // PIN apa adanya tidak pernah masuk antrian — lihat
+    // src/lib/auth/voidAuthorization.ts.
+    const otorisasi = authorizedBy
+      ? {
+          authorizedByRef: authorizedBy.id,
+          authorizationProof: await buatBuktiOtorisasi(authorizedBy.pinHash, targetOrder.id),
+        }
+      : undefined;
+
     enqueueSync(
       tenant.businessId,
-      orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role)
+      orderToPayload(
+        { ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' },
+        currentUser.role,
+        otorisasi
+      )
     );
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
@@ -1636,9 +1670,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       tableName: selectedTable?.name,
       customer: selectedCustomer || undefined,
       subtotal,
-      discountTotal: cart.reduce((s, i) => s + i.discountAmount, 0),
-      taxTotal: settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0,
-      serviceChargeTotal: settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0,
+      discountTotal: rupiahPositif(cart.reduce((s, i) => s + i.discountAmount, 0)),
+      taxTotal: settings.enableTax ? persenDari(subtotal, settings.taxRate) : 0,
+      serviceChargeTotal: settings.enableService ? persenDari(subtotal, settings.serviceRate) : 0,
       total: subtotal,
       paymentMethod: 'CASH',
       paymentStatus: 'PENDING',

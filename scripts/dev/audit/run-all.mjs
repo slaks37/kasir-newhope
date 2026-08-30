@@ -15,6 +15,8 @@ const probes = [
   ['ACID & rollback', 't-acid.mjs'],
   ['Presisi finansial', 't-presisi.mjs'],
   ['Isolasi tenant', 't-isolasi.mjs'],
+  // Butuh pos-service menyala di :3101 — dilewati dengan pesan jelas bila tidak.
+  ['Otorisasi void & idempotensi', 't-rbac.mjs'],
 ];
 
 let gagal = 0;

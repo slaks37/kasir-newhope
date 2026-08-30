@@ -1,45 +1,57 @@
-// Rumus disalin PERSIS dari src/context/POSContext.tsx
-//   applyCartItemDiscount : disc = (rawTotal * discountPercent) / 100     <- tanpa pembulatan
-//   totalPrice            : rawTotal - disc
-//   processPayment        : tax = Math.round(subtotal * taxRate / 100)
-const line=console.log;
-
-const item = (harga, qty, pct) => {
-  const rawTotal = harga * qty;
-  const disc = pct > 0 ? (rawTotal * pct) / 100 : 0;
-  return { rawTotal, disc, totalPrice: rawTotal - disc };
+/**
+ * Presisi finansial — memakai src/lib/money.ts YANG SEBENARNYA.
+ *
+ * Sebelumnya berkas ini menyalin rumusnya. Salinan bisa benar sementara kodenya
+ * salah, jadi sekarang modulnya diimpor langsung.
+ */
+import { hitungDiskonBaris, hitungKembalian, hitungTotal, rupiah } from '../../../src/lib/money.ts';
+const line = console.log;
+let gagal = 0;
+const cek = (nama, nilai) => {
+  const bulat = Number.isInteger(nilai);
+  if (!bulat) gagal++;
+  return `${String(nilai).padEnd(22)} ${bulat ? '' : '<-- PECAHAN'}`;
 };
 
 line('\n  A. Diskon persen yang tidak bulat');
 for (const [h,q,p] of [[33333,1,10],[10000,3,33],[15750,2,15],[9999,7,12.5],[100,1,33.33]]) {
-  const r = item(h,q,p);
-  const pecahan = !Number.isInteger(r.totalPrice);
-  line(`     ${String(h).padStart(6)} x${q} -${p}%  -> diskon ${String(r.disc).padEnd(22)} total ${String(r.totalPrice).padEnd(22)} ${pecahan?'<-- PECAHAN':''}`);
+  const r = hitungDiskonBaris(h,q,p,0);
+  line(`     ${String(h).padStart(6)} x${q} -${String(p).padEnd(5)} diskon ${cek('d',r.diskon)} neto ${cek('n',r.neto)}`);
 }
 
-line('\n  B. Akumulasi ke subtotal, lalu pajak 11% (PPN)');
-const keranjang = [item(33333,1,10), item(10000,3,33), item(15750,2,15)];
-const subtotal = keranjang.reduce((s,x)=>s+x.totalPrice,0);
-const tax = Math.round((subtotal * 11) / 100);
-const service = Math.round((subtotal * 5) / 100);
-const grand = subtotal + tax + service;
-line(`     subtotal   : ${subtotal}`);
-line(`     pajak 11%  : ${tax}   (dibulatkan)`);
-line(`     service 5% : ${service}   (dibulatkan)`);
-line(`     grand total: ${grand}`);
-line(`     grand total bulat? ${Number.isInteger(grand) ? 'ya' : 'TIDAK — ' + grand}`);
+line('\n  B. Diskon melebihi harga (tidak boleh jadi uang kembali)');
+const lebih = hitungDiskonBaris(10000,1,150,0);
+line(`     10.000 -150% -> diskon ${lebih.diskon}, neto ${lebih.neto}  ${lebih.neto===0?'':'<-- SALAH'}`);
+if (lebih.neto !== 0) gagal++;
 
-line('\n  C. Kembalian tunai');
-const bayar = 100000;
-const kembali = Math.max(0, bayar - grand);
-line(`     bayar ${bayar} - total ${grand} = ${kembali}`);
-line(`     kembalian bulat? ${Number.isInteger(kembali) ? 'ya' : 'TIDAK — ' + kembali}`);
+line('\n  C. Akumulasi ke subtotal, pajak 11%, service 5%');
+const baris = [hitungDiskonBaris(33333,1,10,0), hitungDiskonBaris(10000,3,33,0), hitungDiskonBaris(15750,2,15,0)];
+const t = hitungTotal({ subtotal: baris.reduce((s,x)=>s+x.neto,0),
+  pakaiPajak:true, pajakPersen:11, pakaiService:true, servicePersen:5 });
+line(`     subtotal    ${cek('s',t.subtotal)}`);
+line(`     pajak 11%   ${cek('p',t.pajak)}`);
+line(`     service 5%  ${cek('v',t.service)}`);
+line(`     grand total ${cek('g',t.total)}`);
 
-line('\n  D. Klasik floating point');
-line(`     0.1 + 0.2 === 0.3 ? ${0.1+0.2===0.3}   (${0.1+0.2})`);
-line(`     19900 * 3 * 0.15  = ${19900*3*0.15}`);
-line(`     (8950*7)*0.075    = ${(8950*7)*0.075}`);
+line('\n  D. Kembalian tunai');
+const kembali = hitungKembalian(100000, t.total);
+line(`     bayar 100.000 - total ${t.total} = ${cek('k',kembali)}`);
+line(`     uang kurang: bayar 50.000 -> ${hitungKembalian(50000,t.total)} (tidak negatif)`);
+if (hitungKembalian(50000,t.total) < 0) gagal++;
 
-line('\n  E. Batas aman integer untuk rupiah');
-line(`     Number.MAX_SAFE_INTEGER = ${Number.MAX_SAFE_INTEGER}  (~9 kuadriliun rupiah)`);
-line(`     omzet tahunan 100 miliar aman? ${100_000_000_000 < Number.MAX_SAFE_INTEGER}`);
+line('\n  E. Masukan rusak tidak boleh jadi NaN');
+for (const buruk of [NaN, undefined, null, 'abc', Infinity]) {
+  const r = rupiah(buruk);
+  line(`     rupiah(${String(buruk).padEnd(9)}) = ${r} ${Number.isFinite(r)?'':'<-- NaN BOCOR'}`);
+  if (!Number.isFinite(r)) gagal++;
+}
+
+line('\n  F. Baris struk harus menjumlah TEPAT ke totalnya');
+const jumlahBaris = baris.reduce((s,x)=>s+x.neto,0);
+const cocok = jumlahBaris === t.subtotal;
+line(`     Σ baris = ${jumlahBaris}, subtotal = ${t.subtotal}  ${cocok?'cocok':'<-- SELISIH'}`);
+if (!cocok) gagal++;
+
+line(gagal===0 ? '\n  >>> LULUS: seluruh nilai uang bulat dan konsisten.\n'
+               : `\n  >>> ${gagal} MASALAH presisi.\n`);
+process.exit(gagal===0?0:1);

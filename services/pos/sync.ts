@@ -20,6 +20,7 @@ import type express from 'express';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
+import { daftarkanStaf, pastikanVoidDiotorisasi, VoidAuthError, type StafMasuk } from './staff';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -82,6 +83,12 @@ interface SyncTxn {
   cancelledAt?: string;
   voidedAt?: string;
   shiftId?: string;
+  /** Staf yang MENGOTORISASI pembatalan — bukan kasir yang menjual. */
+  authorizedByRef?: string;
+  /** PIN otorisasi. Hanya jalur langsung (uji / integrasi server-ke-server). */
+  authorizationPin?: string;
+  /** Bukti terikat-transaksi dari aplikasi kasir. Lihat services/pos/staff.ts. */
+  authorizationProof?: string;
   items: SyncItem[];
 }
 
@@ -136,21 +143,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     try {
       const out = await db.tx(async (c) => {
         await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
-        if (idemKey) {
-          const prev = await c.query(
-            `SELECT rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
-            [idemKey]
-          );
-          if (prev.rows.length) {
-            return {
-              replayed: true,
-              accepted: prev.rows[0].rows_accepted,
-              duplicates: prev.rows[0].rows_duplicate,
-              tenantId: null as string | null,
-            };
-          }
-        }
 
         /* -- MODEL B: TENANT -> MERCHANT -> OUTLET ------------------------- */
         // Tenant (owner level)
@@ -164,6 +156,41 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           [storeName, tenantExternalRef, ownerRef]
         );
         const tenantId: string = t.rows[0].id;
+
+        /*
+         * IDEMPOTENSI DIPERIKSA SETELAH TENANT DIKETAHUI, dan itu bukan sekadar
+         * urutan.
+         *
+         * Sebelumnya pemeriksaan ini berjalan lebih dulu dan mencocokkan
+         * `idempotency_key` SAJA — kunci yang dulunya primary key global. Dua
+         * antrian dengan kunci batch yang sama akan saling menelan: yang kedua
+         * dijawab `replayed: true`, transaksinya tidak pernah masuk, dan
+         * antriannya di perangkat terlanjur dipangkas.
+         *
+         * Cakupannya UNIT USAHA, bukan tenant: satu pemilik bisa punya kafe dan
+         * laundry di bawah tenant yang sama, masing-masing dengan antriannya
+         * sendiri. Lihat migrasi 0043.
+         *
+         * Upsert tenant di atas idempoten (ON CONFLICT DO UPDATE), jadi
+         * memindahkan pemeriksaan ke sini tidak menambah efek samping apa pun
+         * pada batch yang memang diulang.
+         */
+        if (idemKey) {
+          const prev = await c.query(
+            `SELECT rows_accepted, rows_duplicate
+               FROM pos.sync_receipts
+              WHERE tenant_id = $1 AND business_id = $2 AND idempotency_key = $3`,
+            [tenantId, businessId, idemKey]
+          );
+          if (prev.rows.length) {
+            return {
+              replayed: true,
+              accepted: prev.rows[0].rows_accepted,
+              duplicates: prev.rows[0].rows_duplicate,
+              tenantId,
+            };
+          }
+        }
 
         // Merchant (business level)
         const m = await c.query(
@@ -380,6 +407,25 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
              */
             const status = str(x.paymentStatus, 20);
             if (status === 'CANCELLED') {
+              /*
+               * OTORISASI DIPERIKSA SERVER, sebelum apa pun diubah.
+               *
+               * `cashierRole` dari body TIDAK dipakai untuk keputusan ini — itu
+               * klaim klien tentang dirinya sendiri. Yang diverifikasi adalah
+               * PIN pengotorisasi terhadap hash di `internal.memberships`, dan
+               * perannya dibaca dari catatan server. Lihat services/pos/staff.ts.
+               *
+               * Melempar di sini membatalkan SELURUH batch (kita di dalam
+               * db.tx). Itu memang yang diinginkan: batch yang memuat satu void
+               * tak sah tidak boleh sebagian diterima.
+               */
+              const pengotorisasi = await pastikanVoidDiotorisasi(c, tenantId, {
+                staffRef: str(x.authorizedByRef, 96),
+                pin: typeof x.authorizationPin === 'string' ? x.authorizationPin : null,
+                proof: str(x.authorizationProof, 128),
+                clientTxnId: clientId,
+              });
+
               const upd = await c.query(
                 `UPDATE pos.transactions
                     SET order_status = 'VOIDED',
@@ -451,12 +497,18 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   appModule: 'POS',
                   eventType: 'TRANSACTION_VOID',
                   severity: 'WARNING',
-                  actorName: str(x.cashierName, 100),
-                  actorRole: str(x.cashierRole, 24),
+                  // Pelakunya adalah yang MENGOTORISASI, bukan yang menekan
+                  // tombol — dan perannya dari catatan server, bukan dari body.
+                  actorName: pengotorisasi.nama,
+                  actorRole: pengotorisasi.peran,
                   transactionId: voidedTxnId,
                   amountIdr: total,
                   summary: `Transaksi ${str(x.invoiceNumber, 64) ?? clientId} dibatalkan`,
-                  detail: { clientTxnId: clientId },
+                  detail: {
+                    clientTxnId: clientId,
+                    diotorisasiOleh: pengotorisasi.nama,
+                    kasir: str(x.cashierName, 100),
+                  },
                 });
               }
             }
@@ -576,7 +628,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
                                         rows_accepted, rows_duplicate)
              VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (idempotency_key) DO NOTHING`,
+             ON CONFLICT (tenant_id, business_id, idempotency_key) DO NOTHING`,
             [idemKey, tenantId, businessId, accepted, duplicates]
           );
         }
@@ -602,6 +654,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       console.error('[sync] gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
+      // Sebabnya disebutkan: "otorisasi ditolak" tanpa alasan hanya membuat
+      // kasir mencoba lagi dengan PIN yang sama.
+      if (err instanceof VoidAuthError) {
+        return res.status(403).json({ ok: false, error: err.kode, detail: err.message });
+      }
       res.status(500).json({ ok: false, error: 'SYNC_FAILED' });
     }
   });
@@ -766,11 +823,98 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       console.error('[sync] katalog gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
+      // Sebabnya disebutkan: "otorisasi ditolak" tanpa alasan hanya membuat
+      // kasir mencoba lagi dengan PIN yang sama.
+      if (err instanceof VoidAuthError) {
+        return res.status(403).json({ ok: false, error: err.kode, detail: err.message });
+      }
       res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED' });
     }
   });
 
   /** Kejadian non-penjualan dari aplikasi kasir. */
+  /**
+   * POST /api/v1/sync/staff
+   *
+   * Mendaftarkan staf merchant beserta peran dan PIN otorisasinya.
+   *
+   * INILAH JANGKAR KEPERCAYAAN untuk otorisasi void. Pemanggilnya harus
+   * principal pemilik akun — sama seperti seluruh endpoint sinkronisasi — dan
+   * catatan yang dihasilkannya adalah satu-satunya sumber peran yang dipercaya
+   * server. Peran yang dikirim bersama transaksi tidak pernah dipakai untuk
+   * keputusan apa pun.
+   *
+   * PIN dikirim SUDAH TER-HASH (`sha256$<salt>$<hash>`, dibuat
+   * src/lib/auth/pinSecurity.ts). PIN apa adanya tidak pernah menyeberang
+   * jaringan dan tidak pernah tersimpan di server.
+   *
+   * {
+   *   businessId, sector, storeName,
+   *   staff: [ { ref, nama, peran, pinHash?, aktif? } ]
+   * }
+   */
+  app.post('/api/v1/sync/staff', async (req, res) => {
+    const b = req.body ?? {};
+    const businessId = str(b.businessId, 96);
+    const sector = str(b.sector, 16);
+    const storeName = str(b.storeName, 100) ?? 'Tanpa Nama';
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    const ownerRef = principal.subject;
+    const staff: StafMasuk[] = Array.isArray(b.staff) ? b.staff : [];
+
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
+    }
+    if (staff.length > 200) {
+      return res.status(413).json({ ok: false, error: 'STAFF_LIST_TOO_LARGE' });
+    }
+
+    try {
+      const out = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const t = await c.query(
+          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+           VALUES (uuidv7(), $1, $2, $3)
+           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [storeName, ownerRef || `tenant_${businessId}`, ownerRef]
+        );
+        const tenantId: string = t.rows[0].id;
+
+        const m = await c.query(
+          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+           VALUES (uuidv7(), $1, $2, $3, $4)
+           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+             DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [tenantId, storeName, sector, businessId]
+        );
+
+        const hasil = await daftarkanStaf(c, tenantId, m.rows[0].id, staff);
+
+        await writeActivity(c, {
+          merchantId: tenantId,
+          businessSector: sector as Sector,
+          businessId,
+          appModule: 'SETTINGS',
+          eventType: 'STAFF_SYNC',
+          severity: 'NOTICE',
+          summary: `Daftar staf diperbarui: ${hasil.tersimpan} aktif, ${hasil.dinonaktifkan} dinonaktifkan`,
+          detail: hasil,
+        });
+
+        return { tenantId, ...hasil };
+      });
+      res.json({ ok: true, ...out });
+    } catch (err) {
+      console.error('[sync] staf gagal:', (err as Error).message);
+      if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
+      res.status(500).json({ ok: false, error: 'STAFF_SYNC_FAILED' });
+    }
+  });
+
   app.post('/api/v1/sync/activity', async (req, res) => {
     const b = req.body ?? {};
     const businessId = str(b.businessId, 96);

@@ -25,6 +25,7 @@
  */
 
 import type { Order, BusinessSector } from '../../types';
+import { rupiah } from '../money';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
@@ -62,6 +63,9 @@ export interface SyncPayloadTxn {
   orderType?: string;
   appModule?: string;
   createdAt?: string;
+  /** Staf yang mengotorisasi pembatalan, dan bukti terikat-transaksinya. */
+  authorizedByRef?: string;
+  authorizationProof?: string;
   items: SyncPayloadItem[];
 }
 
@@ -163,34 +167,48 @@ function batchKey(businessId: string, txns: SyncPayloadTxn[]): string {
   return `${businessId}:${parts.length}:${h.toString(16)}`;
 }
 
-/** Mengubah Order aplikasi menjadi bentuk yang diterima server. */
-export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadTxn {
+/**
+ * Mengubah Order aplikasi menjadi bentuk yang diterima server.
+ *
+ * SETIAP NILAI UANG DIBULATKAN DI SINI, dan itu bukan pengulangan yang sia-sia.
+ * Perhitungan di aplikasi sudah bulat sejak seluruhnya lewat src/lib/money.ts,
+ * tapi antrian ini juga memuat transaksi yang tersimpan di localStorage SEBELUM
+ * perbaikan itu — lengkap dengan pecahan rupiahnya. Ini gerbang terakhir sebelum
+ * angka masuk ke pembukuan pusat: riwayat lokal boleh berpecahan, omzet di
+ * server tidak.
+ */
+export function orderToPayload(
+  order: Order,
+  cashierRole?: string,
+  otorisasi?: { authorizedByRef: string; authorizationProof: string }
+): SyncPayloadTxn {
   return {
     clientTxnId: order.id,
     invoiceNumber: order.id,
     cashierName: order.cashierName,
     cashierRole,
-    subtotal: order.subtotal,
-    discountAmount: order.discountTotal,
-    taxAmount: order.taxTotal,
-    serviceChargeAmount: order.serviceChargeTotal || 0,
-    totalAmount: order.total,
+    subtotal: rupiah(order.subtotal),
+    discountAmount: rupiah(order.discountTotal),
+    taxAmount: rupiah(order.taxTotal),
+    serviceChargeAmount: rupiah(order.serviceChargeTotal || 0),
+    totalAmount: rupiah(order.total),
     paymentMethod: order.paymentMethod,
     paymentStatus: order.status === 'VOID' ? 'CANCELLED' : 'COMPLETED',
+    ...otorisasi,
     orderType: order.orderType,
     appModule: order.tableId ? 'TABLES' : 'POS',
     createdAt: order.date,
     items: order.items.map((i) => ({
       productRef: i.productId,
       productName: i.variantName ? `${i.name} (${i.variantName})` : i.name,
-      unitPrice: i.unitPrice,
+      unitPrice: rupiah(i.unitPrice),
       // HPP hasil snapshot saat item masuk keranjang. Keranjang lama yang
       // tersimpan sebelum kolom ini ada akan bernilai 0 — margin transaksi itu
       // akan tampak 100% di panel, dan itu memang jujur: HPP-nya tidak pernah
       // tercatat, bukan benar-benar nol.
-      unitCost: i.unitCost ?? 0,
+      unitCost: rupiah(i.unitCost ?? 0),
       quantity: i.quantity,
-      totalPrice: i.totalPrice,
+      totalPrice: rupiah(i.totalPrice),
     })),
   };
 }

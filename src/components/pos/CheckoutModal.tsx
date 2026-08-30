@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { hitungKembalian, hitungTotal } from '../../lib/money';
 import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, Order } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
@@ -64,14 +65,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Totals Calculation
-  const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
-  const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-  const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+  // Rumus yang SAMA PERSIS dengan processPayment dan CartPanel — lihat catatan
+  // di src/lib/money.ts. Kembalian di layar ini adalah uang fisik yang benar-benar
+  // diserahkan, jadi ia tidak boleh berbeda satu rupiah pun dari yang dicatat.
+  const { subtotal, pajak: taxTotal, service: serviceChargeTotal, total: grandTotal } = hitungTotal({
+    subtotal: cart.reduce((sum, item) => sum + item.totalPrice, 0),
+    pakaiPajak: settings.enableTax,
+    pajakPersen: settings.taxRate,
+    pakaiService: settings.enableService,
+    servicePersen: settings.serviceRate,
+  });
 
   const cashReceivedNumber = Number(cashReceivedInput) || 0;
-  const changeAmount = Math.max(0, cashReceivedNumber - grandTotal);
+  const changeAmount = hitungKembalian(cashReceivedNumber, grandTotal);
   const isCashSufficient = cashReceivedNumber >= grandTotal;
 
   // Auto set exact cash on paymentMethod change

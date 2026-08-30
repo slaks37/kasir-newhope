@@ -9,7 +9,14 @@ interface PinAuthorizationModalProps {
   description?: string;
   requiredRoles?: UserRole[];
   onClose: () => void;
-  onAuthorized: (authorizedByRole: UserRole, authorizedByName: string) => void;
+  /**
+   * Menerima USER LENGKAP, bukan hanya peran dan nama.
+   *
+   * Pemanggil butuh `id` dan `pin` (hash) untuk membuat bukti otorisasi yang
+   * diverifikasi server — lihat src/lib/auth/voidAuthorization.ts. Tanpa itu,
+   * otorisasi ini hanya berlaku di browser dan server akan menolak voidnya.
+   */
+  onAuthorized: (authorizedBy: { id: string; name: string; role: UserRole; pinHash: string }) => void;
 }
 
 export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
@@ -95,7 +102,12 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
         return;
       }
 
-      onAuthorized(result.user.role, result.user.name);
+      onAuthorized({
+        id: result.user.id,
+        name: result.user.name,
+        role: result.user.role,
+        pinHash: result.user.pin,
+      });
     } finally {
       setIsVerifying(false);
     }
