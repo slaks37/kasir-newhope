@@ -1,6 +1,19 @@
 /**
  * CHURN RISK — explainable scoring model.
  *
+ * TIDAK ADA YANG MENGIMPOR BERKAS INI, DAN ITU BUKAN BERARTI IA MATI.
+ *
+ * Berkas ini sempat dihapus sebagai "kode mati" karena graf impor menunjukkan
+ * nol pengimpor. Itu keliru: `scripts/dev/check-source-hygiene.mjs` membacanya
+ * LEWAT PATH, bukan lewat `import`, sebagai ekspresi kanonik model churn dalam
+ * TypeScript — lalu membandingkannya dengan dua implementasi lain (rumus SQL di
+ * migrations/0004 dan cron di scripts/batch/merchant-health.mjs) dan menggagalkan
+ * gerbang higiene bila ketiganya menyimpang.
+ *
+ * Menghapusnya tidak menimbulkan error apa pun. Pemeriksa paritas hanya berhenti
+ * diam-diam (`if (!sql || !ts || !job) return;`), dan ketiga salinan model itu
+ * bebas berbeda tanpa ada yang tahu. Jangan hapus tanpa memindahkan perannya.
+ *
  * This is the TypeScript twin of `compute_churn_risk()` in
  * migrations/0004_internal_backoffice.sql. The weights MUST stay identical: the
  * API scores live merchants with this, the nightly job writes history with the

@@ -1,5 +1,16 @@
 # ERD — New Hope POS
 
+> **Cakupan dokumen ini: migrasi 0001–0006.** Angka di bawah benar untuk keadaan
+> skema saat dokumen ini ditulis, bukan untuk keadaan sekarang. Sejak pemisahan
+> skema per service (0009) dan hierarki Model B (0015), jumlahnya menjadi
+> **±68 tabel dalam 5 skema dan 29 view di `contract`**.
+>
+> Diagram per domain di bawah masih menggambarkan bentuk relasinya dengan benar
+> dan tetap berguna untuk memahami model datanya; yang usang adalah jumlah dan
+> nama skemanya. Peta yang mutakhir ada di
+> [`docs/reverse-engineering/04-model-data.md`](reverse-engineering/04-model-data.md),
+> dan jumlah view dijaga oleh `npm run hygiene` agar tidak menyimpang lagi.
+
 **24 tabel dan 8 view, dalam 5 domain.** Diturunkan langsung dari keenam file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL 18.3 — jadi
 diagram ini menunjukkan apa yang benar-benar dibuat Postgres, bukan yang

@@ -1022,9 +1022,36 @@ export const AIAssistant: React.FC = () => {
           text: `🎯 **Rekomendasi Promo Baru dari AI:**\n\n- **Kode:** ${data.promo.code}\n- **Deskripsi:** ${data.promo.description}\n- **Diskon:** ${data.promo.discountPercent}% (maks. ${formatRupiah(data.promo.maxDiscountAmount || 0)})\n\nKlik tombol di bawah untuk mengaktifkan kode ini di kasir.`,
           promoSuggestion: data.promo,
         });
+      } else {
+        /*
+         * Sebabnya disebutkan, bukan ditelan.
+         *
+         * Endpoint ini dulu tidak ada sama sekali, jadi setiap klik menerima 404
+         * dan berakhir di blok catch sebagai "Gagal membuat ide promo" — pesan
+         * yang sama untuk kuota habis, modul AI belum aktif, dan penyedia yang
+         * sedang bermasalah. Ketiganya menuntut tindakan berbeda dari pemilik
+         * toko, jadi ketiganya harus terbaca berbeda.
+         */
+        const pesan: Record<string, string> = {
+          PAYWALL:
+            '**Jatah AI Credit bulan ini sudah habis.** Pertanyaan seputar stok, omzet, dan pelanggan tetap gratis lewat tombol cepat di atas.',
+          LLM_NOT_CONFIGURED:
+            '**Modul AI generatif belum aktif di server ini.** Credit Anda tidak dipotong.',
+          LLM_FAILED:
+            '**Gagal menghubungi layanan AI.** Credit Anda sudah dikembalikan — silakan coba lagi sebentar lagi.',
+        };
+        push({
+          sender: 'ai',
+          source: 'ERROR',
+          text: pesan[String(data?.error)] || `**Gagal membuat ide promo.** ${data?.message ?? ''}`.trim(),
+        });
       }
     } catch {
-      push({ sender: 'ai', source: 'ERROR', text: '**Gagal membuat ide promo.**' });
+      push({
+        sender: 'ai',
+        source: 'ERROR',
+        text: '**Tidak bisa menghubungi server.** Periksa koneksi lalu coba lagi.',
+      });
     } finally {
       setIsGenerating(false);
     }

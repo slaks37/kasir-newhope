@@ -16,11 +16,19 @@ Dokumen ini menjelaskan implementasi fitur Smart Assistant di New Hope POS: baga
 | **2. Intent Router + Rule Engine** | Setiap pertanyaan, real-time | **Rp 0** | < 5 ms, tanpa network |
 | **3. LLM Fallback** | Hanya kalau Layer 2 menyerah | −1 AI Credit | 1–4 detik |
 
-**Target: ≥ 90% pertanyaan dijawab di Layer 1–2.** Pengukuran aktual pada test suite (`scripts/dev/smoke-assistant.ts`, 53 pertanyaan realistis berbahasa Indonesia): **47 dijawab deterministik, 6 diteruskan ke LLM → 88,7% zero-cost**, dan keenam yang diteruskan memang pertanyaan strategis terbuka ("buatkan strategi marketing…", "menurutmu kenapa penjualan turun?") yang secara desain **memang** butuh LLM.
+**Target: ≥ 90% pertanyaan dijawab di Layer 1–2.** Pengukuran aktual pada test suite (`scripts/dev/smoke-assistant.ts`, 53 pertanyaan realistis berbahasa Indonesia): **47 dijawab deterministik, 6 diteruskan ke LLM → 88,7% zero-cost** — angka ini dijalankan ulang oleh CI setiap push (`npm run smoke`), memakai fikstur milik suite itu sendiri di `scripts/dev/fixtures/`, dan keenam yang diteruskan memang pertanyaan strategis terbuka ("buatkan strategi marketing…", "menurutmu kenapa penjualan turun?") yang secara desain **memang** butuh LLM.
 
 ### Catatan jujur soal deployment saat ini
 
-Data merchant di build ini **masih tersimpan di `localStorage` browser**, bukan Postgres. `schema.sql` dan `schema_hybrid_pos.sql` adalah blueprint yang belum tersambung ke aplikasi.
+> **Diperbarui.** Paragraf di bawah sudah tidak berlaku. Jalur sinkronisasi ke
+> PostgreSQL kini berjalan penuh: `POST /api/v1/sync/transactions` menulis ke
+> skema `pos`, dan ai-service membaca angka uang dari `contract.merchant_revenue`
+> — view yang sama dengan yang dipakai konsol back-office.
+>
+> `localStorage` tetap menjadi sistem pencatatan aplikasi kasir (itulah yang
+> membuatnya bekerja saat internet mati), tapi Postgres bukan lagi blueprint.
+
+~~Data merchant di build ini **masih tersimpan di `localStorage` browser**, bukan Postgres. `schema.sql` dan `schema_hybrid_pos.sql` adalah blueprint yang belum tersambung ke aplikasi.~~
 
 Karena itu Layer 1 ditulis **source-agnostic**: `src/lib/assistant/insights.ts` menerima array biasa dan mengembalikan data biasa — tanpa React, tanpa `localStorage`, tanpa SQL.
 

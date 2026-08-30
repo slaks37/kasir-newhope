@@ -1,33 +1,12 @@
 import { createDokuCheckout, isDokuConfigured } from '../../_doku';
 
-const SAAS_PLANS = [
-  {
-    id: 'plan-free',
-    name: 'Free Tier',
-    tierLevel: 1,
-    billingCycle: 'MONTHLY',
-    priceIdr: 0,
-    currency: 'IDR',
-  },
-  {
-    id: 'plan-plus-monthly',
-    name: 'Tier Plus',
-    tierLevel: 2,
-    billingCycle: 'MONTHLY',
-    priceIdr: 99000,
-    priceYearlyIdr: 79000,
-    currency: 'IDR',
-  },
-  {
-    id: 'plan-pro-monthly',
-    name: 'Tier Pro',
-    tierLevel: 3,
-    billingCycle: 'MONTHLY',
-    priceIdr: 299000,
-    priceYearlyIdr: 239000,
-    currency: 'IDR',
-  },
-];
+/*
+ * Katalog paket dulu DISALIN utuh ke berkas ini — satu dari empat salinan
+ * yang tersebar di dua permukaan deployment. Nilainya kebetulan masih sama;
+ * yang tidak ada adalah apa pun yang menjaganya tetap begitu.
+ * Sekarang satu sumber: src/data/saasPlans.ts
+ */
+import { SAAS_PLANS } from '../../../src/data/saasPlans';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');

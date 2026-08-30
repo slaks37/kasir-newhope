@@ -33,7 +33,7 @@ gateway :3000  ──┬─ pos        :3101  skema pos       transaksi, katalog
                  ├─ billing    :3103  skema billing   langganan, faktur, webhook
                  └─ backoffice :3104  skema internal  konsol penyedia
                         ↓
-                 contract.*  ← 13 view, satu-satunya permukaan lintas service
+                 contract.*  ← 29 view, satu-satunya permukaan lintas service
 ```
 
 ### Batas antar service ditegakkan database, bukan kesepakatan
@@ -43,8 +43,20 @@ Setiap service login sebagai perannya sendiri. Menyentuh tabel milik service lai
 ```
 svc_ai  → ai.merchant_ai_credits     BOLEH
 svc_ai  → contract.merchant_revenue  BOLEH
-svc_ai  → pos.transactions           DITOLAK: permission denied for schema pos
+svc_ai  → pos.transactions           DITOLAK: permission denied for table transactions
 ```
+
+**Peran itu harus diaktifkan lebih dulu.** Migrasi 0009 membuat keempat peran
+sebagai `NOLOGIN`, jadi selama `DATABASE_URL` dipakai bersama, kelima service
+berjalan sebagai satu identitas berhak penuh dan batas di atas TIDAK berlaku:
+
+```bash
+node scripts/db/setup-service-roles.mjs --live   # aktifkan
+node scripts/db/setup-service-roles.mjs          # buktikan batasnya
+```
+
+Perintah kedua menguji setiap batas dan setiap akses yang harus tetap ada, lalu
+keluar dengan kode bukan-nol bila salah satunya meleset.
 
 Yang dibagikan hanya view di skema `contract`. Pemilik boleh mengubah bentuk tabelnya kapan saja selama view-nya utuh, dan perubahan yang merusak ketahuan saat migrasi — bukan saat service lain error di produksi.
 

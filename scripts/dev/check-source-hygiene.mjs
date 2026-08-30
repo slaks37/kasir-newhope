@@ -15,7 +15,7 @@
  * Also catches a few other things that silently break tooling.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
 import process from 'node:process';
 
@@ -313,6 +313,167 @@ function checkChurnWeightParity() {
   }
 }
 checkChurnWeightParity();
+
+/* -------------------------------------------------------------------------- */
+/* SATU KATALOG HARGA                                                          */
+/* -------------------------------------------------------------------------- */
+//
+// Katalog paket pernah ditulis EMPAT KALI — sekali di billing-service dan tiga
+// kali di permukaan serverless — dengan literal harganya tersebar di dua belas
+// berkas. Keempatnya kebetulan masih sama nilainya; yang tidak ada adalah
+// mekanisme apa pun yang menjaganya tetap begitu.
+//
+// Sekarang sumbernya satu (src/data/saasPlans.ts). Pemeriksa ini menolak
+// salinan berikutnya sebelum sempat menyimpang: satu perubahan harga yang
+// terlewat berarti merchant ditagih berbeda dari yang ditampilkan kepadanya.
+function checkSinglePriceCatalog() {
+  const SUMBER = 'src/data/saasPlans.ts';
+  const HARGA = /\b(99000|299000|79000|239000|59000|49000)\b/;
+
+  // Berkas yang memang berhak menyebut angka rupiah paket.
+  const DIKECUALIKAN = new Set([
+    SUMBER,
+    // Skrip operasional yang menyinkronkan katalog ke database jarak jauh; ia
+    // memang membandingkan angka, dan tidak ikut dibundel ke mana pun.
+    'scripts/db/sync-plans.mjs',
+    'scripts/db/bootstrap.mjs',
+    'scripts/db/fix-supabase-database.mjs',
+    'scripts/dev/verify-supabase.mjs',
+    'scripts/dev/check-source-hygiene.mjs',
+  ]);
+
+  if (!existsSync(join(ROOT, SUMBER))) {
+    problems.push(`${SUMBER} tidak ditemukan — katalog paket kehilangan sumber tunggalnya`);
+    return;
+  }
+
+  const duplikat = [];
+  const scan = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (SKIP_DIRS.has(name)) continue;
+      const full = join(dir, name);
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        scan(full);
+        continue;
+      }
+      if (!['.ts', '.tsx', '.mjs'].includes(extname(name))) continue;
+
+      const rel = relative(ROOT, full).split(sep).join('/');
+      if (DIKECUALIKAN.has(rel)) continue;
+
+      const lines = readFileSync(full, 'utf8').split('\n');
+      lines.forEach((line, idx) => {
+        // Hanya baris yang benar-benar menetapkan harga, bukan yang menyebutnya
+        // di komentar atau membandingkannya.
+        if (!/(priceIdr|priceYearlyIdr|extraOutletPriceIdr|ADDON_PRICE_IDR)\s*[:=]/.test(line)) return;
+        if (!HARGA.test(line)) return;
+        duplikat.push(`${rel}:${idx + 1} ${line.trim().slice(0, 70)}`);
+      });
+    }
+  };
+
+  for (const d of ['src', 'services', 'api', 'scripts']) {
+    if (existsSync(join(ROOT, d))) scan(join(ROOT, d));
+  }
+
+  if (duplikat.length) {
+    problems.push(
+      `harga paket ditulis di luar ${SUMBER} (${duplikat.length} tempat) — ` +
+        `impor SAAS_PLANS dari sana:\n      ${duplikat.join('\n      ')}`
+    );
+    return;
+  }
+
+  console.log(`Price catalog: OK (satu-satunya definisi ada di ${SUMBER})`);
+}
+checkSinglePriceCatalog();
+
+/* -------------------------------------------------------------------------- */
+/* KLAIM JUMLAH VIEW KONTRAK HARUS BENAR                                       */
+/* -------------------------------------------------------------------------- */
+//
+// README menyebut berapa view yang ada di skema `contract`. Angka itu pernah
+// tertinggal jauh — tertulis 13 sementara migrasi membuat 29 — dan tidak ada
+// yang menyadarinya karena tidak ada yang menghitungnya.
+//
+// Dihitung dari DDL, bukan dari database, supaya pemeriksa ini tetap berjalan
+// di CI tanpa Postgres. Yang dihitung adalah keadaan AKHIR: view yang dibuat
+// lalu dijatuhkan oleh DROP ... CASCADE di migrasi berikutnya tidak boleh ikut.
+function checkContractViewCount() {
+  const dir = join(ROOT, 'migrations');
+  if (!existsSync(dir)) return;
+
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  // Dijalankan berurutan seperti penerap migrasi: CREATE menambah, DROP
+  // membuang. Itu satu-satunya cara menghitung yang benar-benar tersisa.
+  // Komentar DIBUANG lebih dulu. Migrasi di repositori ini menjelaskan sebab
+  // perubahannya dengan mengutip perintah SQL di dalam komentar — dan parser
+  // yang membaca kutipan itu sebagai pernyataan akan menghitung DROP yang tidak
+  // pernah dijalankan. Persis itu yang terjadi: satu komentar di 0040 yang
+  // mengutip `DROP VIEW ... contract.merchant_revenue` membuat hitungannya
+  // meleset satu.
+  const tanpaKomentar = (sql) =>
+    sql
+      .replace(/\/\*[\s\S]*?\*\//g, ' ') // blok
+      .replace(/--[^\n]*/g, ' '); // baris
+
+  // Dijalankan berurutan seperti penerap migrasi. Per berkas, DROP diproses
+  // sebelum CREATE karena pola yang dipakai repositori ini selalu
+  // "drop-lalu-buat-ulang" dalam satu berkas.
+  const hidup = new Set();
+  for (const f of files) {
+    const sql = tanpaKomentar(readFileSync(join(dir, f), 'utf8'));
+    for (const m of sql.matchAll(/DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?contract\.([a-z_]+)/gi)) {
+      hidup.delete(m[1].toLowerCase());
+    }
+    for (const m of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+contract\.([a-z_]+)/gi)) {
+      hidup.add(m[1].toLowerCase());
+    }
+  }
+
+  if (hidup.size === 0) return; // tidak ada yang bisa dibandingkan
+
+  const readme = (() => {
+    try {
+      return readFileSync(join(ROOT, 'README.md'), 'utf8');
+    } catch {
+      return null;
+    }
+  })();
+  if (!readme) return;
+
+  const m = /contract\.\*\s*←\s*(\d+)\s*view/.exec(readme);
+  if (!m) {
+    problems.push('README: klaim jumlah view kontrak tidak ditemukan — pemeriksa ini tidak bisa menjaganya');
+    return;
+  }
+
+  const diklaim = Number(m[1]);
+  if (diklaim !== hidup.size) {
+    problems.push(
+      `README menyebut ${diklaim} view kontrak, migrasi menghasilkan ${hidup.size} — perbarui angkanya di README.md`
+    );
+    return;
+  }
+
+  console.log(`Contract views: OK (README dan migrasi sama-sama ${hidup.size})`);
+}
+checkContractViewCount();
 
 if (problems.length === 0) {
   console.log('Source hygiene: OK');

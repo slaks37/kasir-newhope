@@ -34,6 +34,7 @@ import {
 } from '../../src/lib/assistant/types';
 import { parseIntent, resolveIntentFromAggregates, QUICK_CHIPS } from '../../src/lib/assistant/intents';
 import { newId } from '../../src/lib/ids';
+import { AI_CREDIT_ADDON } from '../../src/data/saasPlans';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
 
 startService({
@@ -46,8 +47,9 @@ startService({
     // adalah cara paling mudah menulis bug yang lolos type-check.
     const db = () => Promise.resolve(svc.db);
   
-  const ADDON_PRICE_IDR = 49000;
-  const ADDON_CREDITS = 50;
+  // Harga add-on ikut satu sumber katalog. Lihat src/data/saasPlans.ts.
+  const ADDON_PRICE_IDR = AI_CREDIT_ADDON.priceIdr;
+  const ADDON_CREDITS = AI_CREDIT_ADDON.credits;
 
   /*
    * Dompet kredit dan jejak audit TIDAK LAGI di memori.
@@ -418,6 +420,133 @@ startService({
   
   app.get('/api/v1/assistant/quick-chips', (_req, res) => {
     res.json({ ok: true, chips: QUICK_CHIPS });
+  });
+
+  /**
+   * POST /api/ai/generate-promo
+   *
+   * ENDPOINT INI SEBELUMNYA TIDAK ADA. Tombol "Buat Ide Promo" di
+   * `src/components/ai/AIAssistant.tsx:1007` memanggilnya sejak lama; gateway
+   * merutekan prefiks `/api/ai` ke service ini, tapi tidak ada handler yang
+   * menerimanya — jadi setiap klik menerima 404 dari penangkap terakhir dan
+   * berakhir sebagai pesan "Gagal membuat ide promo" yang tidak menyebut sebab.
+   *
+   * Disiplin biayanya sama persis dengan jalur query, dan urutannya menentukan:
+   * paywall dulu, konfigurasi LLM dulu, BARU kredit dipotong. Panggilan yang
+   * gagal mengembalikan kreditnya.
+   */
+  app.post('/api/ai/generate-promo', async (req, res) => {
+    const body = (req.body || {}) as {
+      merchantId?: string;
+      businessId?: string;
+      storeType?: string;
+      targetAudience?: string;
+      lowSalesProducts?: unknown;
+    };
+    const merchantId = body.merchantId || (req.headers['x-tenant-id'] as string) || 'tenant-default';
+    const businessId = body.businessId || `${merchantId}_${body.storeType || 'FNB'}`;
+
+    if (!(await requireBusiness(req, res, businessId))) return;
+
+    const wallet = await ambilDompet(svc.db, merchantId, businessId);
+    if (wallet.balance <= 0) {
+      return res.status(402).json({
+        ok: false,
+        error: 'PAYWALL',
+        credits: wallet,
+        message: `Jatah AI Credit bulan ini sudah habis (0 dari ${wallet.monthlyGrant}).`,
+      });
+    }
+
+    const llm = getLlmConfig();
+    if (!llm) {
+      // Bukan salah merchant kalau server ini belum dikonfigurasi.
+      return res.status(503).json({
+        ok: false,
+        error: 'LLM_NOT_CONFIGURED',
+        credits: wallet,
+        message: 'Modul AI generatif belum aktif di server ini. Credit Anda tidak dipotong.',
+      });
+    }
+
+    if (!(await pakaiKredit(svc.db, merchantId, businessId))) {
+      return res.status(402).json({ ok: false, error: 'PAYWALL', credits: wallet });
+    }
+
+    // Hanya nama produk yang menyeberang — tidak ada angka penjualan, tidak ada
+    // data pelanggan. Maksimal lima, supaya prompt tetap kecil dan murah.
+    const produkLambat = Array.isArray(body.lowSalesProducts)
+      ? body.lowSalesProducts.filter((p): p is string => typeof p === 'string').slice(0, 5)
+      : [];
+
+    const startedAt = Date.now();
+    try {
+      const hasil = await callLlm({
+        system:
+          'Anda perancang promo untuk UMKM Indonesia. Jawab HANYA dengan satu objek json, ' +
+          'tanpa penjelasan apa pun di luarnya, dengan kunci persis: ' +
+          'code (huruf kapital tanpa spasi, maksimal 12 karakter), description (satu kalimat ' +
+          'bahasa Indonesia), discountPercent (bilangan bulat 5-30), maxDiscountAmount ' +
+          '(bilangan bulat rupiah, kelipatan 1000, maksimal 50000).',
+        user:
+          `Sektor usaha: ${body.storeType || 'FNB'}\n` +
+          `Target: ${body.targetAudience || 'Pelanggan Setia'}\n` +
+          `Produk yang kurang laku: ${produkLambat.length ? produkLambat.join(', ') : '(tidak disebutkan)'}\n\n` +
+          'Rancang satu promo yang mendorong produk itu terjual tanpa merusak margin.',
+        json: true,
+        maxTokens: 300,
+      });
+
+      /*
+       * Jawaban model DIVALIDASI, bukan diteruskan apa adanya.
+       *
+       * `promo` yang dikembalikan di sini bisa langsung diaktifkan menjadi kode
+       * diskon sungguhan di kasir (`handleActivatePromo`). Diskon 900% atau
+       * potongan maksimal Rp 90 juta yang lolos karena model salah hitung akan
+       * menjadi uang merchant yang benar-benar hilang.
+       */
+      const mentah = JSON.parse(hasil.text || '{}') as Record<string, unknown>;
+      const angka = (v: unknown, min: number, max: number, bawaan: number) => {
+        const n = Math.round(Number(v));
+        return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : bawaan;
+      };
+      const kode = String(mentah.code ?? '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .slice(0, 12);
+
+      const promo = {
+        code: kode || 'PROMOHEMAT',
+        description: String(mentah.description ?? 'Promo spesial untuk pelanggan setia.').slice(0, 200),
+        discountPercent: angka(mentah.discountPercent, 5, 30, 10),
+        maxDiscountAmount: angka(mentah.maxDiscountAmount, 1000, 50000, 15000),
+      };
+
+      void catatAudit(svc.db, {
+        merchantId,
+        businessId,
+        query: '[generate-promo]',
+        intent: 'GET_PROMO_LIST',
+        source: 'LLM',
+        creditsCharged: 1,
+        latencyMs: Date.now() - startedAt,
+        model: llm.model,
+        promptTokens: hasil.promptTokens,
+        completionTokens: hasil.completionTokens,
+      });
+
+      res.json({ ok: true, promo, credits: await ambilDompet(svc.db, merchantId, businessId) });
+    } catch (err) {
+      await kembalikanKredit(svc.db, merchantId, businessId);
+      svc.log.warn('generate-promo gagal, kredit dikembalikan', {
+        sebab: (err as Error).message,
+      });
+      res.status(502).json({
+        ok: false,
+        error: 'LLM_FAILED',
+        message: 'Gagal membuat ide promo. Credit Anda sudah dikembalikan.',
+      });
+    }
   });
   
   /** The proof that the cost-control objective is actually being met. */

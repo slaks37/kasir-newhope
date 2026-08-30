@@ -1,4 +1,6 @@
 import { createDokuCheckout, isDokuConfigured } from '../../_doku';
+// Satu sumber katalog paket — lihat src/data/saasPlans.ts.
+import { SAAS_PLANS } from '../../../src/data/saasPlans';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,21 +15,21 @@ export default async function handler(req: any, res: any) {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const { targetPlanId } = body;
 
-    const targetPlan = {
-      id: targetPlanId || 'plan-pro-monthly',
-      name: 'Tier Pro',
-      tierLevel: 3,
-      priceIdr: 299000,
-      features: ['Full POS & Multi-Outlet', 'Manajemen Stok & BOM', 'AI Analyst 90x/bln'],
-    };
+    /*
+     * Harga diambil dari katalog bersama, bukan diketik ulang di sini.
+     *
+     * Handler ini dulu memuat dua objek paket lengkap dengan angkanya sendiri —
+     * salinan keempat dari katalog yang sama. Karena selisih harga inilah yang
+     * ditagihkan saat merchant naik paket, salinan yang tertinggal satu revisi
+     * berarti menagih selisih yang salah.
+     */
+    const cari = (id: string) => SAAS_PLANS.find((p) => p.id === id) ?? null;
+    const targetPlan = cari(String(targetPlanId || 'plan-pro-monthly'));
+    const currentPlan = cari('plan-plus-monthly');
 
-    const currentPlan = {
-      id: 'plan-plus-monthly',
-      name: 'Tier Plus',
-      tierLevel: 2,
-      priceIdr: 99000,
-      features: ['Full POS Kasir', 'Inventori Dasar', 'AI Analyst 30x/bln'],
-    };
+    if (!targetPlan || !currentPlan) {
+      return res.status(400).json({ ok: false, error: 'PLAN_NOT_FOUND' });
+    }
 
     const remainingDays = 25;
     const diffMonth = Math.max(0, targetPlan.priceIdr - currentPlan.priceIdr);

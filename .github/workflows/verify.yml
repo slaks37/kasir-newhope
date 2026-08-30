@@ -1,0 +1,59 @@
+name: Verifikasi
+
+# KENAPA WORKFLOW INI ADA.
+#
+# Sebelumnya satu-satunya workflow di repositori ini adalah batch analitik
+# malam. Tidak ada yang menjalankan `npm run lint`, `tsc`, atau `npm run smoke`
+# pada setiap perubahan — padahal gerbang higiene repo ini bagus dan memeriksa
+# hal yang biasanya terlewat (paritas enum TypeScript vs SQL, konsistensi bobot
+# model churn di tiga bahasa, byte NUL yang pernah membuat Git menganggap berkas
+# analitik 1.866 baris sebagai biner).
+#
+# Akibatnya terbukti: suite regresi 47 intent AI Copilot rusak dan tidak ada
+# yang tahu, karena tidak ada satu pun yang menjalankannya.
+#
+# Ketiga langkah di bawah berjalan TANPA database dan selesai dalam hitungan
+# detik. Migrasi sengaja tidak dijalankan di sini — itu butuh Postgres dan
+# kredensial, dan pekerjaan yang lambat cenderung dimatikan orang.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Push beruntun ke branch yang sama tidak perlu diverifikasi semuanya; yang
+# penting hanyalah keadaan terakhir.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Higiene, type-check, dan regresi asisten
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Higiene sumber + tsc --noEmit. Dipisah dari langkah berikutnya supaya
+      # yang gagal langsung terbaca dari nama langkahnya, bukan dari log.
+      - name: Higiene sumber dan type-check
+        run: npm run lint
+
+      # Regresi 47 intent. Menjaga rule engine 3.842 baris di
+      # src/lib/assistant/intents.ts — bagian yang paling mahal kalau diam-diam
+      # berubah, karena jawabannya tetap terlihat masuk akal saat salah.
+      - name: Regresi AI Copilot
+        run: npm run smoke

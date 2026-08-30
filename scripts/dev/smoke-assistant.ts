@@ -9,16 +9,36 @@
  */
 
 import { BUSINESS_PRESETS } from '../../src/data/businessPresets';
+import { INITIAL_SETTINGS, INITIAL_SHIFT } from '../../src/data/initialData';
+/*
+ * Fikstur milik suite ini sendiri — BUKAN data contoh aplikasi.
+ *
+ * Suite ini dulu memakai INITIAL_HISTORICAL_ORDERS dan lima konstanta lain dari
+ * src/data/initialData.ts. Keenamnya dikosongkan menjadi `[]` saat data contoh
+ * dibersihkan dari aplikasi merchant — perubahan yang benar di sisi produk, tapi
+ * membuat suite ini mati di baris `INITIAL_HISTORICAL_ORDERS[0]`:
+ *
+ *   TypeError: Cannot read properties of undefined (reading 'items')
+ *
+ * Sejak itu regresi 47 intent yang dikutip README tidak pernah berjalan lagi.
+ * Sekarang fiksturnya dimiliki uji ini, jadi perubahan pada data contoh aplikasi
+ * tidak bisa lagi mematikannya diam-diam. Lihat scripts/dev/fixtures/.
+ */
 import {
-  INITIAL_ATTENDANCE_LOGS,
-  INITIAL_CUSTOMERS,
-  INITIAL_HISTORICAL_ORDERS,
-  INITIAL_PROMO_CODES,
-  INITIAL_SETTINGS,
-  INITIAL_SHIFT,
-  INITIAL_STAFF_MEMBERS,
-  INITIAL_STOCK_ITEMS,
-} from '../../src/data/initialData';
+  FIXTURE_ATTENDANCE,
+  FIXTURE_CUSTOMERS,
+  FIXTURE_ORDERS,
+  FIXTURE_PROMOS,
+  FIXTURE_STAFF,
+  FIXTURE_STOCK,
+} from './fixtures/assistant-fixture';
+
+const INITIAL_HISTORICAL_ORDERS = FIXTURE_ORDERS;
+const INITIAL_CUSTOMERS = FIXTURE_CUSTOMERS;
+const INITIAL_STAFF_MEMBERS = FIXTURE_STAFF;
+const INITIAL_ATTENDANCE_LOGS = FIXTURE_ATTENDANCE;
+const INITIAL_STOCK_ITEMS = FIXTURE_STOCK;
+const INITIAL_PROMO_CODES = FIXTURE_PROMOS;
 import { runDailyBatch } from '../../src/lib/assistant/insights';
 import {
   parseIntent,
