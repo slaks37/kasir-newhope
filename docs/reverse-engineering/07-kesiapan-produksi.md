@@ -1,5 +1,16 @@
 # 07 — Pemeriksaan Kesiapan Produksi
 
+> **Dokumen ini adalah CATATAN TEMUAN, bukan keadaan sekarang.**
+>
+> Isinya sengaja dibiarkan seperti saat pemeriksaan dilakukan. Menghapus temuan
+> yang sudah diperbaiki akan menghapus satu-satunya catatan tentang APA yang
+> pernah salah dan bagaimana ia terbukti salah — dan itu justru bagian yang
+> paling berguna ketika cacat serupa muncul lagi.
+>
+> Apa yang sudah ditutup, dengan buktinya, ada di
+> [`08-penutupan.md`](08-penutupan.md). Kolom **Sekarang** di tabel ringkasan
+> di bawah menunjuk ke sana.
+
 Pemeriksaan 15 area kesiapan operasional POS. Yang bisa diuji, **diuji dengan
 menjalankannya** — bukan dengan membaca kode. Probe-nya ikut di-commit dan bisa
 dijalankan ulang:
@@ -15,23 +26,25 @@ npm run audit:prod
 
 ## Ringkasan
 
-| Area | Status | Diuji? |
-|---|---|---|
-| Idempotency Verification | ✅ **Kuat** | ya, end-to-end |
-| Database ACID & Rollback | ✅ **Lulus** | ya |
-| Tenant Isolation & Data Leak | ✅ **Kuat** | ya |
-| Race Condition & Overselling | 🔴 **Gagal** | ya — stok jadi −1 |
-| Financial & Calculation Precision | 🔴 **Cacat** | ya — kembalian pecahan |
-| RBAC (void / refund) | 🔴 **Lemah** | ya — server tidak menegakkan |
-| Offline-First & Conflict Resolution | 🟡 Sebagian | ya (transaksi), tidak (katalog) |
-| Memory Leak Profiling | 🟡 Sebagian | statis |
-| Regression Testing | 🟡 Sebagian | ya |
-| Peripheral Integration (ESC/POS, laci, scanner) | ⚫ **Tidak ada** | — |
-| Print Spooling & Timeout Handling | ⚫ **Tidak ada** | — |
-| SDK & Dokumentasinya | ⚫ **Tidak ada** | — |
-| Peak Load & Stress Testing | ⚫ **Tidak ada** | — |
-| E2E Smoke (jalur kasir) | ⚫ **Tidak ada** | — |
-| Canary / Phased Rollout | ⚫ **Tidak ada** | — |
+| Area | Saat diperiksa | Diuji? | Sekarang |
+|---|---|---|---|
+| Idempotency Verification | ✅ **Kuat** | ya, end-to-end | ✅ diperluas — kunci kini per-(tenant, unit usaha) |
+| Database ACID & Rollback | ✅ **Lulus** | ya | ✅ ditambah kontrol positif |
+| Tenant Isolation & Data Leak | ✅ **Kuat** | ya | ✅ tetap |
+| Race Condition & Overselling | 🔴 **Gagal** | ya — stok jadi −1 | ✅ ditutup (0044) |
+| Financial & Calculation Precision | 🔴 **Cacat** | ya — kembalian pecahan | ✅ ditutup (`src/lib/money.ts`) |
+| RBAC (void / refund) | 🔴 **Lemah** | ya — server tidak menegakkan | ✅ ditutup (0042 + `services/pos/staff.ts`) |
+| Offline-First & Conflict Resolution | 🟡 Sebagian | ya (transaksi), tidak (katalog) | ✅ katalog kini berevisi (0045) |
+| Memory Leak Profiling | 🟡 Sebagian | statis | ✅ diukur: 4,9 KB/transaksi |
+| Regression Testing | 🟡 Sebagian | ya | ✅ 8 probe + 3 E2E di CI |
+| Peripheral Integration (ESC/POS, laci, scanner) | ⚫ **Tidak ada** | — | ✅ ESC/POS + laci, diuji per byte |
+| Print Spooling & Timeout Handling | ⚫ **Tidak ada** | — | ✅ antrian dengan batas waktu & ulang |
+| SDK & Dokumentasinya | ⚫ **Tidak ada** | — | ✅ OpenAPI 3.1 + pemeriksa anti-meleset |
+| Peak Load & Stress Testing | ⚫ **Tidak ada** | — | ✅ ada, dan menemukan cacat mematikan |
+| E2E Smoke (jalur kasir) | ⚫ **Tidak ada** | — | ✅ ada, dan menemukan penghapus data |
+| Canary / Phased Rollout | ⚫ **Tidak ada** | — | ✅ bendera fitur (0046) |
+
+Rinciannya, dengan bukti dan angka, ada di [`08-penutupan.md`](08-penutupan.md).
 
 ---
 
