@@ -146,14 +146,51 @@ export const InventoryManager: React.FC = () => {
     );
   });
 
+  /*
+   * KODE YANG DIUSULKAN HARUS UNIK DI KATALOG INI.
+   *
+   * Versi sebelumnya memakai `Math.floor(1000 + Math.random() * 9000)` apa
+   * adanya — 9.000 kemungkinan, tanpa memeriksa apa pun. Menurut paradoks
+   * ulang tahun, toko dengan ~112 produk sudah punya peluang ~50% memiliki dua
+   * SKU yang sama, dan toko dengan 300 produk hampir pasti punya.
+   *
+   * Untuk SKU akibatnya membingungkan. Untuk BARCODE akibatnya lebih buruk:
+   * memindai barang menarik produk yang salah, jadi kasir menjual A dan
+   * sistem mencatat B — selisih stok dan omzet yang tidak akan pernah
+   * ketemu sebabnya.
+   *
+   * Karena ini hanya USULAN yang masih bisa disunting pengguna, yang
+   * dibutuhkan bukan keacakan kriptografis melainkan jaminan tidak bentrok
+   * dengan yang sudah ada.
+   */
+  const kodeUnik = (buat: () => string, terpakai: Set<string>, maksimal = 50): string => {
+    for (let i = 0; i < maksimal; i++) {
+      const kode = buat();
+      if (!terpakai.has(kode)) return kode;
+    }
+    // Ruang acaknya penuh. Cap waktu tidak cantik, tapi ia pasti unik — dan
+    // usulan jelek jauh lebih baik daripada usulan yang diam-diam bentrok.
+    return `${buat()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+  };
+
+  const skuTerpakai = () =>
+    new Set([
+      ...products.map((p) => p.sku).filter(Boolean),
+      ...stockItems.map((i) => i.sku).filter(Boolean),
+      ...bundles.map((b) => b.sku).filter(Boolean),
+    ] as string[]);
+
+  const barcodeTerpakai = () =>
+    new Set(products.map((p) => p.barcode).filter(Boolean) as string[]);
+
   /* -------------------------------------------------------------------------- */
   /* PRODUCT ACTIONS                                                            */
   /* -------------------------------------------------------------------------- */
 
   const handleOpenAddModal = () => {
     setFormName('');
-    setFormSku(`SKU-${Math.floor(1000 + Math.random() * 9000)}`);
-    setFormBarcode(`899${Math.floor(1000000 + Math.random() * 9000000)}`);
+    setFormSku(kodeUnik(() => `SKU-${Math.floor(1000 + Math.random() * 9000)}`, skuTerpakai()));
+    setFormBarcode(kodeUnik(() => `899${Math.floor(1000000 + Math.random() * 9000000)}`, barcodeTerpakai()));
     setFormCategoryId(categories[0]?.id || 'cat-makanan');
     setFormPrice(25000);
     setFormCostPrice(12000);
@@ -226,7 +263,7 @@ export const InventoryManager: React.FC = () => {
   const handleOpenAddStockModal = () => {
     setEditingStockItem(null);
     setStockItemName('');
-    setStockItemSku(`RAW-${Math.floor(100 + Math.random() * 900)}`);
+    setStockItemSku(kodeUnik(() => `RAW-${Math.floor(100 + Math.random() * 900)}`, skuTerpakai()));
     setStockItemType('BAHAN_BAKU');
     setStockItemUnit('Gram');
     setStockItemQty(1000);
@@ -356,7 +393,7 @@ export const InventoryManager: React.FC = () => {
   const handleOpenAddBundleModal = () => {
     setEditingBundle(null);
     setBundleName('');
-    setBundleSku(`BUN-${Math.floor(100 + Math.random() * 900)}`);
+    setBundleSku(kodeUnik(() => `BUN-${Math.floor(100 + Math.random() * 900)}`, skuTerpakai()));
     setBundleDescription('');
     setBundleImage('https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400');
     setBundlePrice(35000);

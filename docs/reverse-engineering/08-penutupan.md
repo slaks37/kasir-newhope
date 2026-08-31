@@ -311,28 +311,143 @@ yang dipakai service, dan tiernya beragam supaya batas paket ikut teruji.
 
 ---
 
+## Bagian IV — Tiga batas yang sempat dinyatakan tidak bisa dilewati
+
+### 1. Premis yang keliru: irisan sinkronisasi "tidak bisa dipecah"
+
+Saya menunda ini dua kali dengan alasan yang sama: `enqueueSync` dipanggil dari
+DALAM `processPayment` dan `voidOrder`, jadi memisahkannya menuntut membalik
+arah ketergantungan lebih dulu.
+
+**Premisnya salah.** Kedua fungsi itu tidak bergantung pada bagian dalam
+sinkronisasi; mereka MENYERAHKAN satu order kepadanya. Itu panggilan biasa ke
+modul lain, bukan lingkaran. Yang membuatnya tampak seperti lingkaran hanyalah
+bentuk pengulangannya — pola tiga baris yang sama disalin di dua tempat:
+
+```
+enqueueSync(businessId, orderToPayload(order, role, otorisasi));
+setSyncStatus(getSyncStatus(businessId));
+void runSync(target);
+```
+
+Tiga baris itu SATU operasi — "antrikan order ini, lalu coba kirim" — yang
+kebetulan ditulis terurai. Begitu ia diberi nama, tidak ada yang perlu dibalik.
+
+Satu cacat halus ikut ditutup: `syncTarget` dibangun ulang setiap render dan
+menjadi dependensi efek pemicu, sehingga pendengar `'online'` dipasang-lepas
+terus-menerus dan pewaktu 60 detik tidak pernah sempat berdetak.
+
+```
+POSContext.tsx      2.292 -> 2.022 baris
+penyimpananPOS.ts   163 baris   (lapisan penyimpanan)
+sinkronisasiPOS.ts  186 baris   (antrian & katalog)
+```
+
+### 2. Probe yang tidak bisa menunjuk ke mana pun kecuali PGlite
+
+Alasan setiap angka uji beban membawa catatan kaki "tidak berlaku untuk
+produksi" ternyata bukan sifat ujinya, melainkan **`probe.mjs` yang
+meng-hardcode URL PGlite**. Ketahuan ketika probe diarahkan ke PostgreSQL 16
+asli dan gagal dengan `client password must be a string` — harness-nya memang
+tidak pernah bisa menunjuk ke tempat lain.
+
+Sesudah tujuan dibaca dari `DATABASE_URL`, **kesepuluh probe lulus di
+PostgreSQL 16 sungguhan**, termasuk 47 migrasi dari database kosong.
+
+Uji beban di PostgreSQL asli, dibanding PGlite:
+
+| | PGlite | PostgreSQL 16 |
+|---|---|---|
+| 200 checkout, 20 bersamaan | 91/detik, p95 234 ms | **174/detik, p95 140 ms** |
+| 100 bersamaan atas 4 koneksi | p99 1.016 ms | **p99 531 ms** |
+| baca+tulis bersamaan | galat sesekali | **nol galat** |
+
+Baris terakhir menutup satu dugaan yang sebelumnya hanya bisa saya nyatakan
+tanpa bukti: galat `portal does not exist` memang batas PGlite, bukan cacat
+jalur kode.
+
+Catatan penutup uji beban kini menyebut tujuan yang SEBENARNYA — peringatan
+yang salah lebih buruk daripada tidak ada peringatan, karena ia membuat angka
+yang sah ikut diabaikan. Job CI `postgres` menjalankannya di PostgreSQL 16
+pada setiap push, jadi ini bukan verifikasi sekali jalan.
+
+### 3. Printer: jarak yang bisa dipersempit, meski tidak dihapus
+
+"Belum bertemu printer sungguhan" tetap benar. Tapi uji sebelumnya punya
+kelemahan yang bisa diperbaiki: ia mencocokkan byte dengan konstanta yang
+diambil dari **encoder yang sama**. Itu membuktikan encoder konsisten dengan
+dirinya sendiri, dan akan tetap hijau kalau konstantanya sendiri salah menurut
+spesifikasi Epson.
+
+`escpos-decoder.mjs` ditulis dari spesifikasi secara TERPISAH — ia membongkar
+aliran byte menjadi teks, perataan, penekanan, momen laci dipulsa, dan jenis
+potongan. Yang dibandingkan sekarang adalah **dua pembacaan spesifikasi yang
+berbeda**, dan hasilnya bisa digambar sebagai struk yang terbaca manusia:
+
+```
+====================================================
+|                Kopi Senja Kemang                 |
+|     Jl. Kemang Raya No. 45, Jakarta Selatan      |
+| ------------------------------------------------ |
+| Kopi Susu Gula Aren                              |
+|   2 x 22.000                              44.000 |
+| TOTAL                                     85.840 |
+====================================================
+```
+
+Ditambah printer TIRUAN lewat HTTP yang menguji jalur transport `jalurLan`
+sungguhan — termasuk siklus penuh printer yang kertasnya habis lalu diganti.
+
+**Yang tetap tidak dibuktikan:** bahwa printer merek tertentu menafsirkan byte
+ini seperti spesifikasi mengatakannya. Itu menuntut perangkat keras, dan
+dikatakan di dalam ujinya sendiri.
+
+---
+
+### 4. Yang ditemukan sambil membereskan sisa: PIN yang tidak akan pernah cocok
+
+Catatan "barcode masih memakai `Math.random()`" membawa ke sesuatu yang jauh
+lebih serius di berkas yang sama-sama memakai keacakan.
+
+`sha256()` di sisi klien punya **cadangan non-kriptografis**: hash FNV 64-bit
+berawalan `fallback_`, dipakai ketika `crypto.subtle` tidak ada. Dan
+`generateSalt()` jatuh ke `Math.random()` dalam keadaan yang sama.
+
+Dua akibatnya, keduanya buruk:
+
+1. **Itu bukan pengaman.** 64 bit non-kriptografis atas PIN empat angka bisa
+   dibalik seketika; salt yang bisa ditebak meniadakan guna salt, karena
+   penyerang cukup menghitung tabel 10.000 PIN sekali lalu memakainya untuk
+   semua staf.
+
+2. **Server tidak akan pernah mencocokkannya.** `services/pos/staff.ts`
+   memverifikasi dengan SHA-256 sungguhan. Staf yang didaftarkan dari perangkat
+   yang jatuh ke cadangan menyimpan `sha256$<salt>$<bukan sha256>` — dan PIN-nya
+   tidak pernah cocok, dengan pesan **"PIN salah" yang berbohong** kepada
+   manajer yang mengetiknya dengan benar.
+
+Cadangan itu juga tidak pernah bisa berguna: `sha256()` menuntut
+`crypto.subtle`, yang selalu ada di mana pun `getRandomValues` ada. Ia hanya
+melindungi dari keadaan yang membuat baris berikutnya gagal juga — ilusi
+ketahanan.
+
+Keduanya kini **melempar** `KriptoTidakTersedia` dengan pesan yang menunjuk
+sebabnya. `t-pin.ts` memverifikasi rumus kedua sisi dengan implementasi server
+yang ditulis ulang secara terpisah, bukan diimpor dari klien.
+
+Barcode dan SKU yang dibangkitkan kini diperiksa terhadap katalog yang ada.
+Pada 9.000 kemungkinan tanpa pemeriksaan, toko dengan ~112 produk sudah punya
+peluang ~50% memiliki dua SKU sama. Untuk barcode akibatnya lebih buruk:
+memindai barang menarik produk yang salah, jadi kasir menjual A dan sistem
+mencatat B.
+
+---
+
 ## Yang masih terbuka
 
-**Irisan sinkronisasi di `POSContext.tsx` belum dipecah.** Lapisan
-penyimpanan sudah dikeluarkan ke `src/context/penyimpananPOS.ts` — irisan yang
-paling layak didahulukan, karena di situlah cacat penghapus data lahir, dan
-sekarang penjaganya struktural alih-alih diingat di tiga belas tempat
-(2.292 → 2.114 baris).
-
-Irisan sinkronisasi tetap di dalam, dengan alasan yang masih sama:
-`enqueueSync` dipanggil dari DALAM `processPayment` dan `voidOrder`, jadi
-memisahkannya menuntut membalik arah ketergantungan itu lebih dulu — perubahan
-perilaku, bukan penataan ulang. Uji E2E yang sekarang ada membuatnya jauh lebih
-aman dikerjakan daripada sebelumnya.
-
-**Integrasi peripheral belum diuji dengan perangkat keras.** Byte-nya benar
-menurut spesifikasi; bahwa printer merek tertentu menerimanya adalah hal lain,
-dan hanya bisa dibuktikan dengan printer sungguhan.
-
-**Barcode scanner belum tersentuh.** Sebagian besar scanner bekerja sebagai
-papan ketik dan tidak menuntut integrasi apa pun, tapi itu belum diverifikasi —
-dan barcode yang DIBANGKITKAN aplikasi masih memakai `Math.random()`, yang
-berarti tabrakan hanya soal waktu.
+**Barcode scanner belum diuji dengan perangkat keras.** Sebagian besar scanner
+bekerja sebagai papan ketik dan tidak menuntut integrasi apa pun, tapi itu
+belum diverifikasi dengan alat sungguhan.
 
 **Permukaan serverless masih rintisan untuk hal lain selain sinkronisasi.** Ia
 kini menolak dengan jujur alih-alih berpura-pura berhasil, sehingga tidak lagi

@@ -40,14 +40,46 @@ function writeState(state: PinSecurityState): void {
   }
 }
 
-/** Menghasilkan random salt hex string (16 bytes = 32 hex chars) */
-export function generateSalt(bytes = 16): string {
-  const arr = new Uint8Array(bytes);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(arr);
-  } else {
-    for (let i = 0; i < bytes; i++) arr[i] = Math.floor(Math.random() * 256);
+/**
+ * Kesalahan yang sengaja TIDAK ditangkap di mana pun.
+ *
+ * Ia hanya bisa terjadi di lingkungan tanpa Web Crypto, dan di lingkungan itu
+ * PIN memang tidak bisa diamankan. Menangkapnya berarti melanjutkan seolah-olah
+ * bisa.
+ */
+export class KriptoTidakTersedia extends Error {
+  constructor(bagian: string) {
+    super(
+      `Peramban ini tidak menyediakan Web Crypto (${bagian}), sehingga PIN staf ` +
+      'tidak bisa diamankan. Buka aplikasi lewat HTTPS, atau pakai peramban yang ' +
+      'lebih baru.'
+    );
+    this.name = 'KriptoTidakTersedia';
   }
+}
+
+/**
+ * Salt acak 16 byte.
+ *
+ * MELEMPAR kalau tidak ada sumber acak kriptografis — sengaja, dan ini
+ * perubahan dari perilaku sebelumnya.
+ *
+ * Versi lama jatuh ke `Math.random()`, yang bisa ditebak. Salt yang bisa
+ * ditebak meniadakan gunanya salt: penyerang tinggal menghitung tabel untuk
+ * 10.000 kemungkinan PIN empat angka satu kali, lalu memakainya untuk semua
+ * staf sekaligus.
+ *
+ * Cadangan itu juga tidak pernah bisa berguna: `sha256()` di bawah menuntut
+ * `crypto.subtle`, yang selalu ADA di mana pun `getRandomValues` ada. Jadi
+ * cadangan ini hanya melindungi dari keadaan yang membuat baris berikutnya
+ * gagal juga — ilusi ketahanan, bukan ketahanan.
+ */
+export function generateSalt(bytes = 16): string {
+  if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
+    throw new KriptoTidakTersedia('getRandomValues');
+  }
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
   return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -59,14 +91,25 @@ export async function sha256(message: string): Promise<string> {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
   }
-  // Fallback FNV/Simple bitwise jika di environment tanpa crypto.subtle
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < message.length; i++) {
-    const ch = message.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  return `fallback_${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+  /*
+   * TIDAK ADA CADANGAN, dan ini perubahan dari perilaku sebelumnya.
+   *
+   * Versi lama jatuh ke hash FNV 64-bit berawalan `fallback_`. Dua akibatnya,
+   * dan keduanya buruk:
+   *
+   * 1. HASH ITU BUKAN PENGAMAN. 64 bit non-kriptografis atas PIN empat angka
+   *    bisa dibalik seketika. Ia hanya TERLIHAT seperti hash.
+   *
+   * 2. SERVER TIDAK AKAN PERNAH MENCOCOKKANNYA. `services/pos/staff.ts`
+   *    memverifikasi dengan SHA-256 sungguhan. Staf yang didaftarkan dari
+   *    perangkat yang jatuh ke cadangan ini menyimpan `sha256$<salt>$<bukan
+   *    sha256>` — dan PIN-nya tidak akan pernah cocok, dengan pesan "PIN
+   *    salah" yang berbohong kepada manajer yang mengetiknya dengan benar.
+   *
+   * Kegagalan yang jujur jauh lebih baik: ia menunjuk sebabnya, dan bisa
+   * diperbaiki dengan membuka aplikasi lewat HTTPS.
+   */
+  throw new KriptoTidakTersedia('crypto.subtle');
 }
 
 /**

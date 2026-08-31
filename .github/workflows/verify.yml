@@ -76,6 +76,83 @@ jobs:
       - name: Struk tercetak dan printer tiruan
         run: npx tsx scripts/dev/audit/t-printer.ts
 
+      # Rumus hash PIN klien harus SAMA PERSIS dengan verifikasi server.
+      # Kalau meleset, staf terdaftar dengan PIN yang tidak akan pernah cocok.
+      - name: PIN staf, klien vs server
+        run: npx tsx scripts/dev/audit/t-pin.ts
+
+  postgres:
+    name: Probe di PostgreSQL sungguhan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # KENAPA JOB INI ADA.
+    #
+    # Seluruh probe kesiapan produksi selama ini hanya pernah berjalan di atas
+    # PGlite — basis data pengembangan yang repositori ini sendiri sebut "hanya
+    # untuk pengembangan" saat menyala. Akibatnya setiap temuannya membawa
+    # catatan kaki "angka ini tidak berlaku untuk produksi", tanpa cara apa pun
+    # menghilangkannya.
+    #
+    # Yang ingin dibuktikan justru sebaliknya: jaminan yang sama berlaku di
+    # PostgreSQL sungguhan. Menjalankannya di sana juga sudah menemukan hal
+    # yang tidak mungkin terlihat di PGlite — galat "portal does not exist"
+    # ternyata memang batas PGlite, bukan cacat jalur kode.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      AUTH_ALLOW_LOCAL_DEVELOPMENT: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Migrasi dari database KOSONG. Ini sendiri sudah pernah menemukan dua
+      # cacat: entri duplikat yang membuat migrasi gagal dari nol, dan bawaan
+      # kebijakan stok yang tidak berlaku untuk merchant baru.
+      - name: Migrasi dari nol
+        run: npm run db:migrate
+
+      - name: Isi data contoh
+        run: npx tsx scripts/db/seed.ts --force
+
+      - name: Nyalakan pos-service
+        run: |
+          npx tsx services/pos/index.ts > /tmp/pos.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:3101/ready >/dev/null && exit 0
+            sleep 1
+          done
+          echo "pos-service tidak siap:"; cat /tmp/pos.log; exit 1
+
+      - name: Seluruh probe kesiapan produksi
+        run: npm run audit:prod
+
+      - name: Log pos-service kalau gagal
+        if: failure()
+        run: cat /tmp/pos.log || true
+
   e2e:
     name: E2E jalur kasir
     runs-on: ubuntu-latest
