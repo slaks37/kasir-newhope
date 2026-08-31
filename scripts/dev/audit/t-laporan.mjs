@@ -16,9 +16,9 @@
  * SEBENARNYA di database, lalu memperlihatkan berapa besar yang akan hilang
  * kalau layar itu tetap membaca 50 baris lokal saja.
  */
-import { conn, line } from './probe.mjs';
+import { API_URL as API, conn, line } from './probe.mjs';
 
-const API = 'http://127.0.0.1:3101';
+
 for (let i = 0; i < 30; i++) {
   if (await fetch(API + '/ready').then((r) => r.ok).catch(() => false)) break;
   await new Promise((r) => setTimeout(r, 1000));

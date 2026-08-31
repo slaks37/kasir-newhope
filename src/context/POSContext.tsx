@@ -56,15 +56,8 @@ import {
   stampBusiness,
 } from './TenantContext';
 import { posthogTelemetry } from '../utils/posthog';
-import {
-  enqueue as enqueueSync,
-  flush as flushSync,
-  getStatus as getSyncStatus,
-  orderToPayload,
-  pushCatalog,
-  type SyncStatus,
-  type SyncTarget,
-} from '../lib/sync/queue';
+import type { SyncStatus } from '../lib/sync/queue';
+import { useKatalogTersinkron, useSinkronisasiPOS } from './sinkronisasiPOS';
 import {
   verifyPinHash,
   getPinLockoutStatus,
@@ -427,68 +420,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // pernah menunggu jaringan, dan mematikan aplikasi tidak memakan transaksi.
   // Seluruh mekanismenya ada di lib/sync/queue.ts.
 
-  const syncTarget: SyncTarget = {
+  /*
+   * Seluruh mekanismenya ada di ./sinkronisasiPOS.ts — pemicu saat dibuka,
+   * saat jaringan kembali, dan denyut 60 detik; ditambah `antrikan` yang
+   * menggabungkan tiga langkah yang dulu disalin di dua tempat.
+   */
+  const sinkron = useSinkronisasiPOS({
     businessId: tenant.businessId,
     sector: activeSector,
     storeName: settings.storeName,
     ownerRef: currentUser.id,
-  };
-
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
-    getSyncStatus(makeBusinessId(currentUser.id, activeSector))
-  );
-
-  /**
-   * Menjalankan pengiriman lalu menyegarkan status di layar.
-   *
-   * Sengaja tidak pernah melempar: pemanggil terdekatnya adalah jalur
-   * penyelesaian transaksi, dan sinkronisasi yang gagal tidak boleh
-   * menjatuhkan penjualan yang sudah sah.
-   */
-  const runSync = React.useCallback(
-    async (target: SyncTarget) => {
-      try {
-        setSyncStatus(getSyncStatus(target.businessId, true));
-        const after = await flushSync(target);
-        setSyncStatus(after);
-      } catch {
-        setSyncStatus(getSyncStatus(target.businessId));
-      }
-    },
-    []
-  );
-
-  const bizId = tenant.businessId;
-  const storeNameForSync = settings.storeName;
-
-  useEffect(() => {
-    const target: SyncTarget = {
-      businessId: bizId,
-      sector: activeSector,
-      storeName: storeNameForSync,
-      ownerRef: currentUser.id,
-    };
-
-    // Berpindah pengguna atau sektor berarti antrian yang berbeda.
-    setSyncStatus(getSyncStatus(bizId));
-
-    // 1. Saat dibuka — mengirim apa pun yang tertinggal dari sesi sebelumnya.
-    void runSync(target);
-
-    // 2. Saat jaringan kembali. Ini pemicu terpenting bagi kasir yang seharian
-    //    offline lalu masuk area ber-WiFi.
-    const onOnline = () => void runSync(target);
-    window.addEventListener('online', onOnline);
-
-    // 3. Denyut berkala sebagai jaring pengaman. Event 'online' tidak selalu
-    //    menyala di semua perangkat, dan server bisa saja yang tadi mati.
-    const timer = window.setInterval(() => void runSync(target), 60_000);
-
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.clearInterval(timer);
-    };
-  }, [bizId, activeSector, storeNameForSync, currentUser.id, runSync]);
+  });
+  const syncStatus = sinkron.status;
 
   const [categories, setCategories] = useState<Category[]>(() => {
     return loadScopedData('categories', currentUser.id, activeSector, defaultPreset.categories);
@@ -738,45 +681,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.clearTimeout(timer);
   }, [stockItems, kunciSimpan]);
 
-  /*
-   * SINKRONISASI KATALOG.
-   *
-   * Dikirim utuh, bukan yang berubah saja — lihat alasannya di endpoint
-   * /api/v1/sync/catalog. Tanpa ini, produk hanya sampai ke database kalau ia
-   * TERJUAL, sehingga produk yang tidak pernah laku — justru yang paling perlu
-   * diketahui pemilik — tidak akan pernah muncul di panel.
-   *
-   * Ditunda 8 detik dan di-reset setiap perubahan. `products` ikut berubah pada
-   * SETIAP penjualan karena stoknya berkurang; tanpa penundaan, satu jam sibuk
-   * akan mengirim ratusan katalog identik.
-   */
-  useEffect(() => {
-    if (products.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushCatalog(
-        {
-          businessId: makeBusinessId(currentUser.id, activeSector),
-          sector: activeSector,
-          storeName: settings.storeName,
-          ownerRef: currentUser.id,
-        },
-        products.map((p) => ({
-          id: p.id,
-          name: p.name,
-          sku: p.sku,
-          price: p.price,
-          costPrice: p.costPrice,
-          unit: p.unit,
-          description: p.description,
-          categoryName: categories.find((c) => c.id === p.categoryId)?.name,
-          isAvailable: p.isAvailable,
-        }))
-      );
-    }, 8_000);
-
-    return () => window.clearTimeout(timer);
-  }, [products, categories, currentUser.id, activeSector, settings.storeName]);
+  // Katalog dikirim utuh secara berkala; mekanismenya di ./sinkronisasiPOS.ts.
+  useKatalogTersinkron(
+    {
+      businessId: makeBusinessId(currentUser.id, activeSector),
+      sector: activeSector,
+      storeName: settings.storeName,
+      ownerRef: currentUser.id,
+    },
+    products,
+    categories
+  );
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -1492,9 +1407,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // terkirim saat aplikasi dibuka lagi. Pengirimannya sendiri sengaja tidak
     // di-await: kasir tidak boleh menunggu jaringan untuk menyelesaikan
     // penjualan.
-    enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role));
-    setSyncStatus(getSyncStatus(tenant.businessId));
-    void runSync(syncTarget);
+    sinkron.antrikan(newOrder, currentUser.role);
 
     if (soundEnabled) playPOSSound('payment_success');
 
@@ -1544,16 +1457,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       : undefined;
 
-    enqueueSync(
-      tenant.businessId,
-      orderToPayload(
-        { ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' },
-        currentUser.role,
-        otorisasi
-      )
+    sinkron.antrikan(
+      { ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' },
+      currentUser.role,
+      otorisasi
     );
-    setSyncStatus(getSyncStatus(tenant.businessId));
-    void runSync(syncTarget);
 
     // 2. Restore Product Stock & Create Inventory Refund Log
     const returnedQtyByProduct = new Map<string, number>();
@@ -2076,7 +1984,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         processPayment,
         voidOrder,
         syncStatus,
-        forceSync: () => void runSync(syncTarget),
+        forceSync: sinkron.kirimSekarang,
         holdOrder,
         recallHoldOrder,
         cancelHoldOrder,

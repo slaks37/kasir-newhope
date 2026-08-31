@@ -19,9 +19,9 @@
  *   C. penghapusan yang SUNGGUHAN tetap bekerja — kalau penjaga menolak semua
  *      pensiun, ia bukan penjaga melainkan kerusakan lain
  */
-import { conn, line } from './probe.mjs';
+import { API_URL as API, conn, line } from './probe.mjs';
 
-const API = 'http://127.0.0.1:3101';
+
 const RUN = Date.now().toString(36);
 const OWNER = `own-kat-${RUN}`;
 const BIZ = `${OWNER}_RETAIL`;

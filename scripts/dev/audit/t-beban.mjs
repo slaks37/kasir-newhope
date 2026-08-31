@@ -30,9 +30,9 @@
  * dikutip seolah-olah berlaku. Yang dicari adalah PERILAKU: apakah ia antre
  * dengan tertib, apakah ia kehilangan sesuatu, apakah ekornya meledak.
  */
-import { conn, line } from './probe.mjs';
+import { API_URL as API, conn, line, tujuan } from './probe.mjs';
 
-const API = 'http://127.0.0.1:3101';
+
 const RUN = Date.now().toString(36);
 const OWNER = `own-beban-${RUN}`;
 const BIZ = `${OWNER}_RETAIL`;
@@ -228,9 +228,32 @@ if (hTulis.galat.length || hBaca.galat.length) {
   line('       PENTING adalah service tidak lagi ikut mati bersamanya.');
 }
 
-line('\n  CATATAN: berjalan di atas PGlite pada satu mesin pengembangan.');
-line('  Angkanya TIDAK berlaku untuk produksi dan tidak boleh dikutip begitu.');
-line('  Yang dicari uji ini adalah perilaku: antre tertib, tidak kehilangan');
+/*
+ * Catatan penutup MENYEBUT TUJUAN YANG SEBENARNYA.
+ *
+ * Versi pertama menuliskan "berjalan di atas PGlite" apa adanya. Itu benar
+ * selama probe hanya bisa menunjuk ke satu tempat — dan menjadi bohong begitu
+ * ia diarahkan ke PostgreSQL sungguhan, yang justru tujuan seluruh perubahan
+ * ini. Peringatan yang salah lebih buruk daripada tidak ada peringatan: ia
+ * membuat angka yang sah ikut diabaikan.
+ */
+const versi = (await c.query('SELECT version() AS v')).rows[0].v;
+const pglite = /pglite/i.test(versi);
+
+line(`\n  TUJUAN : ${tujuan()}`);
+line(`  MESIN  : ${versi.split(',')[0]}`);
+if (pglite) {
+  line('\n  CATATAN: PGlite adalah basis data pengembangan, bukan produksi.');
+  line('  Angka di atas TIDAK berlaku untuk produksi dan tidak boleh dikutip');
+  line('  begitu. Jalankan ulang dengan DATABASE_URL menunjuk PostgreSQL');
+  line('  sungguhan untuk angka yang berarti.');
+} else {
+  line('\n  CATATAN: berjalan di atas PostgreSQL sungguhan, tapi pada satu mesin');
+  line('  bersama aplikasinya. Angkanya sah untuk membandingkan PERUBAHAN, bukan');
+  line('  untuk merencanakan kapasitas produksi — di sana jaringan, disk, dan');
+  line('  beban tetangga ikut menentukan.');
+}
+line('\n  Yang dicari uji ini adalah perilaku: antre tertib, tidak kehilangan');
 line('  transaksi, ekor latensi tidak meledak.');
 
 line(gagal === 0

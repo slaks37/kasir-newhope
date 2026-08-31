@@ -183,6 +183,24 @@ test.describe('Jalur kasir', () => {
     const adaOrder = Object.entries(sebelum).some(([k, n]) => k.includes('orders') && n > 0);
     expect(adaOrder, `tidak ada order tersimpan: ${JSON.stringify(sebelum)}`).toBe(true);
 
+    /*
+     * ANTRIAN SINKRONISASI ikut diperiksa, bukan hanya riwayat lokal.
+     *
+     * Keduanya jalur yang berbeda: `orders` adalah apa yang dilihat kasir,
+     * `sync_queue` adalah apa yang akan sampai ke pembukuan pusat. Sebuah
+     * penjualan bisa tersimpan di layar dan TIDAK PERNAH terkirim, dan yang
+     * hilang dalam kasus itu adalah uangnya, bukan tampilannya.
+     *
+     * Di lingkungan uji ini tidak ada server yang menjawab, jadi pengirimannya
+     * gagal dan antriannya HARUS tetap terisi — itulah perilaku offline-first
+     * yang benar.
+     */
+    const antrian = Object.entries(sebelum).filter(([k, n]) => k.includes('sync_queue') && n > 0);
+    expect(
+      antrian.length,
+      `penjualan tidak masuk antrian sinkronisasi: ${JSON.stringify(sebelum)}`
+    ).toBeGreaterThan(0);
+
     // Tablet dimuat ulang.
     await page.reload();
     await expect(page.getByTitle('Mulai / Akhiri Shift & Lihat Log Sesi Kasir'))

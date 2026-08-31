@@ -5,8 +5,9 @@
  * kecocokan rumus keduanya, bukan salinan yang kebetulan cocok.
  */
 import crypto from 'node:crypto';
+import { API_URL as API } from './probe.mjs';
 const line = console.log;
-const API = 'http://127.0.0.1:3101';
+
 const post = (path, b) => fetch(API + path, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
 }).then(async r => ({ s: r.status, b: await r.json().catch(() => ({})) }));
