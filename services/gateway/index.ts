@@ -158,6 +158,29 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
+
+        /*
+         * x-internal-user DIBUANG DARI KLIEN, lalu diisi dari sesi
+         * terverifikasi di bawah. Alasannya sama persis dengan x-auth-sub,
+         * dan konsekuensinya jauh lebih besar.
+         *
+         * Header ini menentukan SIAPA yang sedang membuka konsol back-office,
+         * dan konsol itu membaca pembukuan setiap merchant di platform.
+         * Sebelum ini gateway meneruskannya apa adanya, sehingga siapa pun
+         * yang punya sesi sah — merchant mana pun yang mendaftar — cukup
+         * mengirim satu header untuk menjadi SUPERADMIN:
+         *
+         *   curl .../api/admin/transactions -H 'x-internal-user: ops@...'
+         *
+         * Diperagakan langsung terhadap gateway yang berjalan: jawabannya 200,
+         * berisi transaksi merchant lain.
+         *
+         * Panel admin memang MENGIRIM header ini — ia login ke Supabase lalu
+         * mengirimkan email yang sama. Yang hilang adalah pemeriksaan bahwa
+         * keduanya cocok. Sekarang nilai dari klien tidak dipakai sama sekali;
+         * yang berlaku adalah email sesi yang sudah diverifikasi.
+         */
+        'x-internal-user',
       ]);
 
       const headers: Record<string, string> = {};
@@ -179,8 +202,33 @@ app.use('/api', async (req, res, next) => {
       if (principal) {
         headers['x-auth-sub'] = principal.subject;
         if (principal.email) headers['x-auth-email'] = principal.email;
+
+        /*
+         * Identitas back-office = email sesi, bukan yang diakui klien.
+         *
+         * Backoffice mencarinya di internal.internal_users; email merchant
+         * biasa tidak ada di sana, jadi ia dijawab UNKNOWN_IDENTITY. Itulah
+         * perilaku yang benar: hak internal mengikuti akun yang benar-benar
+         * dipakai masuk.
+         */
+        if (principal.email) headers['x-internal-user'] = principal.email;
       }
       // Service menolak request tanpa token ini, termasuk yang masuk langsung
+      /*
+       * PENGEMBANGAN LOKAL SAJA. Dengan AUTH_ALLOW_LOCAL_DEVELOPMENT=1 tidak
+       * ada sesi Supabase, sehingga principal tidak membawa email dan konsol
+       * admin tidak bisa dipakai sama sekali. Di sana — dan HANYA di sana —
+       * nilai dari klien diteruskan.
+       *
+       * Bendera itu sendiri sudah menolak menyala di produksi
+       * (services/shared/env.ts melempar bila NODE_ENV=production), jadi jalan
+       * keluar ini tidak bisa terbuka tanpa disengaja.
+       */
+      if (!headers['x-internal-user'] && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1') {
+        const dariKlien = req.headers['x-internal-user'];
+        if (typeof dariKlien === 'string') headers['x-internal-user'] = dariKlien;
+      }
+
       // ke port internal dengan x-auth-sub palsu.
       if (process.env.INTERNAL_GATEWAY_TOKEN) {
         headers['x-newhope-gateway-token'] = process.env.INTERNAL_GATEWAY_TOKEN;

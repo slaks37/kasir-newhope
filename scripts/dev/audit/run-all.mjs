@@ -24,6 +24,8 @@ const probes = [
   ['Antrian hanya dipangkas atas pengakuan', 't-jujur.ts'],
   ['Struk tercetak & printer tiruan LAN', 't-printer.ts'],
   ['PIN staf: klien vs server', 't-pin.ts'],
+  // Butuh backoffice-service di :3104. Menyalakan gateway ujinya sendiri.
+  ['Konsol back-office: identitas & RBAC', 't-admin.mjs'],
   ['Bendera fitur & peluncuran bertahap', 't-bendera.mjs'],
   // Paling lambat, ditaruh terakhir supaya temuan lain terbaca lebih dulu.
   ['Beban puncak & ketahanan', 't-beban.mjs'],

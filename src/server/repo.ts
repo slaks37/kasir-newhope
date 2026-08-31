@@ -502,9 +502,20 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   w.add((p) => `(a.summary ILIKE ${p} OR a.event_type ILIKE ${p})`, c.search ? `%${c.search}%` : null);
 
   const { rows } = await db.query(
+    /*
+     * `transaction_id` DIHAPUS dari daftar ini, tidak diganti.
+     *
+     * Ia tidak pernah dicatat: internal.audit_logs tidak punya kolomnya dan
+     * `detail` juga tidak memuatnya. Memilihnya membuat seluruh halaman
+     * Activity menjawab 500 — bukan sebagian, bukan kadang.
+     *
+     * `business_id` sebaliknya DIPERTAHANKAN dan dipaparkan oleh view sejak
+     * migrasi 0047: nilainya sudah ada di internal.tenants.external_ref, dan
+     * layar Activity menampilkannya.
+     */
     `SELECT a.id, a.business_sector, a.business_id, a.app_module, a.event_type,
             a.severity, a.actor_name, a.actor_role, a.amount_idr, a.summary,
-            a.detail, a.occurred_at, a.transaction_id,
+            a.detail, a.occurred_at,
             a.merchant_name, a.merchant_id
        FROM contract.activity_log a
        ${w.sql()}
