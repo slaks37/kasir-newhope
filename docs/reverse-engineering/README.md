@@ -92,8 +92,14 @@ npm run lint
 # Regresi 47 intent AI Copilot
 npm run smoke
 
-# Delapan probe kesiapan produksi (butuh database + pos-service menyala)
+# Sebelas probe kesiapan produksi (butuh database + pos-service menyala)
 npm run audit:prod
+
+# Probe menerima DATABASE_URL, jadi ia bisa diarahkan ke PostgreSQL SUNGGUHAN —
+# bukan hanya PGlite pengembangan. Itu jalur yang dipakai job CI `postgres`,
+# dan angkanya jauh berbeda: 174 permintaan/detik dengan p95 140 ms, dibanding
+# 91/detik dan p95 234 ms di PGlite.
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres npm run audit:prod
 
 # Tiga uji peramban: jalur kasir, ketahanan muat ulang, profil memori
 npm run e2e
