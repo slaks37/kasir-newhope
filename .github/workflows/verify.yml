@@ -70,6 +70,12 @@ jobs:
       - name: Antrian sinkronisasi tidak membuang atas jawaban yang bohong
         run: npx tsx scripts/dev/audit/t-jujur.ts
 
+      # Encoder ESC/POS diuji terhadap decoder yang ditulis dari spesifikasi
+      # secara TERPISAH, plus printer tiruan lewat HTTP untuk jalur LAN.
+      # Tidak butuh database maupun perangkat keras.
+      - name: Struk tercetak dan printer tiruan
+        run: npx tsx scripts/dev/audit/t-printer.ts
+
   e2e:
     name: E2E jalur kasir
     runs-on: ubuntu-latest

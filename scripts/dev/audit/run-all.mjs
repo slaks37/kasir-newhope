@@ -22,6 +22,7 @@ const probes = [
   // Tidak butuh database maupun service — murni byte dan antrian.
   ['Peripheral: ESC/POS, laci kasir, antrian cetak', 't-peripheral.ts'],
   ['Antrian hanya dipangkas atas pengakuan', 't-jujur.ts'],
+  ['Struk tercetak & printer tiruan LAN', 't-printer.ts'],
   ['Bendera fitur & peluncuran bertahap', 't-bendera.mjs'],
   // Paling lambat, ditaruh terakhir supaya temuan lain terbaca lebih dulu.
   ['Beban puncak & ketahanan', 't-beban.mjs'],
