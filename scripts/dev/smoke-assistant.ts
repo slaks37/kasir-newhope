@@ -242,7 +242,16 @@ const iso = (y: number, m: number, d: number, h = 12, min = 0) =>
 
 /** Orders spanning payday (25-3) and normal (4-24) windows, with a real uplift. */
 function calendarOrders(): Order[] {
-  const base = INITIAL_HISTORICAL_ORDERS[0];
+  const base = INITIAL_HISTORICAL_ORDERS[0] || {
+    id: 'base-order',
+    items: [{ id: 'p-1', name: 'Produk Test', quantity: 1, unitPrice: 10000, totalPrice: 10000 }],
+    paymentMethod: 'CASH',
+    paymentStatus: 'PAID',
+    status: 'COMPLETED',
+    total: 10000,
+    subtotal: 10000,
+    date: new Date().toISOString(),
+  };
   const out: Order[] = [];
   const mk = (y: number, m: number, d: number, total: number, n: number) => {
     for (let i = 0; i < n; i++) {
@@ -254,8 +263,8 @@ function calendarOrders(): Order[] {
         subtotal: total,
         status: 'COMPLETED',
         customer: undefined,
-        items: [{ ...base.items[0], quantity: 1, totalPrice: total, unitPrice: total }],
-      });
+        items: [{ ...(base.items[0] || { id: 'p-1', name: 'Produk Test' }), quantity: 1, totalPrice: total, unitPrice: total }],
+      } as any);
     }
   };
   // Normal window (4-24 July): small baskets.
