@@ -18,6 +18,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
     'stock_adjustment',
     'user_management',
     'billing_subscription',
+    'labor',
   ],
   MANAGER: [
     'home',
@@ -33,6 +34,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
     'stock_adjustment',
     'user_management',
     'billing_subscription',
+    'labor',
   ],
   CASHIER: [
     'home',

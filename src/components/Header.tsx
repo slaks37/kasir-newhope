@@ -20,8 +20,11 @@ import {
   CloudUpload,
   CloudAlert,
   LogOut,
+  MessageSquare,
 } from 'lucide-react';
 import { formatRupiah } from '../utils/formatters';
+import { WhatsAppLifecycleCenter } from './whatsapp/WhatsAppLifecycleCenter';
+import { generateLifecycleHooks } from '../utils/whatsappLifecycle';
 
 interface HeaderProps {
   onOpenAiCopilot?: () => void;
@@ -53,7 +56,27 @@ export const Header: React.FC<HeaderProps> = ({
     currentUser,
     syncStatus,
     forceSync,
+    customers,
+    orders,
+    bookings,
+    carwashQueue,
+    sentLifecycleHookIds,
   } = usePOS();
+
+  const [showLifecycleCenter, setShowLifecycleCenter] = React.useState(false);
+
+  const pendingHooksCount = React.useMemo(() => {
+    const hooks = generateLifecycleHooks({
+      customers,
+      orders,
+      bookings,
+      carwashQueue,
+      sector: settings.businessSector || 'FNB',
+      storeName: settings.storeName,
+      sentHookIds: sentLifecycleHookIds,
+    });
+    return hooks.length;
+  }, [customers, orders, bookings, carwashQueue, settings.businessSector, settings.storeName, sentLifecycleHookIds]);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -157,6 +180,21 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden md:inline">AI Copilot</span>
         </button>
 
+        {/* WhatsApp Lifecycle Hooks Radar Button */}
+        <button
+          onClick={() => setShowLifecycleCenter(true)}
+          className="flex items-center space-x-1.5 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-800 border border-emerald-300/80 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+          title="Automated WhatsApp Lifecycle Hooks"
+        >
+          <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="hidden md:inline">WA Hooks</span>
+          {pendingHooksCount > 0 && (
+            <span className="bg-emerald-600 text-white font-black px-1.5 py-0.5 rounded-full text-[10px]">
+              {pendingHooksCount}
+            </span>
+          )}
+        </button>
+
         {/* Active User / Role Badge */}
         <button
           onClick={onOpenSwitchUser}
@@ -249,6 +287,11 @@ export const Header: React.FC<HeaderProps> = ({
           {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-600" /> : <VolumeX className="w-4 h-4 text-rose-500" />}
         </button>
       </div>
+      {/* Automated WhatsApp Lifecycle Center Modal */}
+      <WhatsAppLifecycleCenter
+        isOpen={showLifecycleCenter}
+        onClose={() => setShowLifecycleCenter(false)}
+      />
     </header>
   );
 };

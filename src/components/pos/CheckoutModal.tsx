@@ -26,6 +26,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     settings,
     processPayment,
     orderType,
+    staffMembers,
+    selectedStaff,
   } = usePOS();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
@@ -63,6 +65,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [dropOffDateIso, setDropOffDateIso] = useState<string>(toDatetimeLocalStr(now));
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  // Carwash & Laundry Specialized Fields
+  const [vehiclePlateInput, setVehiclePlateInput] = useState<string>('');
+  const [vehicleModelInput, setVehicleModelInput] = useState<string>('Mobil');
+  const [assignedCrewInput, setAssignedCrewInput] = useState<string[]>(
+    selectedStaff ? [selectedStaff.name] : []
+  );
+  const [storageRackInput, setStorageRackInput] = useState<string>('');
 
   // Totals Calculation
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -108,6 +118,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     // Drop-off / completion scheduling only applies to laundry-style orders,
     // otherwise the receipt would show "Tgl Masuk / Cuci" on a coffee order.
     const isLaundry = settings.businessSector === 'LAUNDRY';
+    const isCarwash = settings.businessSector === 'CARWASH';
     const dropOffIndo = isLaundry ? formatIsoToIndoStr(dropOffDateIso) : undefined;
     const completionIndo = isLaundry ? formatIsoToIndoStr(completionDateIso) : undefined;
 
@@ -119,7 +130,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
         completionIndo,
         undefined,
         dropOffIndo,
-        completionIndo
+        completionIndo,
+        {
+          vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
+          vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
+          assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
+          storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
+        }
       );
 
       setIsProcessing(false);
@@ -300,6 +317,93 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                       onChange={(e) => setCompletionDateIso(e.target.value)}
                       className="w-full bg-white border border-indigo-300 rounded-xl px-3 py-2 text-xs text-indigo-950 font-extrabold focus:outline-none focus:ring-2 focus:ring-indigo-600 shadow-xs cursor-pointer"
                     />
+                  </div>
+                </div>
+
+                {/* Rak Simpan Cucian */}
+                <div className="space-y-1 pt-1 border-t border-indigo-200/60">
+                  <label className="text-[11px] font-bold text-slate-700 block">
+                    🏷️ Rak Simpan Cucian (Opsional):
+                  </label>
+                  <input
+                    type="text"
+                    value={storageRackInput}
+                    onChange={(e) => setStorageRackInput(e.target.value)}
+                    placeholder="Cth: Rak A-03, Gantungan 12"
+                    className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Carwash Vehicle Info & Crew Assignment */}
+            {settings.businessSector === 'CARWASH' && (
+              <div className="p-4 bg-cyan-50/90 border border-cyan-200 rounded-2xl space-y-3 text-cyan-950">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-xs flex items-center gap-1.5 text-cyan-900">
+                    🚗 Info Kendaraan &amp; Kru Cuci
+                  </span>
+                  <span className="text-[10px] font-bold text-cyan-800 bg-cyan-100 border border-cyan-300 px-2 py-0.5 rounded-full">
+                    Bay Queue
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700 block">
+                      Nomor Plat:
+                    </label>
+                    <input
+                      type="text"
+                      value={vehiclePlateInput}
+                      onChange={(e) => setVehiclePlateInput(e.target.value.toUpperCase())}
+                      placeholder="Cth: B 1234 ABC"
+                      className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-1.5 text-xs font-black text-slate-900 tracking-wider focus:outline-none focus:ring-2 focus:ring-cyan-500 uppercase"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700 block">
+                      Model / Tipe:
+                    </label>
+                    <input
+                      type="text"
+                      value={vehicleModelInput}
+                      onChange={(e) => setVehicleModelInput(e.target.value)}
+                      placeholder="Cth: Avanza / Vario"
+                      className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Kru Cuci selection */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-700 block">
+                    Penugasan Kru Cuci:
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {staffMembers.map((staff) => {
+                      const isSelected = assignedCrewInput.includes(staff.name);
+                      return (
+                        <button
+                          key={staff.id}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setAssignedCrewInput(assignedCrewInput.filter((n) => n !== staff.name));
+                            } else {
+                              setAssignedCrewInput([...assignedCrewInput, staff.name]);
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-all ${
+                            isSelected
+                              ? 'bg-cyan-600 text-white border-cyan-600 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {isSelected ? '✓ ' : '+ '}{staff.name}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

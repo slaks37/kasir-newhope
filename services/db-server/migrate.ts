@@ -22,14 +22,6 @@ const MIGRATIONS = [
   'migrations/0001_compat.sql',
   'schema.sql',
   'schema_hybrid_pos.sql',
-  'migrations/0003_smart_assistant.sql',
-  'migrations/0004_internal_backoffice.sql',
-  'migrations/0005_uuid_keys.sql',
-  'migrations/0006_merchant_activity.sql',
-  'migrations/0007_product_description.sql',
-  'migrations/0008_catalog_and_charges.sql',
-  'migrations/0009_service_schemas.sql',
-  'migrations/0010_credit_uuid.sql',
   ...fs.readdirSync(path.join(process.cwd(), 'migrations'))
     .filter((file) => /^\d{4}_.*\.sql$/.test(file) && file !== '0001_compat.sql')
     .sort()

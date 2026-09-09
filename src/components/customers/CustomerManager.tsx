@@ -2,14 +2,16 @@ import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Customer, CustomerTier } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
-import { Users, UserPlus, Award, Phone, Mail, Search, CheckCircle2, Gift, Upload, User } from 'lucide-react';
+import { Users, UserPlus, Award, Phone, Mail, Search, CheckCircle2, Gift, Upload, User, MessageSquare } from 'lucide-react';
 import { newId } from '../../lib/ids';
+import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
 
 export const CustomerManager: React.FC = () => {
   const { customers, saveCustomer, settings } = usePOS();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showLifecycleModal, setShowLifecycleModal] = useState(false);
 
   // New Customer Form State
   const [name, setName] = useState('');
@@ -90,13 +92,22 @@ export const CustomerManager: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Pendaftaran Member Baru</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowLifecycleModal(true)}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span>WhatsApp Lifecycle Radar</span>
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Pendaftaran Member Baru</span>
+          </button>
+        </div>
       </div>
 
       {/* Program Loyalty Rule Cards */}
@@ -307,6 +318,11 @@ export const CustomerManager: React.FC = () => {
           </div>
         </div>
       )}
+      {/* WhatsApp Lifecycle Modal */}
+      <WhatsAppLifecycleCenter
+        isOpen={showLifecycleModal}
+        onClose={() => setShowLifecycleModal(false)}
+      />
     </div>
   );
 };

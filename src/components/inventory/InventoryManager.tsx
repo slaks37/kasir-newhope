@@ -89,6 +89,22 @@ export const InventoryManager: React.FC = () => {
   const [formUnit, setFormUnit] = useState('porsi');
   const [formImage, setFormImage] = useState('');
   const [formDescription, setFormDescription] = useState('');
+  const [formReorderPointWholesale, setFormReorderPointWholesale] = useState<number | ''>('');
+  const [formWholesaleMinQty, setFormWholesaleMinQty] = useState<number | ''>('');
+
+  // Modal & Form for Batch SKU Generator (Retail Engine)
+  const [showBatchSkuModal, setShowBatchSkuModal] = useState(false);
+  const [batchBaseName, setBatchBaseName] = useState('Produk Retail');
+  const [batchPrefix, setBatchPrefix] = useState('SKU');
+  const [batchStartNum, setBatchStartNum] = useState(101);
+  const [batchCount, setBatchCount] = useState(5);
+  const [batchCategoryId, setBatchCategoryId] = useState(categories[0]?.id || 'cat-makanan');
+  const [batchPrice, setBatchPrice] = useState(35000);
+  const [batchCostPrice, setBatchCostPrice] = useState(20000);
+  const [batchStock, setBatchStock] = useState(50);
+  const [batchUnit, setBatchUnit] = useState('pcs');
+  const [batchReorderPoint, setBatchReorderPoint] = useState(15);
+  const [batchWholesaleMinQty, setBatchWholesaleMinQty] = useState(30);
 
   // Modal & Form for Multi-Ingredient Recipe Linking (BOM)
   const [showRecipeModal, setShowRecipeModal] = useState(false);
@@ -159,9 +175,11 @@ export const InventoryManager: React.FC = () => {
     setFormCostPrice(12000);
     setFormStock(50);
     setFormMinStock(10);
-    setFormUnit('porsi');
+    setFormUnit('pcs');
     setFormImage('https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400');
     setFormDescription('');
+    setFormReorderPointWholesale(15);
+    setFormWholesaleMinQty(30);
     setEditingProduct(null);
     setShowAddModal(true);
   };
@@ -179,6 +197,8 @@ export const InventoryManager: React.FC = () => {
     setFormUnit(p.unit);
     setFormImage(p.image || '');
     setFormDescription(p.description || '');
+    setFormReorderPointWholesale(p.reorderPointWholesale !== undefined ? p.reorderPointWholesale : '');
+    setFormWholesaleMinQty(p.wholesaleMinQty !== undefined ? p.wholesaleMinQty : '');
     setShowAddModal(true);
   };
 
@@ -189,7 +209,7 @@ export const InventoryManager: React.FC = () => {
     const prod: Product = {
       id: editingProduct ? editingProduct.id : newId('prod'),
       sku: formSku,
-      barcode: formBarcode,
+      barcode: formBarcode || undefined,
       name: formName,
       categoryId: formCategoryId,
       price: formPrice,
@@ -199,6 +219,8 @@ export const InventoryManager: React.FC = () => {
       unit: formUnit,
       image: formImage,
       description: formDescription.trim() || undefined,
+      reorderPointWholesale: formReorderPointWholesale !== '' ? Number(formReorderPointWholesale) : undefined,
+      wholesaleMinQty: formWholesaleMinQty !== '' ? Number(formWholesaleMinQty) : undefined,
       isAvailable: true,
       variants: editingProduct?.variants || [
         { id: 'v-1', name: 'Regular', priceExtra: 0 },
@@ -210,6 +232,38 @@ export const InventoryManager: React.FC = () => {
 
     saveProduct(prod);
     setShowAddModal(false);
+  };
+
+  const handleGenerateBatchSku = (e: React.FormEvent) => {
+    e.preventDefault();
+    const count = Math.min(Math.max(1, batchCount), 50);
+    const start = Math.max(1, batchStartNum);
+    for (let i = 0; i < count; i++) {
+      const currentNum = start + i;
+      const sku = `${batchPrefix}-${currentNum}`;
+      const barcode = `899${String(Math.floor(100000000 + Math.random() * 900000000)).slice(0, 9)}${i % 10}`;
+      const prod: Product = {
+        id: newId('prod'),
+        sku,
+        barcode,
+        name: `${batchBaseName} #${currentNum}`,
+        categoryId: batchCategoryId,
+        price: batchPrice,
+        costPrice: batchCostPrice,
+        stock: batchStock,
+        minStockAlert: Math.max(1, Math.round(batchStock * 0.2)),
+        reorderPointWholesale: batchReorderPoint > 0 ? batchReorderPoint : undefined,
+        wholesaleMinQty: batchWholesaleMinQty > 0 ? batchWholesaleMinQty : undefined,
+        unit: batchUnit,
+        image: 'https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400',
+        isAvailable: true,
+        variants: [
+          { id: 'v-1', name: 'Standard', priceExtra: 0 },
+        ],
+      };
+      saveProduct(prod);
+    }
+    setShowBatchSkuModal(false);
   };
 
   const handleConfirmStockAdjust = (e: React.FormEvent) => {
@@ -476,13 +530,22 @@ export const InventoryManager: React.FC = () => {
 
         <div className="flex flex-wrap gap-2">
           {activeSubTab === 'catalog' && (
-            <button
-              onClick={handleOpenAddModal}
-              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Produk Baru</span>
-            </button>
+            <>
+              <button
+                onClick={() => setShowBatchSkuModal(true)}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+              >
+                <Boxes className="w-4 h-4" />
+                <span>Batch SKU Generator</span>
+              </button>
+              <button
+                onClick={handleOpenAddModal}
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Produk Baru</span>
+              </button>
+            </>
           )}
 
           {activeSubTab === 'bundles' && (
@@ -682,6 +745,19 @@ export const InventoryManager: React.FC = () => {
                         >
                           {p.stock} {p.unit}
                         </span>
+                        {p.reorderPointWholesale !== undefined && (
+                          <div className="mt-1 text-[10px]">
+                            {p.stock <= p.reorderPointWholesale ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold border border-amber-300" title={`Restok Grosir: minimal pesan ${p.wholesaleMinQty || p.reorderPointWholesale} ${p.unit}`}>
+                                Restok Grosir! (≤{p.reorderPointWholesale})
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 font-medium" title={`Reorder point grosir: ${p.reorderPointWholesale} ${p.unit}`}>
+                                Grosir: ≤{p.reorderPointWholesale}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         {hasIngredients ? (
@@ -1078,12 +1154,33 @@ export const InventoryManager: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-black text-slate-700 block mb-1">SKU Produk</label>
+                  <label className="font-black text-slate-700 block mb-1">SKU Produk *</label>
                   <input
                     type="text"
+                    required
                     value={formSku}
                     onChange={(e) => setFormSku(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono text-slate-950 font-bold focus:border-amber-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-black text-slate-700">Barcode EAN-13</label>
+                    <button
+                      type="button"
+                      onClick={() => setFormBarcode(`899${Math.floor(1000000 + Math.random() * 9000000)}`)}
+                      className="text-[10px] font-bold text-amber-600 hover:text-amber-700 cursor-pointer"
+                    >
+                      + Generate EAN-13
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={formBarcode}
+                    onChange={(e) => setFormBarcode(e.target.value)}
+                    placeholder="Scan atau ketik barcode..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-amber-500 outline-none"
                   />
                 </div>
 
@@ -1100,6 +1197,17 @@ export const InventoryManager: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Satuan</label>
+                  <input
+                    type="text"
+                    value={formUnit}
+                    onChange={(e) => setFormUnit(e.target.value)}
+                    placeholder="pcs / cup / botol"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
+                  />
                 </div>
 
                 <div>
@@ -1123,6 +1231,51 @@ export const InventoryManager: React.FC = () => {
                   />
                 </div>
 
+                {/* Live Margin & Markup Calculator Box */}
+                <div className="col-span-2 p-3.5 bg-slate-900 text-white rounded-2xl space-y-2 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-amber-400 flex items-center space-x-1.5 text-xs">
+                      <Percent className="w-3.5 h-3.5" />
+                      <span>Kalkulator Margin &amp; Laba Satuan (Retail Engine)</span>
+                    </span>
+                    <span
+                      className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                        formPrice - formCostPrice < 0
+                          ? 'bg-rose-500 text-white'
+                          : formPrice > 0 && Math.round(((formPrice - formCostPrice) / formPrice) * 100) < 20
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'bg-emerald-500 text-slate-950'
+                      }`}
+                    >
+                      {formPrice - formCostPrice < 0
+                        ? 'Rugi (Jual < Modal)'
+                        : formPrice > 0 && Math.round(((formPrice - formCostPrice) / formPrice) * 100) < 20
+                        ? 'Margin Tipis'
+                        : 'Margin Sehat'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-800">
+                    <div className="bg-slate-800/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-slate-400 font-bold">Laba Satuan</div>
+                      <div className="font-mono font-black text-sm text-emerald-400">
+                        {formatRupiah(formPrice - formCostPrice)}
+                      </div>
+                    </div>
+                    <div className="bg-slate-800/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-slate-400 font-bold">Gross Margin</div>
+                      <div className="font-mono font-black text-sm text-amber-400">
+                        {formPrice > 0 ? Math.round(((formPrice - formCostPrice) / formPrice) * 100) : 0}%
+                      </div>
+                    </div>
+                    <div className="bg-slate-800/80 p-2 rounded-xl">
+                      <div className="text-[10px] text-slate-400 font-bold">Markup</div>
+                      <div className="font-mono font-black text-sm text-cyan-400">
+                        {formCostPrice > 0 ? Math.round(((formPrice - formCostPrice) / formCostPrice) * 100) : 0}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label className="font-black text-slate-700 block mb-1">Stok Awal</label>
                   <input
@@ -1134,14 +1287,42 @@ export const InventoryManager: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-black text-slate-700 block mb-1">Satuan</label>
+                  <label className="font-black text-slate-700 block mb-1">Batas Minimum Peringatan</label>
                   <input
-                    type="text"
-                    value={formUnit}
-                    onChange={(e) => setFormUnit(e.target.value)}
-                    placeholder="pcs / cup / porsi"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
+                    type="number"
+                    value={formMinStock}
+                    onChange={(e) => setFormMinStock(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-amber-500 outline-none"
                   />
+                </div>
+
+                {/* Wholesale Reorder Points */}
+                <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl">
+                  <label className="font-black text-slate-800 block mb-1">Reorder Point Grosir</label>
+                  <input
+                    type="number"
+                    value={formReorderPointWholesale}
+                    onChange={(e) => setFormReorderPointWholesale(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Contoh: 15"
+                    className="w-full px-3 py-2 rounded-xl border border-amber-300 font-mono font-bold text-slate-950 focus:border-amber-500 outline-none bg-white"
+                  />
+                  <span className="text-[10px] text-slate-500 block mt-1">
+                    Titik batas stok untuk order grosir ulang ke supplier
+                  </span>
+                </div>
+
+                <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl">
+                  <label className="font-black text-slate-800 block mb-1">Minimal Order Grosir (Qty)</label>
+                  <input
+                    type="number"
+                    value={formWholesaleMinQty}
+                    onChange={(e) => setFormWholesaleMinQty(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Contoh: 30"
+                    className="w-full px-3 py-2 rounded-xl border border-amber-300 font-mono font-bold text-slate-950 focus:border-amber-500 outline-none bg-white"
+                  />
+                  <span className="text-[10px] text-slate-500 block mt-1">
+                    Kuantitas minimum pembelian grosir per PO
+                  </span>
                 </div>
               </div>
 
@@ -1158,6 +1339,191 @@ export const InventoryManager: React.FC = () => {
                   className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 font-black text-slate-950 shadow-xs cursor-pointer"
                 >
                   Simpan Produk
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL 1B: BATCH SKU GENERATOR (MASS ENTRY)                              */}
+      {/* ====================================================================== */}
+      {showBatchSkuModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-black text-base text-slate-950 flex items-center space-x-2">
+                  <Boxes className="w-5 h-5 text-indigo-600" />
+                  <span>Batch SKU Generator (Mass Inventory Entry)</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Generate puluhan SKU, Barcode EAN-13, dan reorder point grosir sekaligus dalam 1 klik.
+                </p>
+              </div>
+              <button onClick={() => setShowBatchSkuModal(false)} className="p-1 rounded-xl hover:bg-slate-100 text-slate-500 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerateBatchSku} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="font-black text-slate-700 block mb-1">Nama Dasar Produk *</label>
+                  <input
+                    type="text"
+                    required
+                    value={batchBaseName}
+                    onChange={(e) => setBatchBaseName(e.target.value)}
+                    placeholder="Contoh: Kaos Polos Combed 30s"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500">Akan diberi akhiran nomor urut, contoh: {batchBaseName} #{batchStartNum}</span>
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Prefix SKU *</label>
+                  <input
+                    type="text"
+                    required
+                    value={batchPrefix}
+                    onChange={(e) => setBatchPrefix(e.target.value.toUpperCase())}
+                    placeholder="KOS"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none uppercase"
+                  />
+                  <span className="text-[10px] text-slate-500">Format: {batchPrefix}-{batchStartNum}</span>
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Mulai Nomor Urut</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={batchStartNum}
+                    onChange={(e) => setBatchStartNum(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Jumlah Item Yang Digenerate (Maks 50)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={batchCount}
+                    onChange={(e) => setBatchCount(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-black text-indigo-700 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Kategori Produk</label>
+                  <select
+                    value={batchCategoryId}
+                    onChange={(e) => setBatchCategoryId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  >
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Harga Jual Kasir (Rp)</label>
+                  <input
+                    type="number"
+                    value={batchPrice}
+                    onChange={(e) => setBatchPrice(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-black text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">HPP / Modal Satuan (Rp)</label>
+                  <input
+                    type="number"
+                    value={batchCostPrice}
+                    onChange={(e) => setBatchCostPrice(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Stok Awal per SKU</label>
+                  <input
+                    type="number"
+                    value={batchStock}
+                    onChange={(e) => setBatchStock(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Satuan</label>
+                  <input
+                    type="text"
+                    value={batchUnit}
+                    onChange={(e) => setBatchUnit(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Reorder Point Grosir</label>
+                  <input
+                    type="number"
+                    value={batchReorderPoint}
+                    onChange={(e) => setBatchReorderPoint(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-black text-slate-700 block mb-1">Minimal Order Grosir (Qty)</label>
+                  <input
+                    type="number"
+                    value={batchWholesaleMinQty}
+                    onChange={(e) => setBatchWholesaleMinQty(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Batch Summary Preview */}
+              <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-indigo-900 block">Total Item Baru: {batchCount} SKU</span>
+                  <span className="text-[11px] text-indigo-700 font-mono">
+                    Rentang: {batchPrefix}-{batchStartNum} s/d {batchPrefix}-{batchStartNum + batchCount - 1}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-indigo-600 block">Estimasi Margin Satuan</span>
+                  <span className="font-mono font-black text-sm text-indigo-950">
+                    {batchPrice > 0 ? Math.round(((batchPrice - batchCostPrice) / batchPrice) * 100) : 0}% ({formatRupiah(batchPrice - batchCostPrice)})
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowBatchSkuModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-white shadow-xs cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Boxes className="w-4 h-4" />
+                  <span>Generate {batchCount} SKU Sekaligus</span>
                 </button>
               </div>
             </form>

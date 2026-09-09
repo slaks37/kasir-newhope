@@ -27,6 +27,13 @@ import {
   CashMovement,
   CashMovementType,
   CashMovementCategory,
+  KDSTicket,
+  KDSStatus,
+  CarwashQueueItem,
+  AppointmentBooking,
+  BookingStatus,
+  StaffCommissionRule,
+  PayrollSlip,
 } from '../types';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 import { ROLE_PERMISSIONS } from '../data/rolePermissions';
@@ -71,6 +78,10 @@ import {
   INITIAL_ATTENDANCE_LOGS,
   INITIAL_BRANCHES,
   INITIAL_BUNDLES,
+  INITIAL_KDS_TICKETS,
+  INITIAL_CARWASH_QUEUE,
+  INITIAL_BOOKINGS,
+  INITIAL_COMMISSION_RULES,
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
@@ -82,8 +93,8 @@ interface POSContextType {
    */
   tenant: TenantInfo;
 
-  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings';
-  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings') => void;
+  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor';
+  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor') => void;
   
   categories: Category[];
   products: Product[];
@@ -199,7 +210,19 @@ interface POSContextType {
     completionEstimate?: string,
     channel?: string,
     dropOffDate?: string,
-    completionDate?: string
+    completionDate?: string,
+    extraOptions?: {
+      vehiclePlate?: string;
+      vehicleModel?: string;
+      assignedCrew?: string[];
+      storageRack?: string;
+      isSplitBill?: boolean;
+      splitBillIndex?: number;
+      parentOrderId?: string;
+      splitAmount?: number;
+      splitItems?: CartItem[];
+      skipClearCart?: boolean;
+    }
   ) => Order | null;
   voidOrder: (orderId: string, reason?: string) => void;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
@@ -210,7 +233,39 @@ interface POSContextType {
   recallHoldOrder: (orderId: string) => void;
   cancelHoldOrder: (orderId: string) => void;
   updateOrderLaundryStatus: (orderId: string, status: 'PROSES_CUCI' | 'SELESAI_SIAP_AMBIL' | 'SUDAH_DIAMBIL') => void;
+  updateLaundryStage: (orderId: string, stage: 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI', storageRack?: string) => void;
   sendLaundryWaNotification: (order: Order) => string;
+
+  // F&B Kitchen Display System (KDS)
+  kdsTickets: KDSTicket[];
+  updateKDSTicketStatus: (ticketId: string, status: KDSStatus) => void;
+  clearCompletedKDSTickets: () => void;
+
+  // Carwash Bay Capacity & Queue Pipeline
+  carwashQueue: CarwashQueueItem[];
+  addCarwashQueue: (item: Omit<CarwashQueueItem, 'id' | 'enteredAt'>) => void;
+  updateCarwashStage: (queueId: string, stage: CarwashQueueItem['stage'], assignedBayId?: string, assignedBayName?: string) => void;
+  removeCarwashQueue: (queueId: string) => void;
+
+  // Barbershop Time-Slot Booking & Kapster Engine
+  bookings: AppointmentBooking[];
+  saveBooking: (booking: AppointmentBooking) => void;
+  deleteBooking: (bookingId: string) => void;
+  updateBookingStatus: (bookingId: string, status: BookingStatus) => void;
+  sendBookingWaReminder: (booking: AppointmentBooking) => string;
+
+  // Staff Commission Rules & Payroll Slips
+  commissionRules: StaffCommissionRule[];
+  saveCommissionRule: (rule: StaffCommissionRule) => void;
+  payrollSlips: PayrollSlip[];
+  savePayrollSlip: (slip: PayrollSlip) => void;
+  deletePayrollSlip: (slipId: string) => void;
+  disbursePayrollCashMovement: (slipId: string, paymentMethod?: string) => boolean;
+
+  // Automated WhatsApp Lifecycle Hooks
+  sentLifecycleHookIds: string[];
+  markLifecycleHookSent: (hookId: string) => void;
+  dismissLifecycleHook: (hookId: string) => void;
   
   // Inventory & Catalog CRUD
   saveProduct: (product: Product) => void;
@@ -337,7 +392,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     createdAt: authUser?.created_at || new Date().toISOString(),
   };
 
-  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor'>('overview');
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
@@ -652,6 +707,36 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('attendance_logs', currentUser.id, activeSector, seedAttendanceFor(activeSector));
   });
 
+  // KDS Tickets (F&B Kitchen Display System)
+  const [kdsTickets, setKdsTickets] = useState<KDSTicket[]>(() => {
+    return loadScopedData('kds_tickets', currentUser.id, activeSector, INITIAL_KDS_TICKETS);
+  });
+
+  // Carwash Bay Queue (Carwash Bay Capacity Pipeline)
+  const [carwashQueue, setCarwashQueue] = useState<CarwashQueueItem[]>(() => {
+    return loadScopedData('carwash_queue', currentUser.id, activeSector, INITIAL_CARWASH_QUEUE);
+  });
+
+  // Appointment Bookings (Barbershop Time-Slot Resource Engine)
+  const [bookings, setBookings] = useState<AppointmentBooking[]>(() => {
+    return loadScopedData('bookings', currentUser.id, activeSector, INITIAL_BOOKINGS);
+  });
+
+  // Staff Commission Rules
+  const [commissionRules, setCommissionRules] = useState<StaffCommissionRule[]>(() => {
+    return loadScopedData('commission_rules', currentUser.id, activeSector, INITIAL_COMMISSION_RULES);
+  });
+
+  // Payroll Slips (Smart Labor & Commission Core)
+  const [payrollSlips, setPayrollSlips] = useState<PayrollSlip[]>(() => {
+    return loadScopedData('payroll_slips', currentUser.id, activeSector, []);
+  });
+
+  // Automated WhatsApp Lifecycle Hooks
+  const [sentLifecycleHookIds, setSentLifecycleHookIds] = useState<string[]>(() => {
+    return loadScopedData('sent_lifecycle_hooks', currentUser.id, activeSector, []);
+  });
+
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
     const uId = currentUser?.id || 'usr-admin';
@@ -754,6 +839,42 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('promo_codes', uId, sec), JSON.stringify(promoCodes));
   }, [promoCodes, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('kds_tickets', uId, sec), JSON.stringify(kdsTickets));
+  }, [kdsTickets, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('carwash_queue', uId, sec), JSON.stringify(carwashQueue));
+  }, [carwashQueue, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('bookings', uId, sec), JSON.stringify(bookings));
+  }, [bookings, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('commission_rules', uId, sec), JSON.stringify(commissionRules));
+  }, [commissionRules, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('payroll_slips', uId, sec), JSON.stringify(payrollSlips));
+  }, [payrollSlips, currentUser.id, settings.businessSector]);
+
+  useEffect(() => {
+    const uId = currentUser?.id || 'usr-admin';
+    const sec = settings.businessSector || 'FNB';
+    localStorage.setItem(getScopedKey('sent_lifecycle_hooks', uId, sec), JSON.stringify(sentLifecycleHookIds));
+  }, [sentLifecycleHookIds, currentUser.id, settings.businessSector]);
 
   /*
    * SINKRONISASI KATALOG.
@@ -1025,6 +1146,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('attendance_logs', oldUId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', oldUId, currentSec), JSON.stringify(promoCodes));
     localStorage.setItem(getScopedKey('cash_movements', oldUId, currentSec), JSON.stringify(cashMovements));
+    localStorage.setItem(getScopedKey('kds_tickets', oldUId, currentSec), JSON.stringify(kdsTickets));
+    localStorage.setItem(getScopedKey('carwash_queue', oldUId, currentSec), JSON.stringify(carwashQueue));
+    localStorage.setItem(getScopedKey('bookings', oldUId, currentSec), JSON.stringify(bookings));
+    localStorage.setItem(getScopedKey('commission_rules', oldUId, currentSec), JSON.stringify(commissionRules));
+    localStorage.setItem(getScopedKey('payroll_slips', oldUId, currentSec), JSON.stringify(payrollSlips));
+    localStorage.setItem(getScopedKey('sent_lifecycle_hooks', oldUId, currentSec), JSON.stringify(sentLifecycleHookIds));
 
     // 2. Set new user
     setCurrentUser(user);
@@ -1053,11 +1180,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setAttendanceLogs(loadScopedData('attendance_logs', newUId, userSec, seedAttendanceFor(userSec)));
     setPromoCodes(loadScopedData('promo_codes', newUId, userSec, seedPromosFor(userSec)));
     setCashMovements(loadScopedData('cash_movements', newUId, userSec, []));
+    setKdsTickets(loadScopedData('kds_tickets', newUId, userSec, []));
+    setCarwashQueue(loadScopedData('carwash_queue', newUId, userSec, []));
+    setBookings(loadScopedData('bookings', newUId, userSec, []));
+    setCommissionRules(loadScopedData('commission_rules', newUId, userSec, []));
+    setPayrollSlips(loadScopedData('payroll_slips', newUId, userSec, []));
+    setSentLifecycleHookIds(loadScopedData('sent_lifecycle_hooks', newUId, userSec, []));
     // Staff roster stays per-account (one roster across the merchant's
     // businesses); the exposed list is filtered to the active sector.
     setStaffMembers(loadGlobalUserData('staff_members', newUId, INITIAL_STAFF_MEMBERS));
 
     clearCart();
+    setSearchQuery('');
     if (soundEnabled) playPOSSound('click');
   };
 
@@ -1288,14 +1422,32 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     completionEstimate?: string,
     channel?: string,
     dropOffDate?: string,
-    completionDate?: string
+    completionDate?: string,
+    extraOptions?: {
+      vehiclePlate?: string;
+      vehicleModel?: string;
+      assignedCrew?: string[];
+      storageRack?: string;
+      isSplitBill?: boolean;
+      splitBillIndex?: number;
+      parentOrderId?: string;
+      splitAmount?: number;
+      splitItems?: CartItem[];
+      skipClearCart?: boolean;
+    }
   ): Order | null => {
     if (cart.length === 0) return null;
 
-    const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
+    const isSplit = !!extraOptions?.isSplitBill;
+    const splitAmount = extraOptions?.splitAmount;
+    const splitItems = extraOptions?.splitItems;
+    const skipClear = !!extraOptions?.skipClearCart;
+
+    const effectiveItems = splitItems && splitItems.length > 0 ? splitItems : [...cart];
+    const subtotal = effectiveItems.reduce((sum, item) => sum + item.totalPrice, 0);
     const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
     const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-    const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+    const grandTotal = splitAmount !== undefined ? splitAmount : (subtotal + taxTotal + serviceChargeTotal);
 
     let changeAmount = 0;
     if (paymentMethod === 'CASH' && cashReceived) {
@@ -1313,13 +1465,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     const isLaundry = settings.businessSector === 'LAUNDRY';
+    const isCarwash = settings.businessSector === 'CARWASH';
+    const isFnb = settings.businessSector === 'FNB';
     const laundryDefaultCompletion = isLaundry ? 'Besok, 16:00 WIB' : undefined;
 
     const newOrder: Order = {
       id: invoiceNum,
       orderNumber: orders.length + 1,
       date: new Date().toISOString(),
-      items: [...cart],
+      items: effectiveItems,
       orderType,
       onlineChannel: (orderType === 'ONLINE' || orderType === 'DELIVERY') ? channel : undefined,
       tableId: selectedTable?.id,
@@ -1328,7 +1482,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
       subtotal,
-      discountTotal: cart.reduce((sum, i) => sum + i.discountAmount, 0),
+      discountTotal: effectiveItems.reduce((sum, i) => sum + i.discountAmount, 0),
       taxTotal,
       serviceChargeTotal,
       total: grandTotal,
@@ -1345,7 +1499,62 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       completionDate: completionDate || completionEstimate || laundryDefaultCompletion,
       completionEstimate: completionEstimate || completionDate || laundryDefaultCompletion,
       laundryStatus: isLaundry ? 'PROSES_CUCI' : undefined,
+      laundryStage: isLaundry ? 'CUCI' : undefined,
+      storageRack: extraOptions?.storageRack,
+      vehiclePlate: extraOptions?.vehiclePlate,
+      vehicleModel: extraOptions?.vehicleModel,
+      assignedCrew: extraOptions?.assignedCrew,
+      carwashStage: isCarwash ? 'CUCI_BUSA' : undefined,
+      isSplitBill: extraOptions?.isSplitBill,
+      splitBillIndex: extraOptions?.splitBillIndex,
+      parentOrderId: extraOptions?.parentOrderId,
+      businessSector: settings.businessSector,
+      userId: currentUser.id,
     };
+
+    // Auto-create KDS Ticket if F&B sector
+    if (isFnb) {
+      const kdsTicket: KDSTicket = {
+        id: newId('kds'),
+        orderId: newOrder.id,
+        orderNumber: newOrder.orderNumber,
+        tableName: newOrder.tableName || (newOrder.orderType === 'DINE_IN' ? 'Meja 01' : 'Takeaway / Kasir'),
+        orderType: newOrder.orderType,
+        items: newOrder.items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          quantity: i.quantity,
+          variantName: i.variantName,
+          selectedModifiers: i.selectedModifiers,
+          notes: i.itemNotes,
+          isCompleted: false,
+        })),
+        notes: newOrder.notes,
+        createdAt: newOrder.date,
+        status: 'PENDING',
+      };
+      setKdsTickets((prev) => [kdsTicket, ...prev]);
+    }
+
+    // Auto-create Carwash Queue item if Carwash sector
+    if (isCarwash && (extraOptions?.vehiclePlate || newOrder.tableName)) {
+      const queueItem: CarwashQueueItem = {
+        id: newId('cwq'),
+        orderId: newOrder.id,
+        vehiclePlate: extraOptions?.vehiclePlate || 'B 1000 POS',
+        vehicleModel: extraOptions?.vehicleModel || 'Kendaraan Tamu',
+        customerName: newOrder.customer?.name || 'Pelanggan Walk-In',
+        customerPhone: newOrder.customer?.phone || '',
+        serviceName: newOrder.items[0]?.name || 'Cuci Kendaraan',
+        assignedBayId: selectedTable?.id,
+        assignedBayName: selectedTable?.name || 'Bay Cuci',
+        assignedCrew: extraOptions?.assignedCrew || (selectedStaff ? [selectedStaff.name] : ['Operator']),
+        stage: 'CUCI_BUSA',
+        enteredAt: newOrder.date,
+        notes: newOrder.notes,
+      };
+      setCarwashQueue((prev) => [queueItem, ...prev]);
+    }
 
     // Track Dual-Event to PostHog Telemetry (Non-PII)
     posthogTelemetry.trackTransactionCompleted({
@@ -1362,10 +1571,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Everything is computed up-front so the state updaters below stay pure
     // (React may invoke an updater more than once — side effects inside them
     // would duplicate the logs and double-deduct raw material stock).
+    const shouldDeductStock = !isSplit || (splitItems && splitItems.length > 0) || (extraOptions?.splitBillIndex === 1);
+    const itemsForStock = splitItems && splitItems.length > 0 ? splitItems : cart;
+
     const soldQtyByProduct = new Map<string, number>();
-    cart.forEach((item) => {
-      soldQtyByProduct.set(item.productId, (soldQtyByProduct.get(item.productId) || 0) + item.quantity);
-    });
+    if (shouldDeductStock) {
+      itemsForStock.forEach((item) => {
+        soldQtyByProduct.set(item.productId, (soldQtyByProduct.get(item.productId) || 0) + item.quantity);
+      });
+    }
 
     const newLogs: InventoryLog[] = [];
     const rawDeductions = new Map<string, number>();
@@ -1465,7 +1679,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // 3. Update Table status if DINE_IN
-    if (selectedTable) {
+    if (selectedTable && !skipClear) {
       setTables((prevTables) =>
         prevTables.map((t) => (t.id === selectedTable.id ? { ...t, status: 'AVAILABLE', currentOrderId: undefined } : t))
       );
@@ -1511,7 +1725,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     if (soundEnabled) playPOSSound('payment_success');
 
-    clearCart();
+    if (!skipClear) {
+      clearCart();
+    }
     return newOrder;
   };
 
@@ -1795,6 +2011,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('attendance_logs', uId, currentSec), JSON.stringify(attendanceLogs));
     localStorage.setItem(getScopedKey('promo_codes', uId, currentSec), JSON.stringify(promoCodes));
     localStorage.setItem(getScopedKey('cash_movements', uId, currentSec), JSON.stringify(cashMovements));
+    localStorage.setItem(getScopedKey('kds_tickets', uId, currentSec), JSON.stringify(kdsTickets));
+    localStorage.setItem(getScopedKey('carwash_queue', uId, currentSec), JSON.stringify(carwashQueue));
+    localStorage.setItem(getScopedKey('bookings', uId, currentSec), JSON.stringify(bookings));
+    localStorage.setItem(getScopedKey('commission_rules', uId, currentSec), JSON.stringify(commissionRules));
+    localStorage.setItem(getScopedKey('payroll_slips', uId, currentSec), JSON.stringify(payrollSlips));
+    localStorage.setItem(getScopedKey('sent_lifecycle_hooks', uId, currentSec), JSON.stringify(sentLifecycleHookIds));
 
     // 2. Load target sector state
     const targetCategories = loadScopedData('categories', uId, sector, preset.categories);
@@ -1810,6 +2032,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const targetAttendance = loadScopedData('attendance_logs', uId, sector, seedAttendanceFor(sector));
     const targetPromos = loadScopedData('promo_codes', uId, sector, seedPromosFor(sector));
     const targetCashMovements = loadScopedData('cash_movements', uId, sector, []);
+    const targetKds = loadScopedData('kds_tickets', uId, sector, []);
+    const targetCarwash = loadScopedData('carwash_queue', uId, sector, []);
+    const targetBookings = loadScopedData('bookings', uId, sector, []);
+    const targetCommission = loadScopedData('commission_rules', uId, sector, []);
+    const targetPayrollSlips = loadScopedData('payroll_slips', uId, sector, []);
+    const targetLifecycleHooks = loadScopedData('sent_lifecycle_hooks', uId, sector, []);
 
     const storeName = customStoreName || preset.defaultStoreName;
 
@@ -1836,9 +2064,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setAttendanceLogs(targetAttendance);
     setPromoCodes(targetPromos);
     setCashMovements(targetCashMovements);
+    setKdsTickets(targetKds);
+    setCarwashQueue(targetCarwash);
+    setBookings(targetBookings);
+    setCommissionRules(targetCommission);
+    setPayrollSlips(targetPayrollSlips);
+    setSentLifecycleHookIds(targetLifecycleHooks);
 
     setSelectedCategory(targetCategories[0]?.id || 'ALL');
     clearCart();
+    setSearchQuery('');
 
     if (soundEnabled) playPOSSound('payment_success');
   };
@@ -2003,6 +2238,178 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return waUrl;
   };
 
+  const updateLaundryStage = (
+    orderId: string,
+    stage: 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI',
+    storageRack?: string
+  ) => {
+    setOrders((prev) =>
+      prev.map((ord) => {
+        if (ord.id === orderId) {
+          const isReady = stage === 'SIAP_AMBIL';
+          const isDone = stage === 'SELESAI';
+          return {
+            ...ord,
+            laundryStage: stage,
+            laundryStatus: isReady ? 'SELESAI_SIAP_AMBIL' : isDone ? 'SUDAH_DIAMBIL' : 'PROSES_CUCI',
+            storageRack: storageRack !== undefined ? storageRack : ord.storageRack,
+            waNotifiedAt: isReady && !ord.waNotifiedAt ? new Date().toISOString() : ord.waNotifiedAt,
+          };
+        }
+        return ord;
+      })
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const updateKDSTicketStatus = (ticketId: string, status: KDSStatus) => {
+    setKdsTickets((prev) =>
+      prev.map((t) => (t.id === ticketId ? { ...t, status } : t))
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const clearCompletedKDSTickets = () => {
+    setKdsTickets((prev) => prev.filter((t) => t.status !== 'SERVED'));
+  };
+
+  const addCarwashQueue = (item: Omit<CarwashQueueItem, 'id' | 'enteredAt'>) => {
+    const queueItem: CarwashQueueItem = {
+      ...item,
+      id: newId('cwq'),
+      enteredAt: new Date().toISOString(),
+    };
+    setCarwashQueue((prev) => [queueItem, ...prev]);
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const updateCarwashStage = (
+    queueId: string,
+    stage: CarwashQueueItem['stage'],
+    assignedBayId?: string,
+    assignedBayName?: string
+  ) => {
+    setCarwashQueue((prev) =>
+      prev.map((q) => {
+        if (q.id === queueId) {
+          return {
+            ...q,
+            stage,
+            assignedBayId: assignedBayId !== undefined ? assignedBayId : q.assignedBayId,
+            assignedBayName: assignedBayName !== undefined ? assignedBayName : q.assignedBayName,
+          };
+        }
+        return q;
+      })
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const removeCarwashQueue = (queueId: string) => {
+    setCarwashQueue((prev) => prev.filter((q) => q.id !== queueId));
+  };
+
+  const saveBooking = (booking: AppointmentBooking) => {
+    setBookings((prev) => {
+      const idx = prev.findIndex((b) => b.id === booking.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = booking;
+        return next;
+      }
+      return [booking, ...prev];
+    });
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const deleteBooking = (bookingId: string) => {
+    setBookings((prev) => prev.filter((b) => b.id !== bookingId));
+    if (soundEnabled) playPOSSound('delete');
+  };
+
+  const updateBookingStatus = (bookingId: string, status: BookingStatus) => {
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId ? { ...b, status } : b))
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const sendBookingWaReminder = (booking: AppointmentBooking): string => {
+    const cleanPhone = booking.customerPhone.replace(/[^0-9]/g, '');
+    const formattedPhone = cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone;
+    const storeName = settings.storeName || 'Barbershop POS';
+    const message = `Halo Kak *${booking.customerName}*, kami mengingatkan jadwal booking cukur/treatment di *${storeName}*:%0A%0A` +
+      `📅 *Tanggal:* ${booking.date}%0A` +
+      `⏰ *Waktu:* ${booking.timeSlot} WIB%0A` +
+      `💈 *Layanan:* ${booking.serviceName}%0A` +
+      `✂️ *Stylist / Kapster:* ${booking.staffName}%0A%0A` +
+      `Mohon hadir 5-10 menit sebelum jam janji temu. Sampai jumpa di ${storeName}! 🙏`;
+
+    const waUrl = `https://wa.me/${formattedPhone}?text=${message}`;
+    window.open(waUrl, '_blank');
+    return waUrl;
+  };
+
+  const saveCommissionRule = (rule: StaffCommissionRule) => {
+    setCommissionRules((prev) => {
+      const idx = prev.findIndex((r) => r.staffId === rule.staffId);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = rule;
+        return next;
+      }
+      return [...prev, rule];
+    });
+  };
+
+  const savePayrollSlip = (slip: PayrollSlip) => {
+    setPayrollSlips((prev) => {
+      const idx = prev.findIndex((s) => s.id === slip.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = slip;
+        return next;
+      }
+      return [slip, ...prev];
+    });
+  };
+
+  const deletePayrollSlip = (slipId: string) => {
+    setPayrollSlips((prev) => prev.filter((s) => s.id !== slipId));
+  };
+
+  const disbursePayrollCashMovement = (slipId: string, paymentMethod: string = 'TUNAI'): boolean => {
+    const slip = payrollSlips.find((s) => s.id === slipId);
+    if (!slip) return false;
+
+    const updatedSlip: PayrollSlip = {
+      ...slip,
+      status: 'PAID',
+      paidAt: new Date().toISOString(),
+      paymentMethod,
+    };
+    savePayrollSlip(updatedSlip);
+
+    if (paymentMethod.toUpperCase().includes('TUNAI') || paymentMethod.toUpperCase().includes('KAS')) {
+      addCashMovement(
+        'CASH_OUT',
+        'OPERASIONAL',
+        slip.netSalary,
+        `Pembayaran Gaji & Komisi: ${slip.staffName} (${slip.periodMonth})`,
+        slip.staffName
+      );
+    }
+    return true;
+  };
+
+  const markLifecycleHookSent = (hookId: string) => {
+    setSentLifecycleHookIds((prev) => (prev.includes(hookId) ? prev : [...prev, hookId]));
+  };
+
+  const dismissLifecycleHook = (hookId: string) => {
+    setSentLifecycleHookIds((prev) => (prev.includes(hookId) ? prev : [...prev, hookId]));
+  };
+
   return (
     <POSContext.Provider
       value={{
@@ -2076,7 +2483,29 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         recallHoldOrder,
         cancelHoldOrder,
         updateOrderLaundryStatus,
+        updateLaundryStage,
         sendLaundryWaNotification,
+        kdsTickets,
+        updateKDSTicketStatus,
+        clearCompletedKDSTickets,
+        carwashQueue,
+        addCarwashQueue,
+        updateCarwashStage,
+        removeCarwashQueue,
+        bookings,
+        saveBooking,
+        deleteBooking,
+        updateBookingStatus,
+        sendBookingWaReminder,
+        commissionRules,
+        saveCommissionRule,
+        payrollSlips,
+        savePayrollSlip,
+        deletePayrollSlip,
+        disbursePayrollCashMovement,
+        sentLifecycleHookIds,
+        markLifecycleHookSent,
+        dismissLifecycleHook,
         saveProduct,
         deleteProduct,
         saveCategory,

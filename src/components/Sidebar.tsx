@@ -18,6 +18,7 @@ import {
   UserCheck,
   Home,
   BookOpen,
+  Coins,
 } from 'lucide-react';
 
 import { BUSINESS_PRESETS } from '../data/businessPresets';
@@ -83,6 +84,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'AI Copilot',
       icon: Bot,
       special: true,
+    },
+    {
+      id: 'labor' as const,
+      label: 'Gaji & Komisi',
+      icon: Coins,
     },
     {
       id: 'settings' as const,
