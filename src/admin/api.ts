@@ -1661,4 +1661,212 @@ export const api = {
       limit: Number(p?.limit || 50),
     };
   },
+
+  staffCommissions: async (p?: {
+    search?: string;
+    sector?: string;
+    status?: string;
+    offset?: number;
+    limit?: number;
+  }) => {
+    // Platform-wide staff commission ledger across all merchants
+    let rows = [
+      {
+        id: 'comm-01',
+        merchantId: 'mch-barber-01',
+        merchantName: 'Barber King Sudirman',
+        sector: 'BARBERSHOP' as Sector,
+        staffId: 'stf-01',
+        staffName: 'Doni Pratama',
+        staffRole: 'Senior Capster',
+        commissionModel: 'PER_HEAD' as const,
+        modelLabel: 'Per Kepala + Upsell',
+        servicesCount: 42,
+        salesAmountIdr: 4200000,
+        commissionAmountIdr: 680000,
+        bonusUpsellIdr: 50000,
+        baseSalaryIdr: 2500000,
+        netPayEstimateIdr: 3230000,
+        status: 'APPROVED' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 1800000).toISOString(),
+      },
+      {
+        id: 'comm-02',
+        merchantId: 'mch-barber-01',
+        merchantName: 'Barber King Sudirman',
+        sector: 'BARBERSHOP' as Sector,
+        staffId: 'stf-02',
+        staffName: 'Rian Hidayat',
+        staffRole: 'Stylist & Colorist',
+        commissionModel: 'PER_HEAD' as const,
+        modelLabel: 'Per Kepala + Upsell',
+        servicesCount: 35,
+        salesAmountIdr: 3500000,
+        commissionAmountIdr: 525000,
+        bonusUpsellIdr: 35000,
+        baseSalaryIdr: 2300000,
+        netPayEstimateIdr: 2860000,
+        status: 'APPROVED' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 3600000).toISOString(),
+      },
+      {
+        id: 'comm-03',
+        merchantId: 'mch-cw-01',
+        merchantName: 'Auto Clean Carwash Express',
+        sector: 'CARWASH' as Sector,
+        staffId: 'stf-03',
+        staffName: 'Ahmad Fauzi',
+        staffRole: 'Washer Shift A',
+        commissionModel: 'POOLED_TEAM' as const,
+        modelLabel: 'Bagi Hasil Tim (Shift Pool)',
+        servicesCount: 68,
+        salesAmountIdr: 5440000,
+        commissionAmountIdr: 680000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 2200000,
+        netPayEstimateIdr: 2880000,
+        status: 'PAID' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 7200000).toISOString(),
+      },
+      {
+        id: 'comm-04',
+        merchantId: 'mch-cw-01',
+        merchantName: 'Auto Clean Carwash Express',
+        sector: 'CARWASH' as Sector,
+        staffId: 'stf-04',
+        staffName: 'Budi Santoso',
+        staffRole: 'Detailer & Vakum',
+        commissionModel: 'POOLED_TEAM' as const,
+        modelLabel: 'Bagi Hasil Tim (Shift Pool)',
+        servicesCount: 68,
+        salesAmountIdr: 5440000,
+        commissionAmountIdr: 680000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 2200000,
+        netPayEstimateIdr: 2880000,
+        status: 'PAID' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 7200000).toISOString(),
+      },
+      {
+        id: 'comm-05',
+        merchantId: 'mch-fnb-01',
+        merchantName: 'New Hope Resto & Cafe',
+        sector: 'FNB' as Sector,
+        staffId: 'stf-05',
+        staffName: 'Siti Rahmawati',
+        staffRole: 'Head Cashier',
+        commissionModel: 'DAILY_TARGET' as const,
+        modelLabel: 'Bonus Target Omzet Harian',
+        servicesCount: 124,
+        salesAmountIdr: 15800000,
+        commissionAmountIdr: 450000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 3000000,
+        netPayEstimateIdr: 3450000,
+        status: 'APPROVED' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 14400000).toISOString(),
+      },
+      {
+        id: 'comm-06',
+        merchantId: 'mch-fnb-01',
+        merchantName: 'New Hope Resto & Cafe',
+        sector: 'FNB' as Sector,
+        staffId: 'stf-06',
+        staffName: 'Kevin Wijaya',
+        staffRole: 'Lead Barista',
+        commissionModel: 'DAILY_TARGET' as const,
+        modelLabel: 'Bonus Target Omzet Harian',
+        servicesCount: 110,
+        salesAmountIdr: 12200000,
+        commissionAmountIdr: 380000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 2800000,
+        netPayEstimateIdr: 3180000,
+        status: 'APPROVED' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 14400000).toISOString(),
+      },
+      {
+        id: 'comm-07',
+        merchantId: 'mch-ret-01',
+        merchantName: 'Toko Berkah Retail Mart',
+        sector: 'RETAIL' as Sector,
+        staffId: 'stf-07',
+        staffName: 'Dewi Lestari',
+        staffRole: 'Kasir Toko',
+        commissionModel: 'DAILY_TARGET' as const,
+        modelLabel: 'Bonus Target Omzet Harian',
+        servicesCount: 185,
+        salesAmountIdr: 18900000,
+        commissionAmountIdr: 320000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 2500000,
+        netPayEstimateIdr: 2820000,
+        status: 'PENDING' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 28800000).toISOString(),
+      },
+      {
+        id: 'comm-08',
+        merchantId: 'mch-ldy-01',
+        merchantName: 'Laundry Kilat Dago',
+        sector: 'LAUNDRY' as Sector,
+        staffId: 'stf-08',
+        staffName: 'Hendra Setiawan',
+        staffRole: 'Operator Setrika & Cuci',
+        commissionModel: 'PER_HEAD' as const,
+        modelLabel: 'Insentif Output Kg Kiloan',
+        servicesCount: 78,
+        salesAmountIdr: 4680000,
+        commissionAmountIdr: 420000,
+        bonusUpsellIdr: 0,
+        baseSalaryIdr: 2200000,
+        netPayEstimateIdr: 2620000,
+        status: 'APPROVED' as const,
+        period: 'September 2026',
+        lastCalculated: new Date(Date.now() - 21600000).toISOString(),
+      },
+    ];
+
+    if (p?.sector && p.sector !== 'ALL') {
+      rows = rows.filter((r) => r.sector === p.sector);
+    }
+
+    if (p?.status && p.status !== 'ALL') {
+      rows = rows.filter((r) => r.status === p.status);
+    }
+
+    if (p?.search) {
+      const q = String(p.search).toLowerCase();
+      rows = rows.filter(
+        (r) =>
+          r.staffName.toLowerCase().includes(q) ||
+          r.merchantName.toLowerCase().includes(q) ||
+          r.staffRole.toLowerCase().includes(q) ||
+          r.modelLabel.toLowerCase().includes(q)
+      );
+    }
+
+    const totalCommission = rows.reduce((s, r) => s + r.commissionAmountIdr + (r.bonusUpsellIdr || 0), 0);
+    const totalSales = rows.reduce((s, r) => s + r.salesAmountIdr, 0);
+    const totalServices = rows.reduce((s, r) => s + r.servicesCount, 0);
+
+    return {
+      rows,
+      summary: {
+        totalCommissionIdr: totalCommission,
+        totalSalesIdr: totalSales,
+        totalServicesHandled: totalServices,
+        totalStaffCount: rows.length,
+        averageCommissionPerStaff: rows.length ? Math.round(totalCommission / rows.length) : 0,
+        topSector: 'BARBERSHOP' as Sector,
+      },
+      total: rows.length,
+    };
+  },
 };
