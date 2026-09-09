@@ -1,4 +1,4 @@
-import { Category, Product, Table, Customer, StoreSettings, Order, Shift, User, PromoCode, StaffMember, StockItem, AttendanceRecord, StoreBranch, ProductBundle } from '../types';
+import { Category, Product, Table, Customer, StoreSettings, Order, Shift, User, PromoCode, StaffMember, StockItem, AttendanceRecord, StoreBranch, ProductBundle, KDSTicket, CarwashQueueItem, AppointmentBooking, StaffCommissionRule } from '../types';
 
 export const INITIAL_CATEGORIES: Category[] = [
   { id: 'cat-makanan', name: 'Makanan', icon: 'Utensils', color: 'bg-amber-500' },
@@ -549,4 +549,147 @@ export const INITIAL_ATTENDANCE_LOGS: AttendanceRecord[] = [];
 export const INITIAL_STOCK_ITEMS: StockItem[] = [];
 
 export const INITIAL_BUNDLES: ProductBundle[] = [];
+
+export const INITIAL_KDS_TICKETS: KDSTicket[] = [
+  {
+    id: 'kds-01',
+    orderId: 'INV-101',
+    orderNumber: 101,
+    tableName: 'Meja 01',
+    orderType: 'DINE_IN',
+    items: [
+      { id: 'item-kds-1', name: 'Es Kopi Susu Gula Aren', quantity: 2, variantName: 'Regular (12oz)', notes: 'Less ice, normal sugar' },
+      { id: 'item-kds-2', name: 'Nasi Goreng Special New Hope', quantity: 1, notes: 'Pedas level 3, telur setengah matang' },
+    ],
+    notes: 'Prioritas cepat, tamu sedang meeting',
+    createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(), // 8 menit lalu
+    status: 'PREPARING',
+  },
+  {
+    id: 'kds-02',
+    orderId: 'INV-102',
+    orderNumber: 102,
+    tableName: 'Meja 04',
+    orderType: 'DINE_IN',
+    items: [
+      { id: 'item-kds-3', name: 'Matcha Latte Ice', quantity: 1, variantName: 'Large (16oz)' },
+      { id: 'item-kds-4', name: 'Butter Croissant Premium', quantity: 2, notes: 'Dipanaskan oven' },
+    ],
+    createdAt: new Date(Date.now() - 1000 * 60 * 3).toISOString(), // 3 menit lalu
+    status: 'PENDING',
+  },
+];
+
+export const INITIAL_CARWASH_QUEUE: CarwashQueueItem[] = [
+  {
+    id: 'cwq-01',
+    vehiclePlate: 'B 1234 ABC',
+    vehicleModel: 'Toyota Fortuner Hitam',
+    serviceName: 'Cuci Mobil Hidrolik + Vakum Interior',
+    assignedBayId: 'tbl-cw-1',
+    assignedBayName: 'Bay 01 (Hidrolik Mobil)',
+    assignedCrew: ['Joko', 'Andi'],
+    stage: 'CUCI_BUSA',
+    enteredAt: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+    notes: 'Perhatikan pembersihan velg racing',
+  },
+  {
+    id: 'cwq-02',
+    vehiclePlate: 'D 5678 XYZ',
+    vehicleModel: 'Toyota Avanza Silver',
+    serviceName: 'Cuci Body Salju Cepat',
+    assignedBayId: 'tbl-cw-4',
+    assignedBayName: 'Bay 04 (Cuci Busa Salju)',
+    assignedCrew: ['Budi'],
+    stage: 'PENGERINGAN_VAKUM',
+    enteredAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
+    notes: 'Vakum jok karpet belakang',
+  },
+  {
+    id: 'cwq-03',
+    vehiclePlate: 'B 9999 PRO',
+    vehicleModel: 'Honda HR-V Putih',
+    serviceName: 'Paket Nano Ceramic Wax Body Protect',
+    assignedCrew: ['Deni', 'Rian'],
+    stage: 'ANTRIAN_BAY',
+    enteredAt: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
+    notes: 'Antri menunggu Bay 01 selesai',
+  },
+];
+
+export const INITIAL_BOOKINGS: AppointmentBooking[] = [
+  {
+    id: 'bkg-01',
+    customerName: 'Mas Hendra',
+    customerPhone: '081234567890',
+    staffId: 'stf-bb-1',
+    staffName: 'Alex',
+    serviceId: 'prod-bb-1',
+    serviceName: 'Executive Haircut + Hot Towel & Massage',
+    servicePrice: 65000,
+    date: new Date().toISOString().split('T')[0],
+    timeSlot: '10:00',
+    durationMinutes: 45,
+    status: 'CONFIRMED',
+    notes: 'Model undercut fade natural',
+    createdAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+  },
+  {
+    id: 'bkg-02',
+    customerName: 'Pak Anton',
+    customerPhone: '081987654321',
+    staffId: 'stf-bb-2',
+    staffName: 'Denis',
+    serviceId: 'prod-bb-3',
+    serviceName: 'Hair Coloring Premium Fashion Color',
+    servicePrice: 150000,
+    date: new Date().toISOString().split('T')[0],
+    timeSlot: '13:00',
+    durationMinutes: 90,
+    status: 'SCHEDULED',
+    notes: 'Warna Ash Brown, konsultasi dulu',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+  },
+  {
+    id: 'bkg-03',
+    customerName: 'Rian Santoso',
+    customerPhone: '085678912345',
+    staffId: 'stf-bb-3',
+    staffName: 'Budi',
+    serviceId: 'prod-bb-1',
+    serviceName: 'Executive Haircut + Hot Towel & Massage',
+    servicePrice: 65000,
+    date: new Date().toISOString().split('T')[0],
+    timeSlot: '15:30',
+    durationMinutes: 45,
+    status: 'SCHEDULED',
+    notes: 'Langganan setia',
+    createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+  },
+];
+
+export const INITIAL_COMMISSION_RULES: StaffCommissionRule[] = [
+  {
+    staffId: 'stf-bb-1',
+    staffName: 'Alex',
+    serviceCommissionPercent: 35,
+    fixedCommissionPerService: 0,
+    retailCommissionPercent: 10,
+  },
+  {
+    staffId: 'stf-bb-2',
+    staffName: 'Denis',
+    serviceCommissionPercent: 35,
+    fixedCommissionPerService: 0,
+    retailCommissionPercent: 10,
+  },
+  {
+    staffId: 'stf-bb-3',
+    staffName: 'Budi',
+    serviceCommissionPercent: 30,
+    fixedCommissionPerService: 0,
+    retailCommissionPercent: 8,
+  },
+];
+
 

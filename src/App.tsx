@@ -53,6 +53,9 @@ const AIAssistant = lazy(() =>
 const SettingsManager = lazy(() =>
   import('./components/settings/SettingsManager').then((m) => ({ default: m.SettingsManager }))
 );
+const SmartLaborManager = lazy(() =>
+  import('./components/labor/SmartLaborManager').then((m) => ({ default: m.SmartLaborManager }))
+);
 
 const TabLoading: React.FC = () => (
   <div className="flex-1 flex items-center justify-center bg-slate-50/70">
@@ -299,6 +302,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
               {activeTab === 'settings' && (
                 <Suspense fallback={<TabLoading />}>
                   <SettingsManager />
+                </Suspense>
+              )}
+
+              {activeTab === 'labor' && (
+                <Suspense fallback={<TabLoading />}>
+                  <SmartLaborManager />
                 </Suspense>
               )}
             </>

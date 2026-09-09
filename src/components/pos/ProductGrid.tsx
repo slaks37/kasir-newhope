@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Product, ProductBundle } from '../../types';
 import { ProductCard } from './ProductCard';
@@ -16,6 +16,9 @@ import {
   ShoppingBag,
   Layers,
   Sparkles,
+  Camera,
+  CheckCircle2,
+  Zap,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 
@@ -39,6 +42,49 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   const [onlyLowStock, setOnlyLowStock] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [scanToast, setScanToast] = useState<{ name: string; barcode: string } | null>(null);
+
+  // Global Hardware USB / Bluetooth Barcode Scanner Listener
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is currently typing in an input or textarea
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        return;
+      }
+
+      const currentTime = Date.now();
+      if (currentTime - lastKeyTime > 100) {
+        buffer = ''; // Reset buffer if typing was slow (manual typing)
+      }
+      lastKeyTime = currentTime;
+
+      if (e.key === 'Enter') {
+        if (buffer.length >= 3) {
+          e.preventDefault();
+          const cleanCode = buffer.trim();
+          const found = products.find(
+            (p) => p.barcode === cleanCode || p.sku.toLowerCase() === cleanCode.toLowerCase()
+          );
+          if (found) {
+            onSelectProduct(found);
+            setScanToast({ name: found.name, barcode: cleanCode });
+            setTimeout(() => setScanToast(null), 3000);
+          }
+        }
+        buffer = '';
+      } else if (e.key.length === 1) {
+        buffer += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [products, onSelectProduct]);
 
   // Icon map for categories
   const getCategoryIcon = (iconName: string) => {
@@ -73,7 +119,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
     return matchesCategory && matchesSearch && matchesLowStock;
   });
 
-  // Handle Barcode Scan Simulation
+  // Handle Barcode Scan Manual/Submit
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!barcodeInput) return;
@@ -82,6 +128,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
     );
     if (found) {
       onSelectProduct(found);
+      setScanToast({ name: found.name, barcode: barcodeInput });
+      setTimeout(() => setScanToast(null), 3000);
       setBarcodeInput('');
       setShowBarcodeModal(false);
     } else {
@@ -105,19 +153,35 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           />
         </div>
 
-        {/* Filter Badges & Scan Barcode */}
+        {/* Filter Badges & Fast Scan Barcode */}
         <div className="flex items-center space-x-2">
+          {/* USB Scanner Ready Pill */}
+          <div className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>USB Gun Siap Tembak</span>
+          </div>
+
           <button
             onClick={() => setShowBarcodeModal(true)}
-            className="flex items-center space-x-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shadow-xs"
+            className="flex items-center space-x-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            title="Ketik manual Barcode atau SKU"
           >
             <ScanBarcode className="w-4 h-4 text-amber-600" />
-            <span className="hidden sm:inline">Scan Barcode</span>
+            <span className="hidden sm:inline">Ketik Barcode</span>
+          </button>
+
+          <button
+            onClick={() => setShowCameraScanner(true)}
+            className="flex items-center space-x-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 px-3 py-2 rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            title="Scan Cepat Barcode dengan Kamera"
+          >
+            <Camera className="w-4 h-4 text-amber-600" />
+            <span className="hidden sm:inline">Kamera Scan</span>
           </button>
 
           <button
             onClick={() => setOnlyLowStock(!onlyLowStock)}
-            className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors shadow-xs ${
+            className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors shadow-xs cursor-pointer ${
               onlyLowStock
                 ? 'bg-rose-50 text-rose-700 border-rose-300'
                 : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'
@@ -131,7 +195,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           <div className="flex items-center bg-white border border-slate-200 p-1 rounded-xl shadow-xs">
             <button
               onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'grid' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
@@ -139,7 +203,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'list' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
@@ -148,6 +212,20 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           </div>
         </div>
       </div>
+
+      {/* Instant Scan Success Toast Notification */}
+      {scanToast && (
+        <div className="bg-emerald-600 text-white px-4 py-2.5 rounded-2xl shadow-lg flex items-center justify-between text-xs font-bold animate-slide-down">
+          <div className="flex items-center space-x-2">
+            <Zap className="w-4 h-4 text-amber-300 fill-amber-300 animate-pulse" />
+            <span>⚡ Produk Ter-Scan: <strong>{scanToast.name}</strong> (Barcode: <span className="font-mono">{scanToast.barcode}</span>)</span>
+          </div>
+          <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md flex items-center space-x-1">
+            <CheckCircle2 className="w-3 h-3 text-white" />
+            <span>Masuk Keranjang</span>
+          </span>
+        </div>
+      )}
 
       {/* Category Filter Pills Bar */}
       <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-200">
@@ -372,6 +450,79 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Camera Barcode Scanner Modal */}
+      {showCameraScanner && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full text-slate-900 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-base text-amber-900 flex items-center space-x-2">
+                <Camera className="w-5 h-5 text-amber-600" />
+                <span>Kamera Scanner Barcode Cepat</span>
+              </h3>
+              <button
+                onClick={() => setShowCameraScanner(false)}
+                className="text-slate-400 hover:text-slate-700 text-sm p-1 rounded-lg hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Simulated Camera Viewport with Red Laser Line */}
+            <div className="relative w-full h-48 bg-slate-950 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-amber-500/50 shadow-inner">
+              {/* Corner reticles */}
+              <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-amber-400"></div>
+              <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-amber-400"></div>
+              <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-amber-400"></div>
+              <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-amber-400"></div>
+
+              {/* Scanning Laser animation */}
+              <div className="absolute left-6 right-6 h-0.5 bg-red-500 shadow-[0_0_12px_#ef4444] animate-pulse"></div>
+
+              <ScanBarcode className="w-16 h-16 text-slate-600 opacity-40 mb-2" />
+              <p className="text-[11px] text-amber-300 font-bold z-10 text-center px-4">
+                Arahkan Barcode atau QR Code produk ke dalam kotak bidik
+              </p>
+              <span className="text-[10px] text-slate-400 mt-1">Auto-focus aktif • Sensor 60 FPS</span>
+            </div>
+
+            {/* Quick 1-Click Scan Triggers from Catalog */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700">Simulasi Tembak Barcode Produk:</span>
+                <span className="text-[10px] text-slate-400 font-medium">Klik untuk uji coba</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                {products.filter((p) => p.barcode).slice(0, 6).map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      onSelectProduct(p);
+                      setScanToast({ name: p.name, barcode: p.barcode || p.sku });
+                      setTimeout(() => setScanToast(null), 3000);
+                      setShowCameraScanner(false);
+                    }}
+                    className="p-2 text-left bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-xl transition-all text-xs"
+                  >
+                    <p className="font-bold text-slate-900 truncate">{p.name}</p>
+                    <p className="font-mono text-[10px] text-amber-700 font-bold">{p.barcode}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCameraScanner(false)}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-colors"
+              >
+                Tutup Kamera
+              </button>
+            </div>
           </div>
         </div>
       )}

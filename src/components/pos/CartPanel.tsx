@@ -21,7 +21,11 @@ import {
   UserCheck,
   Scissors,
   Wrench,
+  Scale,
+  Divide,
 } from 'lucide-react';
+import { SplitBillModal } from './SplitBillModal';
+import { DigitalScaleModal } from './DigitalScaleModal';
 
 interface CartPanelProps {
   onOpenCustomerSelect: () => void;
@@ -64,6 +68,8 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   const [editingItemNotes, setEditingItemNotes] = useState<{ id: string; notes: string } | null>(null);
   const [editingItemDiscount, setEditingItemDiscount] = useState<{ id: string; percent: number; amount: number } | null>(null);
   const [showStaffModal, setShowStaffModal] = useState(false);
+  const [showSplitBillModal, setShowSplitBillModal] = useState(false);
+  const [showScaleModal, setShowScaleModal] = useState(false);
 
   const activePreset = BUSINESS_PRESETS[settings.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
   const slotNoun = activePreset.layoutTerm?.itemNoun || 'Meja';
@@ -378,6 +384,28 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           </div>
         </div>
 
+        {/* Specialized Sector Feature Buttons */}
+        {sector === 'FNB' && (
+          <button
+            disabled={cart.length === 0}
+            onClick={() => setShowSplitBillModal(true)}
+            className="w-full flex items-center justify-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+          >
+            <Divide className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Split Bill (Bagi Rata / Per Item)</span>
+          </button>
+        )}
+
+        {sector === 'LAUNDRY' && (
+          <button
+            onClick={() => setShowScaleModal(true)}
+            className="w-full flex items-center justify-center space-x-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-950 border border-cyan-300 py-2 rounded-xl text-xs font-bold transition-all shadow-xs"
+          >
+            <Scale className="w-3.5 h-3.5 text-cyan-700" />
+            <span>Timbangan Digital USB/Serial (Kg)</span>
+          </button>
+        )}
+
         {/* Action Buttons */}
         <div className="grid grid-cols-3 gap-2 pt-1">
           {/* Hold Order */}
@@ -574,8 +602,20 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 </button>
               </div>
             </div>
-          </div>
-        )}
+        </div>
+      )}
+
+      {/* Split Bill Modal */}
+      <SplitBillModal
+        isOpen={showSplitBillModal}
+        onClose={() => setShowSplitBillModal(false)}
+      />
+
+      {/* Digital Scale Modal */}
+      <DigitalScaleModal
+        isOpen={showScaleModal}
+        onClose={() => setShowScaleModal(false)}
+      />
     </div>
   );
 

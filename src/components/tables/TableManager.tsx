@@ -23,15 +23,22 @@ import {
   Layers,
   Scale,
   Store,
+  ChefHat,
+  Waves,
 } from 'lucide-react';
+import { KitchenDisplaySystem } from './KitchenDisplaySystem';
+import { LaundryPipelineView } from './LaundryPipelineView';
+import { CarwashPipelineView } from './CarwashPipelineView';
+import { BarbershopBookingView } from './BarbershopBookingView';
 
 export const TableManager: React.FC = () => {
-  const { tables, saveTable, deleteTable, settings, activateBusinessSector } = usePOS();
+  const { tables, saveTable, deleteTable, settings, activateBusinessSector, kdsTickets, carwashQueue, bookings } = usePOS();
 
   const activeSectorKey: BusinessSector = settings.businessSector || 'FNB';
   const activePreset = BUSINESS_PRESETS[activeSectorKey] || BUSINESS_PRESETS.FNB;
   const layoutTerm = activePreset.layoutTerm;
 
+  const [activeTab, setActiveTab] = useState<'LAYOUT' | 'SPECIALIZED'>('LAYOUT');
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('ALL');
@@ -147,8 +154,61 @@ export const TableManager: React.FC = () => {
         </div>
       </div>
 
-      {/* Sector Switcher Quick Bar */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs">
+      {/* Primary Sub-Nav Bar (Layout vs Specialized Engine) */}
+      <div className="flex items-center space-x-2 border-b border-slate-200 pb-3">
+        <button
+          onClick={() => setActiveTab('LAYOUT')}
+          className={`px-4 py-2.5 rounded-2xl font-black text-xs transition-all flex items-center space-x-2 cursor-pointer ${
+            activeTab === 'LAYOUT'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+          }`}
+        >
+          <HeaderIcon className="w-4 h-4 text-amber-500" />
+          <span>{layoutTerm.title}</span>
+        </button>
+
+        {activeSectorKey !== 'RETAIL' && (
+          <button
+            onClick={() => setActiveTab('SPECIALIZED')}
+            className={`px-4 py-2.5 rounded-2xl font-black text-xs transition-all flex items-center space-x-2 cursor-pointer ${
+              activeTab === 'SPECIALIZED'
+                ? 'bg-amber-500 text-slate-950 shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            {activeSectorKey === 'FNB' && <ChefHat className="w-4 h-4" />}
+            {activeSectorKey === 'LAUNDRY' && <Waves className="w-4 h-4" />}
+            {activeSectorKey === 'CARWASH' && <Car className="w-4 h-4" />}
+            {activeSectorKey === 'BARBERSHOP' && <Scissors className="w-4 h-4" />}
+            <span>
+              {activeSectorKey === 'FNB'
+                ? `Kitchen Display System (${kdsTickets.filter((t) => t.status !== 'SERVED').length})`
+                : activeSectorKey === 'LAUNDRY'
+                ? 'Pipeline Pengerjaan & Rak Simpan'
+                : activeSectorKey === 'CARWASH'
+                ? `Antrean Bay & Kru Cuci (${carwashQueue.length})`
+                : `Kalender Booking & Kapster (${bookings.length})`}
+            </span>
+          </button>
+        )}
+      </div>
+
+      {/* SPECIALIZED VERTICAL ENGINE VIEW */}
+      {activeTab === 'SPECIALIZED' && (
+        <div className="pt-2">
+          {activeSectorKey === 'FNB' && <KitchenDisplaySystem />}
+          {activeSectorKey === 'LAUNDRY' && <LaundryPipelineView />}
+          {activeSectorKey === 'CARWASH' && <CarwashPipelineView />}
+          {activeSectorKey === 'BARBERSHOP' && <BarbershopBookingView />}
+        </div>
+      )}
+
+      {/* PHYSICAL LAYOUT & ZONES VIEW */}
+      {activeTab === 'LAYOUT' && (
+        <>
+          {/* Sector Switcher Quick Bar */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs">
         <span className="font-bold text-slate-600 flex items-center space-x-1.5 px-2">
           <Building2 className="w-4 h-4 text-amber-600" />
           <span>Sektor Terdeteksi:</span>
@@ -287,6 +347,8 @@ export const TableManager: React.FC = () => {
             );
           })}
         </div>
+      )}
+        </>
       )}
 
       {/* Table Detail Modal */}

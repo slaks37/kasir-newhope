@@ -92,6 +92,9 @@ export interface Product {
   linkedStockItemId?: string;
   recipeQty?: number;
   recipeIngredients?: RecipeIngredient[]; // Multi-ingredient Bill of Materials
+  reorderPointWholesale?: number; // Reorder point grosir (batas restok supplier)
+  wholesaleMinQty?: number; // Minimum pembelian grosir (MOQ)
+  targetMarginPercent?: number; // Target margin % per unit
 }
 
 export interface StaffMember {
@@ -103,6 +106,10 @@ export interface StaffMember {
   businessId?: string;
   avatar?: string;
   isAvailable: boolean;
+  phone?: string;
+  baseSalary?: number;
+  salaryType?: 'MONTHLY' | 'DAILY';
+  dailyAllowance?: number;
 }
 
 export interface StoreBranch {
@@ -246,6 +253,9 @@ export interface Customer {
   totalSpent: number;
   visitCount: number;
   lastVisit: string;
+  preferredStylist?: string;
+  lastServiceType?: string;
+  lastVehiclePlate?: string;
 }
 
 export interface Order {
@@ -280,9 +290,175 @@ export interface Order {
   completionDate?: string; // e.g. "12 Ags 2026, 16:00"
   completionEstimate?: string; // e.g. "2026-08-11T16:00" or "Besok, 16:00 WITA"
   laundryStatus?: 'PROSES_CUCI' | 'SELESAI_SIAP_AMBIL' | 'SUDAH_DIAMBIL';
+  laundryStage?: LaundryStage;
+  storageRack?: string; // e.g. "Rak A-02", "Loker B-01"
   waNotifiedAt?: string; // ISO date string when WA notification sent
+  // Carwash specific
+  vehiclePlate?: string; // e.g. "B 1234 ABC"
+  vehicleModel?: string; // e.g. "Avanza Hitam"
+  assignedCrew?: string[]; // Daftar nama kru cuci
+  carwashStage?: CarwashStage;
+  // Split bill references
+  isSplitBill?: boolean;
+  splitBillIndex?: number;
+  parentOrderId?: string;
   businessSector?: BusinessSector;
   userId?: string;
+}
+
+export type LaundryStage = 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI';
+export type CarwashStage = 'ANTRIAN_BAY' | 'CUCI_BUSA' | 'PENGERINGAN_VAKUM' | 'INSPEKSI_SELESAI' | 'SIAP_KELUAR';
+
+export type KDSStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED';
+
+export interface KDSTicketItem {
+  id: string;
+  name: string;
+  productName?: string;
+  quantity: number;
+  variantName?: string;
+  selectedModifiers?: SelectedModifier[];
+  notes?: string;
+  isCompleted?: boolean;
+}
+
+export interface KDSTicket {
+  id: string;
+  orderId: string;
+  orderNumber: number;
+  tableName?: string;
+  customerName?: string;
+  orderType: OrderType;
+  items: KDSTicketItem[];
+  notes?: string;
+  createdAt: string; // ISO date string
+  status: KDSStatus;
+}
+
+export interface CarwashQueueItem {
+  id: string;
+  orderId?: string;
+  vehiclePlate: string;
+  vehicleModel: string;
+  serviceName: string;
+  assignedBayId?: string;
+  assignedBayName?: string;
+  bayName?: string;
+  assignedCrew: string[];
+  stage: CarwashStage;
+  enteredAt: string; // ISO date string
+  customerName?: string;
+  customerPhone?: string;
+  estimatedMinutes?: number;
+  notes?: string;
+}
+
+export type BookingStatus = 'SCHEDULED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+export interface AppointmentBooking {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  staffId: string;
+  staffName: string;
+  staffMemberId?: string;
+  staffMemberName?: string;
+  serviceId?: string;
+  serviceName: string;
+  servicePrice?: number;
+  date: string; // YYYY-MM-DD
+  bookingDate?: string;
+  timeSlot: string; // e.g. "10:00"
+  startTime?: string;
+  endTime?: string;
+  durationMinutes?: number; // e.g. 45
+  status: BookingStatus;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface StaffCommissionRule {
+  id?: string;
+  staffId: string;
+  staffName?: string;
+  staffMemberId?: string;
+  // Mode 1: Individual / Barbershop Per-Head
+  serviceCommissionPercent?: number; // e.g. 30%
+  fixedCommissionPerService?: number; // e.g. Rp 15.000
+  retailCommissionPercent?: number; // e.g. 5%
+  commissionType?: 'PERCENTAGE' | 'FIXED_PER_ORDER';
+  rateValue?: number;
+  // Mode 2: Car Wash / Team Pooled Split
+  teamPoolType?: 'PERCENTAGE_OF_POOL' | 'FIXED_PER_VEHICLE';
+  teamPoolRate?: number; // e.g. 15% dari omzet car wash atau Rp 10.000 per mobil
+  teamPoolDistribution?: 'EQUAL_AMONG_PRESENT' | 'BY_ASSIGNED_JOB';
+  // Mode 3: F&B / Retail Daily Revenue Target Incentive
+  dailyRevenueTarget?: number; // e.g. Rp 3.000.000 / hari
+  targetBonusAmount?: number; // e.g. Rp 50.000 per staf jika tembus target
+  targetStretchAmount?: number; // e.g. Rp 6.000.000 / hari
+  targetStretchBonus?: number; // e.g. Rp 100.000 per staf jika tembus stretch
+  targetBonusType?: 'FLAT_PER_STAFF' | 'SURPLUS_PERCENTAGE';
+  surplusPercent?: number; // e.g. 5% dari surplus omzet di atas target
+}
+
+export interface PayrollSlip {
+  id: string;
+  staffId: string;
+  staffName: string;
+  staffRole: string;
+  periodMonth: string; // YYYY-MM
+  periodStart: string; // YYYY-MM-DD
+  periodEnd: string; // YYYY-MM-DD
+  daysAttended: number;
+  baseSalary: number;
+  allowance: number;
+  individualCommission: number;
+  teamPoolCommission: number;
+  dailyTargetBonus: number;
+  grossEarnings: number;
+  deductions: number;
+  netSalary: number;
+  status: 'DRAFT' | 'PAID';
+  paidAt?: string;
+  paymentMethod?: string;
+  notes?: string;
+  businessSector?: BusinessSector;
+}
+
+export type LifecycleHookType =
+  | 'LAUNDRY_READY'
+  | 'BARBERSHOP_RETENTION'
+  | 'CARWASH_WEATHER'
+  | 'FNB_LUNCH_PROMO'
+  | 'RETAIL_VIP';
+
+export interface WhatsAppLifecycleHook {
+  id: string;
+  type: LifecycleHookType;
+  sector: BusinessSector;
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  title: string;
+  message: string;
+  triggerReason: string;
+  urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+  metadata?: {
+    orderId?: string;
+    storageRack?: string;
+    weightKg?: number;
+    stylistName?: string;
+    daysSinceLastCut?: number;
+    suggestedTimeSlot?: string;
+    vehiclePlate?: string;
+    vehicleModel?: string;
+    promoCode?: string;
+    points?: number;
+    [key: string]: any;
+  };
+  status: 'PENDING' | 'SENT' | 'DISMISSED';
+  createdAt: string;
+  sentAt?: string;
 }
 
 export interface InventoryLog {
@@ -375,6 +551,7 @@ export interface StoreSettings {
   activeBranchId?: string;
   geofenceEnforcement?: 'STRICT' | 'FLEXIBLE';
   subscription?: SaaSSubscription;
+  whatsappLifecycleEnabled?: boolean;
 }
 
 export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER';
@@ -405,7 +582,8 @@ export type PermissionFeature =
   | 'void_order' 
   | 'stock_adjustment' 
   | 'user_management'
-  | 'billing_subscription';
+  | 'billing_subscription'
+  | 'labor';
 
 export interface PromoCode {
   code: string;

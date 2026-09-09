@@ -17,6 +17,7 @@ import {
   Clock,
   Shield,
   Home,
+  Coins,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 
@@ -105,6 +106,12 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
       label: 'Pengaturan Toko',
       icon: Settings,
       desc: 'Struk, pajak, staf & langganan',
+    },
+    {
+      id: 'labor' as const,
+      label: 'Gaji & Komisi Staf',
+      icon: Coins,
+      desc: 'Perhitungan komisi, bagi hasil tim & slip gaji',
     },
   ];
 
