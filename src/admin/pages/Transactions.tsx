@@ -182,9 +182,9 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
           />
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Select value={mod} onChange={(v) => { setMod(v); reset(); }} options={MODULES} placeholder="Semua Modul" />
-            <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className={dateInput} />
+            <input type="date" aria-label="Tanggal awal transaksi" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className={dateInput} />
             <span className="text-xs font-bold text-slate-500">s/d</span>
-            <input type="date" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className={dateInput} />
+            <input type="date" aria-label="Tanggal akhir transaksi" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className={dateInput} />
             {(mod || from || to) && (
               <button
                 onClick={() => { setMod(''); setFrom(''); setTo(''); reset(); }}

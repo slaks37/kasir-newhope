@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useModalFocus } from '../../hooks/useModalFocus';
 import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, Order } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
@@ -65,6 +66,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [dropOffDateIso, setDropOffDateIso] = useState<string>(toDatetimeLocalStr(now));
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, () => { if (!isProcessing) onClose(); });
 
   // Carwash & Laundry Specialized Fields
   const [vehiclePlateInput, setVehiclePlateInput] = useState<string>('');
@@ -157,12 +160,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full text-slate-900 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="checkout-title" tabIndex={-1} className="nh-checkout bg-white border border-slate-200 rounded-3xl max-w-2xl w-full text-slate-900 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
           <div>
             <div className="flex items-center space-x-2">
-              <h3 className="font-extrabold text-lg text-amber-900">Proses Pembayaran</h3>
+              <h3 id="checkout-title" className="font-extrabold text-lg text-slate-900">Proses pembayaran</h3>
               <span className="px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-100 text-amber-900 border border-amber-300 uppercase tracking-wide">
                 {orderType === 'DINE_IN'
                   ? `Dine In (${selectedTable ? selectedTable.name : 'Meja Kasir'})`
@@ -178,6 +181,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
           </div>
 
           <button
+            aria-label="Tutup pembayaran"
+            disabled={isProcessing}
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
           >
@@ -206,6 +211,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                 return (
                   <button
                     key={method.id}
+                    aria-pressed={paymentMethod === method.id}
                     onClick={() => setPaymentMethod(method.id as PaymentMethod)}
                     className={`w-full p-3 rounded-2xl border text-left flex items-center space-x-3 transition-all ${
                       isSelected
@@ -421,6 +427,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                   <input
                     type="number"
                     autoFocus
+                    aria-label="Uang tunai diterima"
                     value={cashReceivedInput}
                     onChange={(e) => setCashReceivedInput(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-lg font-bold font-mono text-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -503,6 +510,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                   </label>
                   <input
                     type="text"
+                    aria-label="Nomor referensi pembayaran QRIS"
                     value={qrisRefInput}
                     onChange={(e) => setQrisRefInput(e.target.value)}
                     placeholder="Contoh RRN: 10839201..."

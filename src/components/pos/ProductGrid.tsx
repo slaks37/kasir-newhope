@@ -139,7 +139,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
   return (
     <div className="nh-product-grid flex-1 flex flex-col h-full bg-slate-50/70 p-4 space-y-4 overflow-hidden">
-      <div className="nh-pos-heading"><div><h1>Kasir</h1><p>Pilih produk, buat pesanan, lanjutkan pembayaran.</p></div><span>{filteredProducts.length} produk</span></div>
+      <div className="nh-app-pos-heading"><div><h1>Kasir</h1><p>Pilih produk, buat pesanan, lanjutkan pembayaran.</p></div><span>{filteredProducts.length} produk</span></div>
       {/* Search & Toolbar Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Search Input for Mobile/Tablet */}
@@ -182,6 +182,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           </button>
 
           <button
+            aria-label="Filter stok menipis"
+            aria-pressed={onlyLowStock}
             onClick={() => setOnlyLowStock(!onlyLowStock)}
             className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors shadow-xs cursor-pointer ${
               onlyLowStock

@@ -198,6 +198,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
                 </p>
               </div>
               <button
+                aria-label="Tutup menu lainnya"
                 onClick={() => setShowMoreMenu(false)}
                 className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"
               >

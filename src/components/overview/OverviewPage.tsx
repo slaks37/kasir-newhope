@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { FirstSaleGuide } from './FirstSaleGuide';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
@@ -308,12 +309,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
 
       <div className="nh-overview-header">
         <div>
-          <span className="nh-eyebrow">RINGKASAN USAHA</span>
+          <span className="nh-app-eyebrow">RINGKASAN USAHA</span>
           <h1>Halo, {currentUser?.name || 'Admin'}.</h1>
           <p>Setiap angka, satu langkah ke depan. Lihat performa usaha dan tentukan langkah Anda hari ini.</p>
         </div>
         <div className="nh-overview-actions">
-          <button onClick={() => setActiveTab('pos')} className="nh-button-primary"><ShoppingCart size={17} /> Buka kasir <ArrowUpRight size={16} /></button>
+          <button onClick={() => setActiveTab('pos')} className="nh-app-button-primary"><ShoppingCart size={17} /> Buka kasir <ArrowUpRight size={16} /></button>
           <div className="nh-segment" aria-label="Periode ringkasan">{(['TODAY', '7DAYS', '30DAYS'] as const).map(t => <button key={t} onClick={() => setTimeFilter(t)} aria-pressed={timeFilter === t}>{t === 'TODAY' ? 'Hari ini' : t === '7DAYS' ? '7 hari' : '30 hari'}</button>)}</div>
         </div>
       </div>
@@ -323,6 +324,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
         {shift.status === 'OPEN' && <span>Kas awal <strong>{formatRupiah(shift.initialCash || 0)}</strong></span>}
         <span><UserCheck size={15} />{currentUser?.role || 'ADMIN'}</span>
       </div>
+
+      <FirstSaleGuide />
 
       {/* 2. EXECUTIVE FINANCIAL & PROFITABILITY CARDS GRID (5 INSIGHT CARDS) */}
       <div className="nh-metrics grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

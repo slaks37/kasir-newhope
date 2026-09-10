@@ -264,14 +264,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                   </div>
 
                   {/* Desktop Right Cart Column */}
-                  <div className="hidden lg:flex w-[380px] xl:w-[420px] 2xl:w-[460px] shrink-0 border-l border-slate-200 bg-white">
                     <CartPanel
                       onOpenCheckout={() => setShowCheckoutModal(true)}
                       onOpenCustomerSelect={() => setShowCustomerModal(true)}
                       onOpenHoldOrders={() => setShowHoldOrdersModal(true)}
                       onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
                     />
-                  </div>
                 </>
               )}
 
@@ -324,41 +322,16 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
         />
       )}
 
-      {/* Mobile Cart Sheet Modal */}
+      {/* One responsive cart implementation for both desktop and mobile. */}
       {showMobileCartSheet && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm animate-fade-in flex flex-col justify-end">
-          <div className="bg-white rounded-t-3xl max-h-[85vh] h-[85vh] flex flex-col shadow-2xl animate-slide-up">
-            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
-              <span className="font-extrabold text-sm text-slate-800">Keranjang Kasir</span>
-              <button
-                onClick={() => setShowMobileCartSheet(false)}
-                className="text-xs font-bold text-slate-500 p-1.5 rounded-lg hover:bg-slate-100"
-              >
-                Tutup ✕
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <CartPanel
-                onOpenCheckout={() => {
-                  setShowMobileCartSheet(false);
-                  setShowCheckoutModal(true);
-                }}
-                onOpenCustomerSelect={() => {
-                  setShowMobileCartSheet(false);
-                  setShowCustomerModal(true);
-                }}
-                onOpenHoldOrders={() => {
-                  setShowMobileCartSheet(false);
-                  setShowHoldOrdersModal(true);
-                }}
-                onOpenRecentTransactions={() => {
-                  setShowMobileCartSheet(false);
-                  setShowRecentTransactionsModal(true);
-                }}
-              />
-            </div>
-          </div>
-        </div>
+        <CartPanel
+          isMobileModal
+          onCloseMobile={() => setShowMobileCartSheet(false)}
+          onOpenCheckout={() => { setShowMobileCartSheet(false); setShowCheckoutModal(true); }}
+          onOpenCustomerSelect={() => { setShowMobileCartSheet(false); setShowCustomerModal(true); }}
+          onOpenHoldOrders={() => { setShowMobileCartSheet(false); setShowHoldOrdersModal(true); }}
+          onOpenRecentTransactions={() => { setShowMobileCartSheet(false); setShowRecentTransactionsModal(true); }}
+        />
       )}
 
       {/* Mobile Bottom Navigation Bar */}

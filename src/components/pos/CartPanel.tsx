@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { useModalFocus } from '../../hooks/useModalFocus';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
@@ -70,6 +71,8 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showSplitBillModal, setShowSplitBillModal] = useState(false);
   const [showScaleModal, setShowScaleModal] = useState(false);
+  const mobileDialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(mobileDialogRef, () => onCloseMobile?.());
 
   const activePreset = BUSINESS_PRESETS[settings.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
   const slotNoun = activePreset.layoutTerm?.itemNoun || 'Meja';
@@ -111,7 +114,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         <div className="p-3 bg-slate-900 text-white flex items-center justify-between shadow-xs">
           <div className="flex items-center space-x-2">
             <ShoppingBag className="w-5 h-5 text-amber-400" />
-            <h3 className="font-extrabold text-sm text-white">Keranjang Pesanan ({cart.reduce((s, i) => s + i.quantity, 0)} Item)</h3>
+            <h3 id="mobile-cart-title" className="font-extrabold text-sm text-white">Keranjang pesanan ({cart.reduce((s, i) => s + i.quantity, 0)} item)</h3>
           </div>
           {onCloseMobile && (
             <button
@@ -630,7 +633,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         {/* Backdrop click to close */}
         <div className="flex-1" onClick={onCloseMobile} />
         {/* Bottom Sheet Modal Body */}
-        <div className="bg-white rounded-t-3xl shadow-2xl flex flex-col max-h-[88dvh] overflow-hidden animate-slide-up border-t border-slate-200">
+        <div ref={mobileDialogRef} role="dialog" aria-modal="true" aria-labelledby="mobile-cart-title" tabIndex={-1} className="nh-mobile-cart bg-white rounded-t-3xl shadow-2xl flex flex-col h-[88dvh] overflow-hidden animate-slide-up border-t border-slate-200 pb-safe">
           {cartContent}
         </div>
       </div>

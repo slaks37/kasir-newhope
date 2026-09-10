@@ -151,7 +151,7 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
       </div>
 
       {/* 2. 🏆 MERCHANT PERFORMANCE LEADERBOARD (OMZET, AKTIVITAS, & PROFIT) */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      <div className="nh-admin-highlights grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4">
         {/* 1. Omzet Tertinggi */}
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3 relative overflow-hidden">
           <div className="flex items-center justify-between">
