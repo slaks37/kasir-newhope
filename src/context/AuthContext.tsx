@@ -136,6 +136,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
+    }).catch((err) => {
+      console.warn('[auth] getSession fetch failed (offline/unreachable):', err);
+      setLoading(false);
     });
 
     // Subscribe ke perubahan state auth (login, logout, token refresh)
@@ -216,6 +219,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return { error: null };
             }
           }
+
+          if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('fetch failed')) {
+            return {
+              error: {
+                message: 'Tidak dapat terhubung ke server cloud. Periksa koneksi internet Anda atau coba beberapa saat lagi.',
+              } as AuthError,
+            };
+          }
+
           return { error };
         }
       } catch (err: any) {
@@ -305,13 +317,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
 
           if (signUpErr) {
-            if (signUpErr.message.toLowerCase().includes('already registered')) {
+            if (signUpErr.message.toLowerCase().includes('already registered') || signUpErr.message.toLowerCase().includes('sudah terdaftar')) {
               return { error: { message: 'Email ini sudah terdaftar! Silakan login.' } as AuthError };
             }
-            return { error: signUpErr };
-          }
+            const isNetworkFailure =
+              signUpErr.message.toLowerCase().includes('failed to fetch') ||
+              signUpErr.message.toLowerCase().includes('fetch failed') ||
+              signUpErr.message.toLowerCase().includes('network') ||
+              signUpErr.name === 'AuthRetryableFetchError';
 
-          if (signUpData?.user) {
+            if (!isNetworkFailure) {
+              return { error: signUpErr };
+            }
+            console.warn('[auth] Supabase unreachable during signup, activating local offline session:', signUpErr.message);
+          } else if (signUpData?.user) {
             if (signUpData.session) {
               setSession(signUpData.session);
               setUser(signUpData.user);

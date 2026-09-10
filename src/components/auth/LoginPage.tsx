@@ -123,6 +123,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             setError(
               "Akun dengan email ini belum terdaftar atau password salah.",
             );
+          } else if (
+            err.message.toLowerCase().includes("failed to fetch") ||
+            err.message.toLowerCase().includes("fetch failed") ||
+            err.message.toLowerCase().includes("network")
+          ) {
+            setError("Tidak dapat terhubung ke server. Periksa koneksi internet Anda atau coba lagi beberapa saat.");
           } else {
             setError(err.message);
           }
@@ -140,6 +146,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           ) {
             setError("Email ini sudah terdaftar! Silakan login.");
             setMode("login");
+          } else if (
+            err.message.toLowerCase().includes("failed to fetch") ||
+            err.message.toLowerCase().includes("fetch failed") ||
+            err.message.toLowerCase().includes("network")
+          ) {
+            setError("Tidak dapat terhubung ke server. Periksa koneksi internet Anda atau coba lagi beberapa saat.");
           } else {
             setError(err.message);
           }
