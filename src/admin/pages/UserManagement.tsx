@@ -113,10 +113,10 @@ export default function UserManagement() {
       {/* Title & Subtitle */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">
+          <h2 className="text-xl font-black text-slate-900">
             Pemisahan Data Pengguna (Admin vs Client)
           </h2>
-          <p className="text-xs text-slate-600 font-medium dark:text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 font-medium mt-0.5">
             Struktur terisolasi antara User Platform Superadmin (Back-Office) dan User Toko/Merchant (Client POS)
           </p>
         </div>

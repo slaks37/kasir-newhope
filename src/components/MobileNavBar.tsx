@@ -57,7 +57,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
   const mainNavItems = [
     {
       id: 'overview' as const,
-      label: 'Overview',
+      label: 'Ringkasan',
       icon: LayoutDashboard,
     },
     {
@@ -119,8 +119,8 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     <>
       {/* Bottom Navigation Bar (Visible only on mobile/tablet < 1024px) */}
       <nav
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-lg px-2 pt-1 pb-safe flex items-center justify-around select-none"
-        aria-label="Mobile Navigation"
+        className="nh-mobile-nav lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-lg px-2 pt-1 pb-safe flex items-center justify-around select-none"
+        aria-label="Navigasi toko"
       >
         {mainNavItems.map((item) => {
           const Icon = item.icon;
@@ -130,6 +130,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
           return (
             <button
               key={item.id}
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => {
                 setShowMoreMenu(false);
                 setActiveTab(item.id);
@@ -152,7 +153,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
                   </span>
                 )}
               </div>
-              <span className="text-[10px] tracking-tight mt-0.5 truncate max-w-full">
+              <span className="text-[11px] tracking-tight mt-0.5 truncate max-w-full">
                 {item.label}
               </span>
               {isActive && (
@@ -164,16 +165,17 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
 
         {/* "Lainnya" / More Menu Button */}
         <button
+          aria-expanded={showMoreMenu}
           onClick={() => setShowMoreMenu(true)}
           className={`relative flex flex-col items-center justify-center flex-1 py-1.5 px-1 rounded-xl transition-all ${
-            showMoreMenu || ['customers', 'reports', 'ai', 'settings'].includes(activeTab)
+            showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor'].includes(activeTab)
               ? 'text-amber-600 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <MoreHorizontal className="w-5 h-5" />
-          <span className="text-[10px] tracking-tight mt-0.5">Lainnya</span>
-          {(showMoreMenu || ['customers', 'reports', 'ai', 'settings'].includes(activeTab)) && (
+          <span className="text-[11px] tracking-tight mt-0.5">Lainnya</span>
+          {(showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor'].includes(activeTab)) && (
             <span className="absolute bottom-0 w-8 h-0.5 bg-amber-500 rounded-full" />
           )}
         </button>

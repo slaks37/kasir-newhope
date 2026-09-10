@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
-  Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, BookOpen, Award
+  Menu, X, ArrowRight, Activity, ClipboardList, LayoutDashboard, LogOut, Package, Receipt, ShieldCheck, Store, CreditCard, BookOpen, Award
 } from 'lucide-react';
 import { api, getIdentity, setIdentity, ROLE_LABEL, type Identity, type Session } from './api';
 import { ErrorBox, Loading } from './ui';
+import { AuthLayout } from '../components/auth/AuthLayout';
+import { Brand } from '../components/brand/Brand';
 import Overview from './pages/Overview';
 import Merchants from './pages/Merchants';
 import Transactions from './pages/Transactions';
@@ -63,85 +65,22 @@ function LoginScreen({ onLoginSuccess }: { onLoginSuccess: (session: Session) =>
   };
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-slate-950 p-4 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/95 p-8 shadow-2xl backdrop-blur-xl">
-        {/* Return to POS Link */}
-        <div className="mb-6">
-          <a
-            href="/"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors"
-          >
-            ← Kembali ke Halaman Utama
-          </a>
-        </div>
-
-        <div className="mb-8 flex items-center gap-3.5">
-          <div className="rounded-2xl bg-amber-500 p-3 text-slate-950 shadow-lg shadow-amber-500/20">
-            <ShieldCheck className="h-6 w-6 text-slate-950" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-white">
-              Back-Office Console
-            </h1>
-            <p className="text-xs text-slate-400">Portal Keamanan & Administrator Platform</p>
-          </div>
-        </div>
-
-        {/* Secure Email & Password Admin Form */}
-        <form onSubmit={handleLoginSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-bold text-slate-300 block mb-1.5">
-              Email Administrator
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="nama@perusahaan.com"
-              autoComplete="username"
-              required
-              className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-bold text-slate-300 block mb-1.5">
-              Password Administrator
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
-              autoComplete="current-password"
-              required
-              className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          {err && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
-              <span className="font-bold">⚠️</span>
-              <span>{err}</span>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
-          >
-            {loading ? 'Memverifikasi Kredensial…' : 'Masuk ke Konsol Admin ➔'}
-          </button>
-        </form>
-
-        <div className="mt-8 pt-4 border-t border-slate-800 text-center">
-          <p className="text-[11px] text-slate-500 font-medium">
-            🔒 Akses dibatasi khusus developer & tim internal platform.
-          </p>
-        </div>
+    <AuthLayout admin>
+      <div className="nh-form-heading">
+        <span className="nh-eyebrow">ADMIN WORKSPACE</span>
+        <h1>Masuk ke konsol admin</h1>
+        <p>Gunakan akun administrator yang telah diberikan akses ke platform New Hope POS.</p>
       </div>
-    </div>
+      <form onSubmit={handleLoginSubmit} className="nh-auth-form" aria-busy={loading}>
+        <fieldset disabled={loading} className="nh-form-fields">
+          <div className="nh-field"><label htmlFor="admin-email">Email administrator</label><input id="admin-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@perusahaan.com" autoComplete="username" required /></div>
+          <div className="nh-field"><label htmlFor="admin-password">Kata sandi</label><input id="admin-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Masukkan kata sandi" autoComplete="current-password" required /></div>
+        </fieldset>
+        {err && <div className="nh-form-alert" role="alert">{err}</div>}
+        <button type="submit" disabled={loading} className="nh-button-primary nh-auth-submit">{loading ? 'Memverifikasi akses…' : 'Masuk ke konsol admin'}<ArrowRight size={18} /></button>
+      </form>
+      <div className="nh-auth-switch flex items-center justify-center gap-2"><ShieldCheck size={16} /> Khusus administrator yang berwenang.</div>
+    </AuthLayout>
   );
 }
 
@@ -154,6 +93,34 @@ export default function AdminApp() {
   // "Ringkasan" ke "Log Transaksi" harus mempertahankan sektor yang sedang
   // ditelusuri, bukan mengembalikannya ke semua.
   const [sector, setSector] = useState('');
+  const [navOpen, setNavOpen] = useState(false);
+  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 1023px)').matches);
+  const navRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)');
+    const update = () => { setCompact(media.matches); if (!media.matches) setNavOpen(false); };
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const elements = () => Array.from(navRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])') || []).filter(el => el.getClientRects().length);
+    elements()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNavOpen(false);
+      if (event.key !== 'Tab') return;
+      const items = elements(), first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener('keydown', onKey); menuRef.current?.focus(); };
+  }, [navOpen]);
 
   const load = useCallback(() => {
     if (!getIdentity()) {
@@ -181,7 +148,7 @@ export default function AdminApp() {
 
   if (booting) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-slate-100 dark:bg-slate-950">
+      <div className="flex min-h-dvh items-center justify-center bg-slate-100">
         <Loading />
       </div>
     );
@@ -214,56 +181,22 @@ export default function AdminApp() {
   };
 
   return (
-    <div className="min-h-dvh bg-slate-100 dark:bg-slate-950">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-slate-900 p-1.5 dark:bg-slate-100">
-              <ShieldCheck className="h-4 w-4 text-white dark:text-slate-900" />
-            </div>
-            <div className="leading-tight">
-              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Back-Office Internal</p>
-              <p className="text-xs text-slate-500">{session.environment}</p>
-            </div>
-          </div>
-
-          <div className="ml-auto flex items-center gap-3">
-            <div className="text-right leading-tight">
-              <p className="text-xs font-medium text-slate-900 dark:text-slate-100">{session.user.fullName}</p>
-              <p className="text-xs text-slate-500">{ROLE_LABEL[session.user.role]}</p>
-            </div>
-            <button
-              onClick={() => {
-                setIdentity(null);
-                setSession(null);
-              }}
-              title="Keluar"
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
-          </div>
+    <div className="nh-admin">
+      {navOpen && <button className="nh-admin-overlay" onClick={() => setNavOpen(false)} aria-label="Tutup navigasi admin" tabIndex={-1} />}
+      <aside ref={navRef} id="admin-navigation" className={`nh-admin-sidebar ${navOpen ? 'is-open' : ''}`} inert={compact && !navOpen ? true : undefined} role={compact && navOpen ? 'dialog' : undefined} aria-modal={compact && navOpen ? true : undefined} aria-label="Navigasi administrator">
+        <div className="flex items-center justify-between gap-2 px-2"><a href="/" aria-label="New Hope POS — halaman utama"><Brand admin /></a>{compact && <button onClick={() => setNavOpen(false)} className="nh-admin-menu-toggle" aria-label="Tutup navigasi"><X size={18} /></button>}</div>
+        <div><p className="nh-sidebar-caption">KELOLA PLATFORM</p>
+          <nav className="nh-sidebar-nav">{menu.map(n => <button key={n.id} onClick={() => { setPage(n.id); setNavOpen(false); }} aria-current={page === n.id ? 'page' : undefined} className="nh-sidebar-item"><n.icon /><span>{n.label}</span></button>)}</nav>
         </div>
-
-        <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 pb-2">
-          {menu.map((n) => (
-            <button
-              key={n.id}
-              onClick={() => setPage(n.id)}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                page === n.id
-                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              <n.icon className="h-4 w-4" />
-              {n.label}
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      <main className="mx-auto max-w-7xl p-4">
+        <div className="nh-sidebar-foot"><span><ShieldCheck size={16} /> Akses sesuai peran</span><strong>{ROLE_LABEL[session.user.role]}</strong><small>Lingkungan: {session.environment}</small><a href="/" className="nh-text-link">Ke halaman utama <ArrowRight size={14} /></a></div>
+      </aside>
+      <div className="nh-admin-body" inert={navOpen ? true : undefined}>
+        <header className="nh-admin-header">
+          <button ref={menuRef} className="nh-admin-menu-toggle" aria-label="Buka navigasi admin" aria-controls="admin-navigation" aria-expanded={navOpen} onClick={() => setNavOpen(true)}><Menu size={20} /></button>
+          <div><span className="nh-eyebrow">PLATFORM / ADMINISTRASI</span><h1>{menu.find(n => n.id === page)?.label || 'Admin workspace'}</h1></div>
+          <div className="nh-admin-account"><div className="nh-admin-avatar" aria-hidden="true">{session.user.fullName.charAt(0).toUpperCase()}</div><div><strong>{session.user.fullName}</strong><small>{ROLE_LABEL[session.user.role]}</small></div><button onClick={() => { setIdentity(null); setSession(null); }} aria-label="Keluar dari admin" title="Keluar dari admin"><LogOut size={17} /></button></div>
+        </header>
+        <main className="nh-admin-main" id="admin-main">
         {page === 'overview' && <Overview onOpenSector={openSector} />}
         {page === 'merchants' && <Merchants sector={sector} onSector={setSector} />}
         {page === 'subscriptions' && <Subscriptions />}
@@ -274,7 +207,9 @@ export default function AdminApp() {
         {page === 'products' && <Products sector={sector} onSector={setSector} />}
         {page === 'activity' && <ActivityPage sector={sector} onSector={setSector} />}
         {page === 'audit' && <Audit />}
-      </main>
+
+        </main>
+      </div>
     </div>
   );
 }

@@ -138,7 +138,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50/70 p-4 space-y-4 overflow-hidden">
+    <div className="nh-product-grid flex-1 flex flex-col h-full bg-slate-50/70 p-4 space-y-4 overflow-hidden">
+      <div className="nh-pos-heading"><div><h1>Kasir</h1><p>Pilih produk, buat pesanan, lanjutkan pembayaran.</p></div><span>{filteredProducts.length} produk</span></div>
       {/* Search & Toolbar Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Search Input for Mobile/Tablet */}
@@ -148,6 +149,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Cari produk"
             placeholder="Cari produk..."
             className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs"
           />
@@ -158,7 +160,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           {/* USB Scanner Ready Pill */}
           <div className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>USB Gun Siap Tembak</span>
+            <span>Scanner siap</span>
           </div>
 
           <button
@@ -194,6 +196,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           {/* View Switcher */}
           <div className="flex items-center bg-white border border-slate-200 p-1 rounded-xl shadow-xs">
             <button
+              aria-label="Tampilan kartu" aria-pressed={viewMode === 'grid'}
               onClick={() => setViewMode('grid')}
               className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'grid' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500 hover:text-slate-900'
@@ -202,6 +205,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
               <LayoutGrid className="w-4 h-4" />
             </button>
             <button
+              aria-label="Tampilan daftar" aria-pressed={viewMode === 'list'}
               onClick={() => setViewMode('list')}
               className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'list' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-500 hover:text-slate-900'
@@ -359,7 +363,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             <p className="text-xs text-slate-400">Coba ubah kata kunci pencarian atau ganti kategori.</p>
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
             {filteredProducts.map((product) => (
               <ProductCard
                 key={product.id}

@@ -98,13 +98,13 @@ export default function Products({ sector, onSector }: { sector: string; onSecto
       {/* Header & Main Tab Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-black text-slate-950 dark:text-white flex items-center gap-2">
+          <h1 className="text-xl font-black text-slate-950 flex items-center gap-2">
             <span>Manajemen &amp; Analitik Produk Seluruh Client</span>
             <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-950 border border-amber-300 font-extrabold">
               Master Catalog &amp; BOM
             </span>
           </h1>
-          <p className="text-xs text-slate-600 font-medium dark:text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 font-medium mt-0.5">
             Database terintegrasi produk, omzet tertinggi, produk termahal, stok inventori, bahan baku/mentah, dan resep komposisi merchant.
           </p>
         </div>

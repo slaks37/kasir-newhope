@@ -19,18 +19,18 @@ export function Card({
 }) {
   return (
     <section
-      className={`rounded-2xl border border-slate-200/90 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 ${className}`}
+      className={`nh-ui-card rounded-2xl border border-slate-200/90 bg-white shadow-xs ${className}`}
     >
       {(title || actions) && (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             {title && (
-              <h2 className="truncate text-base font-extrabold text-slate-900 dark:text-slate-100">
+              <h2 className="truncate text-base font-extrabold text-slate-900">
                 {title}
               </h2>
             )}
             {subtitle && (
-              <p className="mt-0.5 text-xs text-slate-500 font-medium dark:text-slate-400">{subtitle}</p>
+              <p className="mt-0.5 text-xs text-slate-500 font-medium">{subtitle}</p>
             )}
           </div>
           {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
@@ -59,7 +59,7 @@ export function Chip({ children, tone = '' }: { children: React.ReactNode; tone?
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ${
         tone ||
-        'bg-slate-100 text-slate-800 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700'
+        'bg-slate-100 text-slate-800 ring-slate-200'
       }`}
     >
       {children}
@@ -78,11 +78,12 @@ export function SectorFilter({
   return (
     <div className="flex flex-wrap gap-2">
       <button
+        aria-pressed={value === ''}
         onClick={() => onChange('')}
         className={`rounded-xl px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
           value === ''
-            ? 'bg-slate-900 text-white shadow-xs dark:bg-slate-100 dark:text-slate-900'
-            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+            ? 'bg-slate-900 text-white shadow-xs'
+            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
         }`}
       >
         Semua Sektor Usaha
@@ -90,11 +91,12 @@ export function SectorFilter({
       {SECTORS.map((s) => (
         <button
           key={s}
+          aria-pressed={value === s}
           onClick={() => onChange(value === s ? '' : s)}
           className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-black transition-all cursor-pointer ${
             value === s
-              ? 'bg-slate-900 text-white shadow-xs dark:bg-slate-100 dark:text-slate-900'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
           }`}
         >
           <span className={`h-2 w-2 rounded-full ${SECTOR_STYLE[s].dot}`} />
@@ -118,9 +120,10 @@ export function Select({
 }) {
   return (
     <select
+      aria-label={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
     >
       <option value="">{placeholder}</option>
       {options.map((o) => (
@@ -143,10 +146,11 @@ export function SearchBox({
 }) {
   return (
     <input
+      aria-label={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full min-w-48 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 sm:w-64 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      className="w-full min-w-48 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 sm:w-64"
     />
   );
 }
@@ -154,7 +158,7 @@ export function SearchBox({
 export function Table({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-max text-left text-xs">{children}</table>
+      <table className="nh-data-table w-full min-w-max text-left text-xs">{children}</table>
     </div>
   );
 }
@@ -168,7 +172,7 @@ export function Th({
 }) {
   return (
     <th
-      className={`whitespace-nowrap border-b border-slate-200 bg-slate-100/90 px-4 py-3 text-[11px] font-black tracking-wider text-slate-700 uppercase dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 ${
+      className={`whitespace-nowrap border-b border-slate-200 bg-slate-100/90 px-4 py-3 text-[11px] font-black tracking-wider text-slate-700 uppercase ${
         align === 'right' ? 'text-right' : ''
       }`}
     >
@@ -188,7 +192,7 @@ export function Td({
 }) {
   return (
     <td
-      className={`border-b border-slate-100 px-4 py-3 whitespace-nowrap text-slate-800 dark:border-slate-800/80 dark:text-slate-200 ${
+      className={`border-b border-slate-100 px-4 py-3 whitespace-nowrap text-slate-800 ${
         align === 'right' ? 'text-right tabular-nums' : ''
       } ${className}`}
     >
@@ -259,16 +263,16 @@ export function Pagination(props: {
 
 export function Empty({ label = 'Tidak ada data yang cocok' }: { label?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center p-12 text-center text-slate-400 dark:text-slate-500">
+    <div className="flex flex-col items-center justify-center p-12 text-center text-slate-400">
       <Inbox className="h-8 w-8 stroke-1" />
-      <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-400">{label}</p>
+      <p className="mt-2 text-xs font-medium text-slate-600">{label}</p>
     </div>
   );
 }
 
 export function Loading({ label = 'Memuat data dari server...' }: { label?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 p-12 text-xs font-semibold text-slate-600 dark:text-slate-400">
+    <div className="flex items-center justify-center gap-2 p-12 text-xs font-semibold text-slate-600">
       <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
       <span>{label}</span>
     </div>
@@ -277,7 +281,7 @@ export function Loading({ label = 'Memuat data dari server...' }: { label?: stri
 
 export function ErrorBox({ error }: { error: { code?: string; message: string } }) {
   return (
-    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 flex items-start gap-3 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-200">
+    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 flex items-start gap-3">
       <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
       <div>
         <p className="font-extrabold">{error.code || 'Terjadi Kesalahan'}</p>

@@ -439,7 +439,7 @@ export const ReportsDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-slate-50/70 p-4 lg:p-8 overflow-y-auto space-y-6 animate-fade-in">
+    <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-4 lg:p-8 overflow-y-auto space-y-6 animate-fade-in">
       {/* Header with Title, Range Selector & Action Buttons */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -453,10 +453,10 @@ export const ReportsDashboard: React.FC = () => {
           </div>
           <h2 className="font-black text-2xl lg:text-3xl text-slate-900 flex items-center space-x-3 mt-1">
             <BarChart3 className="w-8 h-8 text-amber-600" />
-            <span>Dashboard Omzet &amp; Pembukuan Kas</span>
+            <span>Laporan usaha</span>
           </h2>
           <p className="text-xs lg:text-sm text-slate-500 mt-1 font-medium">
-            Pantau omzet penjualan hari ini, log transaksi uang keluar untuk belanja bahan, uang masuk, dan modal awal laci kasir secara real-time.
+            Pahami penjualan, arus kas, dan performa toko dalam satu ringkasan.
           </p>
         </div>
 
@@ -538,39 +538,39 @@ export const ReportsDashboard: React.FC = () => {
       {/* ========================================================================= */}
       {/* 🌟 HERO SECTION: DASHBOARD OMZET HARI INI & REKAP KAS FISIK DI LACI 🌟 */}
       {/* ========================================================================= */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-950 to-amber-950 text-white rounded-3xl p-6 lg:p-7 shadow-xl border border-slate-800/80 relative overflow-hidden">
+      <div className="nh-report-summary bg-white text-slate-900 rounded-3xl p-6 lg:p-7 shadow-xs border border-slate-200 relative overflow-hidden">
         {/* Background ambient glow */}
-        <div className="absolute -top-24 -right-24 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+
 
         <div className="relative z-10 space-y-5">
           {/* Top Banner Row: Live Indicator & Shift Info */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
             <div className="flex items-center space-x-3">
               <span className="flex h-3 w-3 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className=" absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
               </span>
-              <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+              <span className="text-xs font-black uppercase tracking-wider text-emerald-700">
                 Dashboard Omzet Hari Ini ({new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })})
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-              <div className="bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-xl text-slate-300 flex items-center gap-2">
-                <Users className="w-3.5 h-3.5 text-amber-400" />
-                <span>Kasir: <strong className="text-white">{shift.cashierName || currentUser.name}</strong></span>
+            <div className="flex flex-wrap items-center gap-2 tabular-nums text-xs">
+              <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-600 flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-amber-700" />
+                <span>Kasir: <strong className="text-slate-900">{shift.cashierName || currentUser.name}</strong></span>
               </div>
-              <div className="bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-xl text-slate-300 flex items-center gap-2">
-                <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Shift: <strong className="text-emerald-400">{shift.status === 'OPEN' ? 'SEDANG BUKA' : 'DITUTUP'}</strong></span>
+              <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-600 flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Shift: <strong className="text-emerald-700">{shift.status === 'OPEN' ? 'SEDANG BUKA' : 'DITUTUP'}</strong></span>
               </div>
               <button
                 onClick={() => setShowInitialCashModal(true)}
-                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-700 border border-amber-400/40 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
                 title="Sesuaikan Modal Awal Kasir"
               >
-                <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                <Sliders className="w-3.5 h-3.5 text-amber-700" />
                 <span>Ubah Modal Awal</span>
               </button>
             </div>
@@ -579,68 +579,68 @@ export const ReportsDashboard: React.FC = () => {
           {/* 4 Core Financial Summary Cards (Today's Real-time Revenue & Cash Flow) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Omzet Penjualan Hari Ini */}
-            <div className="bg-slate-800/60 backdrop-blur-xs border border-slate-700/80 rounded-2xl p-4.5 space-y-2">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-black uppercase tracking-wider">
+            <div className="bg-slate-50/60 backdrop-blur-xs border border-slate-200 rounded-2xl p-4.5 space-y-2">
+              <div className="flex items-center justify-between text-slate-600 text-xs font-black uppercase tracking-wider">
                 <span>Omzet Penjualan Hari Ini</span>
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl">
+                <div className="p-2 bg-amber-500/20 text-amber-700 rounded-xl">
                   <TrendingUp className="w-4 h-4" />
                 </div>
               </div>
-              <div className="text-2xl lg:text-3xl font-black text-amber-400 font-mono tracking-tight">
+              <div className="text-2xl lg:text-3xl font-black text-amber-700 tabular-nums tracking-tight">
                 {formatRupiah(todayMetrics.todayNetRevenue)}
               </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/60 font-medium">
+              <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/60 font-medium">
                 <span>{todayMetrics.totalOrders} Transaksi Selesai</span>
                 <span>AOV: {formatRupiah(todayMetrics.avgOrderValue)}</span>
               </div>
             </div>
 
             {/* Card 2: Modal Awal Kasir (Float) */}
-            <div className="bg-slate-800/60 backdrop-blur-xs border border-slate-700/80 rounded-2xl p-4.5 space-y-2">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-black uppercase tracking-wider">
+            <div className="bg-slate-50/60 backdrop-blur-xs border border-slate-200 rounded-2xl p-4.5 space-y-2">
+              <div className="flex items-center justify-between text-slate-600 text-xs font-black uppercase tracking-wider">
                 <span>Modal Awal Kasir</span>
-                <div className="p-2 bg-sky-500/20 text-sky-400 rounded-xl">
+                <div className="p-2 bg-sky-500/20 text-sky-700 rounded-xl">
                   <Coins className="w-4 h-4" />
                 </div>
               </div>
-              <div className="text-2xl lg:text-3xl font-black text-sky-400 font-mono tracking-tight">
+              <div className="text-2xl lg:text-3xl font-black text-sky-700 tabular-nums tracking-tight">
                 {formatRupiah(todayMetrics.initialCash)}
               </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/60 font-medium">
+              <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/60 font-medium">
                 <span>Kas Awal Laci</span>
                 <span className="text-sky-300">Siap Kembalian</span>
               </div>
             </div>
 
             {/* Card 3: Log Uang Keluar (Belanja / Kasbon) */}
-            <div className="bg-slate-800/60 backdrop-blur-xs border border-slate-700/80 rounded-2xl p-4.5 space-y-2">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-black uppercase tracking-wider">
+            <div className="bg-slate-50/60 backdrop-blur-xs border border-slate-200 rounded-2xl p-4.5 space-y-2">
+              <div className="flex items-center justify-between text-slate-600 text-xs font-black uppercase tracking-wider">
                 <span>Uang Keluar / Belanja</span>
-                <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl">
+                <div className="p-2 bg-rose-500/20 text-rose-700 rounded-xl">
                   <ArrowDownRight className="w-4 h-4" />
                 </div>
               </div>
-              <div className="text-2xl lg:text-3xl font-black text-rose-400 font-mono tracking-tight">
+              <div className="text-2xl lg:text-3xl font-black text-rose-700 tabular-nums tracking-tight">
                 - {formatRupiah(todayMetrics.todayCashOut)}
               </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/60 font-medium">
+              <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/60 font-medium">
                 <span>Bahan: {formatRupiah(todayMetrics.todayExpenseBahan)}</span>
-                <span className="text-emerald-400">+ In: {formatRupiah(todayMetrics.todayCashIn)}</span>
+                <span className="text-emerald-700">+ In: {formatRupiah(todayMetrics.todayCashIn)}</span>
               </div>
             </div>
 
             {/* Card 4: Estimasi Kas Fisik Di Laci (Expected Cash) */}
-            <div className="bg-slate-800/60 backdrop-blur-xs border border-slate-700/80 rounded-2xl p-4.5 space-y-2">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-black uppercase tracking-wider">
+            <div className="bg-slate-50/60 backdrop-blur-xs border border-slate-200 rounded-2xl p-4.5 space-y-2">
+              <div className="flex items-center justify-between text-slate-600 text-xs font-black uppercase tracking-wider">
                 <span>Ekspektasi Kas Di Laci</span>
-                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                <div className="p-2 bg-emerald-500/20 text-emerald-700 rounded-xl">
                   <Wallet className="w-4 h-4" />
                 </div>
               </div>
-              <div className="text-2xl lg:text-3xl font-black text-emerald-400 font-mono tracking-tight">
+              <div className="text-2xl lg:text-3xl font-black text-emerald-700 tabular-nums tracking-tight">
                 {formatRupiah(todayMetrics.expectedCashInDrawer)}
               </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/60 font-medium">
+              <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/60 font-medium">
                 <span>Modal + Tunai + In - Out</span>
                 <span className="text-emerald-300 font-bold">Tunai: {formatRupiah(todayMetrics.todayCashSales)}</span>
               </div>
@@ -648,26 +648,26 @@ export const ReportsDashboard: React.FC = () => {
           </div>
 
           {/* Today's Payment Method Breakdown Pill Bar */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="text-slate-400 font-bold flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-amber-400" />
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="text-slate-600 font-bold flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-amber-700" />
               <span>Rincian Pembayaran Hari Ini:</span>
             </div>
-            <div className="flex flex-wrap items-center gap-3 font-mono">
-              <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
-                <span className="text-slate-400">💵 Tunai: </span>
-                <strong className="text-emerald-400 font-bold">{formatRupiah(todayMetrics.todayCashSales)}</strong>
+            <div className="flex flex-wrap items-center gap-3 tabular-nums">
+              <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600">💵 Tunai: </span>
+                <strong className="text-emerald-700 font-bold">{formatRupiah(todayMetrics.todayCashSales)}</strong>
               </div>
-              <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
-                <span className="text-slate-400">📱 QRIS: </span>
-                <strong className="text-amber-400 font-bold">{formatRupiah(todayMetrics.todayQrisSales)}</strong>
+              <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600">📱 QRIS: </span>
+                <strong className="text-amber-700 font-bold">{formatRupiah(todayMetrics.todayQrisSales)}</strong>
               </div>
-              <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
-                <span className="text-slate-400">💳 Kartu Debit/Kredit: </span>
+              <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600">💳 Kartu Debit/Kredit: </span>
                 <strong className="text-indigo-400 font-bold">{formatRupiah(todayMetrics.todayCardSales)}</strong>
               </div>
-              <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
-                <span className="text-slate-400">👛 E-Wallet: </span>
+              <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                <span className="text-slate-600">👛 E-Wallet: </span>
                 <strong className="text-purple-400 font-bold">{formatRupiah(todayMetrics.todayEWalletSales)}</strong>
               </div>
             </div>

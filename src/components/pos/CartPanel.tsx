@@ -115,6 +115,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           </div>
           {onCloseMobile && (
             <button
+              aria-label="Tutup keranjang"
               onClick={onCloseMobile}
               className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white"
             >
@@ -124,6 +125,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         </div>
       )}
 
+      {!isMobileModal && <div className="nh-cart-heading"><h2>Pesanan saat ini</h2><span>{cart.reduce((sum, item) => sum + item.quantity, 0)} item</span></div>}
       {/* Header: Order Type & Customer/Table Details */}
       <div className="p-3 border-b border-slate-200 space-y-3 bg-white">
         {/* Order Type Tabs */}
@@ -136,6 +138,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           ].map((type) => (
             <button
               key={type.id}
+              aria-pressed={orderType === type.id}
               onClick={() => setOrderType(type.id as any)}
               className={`py-1.5 text-[11px] font-bold rounded-lg transition-all ${
                 orderType === type.id
@@ -266,7 +269,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             <ShoppingBag className="w-12 h-12 stroke-1 text-slate-300" />
             <p className="font-semibold text-slate-700 text-sm">Keranjang Masih Kosong</p>
             <p className="text-xs text-slate-400 max-w-[200px]">
-              Klik menu di sebelah kiri untuk menambah pesanan pelanggan.
+              Pilih produk untuk mulai membuat pesanan pelanggan.
             </p>
           </div>
         ) : (
@@ -326,8 +329,9 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 {/* Quantity Controls */}
                 <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5">
                   <button
+                    aria-label={`Kurangi jumlah ${item.name}`}
                     onClick={() => updateCartQuantity(item.id, item.quantity - 1)}
-                    className="p-1 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                    className="p-1 min-w-8 min-h-8 flex items-center justify-center hover:bg-slate-200 text-slate-600 rounded transition-colors"
                   >
                     {item.quantity === 1 ? <Trash2 className="w-3.5 h-3.5 text-rose-500" /> : <Minus className="w-3.5 h-3.5" />}
                   </button>
@@ -335,6 +339,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     {item.quantity}
                   </span>
                   <button
+                    aria-label={`Tambah jumlah ${item.name}`}
                     onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
                     className="p-1 hover:bg-slate-200 text-slate-600 rounded transition-colors"
                   >
@@ -348,7 +353,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
       </div>
 
       {/* Footer Payment Summary */}
-      <div className="p-3 bg-slate-50/90 border-t border-slate-200 space-y-2">
+      <div className="nh-cart-summary p-3 bg-slate-50/90 border-t border-slate-200 space-y-2">
         <div className="space-y-1 text-xs">
           <div className="flex justify-between text-slate-600">
             <span>Subtotal:</span>
@@ -407,7 +412,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         )}
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
+        <div className="grid grid-cols-2 gap-2 pt-1">
           {/* Hold Order */}
           <button
             disabled={cart.length === 0}
@@ -432,7 +437,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           <button
             disabled={cart.length === 0}
             onClick={onOpenCheckout}
-            className="col-span-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="nh-cart-pay col-span-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <CreditCard className="w-4 h-4" />
             <span>Bayar</span>
@@ -633,7 +638,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   }
 
   return (
-    <aside className="hidden lg:flex lg:w-96 bg-white border-l border-slate-200 text-slate-900 flex-col h-full shrink-0 shadow-lg select-none">
+    <aside className="nh-cart-panel hidden lg:flex lg:w-96 bg-white border-l border-slate-200 text-slate-900 flex-col h-full shrink-0 shadow-lg select-none">
       {cartContent}
     </aside>
   );
