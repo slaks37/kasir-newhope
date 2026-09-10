@@ -618,9 +618,17 @@ export interface SaaSPlan {
   aiQuotaMonthly: number; // Jumlah total interaksi AI
   dashboardAccessLevel: 'BASIC' | 'FULL' | 'ADVANCED';
   extraOutletPriceIdr?: number; // Harga add-on per ekstra outlet per bulan
+  extraOutletYearlyIdr?: number; // Harga efektif per bulan bila add-on ditagih tahunan
+  annualDiscountPercent?: number;
+  isTrial?: boolean;
+  trialDays?: number;
+  gracePeriodDays?: number;
 }
 
 export interface SaaSSubscription {
+  accessMode?: 'FULL' | 'READ_ONLY' | 'RESTRICTED';
+  billingCycle?: 'MONTHLY' | 'YEARLY';
+  extraOutlets?: number;
   id: string;
   tenantId: string;
   planId: string;
@@ -649,5 +657,3 @@ export interface SaaSInvoice {
   createdAt: string;
   planName: string;
 }
-
-

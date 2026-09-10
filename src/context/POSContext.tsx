@@ -63,6 +63,8 @@ import {
   resetPinAttempts,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
+import { mergeServerOutlets } from '../lib/sync/outlets';
+import { subscriptionAccess } from '../config/subscriptionPolicy';
 import {
   INITIAL_CATEGORIES,
   INITIAL_PRODUCTS,
@@ -119,8 +121,8 @@ interface POSContextType {
   branches: StoreBranch[];
   activeBranch?: StoreBranch;
   setActiveBranchId: (branchId: string) => void;
-  saveBranch: (branch: StoreBranch) => void;
-  deleteBranch: (branchId: string) => void;
+  saveBranch: (branch: StoreBranch) => Promise<void>;
+  deleteBranch: (branchId: string) => Promise<void>;
 
   // Staff & Service Assignment & Attendance (Clock In / Out)
   /** Staff belonging to the ACTIVE business sector only. */
@@ -458,6 +460,56 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       businessSector: sector,
     };
   });
+
+  useEffect(() => {
+    if (!authUser?.id) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/v1/subscription/status');
+        const data = await response.json();
+        if (active && response.ok && data.ok && data.subscription) {
+          setSettings(prev => ({ ...prev, subscription: data.subscription }));
+        }
+      } catch { /* Offline uses the last verified deadline; never resets it. */ }
+    };
+    void refresh();
+    const interval = window.setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('subscription-updated', refresh);
+    return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', refresh); window.removeEventListener('subscription-updated', refresh); };
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    if (!authUser?.id) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/v1/subscription/outlets');
+        const data = await response.json();
+        if (!active || !response.ok || !data.ok || !Array.isArray(data.rows)) return;
+        setSettings(prev => {
+          const merged = mergeServerOutlets(prev.branches || INITIAL_BRANCHES, data.rows);
+          const selected = merged.find(branch => branch.id === prev.activeBranchId && branch.isActive);
+          return { ...prev, branches: merged, activeBranchId: selected?.id || merged.find(branch => branch.isActive)?.id };
+        });
+      } catch { /* Keep offline branches when the server cannot be reached. */ }
+    };
+    void refresh();
+    window.addEventListener('focus', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); };
+  }, [authUser?.id]);
+
+  function requireWritable<T extends (...args: any[]) => any>(fn: T): T {
+    return ((...args: Parameters<T>) => {
+      const sub = settings.subscription;
+      if (!sub || sub.id === 'sub-trial-active' || subscriptionAccess(sub).accessMode !== 'FULL' || sub.accessMode === 'RESTRICTED') {
+        window.alert('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
+        throw new Error('SUBSCRIPTION_READ_ONLY');
+      }
+      return fn(...args);
+    }) as T;
+  }
 
   const activeSector = settings.businessSector || 'FNB';
   const defaultPreset = BUSINESS_PRESETS[activeSector] || BUSINESS_PRESETS.FNB;
@@ -953,10 +1005,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSettings((prev) => ({ ...prev, activeBranchId: branchId }));
   };
 
-  const saveBranch = (branchToSave: StoreBranch) => {
+  const saveBranch = async (branchToSave: StoreBranch) => {
+    const originalId = branchToSave.id;
+    const response = await fetch('/api/v1/subscription/outlets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...branchToSave, businessSector: branchToSave.businessSector || activeSector }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Outlet gagal disimpan');
+    branchToSave = { ...branchToSave, id: result.outlet.id };
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
-      const idx = existing.findIndex((b) => b.id === branchToSave.id);
+      const idx = existing.findIndex((b) => b.id === originalId);
       let updated: StoreBranch[];
       if (idx >= 0) {
         updated = [...existing];
@@ -964,12 +1024,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } else {
         updated = [branchToSave, ...existing];
       }
-      return { ...prev, branches: updated };
+      return { ...prev, branches: updated, activeBranchId: prev.activeBranchId === originalId ? branchToSave.id : prev.activeBranchId };
     });
     if (soundEnabled) playPOSSound('click');
   };
 
-  const deleteBranch = (branchId: string) => {
+  const deleteBranch = async (branchId: string) => {
+    const branch = settings.branches?.find(b => b.id === branchId);
+    if (!branch) return;
+    const response = await fetch('/api/v1/subscription/outlets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...branch, businessSector: branch.businessSector || activeSector, isActive: false }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) { window.alert(result.error || 'Outlet gagal dinonaktifkan'); return; }
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
       const updated = existing.filter((b) => b.id !== branchId);
@@ -2427,33 +2495,33 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         shiftHistory,
         settings,
         promoCodes,
-        addPromoCode,
+        addPromoCode: requireWritable(addPromoCode),
         branches,
         activeBranch,
         setActiveBranchId,
-        saveBranch,
-        deleteBranch,
+        saveBranch: requireWritable(saveBranch),
+        deleteBranch: requireWritable(deleteBranch),
         staffMembers: sectorStaffMembers,
         allStaffMembers: staffMembers,
         selectedStaff: scopedSelectedStaff,
         setSelectedStaff,
-        addStaffMember,
+        addStaffMember: requireWritable(addStaffMember),
         attendanceLogs,
-        clockInStaff,
-        clockOutStaff,
+        clockInStaff: requireWritable(clockInStaff),
+        clockOutStaff: requireWritable(clockOutStaff),
         getActiveAttendance,
         stockItems,
-        saveStockItem,
-        deleteStockItem,
-        adjustStockItemQuantity,
+        saveStockItem: requireWritable(saveStockItem),
+        deleteStockItem: requireWritable(deleteStockItem),
+        adjustStockItemQuantity: requireWritable(adjustStockItemQuantity),
         bundles,
-        saveBundle,
-        deleteBundle,
+        saveBundle: requireWritable(saveBundle),
+        deleteBundle: requireWritable(deleteBundle),
         users,
         currentUser,
         switchUser,
-        saveUser,
-        deleteUser,
+        saveUser: requireWritable(saveUser),
+        deleteUser: requireWritable(deleteUser),
         hasPermission,
         verifyPin,
         cart,
@@ -2475,52 +2543,52 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         applyCartItemDiscount,
         removeFromCart,
         clearCart,
-        processPayment,
-        voidOrder,
+        processPayment: requireWritable(processPayment),
+        voidOrder: requireWritable(voidOrder),
         syncStatus,
         forceSync: () => void runSync(syncTarget),
-        holdOrder,
-        recallHoldOrder,
-        cancelHoldOrder,
-        updateOrderLaundryStatus,
-        updateLaundryStage,
-        sendLaundryWaNotification,
+        holdOrder: requireWritable(holdOrder),
+        recallHoldOrder: requireWritable(recallHoldOrder),
+        cancelHoldOrder: requireWritable(cancelHoldOrder),
+        updateOrderLaundryStatus: requireWritable(updateOrderLaundryStatus),
+        updateLaundryStage: requireWritable(updateLaundryStage),
+        sendLaundryWaNotification: requireWritable(sendLaundryWaNotification),
         kdsTickets,
-        updateKDSTicketStatus,
-        clearCompletedKDSTickets,
+        updateKDSTicketStatus: requireWritable(updateKDSTicketStatus),
+        clearCompletedKDSTickets: requireWritable(clearCompletedKDSTickets),
         carwashQueue,
-        addCarwashQueue,
-        updateCarwashStage,
-        removeCarwashQueue,
+        addCarwashQueue: requireWritable(addCarwashQueue),
+        updateCarwashStage: requireWritable(updateCarwashStage),
+        removeCarwashQueue: requireWritable(removeCarwashQueue),
         bookings,
-        saveBooking,
-        deleteBooking,
-        updateBookingStatus,
-        sendBookingWaReminder,
+        saveBooking: requireWritable(saveBooking),
+        deleteBooking: requireWritable(deleteBooking),
+        updateBookingStatus: requireWritable(updateBookingStatus),
+        sendBookingWaReminder: requireWritable(sendBookingWaReminder),
         commissionRules,
-        saveCommissionRule,
+        saveCommissionRule: requireWritable(saveCommissionRule),
         payrollSlips,
-        savePayrollSlip,
-        deletePayrollSlip,
-        disbursePayrollCashMovement,
+        savePayrollSlip: requireWritable(savePayrollSlip),
+        deletePayrollSlip: requireWritable(deletePayrollSlip),
+        disbursePayrollCashMovement: requireWritable(disbursePayrollCashMovement),
         sentLifecycleHookIds,
-        markLifecycleHookSent,
-        dismissLifecycleHook,
-        saveProduct,
-        deleteProduct,
-        saveCategory,
-        adjustStock,
-        saveCustomer,
-        saveTable,
-        deleteTable,
-        updateSettings,
-        activateBusinessSector,
-        startShift,
-        endShift,
+        markLifecycleHookSent: requireWritable(markLifecycleHookSent),
+        dismissLifecycleHook: requireWritable(dismissLifecycleHook),
+        saveProduct: requireWritable(saveProduct),
+        deleteProduct: requireWritable(deleteProduct),
+        saveCategory: requireWritable(saveCategory),
+        adjustStock: requireWritable(adjustStock),
+        saveCustomer: requireWritable(saveCustomer),
+        saveTable: requireWritable(saveTable),
+        deleteTable: requireWritable(deleteTable),
+        updateSettings: requireWritable(updateSettings),
+        activateBusinessSector: requireWritable(activateBusinessSector),
+        startShift: requireWritable(startShift),
+        endShift: requireWritable(endShift),
         cashMovements,
-        addCashMovement,
-        deleteCashMovement,
-        setInitialCash,
+        addCashMovement: requireWritable(addCashMovement),
+        deleteCashMovement: requireWritable(deleteCashMovement),
+        setInitialCash: requireWritable(setInitialCash),
       }}
     >
       {/* Anything below can read the active business unit via useTenant(). */}

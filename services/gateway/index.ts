@@ -156,6 +156,7 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
+        'x-auth-sub', 'x-auth-email', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
       ]);
 
       const headers: Record<string, string> = {};

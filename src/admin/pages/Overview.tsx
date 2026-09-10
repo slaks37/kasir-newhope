@@ -84,10 +84,9 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
   const chart = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 
   // Platform Analytics Calculations
-  const platformGMV = Number(totals.gross_revenue) || 477500000;
-  const platformCOGS = Math.round(platformGMV * 0.45);
-  const platformProfit = platformGMV - platformCOGS;
-  const platformMargin = platformGMV > 0 ? Math.round((platformProfit / platformGMV) * 100) : 55;
+  const platformGMV = Number(totals.gross_revenue) || 0;
+  const platformProfit = Number(totals.gross_profit) || 0;
+  const platformMargin = platformGMV > 0 ? Math.round((platformProfit / platformGMV) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -118,148 +117,35 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
           />
           <StatCard
             icon={TrendingUp}
-            label="Estimasi Laba Platform"
+            label="Laba kotor merchant"
             value={rupiahShort(platformProfit)}
             hint={`Margin rata-rata ${platformMargin}%`}
             tone="text-emerald-600"
-            badge="Net Profit"
+            badge="Sebelum biaya operasional"
             bgTone="bg-emerald-50/30"
           />
           <StatCard
             icon={Receipt}
             label="Total Transaksi Masuk"
-            value={angka(totals.transactions || 9790)}
+            value={angka(totals.transactions ?? 0)}
             hint="Dari 5 sektor usaha terintegrasi"
             tone="text-blue-600"
           />
           <StatCard
             icon={Building2}
             label="Total Merchant Aktif"
-            value={`${totals.merchants_active || totals.merchants} Tenant`}
-            hint={`Tersebar di ${totals.sectors_in_use || 5} sektor bisnis`}
+            value={`${totals.merchants_active ?? 0} Tenant`}
+            hint={`Tersebar di ${totals.sectors_in_use ?? 0} sektor bisnis`}
             tone="text-purple-600"
           />
           <StatCard
             icon={ShieldCheck}
-            label="Kesehatan Platform"
-            value="98.5% Sehat"
+            label="Anomali tercatat"
+            value={angka(totals.activity_problems)}
             hint={`${totals.activity_problems || 0} anomali terdeteksi`}
             tone="text-emerald-700"
             bgTone="bg-emerald-50/20"
           />
-        </div>
-      </div>
-
-      {/* 2. 🏆 MERCHANT PERFORMANCE LEADERBOARD (OMZET, AKTIVITAS, & PROFIT) */}
-      <div className="nh-admin-highlights grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4">
-        {/* 1. Omzet Tertinggi */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
-              <Award className="w-4 h-4 text-amber-500" />
-              <span>Omzet Tertinggi</span>
-            </span>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
-              #1 Champion
-            </span>
-          </div>
-          <div>
-            <p className="font-extrabold text-sm text-slate-950">Kopi Kenangan Senopati</p>
-            <p className="text-xs text-slate-500 font-medium">Sektor: Kafe &amp; Resto (F&amp;B)</p>
-            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Omzet 30 Hari:</span>
-              <span className="font-mono font-black text-sm text-slate-950">Rp 184.500.000</span>
-            </div>
-            <p className="text-[11px] text-emerald-700 font-bold mt-0.5">38.6% dari total GMV platform</p>
-          </div>
-        </div>
-
-        {/* 2. Omzet Terendah */}
-        <div className="p-5 rounded-2xl bg-white border border-rose-200 shadow-xs space-y-3 relative overflow-hidden bg-rose-50/15">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
-              <TrendingDown className="w-4 h-4 text-rose-600" />
-              <span>Omzet Terendah</span>
-            </span>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-100 text-rose-950 border border-rose-300">
-              ⚠️ Perlu Aktivasi
-            </span>
-          </div>
-          <div>
-            <p className="font-extrabold text-sm text-slate-950">Laundry Kilat Dago</p>
-            <p className="text-xs text-slate-500 font-medium">Sektor: Laundry Kiloan</p>
-            <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Omzet 30 Hari:</span>
-              <span className="font-mono font-black text-sm text-rose-700">Rp 4.200.000</span>
-            </div>
-            <p className="text-[11px] text-rose-600 font-bold mt-0.5">Aktivitas sepi dalam 12 hari terakhir</p>
-          </div>
-        </div>
-
-        {/* 3. Merchant Paling Aktif */}
-        <div className="p-5 rounded-2xl bg-white border border-blue-200 shadow-xs space-y-3 relative overflow-hidden bg-blue-50/15">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-              <Zap className="w-4 h-4 text-blue-600" />
-              <span>Paling Aktif</span>
-            </span>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-blue-100 text-blue-950 border border-blue-300">
-              ⚡ High Volume
-            </span>
-          </div>
-          <div>
-            <p className="font-extrabold text-sm text-slate-950">Kopi Kenangan Senopati</p>
-            <p className="text-xs text-slate-500 font-medium">Throughput kasir tercepat</p>
-            <div className="mt-2 pt-2 border-t border-blue-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Volume Transaksi:</span>
-              <span className="font-mono font-black text-sm text-blue-900">3.840 Struk</span>
-            </div>
-            <p className="text-[11px] text-blue-700 font-bold mt-0.5">Rata-rata 128 transaksi per hari</p>
-          </div>
-        </div>
-
-        {/* 4. Profit / Laba Tertinggi */}
-        <div className="p-5 rounded-2xl bg-white border border-emerald-200 shadow-xs space-y-3 relative overflow-hidden bg-emerald-50/20">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
-              <span>Profit Tertinggi</span>
-            </span>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-950 border border-emerald-300">
-              💎 Top Margin
-            </span>
-          </div>
-          <div>
-            <p className="font-extrabold text-sm text-slate-950">Kopi Kenangan Senopati</p>
-            <p className="text-xs text-slate-500 font-medium">Beban HPP: 45% (Terkendali)</p>
-            <div className="mt-2 pt-2 border-t border-emerald-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Estimasi Laba:</span>
-              <span className="font-mono font-black text-sm text-emerald-800">Rp 101.475.000</span>
-            </div>
-            <p className="text-[11px] text-emerald-700 font-bold mt-0.5">Margin bersih tinggi: 55.0%</p>
-          </div>
-        </div>
-
-        {/* 5. Margin Terendah / Kritis */}
-        <div className="p-5 rounded-2xl bg-white border border-amber-200 shadow-xs space-y-3 relative overflow-hidden bg-amber-50/20">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
-              <AlertCircle className="w-4 h-4 text-amber-600" />
-              <span>Margin Terendah</span>
-            </span>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 border border-amber-300">
-              ⚠️ Margin Tipis
-            </span>
-          </div>
-          <div>
-            <p className="font-extrabold text-sm text-slate-950">Laundry Kilat Dago</p>
-            <p className="text-xs text-slate-500 font-medium">Tingginya biaya operasional</p>
-            <div className="mt-2 pt-2 border-t border-amber-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">Estimasi Laba:</span>
-              <span className="font-mono font-black text-sm text-amber-900">Rp 1.470.000</span>
-            </div>
-            <p className="text-[11px] text-amber-700 font-bold mt-0.5">Margin tipis: hanya 35.0%</p>
-          </div>
         </div>
       </div>
 

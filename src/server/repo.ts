@@ -11,7 +11,15 @@
  * arah pengurutan, dan itu pun dipetakan dari daftar tertutup.
  */
 
-import type { Db } from './db';
+import type { Db } from '../../services/shared/db';
+import { subscriptionAccess } from '../config/subscriptionPolicy';
+import { findSaaSPlan, DAY_MS } from '../config/saasPlans';
+
+function withSubscription(row:any) {
+  const end=row.current_period_end || new Date(Date.parse(row.joined_at)+45*DAY_MS);
+  const state=subscriptionAccess({status:row.is_active?(row.raw_status || 'TRIAL'):'EXPIRED',currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:row.grace_period_end?new Date(row.grace_period_end).toISOString():undefined});
+  return {...row,subscription_status:state.status,access_mode:state.accessMode,plan_name:findSaaSPlan(row.plan_id)?.name || 'Trial 45 Hari'};
+}
 
 export const SECTORS = ['FNB', 'LAUNDRY', 'RETAIL', 'CARWASH', 'BARBERSHOP'] as const;
 export type Sector = (typeof SECTORS)[number];
@@ -128,7 +136,7 @@ export async function sectorSummary(db: Db) {
            v.last_transaction_at,
            COALESCE(m.registered_merchants, 0)::int   AS registered_merchants
       FROM unnest($1::text[]) AS s(sector)
-      LEFT JOIN contract.sector_summary v ON v.business_sector = s.sector
+      LEFT JOIN contract.admin_sector_summary v ON v.business_sector = s.sector
       LEFT JOIN (
             SELECT business_sector, COUNT(*) AS registered_merchants
               FROM contract.merchant_directory GROUP BY business_sector
@@ -147,8 +155,9 @@ export async function platformTotals(db: Db) {
       (SELECT COUNT(*) FROM contract.merchant_directory WHERE is_active)::int AS merchants_active,
       (SELECT COUNT(*) FROM contract.merchant_revenue)::int                  AS transactions,
       (SELECT COALESCE(SUM(total_amount), 0) FROM contract.merchant_revenue) AS gross_revenue,
-      (SELECT COUNT(*) FROM contract.activity_log)::int                      AS activity_events,
-      (SELECT COUNT(*) FROM contract.activity_log
+      (SELECT COALESCE(SUM(gross_profit),0) FROM contract.admin_product_sales) AS gross_profit,
+      (SELECT COUNT(*) FROM contract.admin_activity_log)::int                      AS activity_events,
+      (SELECT COUNT(*) FROM contract.admin_activity_log
         WHERE severity IN ('WARNING','CRITICAL'))::int                       AS activity_problems,
       (SELECT COUNT(DISTINCT business_sector) FROM contract.merchant_directory)::int AS sectors_in_use
   `);
@@ -160,7 +169,7 @@ export async function dailyRevenue(db: Db, days = 30) {
   const n = Math.min(Math.max(Math.trunc(Number(days) || 30), 1), 180);
   const { rows } = await db.query(
     `SELECT business_sector, sales_date, transaction_count::int, gross_revenue, active_merchants::int
-       FROM contract.daily_sector_revenue
+       FROM contract.admin_daily_sector_revenue
       WHERE sales_date >= (CURRENT_DATE - ($1::int - 1))
       ORDER BY sales_date, business_sector`,
     [n]
@@ -179,9 +188,14 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
   w.add((p) => `d.merchant_name ILIKE ${p}`, c.search ? `%${c.search}%` : null);
 
   const { rows } = await db.query(
-    `SELECT d.*, h.churn_risk_score, h.subscription_status, h.days_since_last_txn
+    `SELECT d.*, h.churn_risk_score, h.days_since_last_txn,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
+       r.transaction_count,r.gross_revenue,r.last_transaction_at,
+       (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit
        FROM contract.merchant_directory d
        LEFT JOIN contract.merchant_health_latest h ON h.merchant_id = d.merchant_id
+       LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id
+       LEFT JOIN LATERAL (SELECT count(*)::int AS transaction_count,COALESCE(sum(total_amount),0) AS gross_revenue,max(created_at) AS last_transaction_at
+         FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) r ON true
        ${w.sql()}
       ORDER BY d.gross_revenue DESC, d.merchant_name
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
@@ -192,14 +206,19 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
     `SELECT COUNT(*)::int AS total FROM contract.merchant_directory d ${w.sql()}`,
     w.params
   );
-  return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
+  return { rows:rows.map(withSubscription), total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
 }
 
 export async function merchantDetail(db: Db, merchantId: string) {
   if (!UUID_RE.test(merchantId)) return null;
 
   const [profile, bySector, health, topProducts] = await Promise.all([
-    db.query(`SELECT * FROM contract.merchant_directory WHERE merchant_id = $1`, [merchantId]),
+    db.query(`SELECT d.*,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
+      (SELECT COALESCE(sum(cogs),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS cogs,
+      (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit,
+      (SELECT COALESCE(sum(discount_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS discount_amount,
+      (SELECT COALESCE(sum(tax_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS tax_amount
+      FROM contract.merchant_directory d LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id WHERE d.merchant_id = $1`, [merchantId]),
     // Satu merchant bisa menjalankan lebih dari satu sektor.
     db.query(
       `SELECT business_sector,
@@ -217,7 +236,7 @@ export async function merchantDetail(db: Db, merchantId: string) {
     db.query(
       `SELECT business_sector, product_name, category_name,
               units_sold::int, revenue, gross_profit, last_sold_at
-         FROM contract.product_sales
+         FROM contract.admin_product_sales
         WHERE merchant_id = $1
         ORDER BY revenue DESC
         LIMIT 15`,
@@ -227,7 +246,7 @@ export async function merchantDetail(db: Db, merchantId: string) {
 
   if (!profile.rows.length) return null;
   return {
-    profile: profile.rows[0],
+    profile: {...withSubscription(profile.rows[0]),gross_revenue:bySector.rows.reduce((sum,r)=>sum+Number(r.gross_revenue),0),transaction_count:bySector.rows.reduce((sum,r)=>sum+Number(r.transaction_count),0)},
     sectors: bySector.rows,
     health: health.rows[0] ?? null,
     topProducts: topProducts.rows,
@@ -317,7 +336,7 @@ export async function productSales(db: Db, f: ListFilter = {}) {
     `SELECT v.business_sector, v.merchant_id, v.merchant_name, v.product_name,
             v.product_description, v.category_name, v.units_sold::int, v.revenue,
             v.cogs, v.gross_profit, v.appeared_in_transactions::int, v.last_sold_at
-       FROM contract.product_sales v
+       FROM contract.admin_product_sales v
        ${w.sql()}
       ORDER BY v.revenue DESC
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
@@ -325,7 +344,7 @@ export async function productSales(db: Db, f: ListFilter = {}) {
   );
 
   const { rows: cnt } = await db.query(
-    `SELECT COUNT(*)::int AS total FROM contract.product_sales v ${w.sql()}`,
+    `SELECT COUNT(*)::int AS total FROM contract.admin_product_sales v ${w.sql()}`,
     w.params
   );
   return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
@@ -402,7 +421,7 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
             a.severity, a.actor_name, a.actor_role, a.amount_idr, a.summary,
             a.detail, a.occurred_at, a.transaction_id,
             a.merchant_name, a.merchant_id
-       FROM contract.activity_log a
+       FROM contract.admin_activity_log a
        ${w.sql()}
       ORDER BY a.occurred_at DESC
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
@@ -410,7 +429,7 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   );
 
   const { rows: cnt } = await db.query(
-    `SELECT COUNT(*)::int AS total FROM contract.activity_log a ${w.sql()}`,
+    `SELECT COUNT(*)::int AS total FROM contract.admin_activity_log a ${w.sql()}`,
     w.params
   );
   return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
@@ -420,7 +439,7 @@ export async function activityBreakdown(db: Db) {
   const { rows } = await db.query(
     `SELECT business_sector, app_module, event_type, severity,
             event_count::int, merchants_affected::int, last_seen_at
-       FROM contract.activity_by_sector
+       FROM contract.admin_activity_by_sector
       ORDER BY event_count DESC`
   );
   return rows;

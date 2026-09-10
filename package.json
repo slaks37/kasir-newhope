@@ -12,6 +12,7 @@
     "lint": "npm run hygiene && tsc --noEmit",
     "hygiene": "node scripts/dev/check-source-hygiene.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
+    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
     "batch:insights:dry": "node scripts/batch/daily-insights.mjs --dry-run",
     "batch:health": "node scripts/batch/merchant-health.mjs",

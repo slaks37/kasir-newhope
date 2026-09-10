@@ -1,9 +1,8 @@
 /**
  * Penulisan jejak aktivitas merchant.
  *
- * Dimiliki pos-service. `merchant_activity_log` ada di skema `pos`, dan hanya
- * peran svc_pos yang boleh menulisnya — service lain ditolak Postgres, bukan
- * sekadar ditegur saat code review.
+ * Ditulis pos-service ke internal.audit_logs. Admin membacanya melalui
+ * contract.admin_activity_log dengan identitas tenant dan merchant terpisah.
  *
  * Fungsi ini sebelumnya tinggal di src/server/repo.ts bersama query admin panel.
  * Setelah pemecahan skema, tempat itu menjadi salah: repo.ts dimiliki
@@ -70,7 +69,7 @@ export async function writeActivity(db: Db, a: ActivityInput): Promise<string | 
       a.actorRole ?? null,
       a.amountIdr ?? null,
       a.summary.slice(0, 240),
-      JSON.stringify(a.detail ?? {}),
+      JSON.stringify({ ...a.detail, businessSector:a.businessSector, businessId:a.businessId, transactionId:a.transactionId }),
       a.occurredAt ?? null,
     ]
   );

@@ -27,7 +27,7 @@ import {
   Printer,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
-import { newId } from '../../lib/ids';
+import { newUuid } from '../../lib/ids';
 
 export const SettingsManager: React.FC = () => {
   const {
@@ -53,6 +53,7 @@ export const SettingsManager: React.FC = () => {
 
   // Branch Modal State
   const [showBranchModal, setShowBranchModal] = useState(false);
+  const [savingBranch, setSavingBranch] = useState(false);
   const [editingBranch, setEditingBranch] = useState<StoreBranch | null>(null);
   const [branchName, setBranchName] = useState('');
   const [branchAddress, setBranchAddress] = useState('');
@@ -142,12 +143,13 @@ export const SettingsManager: React.FC = () => {
     );
   };
 
-  const handleSaveBranchForm = (e: React.FormEvent) => {
+  const handleSaveBranchForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingBranch) return;
     if (!branchName) return;
 
     const b: StoreBranch = {
-      id: editingBranch ? editingBranch.id : newId('branch'),
+      id: editingBranch ? editingBranch.id : newUuid(),
       name: branchName,
       address: branchAddress,
       latitude: branchLat,
@@ -157,8 +159,12 @@ export const SettingsManager: React.FC = () => {
       isActive: true,
     };
 
-    saveBranch(b);
-    setShowBranchModal(false);
+    try {
+      setSavingBranch(true);
+      await saveBranch(b);
+      setShowBranchModal(false);
+    } catch (err) { alert((err as Error).message); }
+    finally { setSavingBranch(false); }
   };
 
   return (
@@ -302,7 +308,7 @@ export const SettingsManager: React.FC = () => {
                       <h4 className="font-extrabold text-base text-slate-900 mt-1">{b.name}</h4>
                     </div>
                     <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-extrabold border border-emerald-200">
-                      Aktif
+                      {b.isActive ? 'Aktif' : 'Nonaktif'}
                     </span>
                   </div>
 
@@ -336,7 +342,7 @@ export const SettingsManager: React.FC = () => {
 
                   {branches.length > 1 && (
                     <button
-                      onClick={() => deleteBranch(b.id)}
+                      onClick={async () => { try { await deleteBranch(b.id); } catch (err) { alert((err as Error).message); } }}
                       className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center space-x-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -470,6 +476,7 @@ export const SettingsManager: React.FC = () => {
                     </button>
                     <button
                       type="submit"
+                      disabled={savingBranch}
                       className="px-5 py-2 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs"
                     >
                       Simpan Cabang
