@@ -266,7 +266,7 @@ export const BlogManagement: React.FC = () => {
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200">
         <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
@@ -274,7 +274,7 @@ export const BlogManagement: React.FC = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Cari judul artikel atau slug..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
           />
         </div>
 
@@ -283,7 +283,7 @@ export const BlogManagement: React.FC = () => {
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none"
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none"
           >
             <option value="ALL">Semua Kategori ({posts.length})</option>
             {CATEGORIES.map((c) => (
@@ -296,11 +296,11 @@ export const BlogManagement: React.FC = () => {
       </div>
 
       {/* Articles Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+      <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-extrabold uppercase text-[10px] tracking-wider">
+              <tr className="bg-slate-100 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider">
                 <th className="py-3.5 px-4">Artikel & Slug SEO</th>
                 <th className="py-3.5 px-4">Kategori</th>
                 <th className="py-3.5 px-4">Penulis</th>
@@ -310,7 +310,7 @@ export const BlogManagement: React.FC = () => {
                 <th className="py-3.5 px-4 text-right">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+            <tbody className="divide-y divide-slate-100 font-medium">
               {filteredPosts.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-slate-400">
@@ -319,16 +319,16 @@ export const BlogManagement: React.FC = () => {
                 </tr>
               ) : (
                 filteredPosts.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3.5 px-4 max-w-sm">
                       <div className="flex items-start space-x-3">
                         <img
                           src={p.coverImage}
                           alt={p.title}
-                          className="w-12 h-12 rounded-xl object-cover shrink-0 bg-slate-200 dark:bg-slate-800"
+                          className="w-12 h-12 rounded-xl object-cover shrink-0 bg-slate-200"
                         />
                         <div className="min-w-0">
-                          <p className="font-extrabold text-slate-900 dark:text-white truncate">
+                          <p className="font-extrabold text-slate-900 truncate">
                             {p.title}
                           </p>
                           <p className="text-[11px] text-slate-500 font-mono truncate">
@@ -339,18 +339,18 @@ export const BlogManagement: React.FC = () => {
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30 rounded-full font-bold text-[10px]">
+                      <span className="px-2.5 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full font-bold text-[10px]">
                         {p.category}
                       </span>
                     </td>
 
-                    <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
+                    <td className="py-3.5 px-4 text-slate-700">
                       {p.author.name}
                     </td>
 
                     <td className="py-3.5 px-4 text-center">
                       {p.mediaEmbeds && p.mediaEmbeds.length > 0 ? (
-                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded font-bold text-[10px]">
+                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-bold text-[10px]">
                           {p.mediaEmbeds.length} Embed
                         </span>
                       ) : (
@@ -358,18 +358,18 @@ export const BlogManagement: React.FC = () => {
                       )}
                     </td>
 
-                    <td className="py-3.5 px-4 text-center font-mono text-slate-600 dark:text-slate-400">
+                    <td className="py-3.5 px-4 text-center font-mono text-slate-600">
                       {p.viewCount} / {p.likesCount}
                     </td>
 
                     <td className="py-3.5 px-4 text-center">
                       {p.isPublished ? (
-                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 rounded-full font-bold text-[10px]">
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full font-bold text-[10px]">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           <span>Publik</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full font-bold text-[10px]">
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full font-bold text-[10px]">
                           <XCircle className="w-3 h-3 text-slate-400" />
                           <span>Draft</span>
                         </span>
@@ -380,7 +380,7 @@ export const BlogManagement: React.FC = () => {
                       <div className="flex items-center justify-end space-x-2">
                         <button
                           onClick={() => handleOpenEditModal(p)}
-                          className="p-2 text-slate-600 hover:text-amber-500 dark:text-slate-400 dark:hover:text-amber-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          className="p-2 text-slate-600 hover:text-amber-500 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                           title="Edit Artikel"
                         >
                           <Edit className="w-4 h-4" />
@@ -388,7 +388,7 @@ export const BlogManagement: React.FC = () => {
 
                         <button
                           onClick={() => handleDeletePost(p)}
-                          className="p-2 text-slate-600 hover:text-rose-500 dark:text-slate-400 dark:hover:text-rose-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          className="p-2 text-slate-600 hover:text-rose-500 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                           title="Hapus Artikel"
                         >
                           <Trash2 className="w-4 h-4" />

@@ -162,22 +162,22 @@ export const SettingsManager: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
+    <div className="nh-page nh-settings flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="font-extrabold text-2xl text-slate-900 flex items-center space-x-2">
             <Settings className="w-7 h-7 text-amber-600" />
-            <span>Pengaturan Toko, Cabang & Hak Akses (RBAC)</span>
+            <span>Pengaturan toko</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Konfigurasi identitas toko, langganan SaaS, geo-fencing cabang, pajak PB1, dan voucher promo.
+            Atur profil usaha, perpajakan, langganan, cabang, dan akses tim.
           </p>
         </div>
 
         <div className="flex items-center space-x-3">
           {/* Nav Tabs */}
-          <div className="flex bg-slate-200/80 p-1 rounded-2xl space-x-1 text-xs font-bold">
+          <div className="nh-settings-tabs flex bg-white border border-slate-200 p-1 rounded-xl gap-1 text-xs font-bold">
             <button
               type="button"
               onClick={() => setActiveTab('STORE')}

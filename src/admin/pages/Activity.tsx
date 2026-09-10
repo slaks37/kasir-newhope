@@ -34,27 +34,27 @@ export default function ActivityPage({ sector, onSector }: { sector: string; onS
       subtitle="Bukan hanya penjualan: penyesuaian stok, perubahan harga, login gagal, diskon berlebih, sinkronisasi. Append-only."
       actions={<SearchBox value={search} onChange={(v) => { setSearch(v); reset(); }} placeholder="Cari kejadian…" />}
     >
-      <div className="space-y-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+      <div className="space-y-3 border-b border-slate-100 px-4 py-3">
         <SectorFilter value={sector} onChange={(v) => { onSector(v); reset(); }} />
         <div className="flex flex-wrap items-center gap-2">
           <Select value={mod} onChange={(v) => { setMod(v); reset(); }} options={MODULES} placeholder="Semua modul aplikasi" />
           <Select value={sev} onChange={(v) => { setSev(v); reset(); }} options={SEVERITIES} placeholder="Semua tingkat" />
           <button
             onClick={() => { setSev('WARNING'); reset(); }}
-            className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 ring-inset hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-800"
+            className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 ring-inset hover:bg-amber-100"
           >
             Peringatan saja
           </button>
           <button
             onClick={() => { setSev('CRITICAL'); reset(); }}
-            className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 ring-1 ring-red-200 ring-inset hover:bg-red-100 dark:bg-red-950 dark:text-red-300 dark:ring-red-800"
+            className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 ring-1 ring-red-200 ring-inset hover:bg-red-100"
           >
             Kritis saja
           </button>
           {(mod || sev) && (
             <button
               onClick={() => { setMod(''); setSev(''); reset(); }}
-              className="text-xs font-medium text-slate-500 underline hover:text-slate-800 dark:hover:text-slate-200"
+              className="text-xs font-medium text-slate-500 underline hover:text-slate-800"
             >
               Bersihkan
             </button>
@@ -69,8 +69,8 @@ export default function ActivityPage({ sector, onSector }: { sector: string; onS
         <Empty label="Tidak ada kejadian yang cocok" />
       ) : (
         <>
-          <div className="bg-slate-50 px-4 py-2.5 text-xs text-slate-500 dark:bg-slate-800/40">
-            <b className="text-slate-900 tabular-nums dark:text-slate-100">{angka(data.total)}</b> kejadian
+          <div className="bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+            <b className="text-slate-900 tabular-nums">{angka(data.total)}</b> kejadian
           </div>
 
           <Table>
@@ -95,13 +95,13 @@ export default function ActivityPage({ sector, onSector }: { sector: string; onS
                 <Fragment key={a.id}>
                   <tr
                     onClick={() => setExpanded(expanded === a.id ? null : a.id)}
-                    className="cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    className="cursor-pointer transition hover:bg-slate-50"
                   >
                     <Td className="text-xs">{waktu(a.occurred_at)}</Td>
                     <Td><SectorChip sector={a.business_sector} /></Td>
                     <Td><Chip>{a.app_module}</Chip></Td>
                     <Td className="font-mono text-xs">{a.event_type}</Td>
-                    <Td className="max-w-xs truncate text-slate-900 dark:text-slate-100">{a.summary}</Td>
+                    <Td className="max-w-xs truncate text-slate-900">{a.summary}</Td>
                     <Td className="text-xs">{a.merchant_name}</Td>
                     <Td className="text-xs">
                       {a.actor_name ?? '—'}
@@ -112,9 +112,9 @@ export default function ActivityPage({ sector, onSector }: { sector: string; onS
                   </tr>
                   {expanded === a.id && (
                     <tr>
-                      <td colSpan={9} className="border-b border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                      <td colSpan={9} className="border-b border-slate-100 bg-slate-50 px-4 py-3">
                         <p className="mb-1 text-xs font-medium text-slate-500">Detail mentah</p>
-                        <pre className="overflow-x-auto rounded-lg bg-white p-2.5 font-mono text-xs text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+                        <pre className="overflow-x-auto rounded-lg bg-white p-2.5 font-mono text-xs text-slate-600 ring-1 ring-slate-200">
                           {JSON.stringify(a.detail, null, 2)}
                         </pre>
                         <p className="mt-1.5 font-mono text-xs text-slate-400">

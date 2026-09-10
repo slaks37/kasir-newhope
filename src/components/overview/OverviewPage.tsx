@@ -295,7 +295,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
   const activeCashierName = currentUser?.name || shift.cashierName || 'Kasir';
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
+    <div className="nh-overview flex-1 min-w-0 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
       {/* Toast Alert */}
       {successMsg && (
         <div className="bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center justify-between animate-bounce">
@@ -306,97 +306,26 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
         </div>
       )}
 
-      {/* 1. TOP HEADER: STORE PROFILE, SHIFT STATUS & TIME RANGE FILTER */}
-      <div className="relative overflow-hidden rounded-3xl bg-slate-900 text-white p-6 lg:p-8 shadow-2xl border border-slate-800">
-        <div className="absolute -top-24 -right-24 w-96 h-96 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-blue-500/15 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3.5">
-            {/* Badges Strip */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500 text-slate-950 text-xs font-black uppercase tracking-wider shadow-xs">
-                <Store className="w-3.5 h-3.5" />
-                <span>{activePreset.name}</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 text-slate-200 text-xs font-bold border border-slate-700">
-                <Building2 className="w-3.5 h-3.5 text-blue-400" />
-                <span>{settings.storeName || 'Outlet Utama'}</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 text-slate-300 text-xs font-semibold border border-slate-700">
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Pengguna Aktif: {currentUser?.name || 'Admin'} ({currentUser?.role || 'ADMIN'})</span>
-              </span>
-              {shift.status === 'OPEN' ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40 animate-pulse">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Shift Terbuka (Petugas: {activeCashierName}, Kas Awal: {formatRupiah(shift.initialCash || 0)})</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/40">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Shift Ditutup</span>
-                </span>
-              )}
-            </div>
-
-            {/* Title & Welcome */}
-            <div>
-              <h1 className="text-2xl lg:text-3xl font-black text-white tracking-tight flex items-center gap-3">
-                <span>Executive Store Dashboard</span>
-                <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
-                  Live Insight
-                </span>
-              </h1>
-              <p className="text-xs lg:text-sm text-slate-300 max-w-2xl mt-1 font-medium leading-relaxed">
-                Pusat kontrol & analitik bisnis: pantau omzet riil, modal terpakai (HPP), estimasi laba bersih (*net profit*), pajak terkumpul, dan preferensi cara bayar pelanggan.
-              </p>
-            </div>
-          </div>
-
-          {/* Quick Actions & Range Selector */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 shrink-0">
-            {/* Time Filter Pill */}
-            <div className="bg-slate-800/90 border border-slate-700 p-1 rounded-2xl flex items-center space-x-1 shadow-inner">
-              {(['TODAY', '7DAYS', '30DAYS'] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTimeFilter(t)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    timeFilter === t
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  {t === 'TODAY' ? 'Hari Ini' : t === '7DAYS' ? '7 Hari' : '30 Hari'}
-                </button>
-              ))}
-            </div>
-
-            {onBackToHome && (
-              <button
-                onClick={onBackToHome}
-                className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 font-bold text-xs border border-slate-700 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
-                title="Keluar ke Halaman Depan / Beranda"
-              >
-                <Home className="w-4 h-4 text-amber-400" />
-                <span>Halaman Depan</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => setActiveTab('pos')}
-              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
-            >
-              <ShoppingCart className="w-4 h-4 text-slate-950" />
-              <span>Buka Kasir (POS)</span>
-            </button>
-          </div>
+      <div className="nh-overview-header">
+        <div>
+          <span className="nh-eyebrow">RINGKASAN USAHA</span>
+          <h1>Halo, {currentUser?.name || 'Admin'}.</h1>
+          <p>Setiap angka, satu langkah ke depan. Lihat performa usaha dan tentukan langkah Anda hari ini.</p>
         </div>
+        <div className="nh-overview-actions">
+          <button onClick={() => setActiveTab('pos')} className="nh-button-primary"><ShoppingCart size={17} /> Buka kasir <ArrowUpRight size={16} /></button>
+          <div className="nh-segment" aria-label="Periode ringkasan">{(['TODAY', '7DAYS', '30DAYS'] as const).map(t => <button key={t} onClick={() => setTimeFilter(t)} aria-pressed={timeFilter === t}>{t === 'TODAY' ? 'Hari ini' : t === '7DAYS' ? '7 hari' : '30 hari'}</button>)}</div>
+        </div>
+      </div>
+      <div className="nh-overview-status">
+        <span><Store size={15} /><strong>{settings.storeName || 'Outlet Utama'}</strong> · {activePreset.name}</span>
+        <span><Clock size={15} /><strong>{shift.status === 'OPEN' ? 'Shift aktif' : 'Shift belum dibuka'}</strong>{shift.status === 'OPEN' && ` · ${activeCashierName}`}</span>
+        {shift.status === 'OPEN' && <span>Kas awal <strong>{formatRupiah(shift.initialCash || 0)}</strong></span>}
+        <span><UserCheck size={15} />{currentUser?.role || 'ADMIN'}</span>
       </div>
 
       {/* 2. EXECUTIVE FINANCIAL & PROFITABILITY CARDS GRID (5 INSIGHT CARDS) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="nh-metrics grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Omzet Penjualan (Gross Revenue) */}
         <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3 relative overflow-hidden">
           <div className="flex items-center justify-between">

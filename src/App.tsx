@@ -168,7 +168,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-slate-100/80 text-slate-900 font-sans select-none pb-14 lg:pb-0">
+    <div className="nh-workspace flex flex-col h-[100dvh] w-screen overflow-hidden bg-slate-100/80 text-slate-900 font-sans select-none pb-14 lg:pb-0">
       {/* Top Header Bar */}
       <Header
         onOpenRecentTransactions={() => setShowRecentTransactionsModal(true)}
@@ -191,7 +191,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
         </div>
 
         {/* View Switcher Container */}
-        <main className="flex-1 flex overflow-hidden bg-slate-100/60 relative">
+        <main className="flex-1 min-w-0 flex overflow-hidden bg-slate-100/60 relative">
           {!isTabAllowed ? (
             /* RBAC Restricted Access View Guard */
             <div className="flex-1 flex items-center justify-center p-6 bg-slate-50">
@@ -469,7 +469,7 @@ export function App() {
   // Loading spinner saat mengecek sesi awal
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+      <div className="nh-auth min-h-screen flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
           <p className="text-slate-400 text-sm font-semibold">Memuat New Hope POS…</p>

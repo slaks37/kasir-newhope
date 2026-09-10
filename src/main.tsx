@@ -28,6 +28,7 @@ import { POSProvider } from './context/POSContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App.tsx';
 import './index.css';
+import './styles/app-theme.css';
 
 installAuthenticatedFetch();
 
@@ -40,4 +41,3 @@ createRoot(document.getElementById('root')!).render(
     </AuthProvider>
   </StrictMode>,
 );
-

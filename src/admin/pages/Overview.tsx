@@ -45,10 +45,10 @@ function StatCard({
     <div className={`rounded-2xl border border-slate-200/90 ${bgTone} p-5 shadow-xs transition-all hover:shadow-md`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className={`p-2 rounded-xl bg-slate-100 dark:bg-slate-800 ${tone}`}>
+          <div className={`p-2 rounded-xl bg-slate-100 ${tone}`}>
             <Icon className="h-4 w-4" />
           </div>
-          <span className="text-xs font-bold text-slate-600 dark:text-slate-400">{label}</span>
+          <span className="text-xs font-bold text-slate-600">{label}</span>
         </div>
         {badge && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
@@ -56,7 +56,7 @@ function StatCard({
           </span>
         )}
       </div>
-      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950 tabular-nums dark:text-slate-100">
+      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950 tabular-nums">
         {value}
       </p>
       {hint && <p className="mt-1 text-xs text-slate-500 font-medium">{hint}</p>}
@@ -95,10 +95,10 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
       <div>
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-black text-slate-950 dark:text-white flex items-center gap-2">
-              <span>Platform Executive Insights</span>
+            <h1 className="text-xl font-black text-slate-950 flex items-center gap-2">
+              <span>Ringkasan platform</span>
               <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-extrabold">
-                Live Macro Cloud
+                Multi-usaha
               </span>
             </h1>
             <p className="text-xs text-slate-600 font-medium mt-0.5">
@@ -107,7 +107,7 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="nh-admin-metrics grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard
             icon={Wallet}
             label="Total GMV Platform"

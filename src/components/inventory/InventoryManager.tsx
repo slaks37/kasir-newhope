@@ -515,16 +515,16 @@ export const InventoryManager: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
+    <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="font-black text-2xl text-slate-950 flex items-center space-x-2.5">
             <Package className="w-7 h-7 text-amber-600" />
-            <span>Katalog, Resep &amp; Paket Bundling</span>
+            <span>Produk & stok</span>
           </h2>
           <p className="text-xs text-slate-600 font-medium mt-1">
-            Kelola produk jadi, racikan resep multi-bahan baku (BOM), dan paket promo bundling untuk kasir.
+            Katalog yang tertata, stok yang terpantau. Kelola produk, resep, dan paket usaha Anda.
           </p>
         </div>
 

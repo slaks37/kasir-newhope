@@ -11,18 +11,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  LogIn,
   Mail,
   Lock,
   Eye,
   EyeOff,
   AlertCircle,
   Loader2,
-  Store,
   ArrowRight,
-  ArrowLeft,
   Zap,
-  User,
   CheckCircle2,
   Coffee,
   ShoppingBag,
@@ -30,6 +26,7 @@ import {
   Scissors,
   Car,
 } from 'lucide-react';
+import { AuthLayout } from './AuthLayout';
 import { BusinessSector } from '../../data/businessPresets';
 
 interface LoginPageProps {
@@ -41,7 +38,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   initialMode = 'login',
 }) => {
-  const { signInWithEmail, signUpWithEmail, configured } = useAuth();
+  const { signInWithEmail, signUpWithEmail } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   
@@ -141,6 +138,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }, 800);
         }
       }
+    } catch {
+      setError('Belum dapat terhubung. Periksa koneksi Anda, lalu coba lagi.');
     } finally {
       setLoading(false);
     }
@@ -153,249 +152,68 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 relative overflow-hidden py-10 px-4">
-      {/* Background decorations */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-orange-600/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-amber-500/3 rounded-full blur-3xl" />
+    <AuthLayout register={mode === 'register'} onBack={onBackToLanding}>
+      <div className="nh-auth-tabs" aria-label="Jenis akses akun">
+        {(['login', 'register'] as const).map((item) => (
+          <button key={item} type="button" aria-pressed={mode === item} disabled={loading}
+            onClick={() => { setMode(item); setError(null); setSuccess(null); setIsNotRegistered(false); }}>
+            {item === 'login' ? 'Masuk' : 'Daftar toko'}
+          </button>
+        ))}
       </div>
-
-      <div className="relative z-10 w-full max-w-md animate-scale-up">
-        {/* Back to Landing Page Link */}
-        {onBackToLanding && (
-          <div className="mb-4">
-            <button
-              onClick={onBackToLanding}
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-300 hover:text-amber-400 bg-white/5 hover:bg-white/10 px-3.5 py-2 rounded-xl transition-all border border-white/10"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>← Kembali ke Halaman Depan</span>
-            </button>
-          </div>
-        )}
-
-        {/* Logo & Brand */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-600 shadow-xl shadow-amber-500/25 mb-2">
-            <Store className="w-7 h-7 text-white" />
-          </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">
-            New Hope <span className="text-amber-400">POS</span>
-          </h1>
-          <p className="text-slate-400 text-xs mt-1 font-medium">
-            {mode === 'login' ? 'Masuk ke Akun Kasir Toko Anda' : 'Daftar Akun Kasir Toko Baru (Gratis)'}
-          </p>
-        </div>
-
-        {/* Card */}
-        <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5">
-          {sessionStorage.getItem('nhpos_pending_checkout_plan') && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-amber-300">
-              <Zap className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>
-                <strong>Langkah 1/2:</strong> Buat akun toko Anda untuk melanjutkan ke pembayaran & aktivasi paket langganan.
-              </span>
-            </div>
-          )}
-
-          {/* Tab Mode Switcher: Login / Register */}
-          <div className="grid grid-cols-2 gap-1 bg-slate-950/80 p-1 rounded-2xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => { setMode('login'); setError(null); setIsNotRegistered(false); }}
-              className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                mode === 'login'
-                  ? 'bg-amber-500 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Masuk (Login)
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('register'); setError(null); setIsNotRegistered(false); }}
-              className={`py-2 text-xs font-bold rounded-xl transition-all ${
-                mode === 'register'
-                  ? 'bg-amber-500 text-slate-950 shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Daftar Toko Baru
-            </button>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleEmailAuth} className="space-y-3.5">
-            {mode === 'register' && (
-              <>
-                {/* Full Name Input */}
-                <div className="relative">
-                  <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Nama Lengkap Pemilik / Kasir"
-                    className="w-full pl-11 pr-4 py-3 bg-slate-950/60 border border-slate-800 rounded-2xl text-white placeholder:text-slate-500 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
-                  />
-                </div>
-
-                {/* Store Name Input */}
-                <div className="relative">
-                  <Store className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    value={storeName}
-                    onChange={(e) => setStoreName(e.target.value)}
-                    placeholder="Nama Usaha / Toko (Cth: Kopi Kenangan)"
-                    className="w-full pl-11 pr-4 py-3 bg-slate-950/60 border border-slate-800 rounded-2xl text-white placeholder:text-slate-500 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
-                  />
-                </div>
-
-                {/* Sector Selector Chips */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-400 block">
-                    Pilih Sektor Usaha:
-                  </label>
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
-                    {sectorOptions.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setSector(s.id)}
-                        className={`flex flex-col items-center justify-center p-2 rounded-xl text-[10px] font-bold border transition-all ${
-                          sector === s.id
-                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
-                            : 'bg-slate-950/40 text-slate-400 border-slate-800 hover:text-white'
-                        }`}
-                      >
-                        {s.icon}
-                        <span className="mt-1 truncate w-full text-center">{s.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Email Input */}
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input
-                id="login-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Alamat Email"
-                autoComplete="email"
-                required
-                className="w-full pl-11 pr-4 py-3 bg-slate-950/60 border border-slate-800 rounded-2xl text-white placeholder:text-slate-500 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
-              />
-            </div>
-
-            {/* Password Input */}
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input
-                id="login-password"
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Kata Sandi (min. 6 karakter)"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                required
-                className="w-full pl-11 pr-12 py-3 bg-slate-950/60 border border-slate-800 rounded-2xl text-white placeholder:text-slate-500 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-
-            {/* Alert Error / User Not Found Helper */}
-            {error && (
-              <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs space-y-2 animate-fade-in">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-rose-400" />
-                  <span>{error}</span>
-                </div>
-
-                {isNotRegistered && (
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={handleSwitchToRegister}
-                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
-                    >
-                      <span>👉 Daftar Akun Ini Sekarang (Gratis)</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Success Message */}
-            {success && (
-              <div className="flex items-start gap-2 p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs animate-fade-in">
-                <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
-                <span>{success}</span>
-              </div>
-            )}
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-2xl transition-all shadow-lg shadow-amber-500/20 active:scale-[0.98] disabled:opacity-50"
-            >
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  {mode === 'login' ? <LogIn className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
-                  <span>{mode === 'login' ? 'Masuk ke Kasir' : 'Daftar & Buat Toko Baru'}</span>
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Toggle bottom link */}
-          <div className="text-center pt-1 border-t border-slate-800/80">
-            {mode === 'login' ? (
-              <p className="text-xs text-slate-400">
-                Belum punya akun?{' '}
-                <button
-                  type="button"
-                  onClick={handleSwitchToRegister}
-                  className="text-amber-400 hover:text-amber-300 font-extrabold transition-colors"
-                >
-                  Daftar Akun Baru
-                </button>
-              </p>
-            ) : (
-              <p className="text-xs text-slate-400">
-                Sudah punya akun?{' '}
-                <button
-                  type="button"
-                  onClick={() => { setMode('login'); setError(null); }}
-                  className="text-amber-400 hover:text-amber-300 font-extrabold transition-colors"
-                >
-                  Masuk di sini
-                </button>
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <p className="text-center text-[11px] text-slate-500 mt-5">
-          © {new Date().getFullYear()} New Hope POS · Cloud Point of Sale System
-        </p>
+      <div className="nh-form-heading">
+        <span className="nh-eyebrow">{mode === 'login' ? 'RUANG KERJA ANDA' : 'MULAI PERJALANAN ANDA'}</span>
+        <h1>{mode === 'login' ? 'Masuk ke toko Anda' : 'Buat ruang untuk tumbuh.'}</h1>
+        <p>{mode === 'login' ? 'Lanjutkan operasional dengan akun yang sudah terdaftar.' : 'Lengkapi informasi usaha. Kami siapkan ruang kasir Anda.'}</p>
       </div>
-    </div>
+      {sessionStorage.getItem('nhpos_pending_checkout_plan') && (
+        <div className="nh-form-notice"><Zap size={18} /><span><strong>Langkah 1 dari 2</strong><br />{mode === 'login' ? 'Masuk' : 'Buat akun'} untuk melanjutkan pembayaran dan aktivasi paket pilihan.</span></div>
+      )}
+      <form onSubmit={handleEmailAuth} className="nh-auth-form" aria-busy={loading}>
+        <fieldset disabled={loading} className="nh-form-fields">
+          {mode === 'register' && <>
+            <div className="nh-field-row">
+              <div className="nh-field">
+                <label htmlFor="owner-name">Nama pemilik <span>(opsional)</span></label>
+                <input id="owner-name" autoComplete="name" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Nama lengkap Anda" />
+              </div>
+              <div className="nh-field">
+                <label htmlFor="store-name">Nama usaha</label>
+                <input id="store-name" autoComplete="organization" value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="Contoh: Kopi Harapan" required />
+              </div>
+            </div>
+            <fieldset className="nh-sector-field">
+              <legend>Jenis usaha</legend>
+              <div className="nh-sector-options">
+                {sectorOptions.map(s => <label key={s.id} className={sector === s.id ? 'is-selected' : ''}>
+                  <input type="radio" name="business-sector" value={s.id} checked={sector === s.id} onChange={() => setSector(s.id)} />
+                  {s.icon}<span>{s.label}</span>
+                </label>)}
+              </div>
+              <p className="nh-field-hint">Menu kasir akan disesuaikan dengan jenis usaha Anda.</p>
+            </fieldset>
+          </>}
+          <div className="nh-field">
+            <label htmlFor="login-email">Email</label>
+            <div className="nh-input-icon"><Mail size={17} /><input id="login-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nama@email.com" autoComplete="email" required /></div>
+          </div>
+          <div className="nh-field">
+            <label htmlFor="login-password">Kata sandi</label>
+            <div className="nh-input-icon">
+              <Lock size={17} />
+              <input id="login-password" type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'Buat kata sandi Anda' : 'Masukkan kata sandi'} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={6} aria-describedby={mode === 'register' ? 'password-hint' : undefined} required />
+              <button type="button" className="nh-password-toggle" aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+            </div>
+            {mode === 'register' && <p id="password-hint" className="nh-field-hint">Gunakan minimal 6 karakter.</p>}
+          </div>
+        </fieldset>
+        {error && <div className="nh-form-alert" role="alert"><AlertCircle size={18} /><div>{error}{isNotRegistered && <button type="button" onClick={handleSwitchToRegister} className="nh-text-link">Daftarkan akun ini <ArrowRight size={14} /></button>}</div></div>}
+        {success && <div className="nh-form-alert is-success" role="status"><CheckCircle2 size={18} /><span>{success}</span></div>}
+        <button type="submit" disabled={loading} className="nh-button-primary nh-auth-submit">
+          {loading ? <><Loader2 size={18} className="animate-spin" /> {mode === 'login' ? 'Sedang masuk…' : 'Menyiapkan toko…'}</> : <>{mode === 'login' ? 'Masuk ke kasir' : 'Daftar & buat toko'}<ArrowRight size={18} /></>}
+        </button>
+      </form>
+      <p className="nh-auth-switch">{mode === 'login' ? 'Baru di New Hope POS?' : 'Sudah punya akun?'} <button type="button" disabled={loading} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); setSuccess(null); }}>{mode === 'login' ? 'Buat akun toko' : 'Masuk di sini'}</button></p>
+    </AuthLayout>
   );
 };
