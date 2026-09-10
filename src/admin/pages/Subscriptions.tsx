@@ -1,195 +1,61 @@
-import React, { useState } from 'react';
-import {
-  CreditCard,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  XCircle,
-  RefreshCcw,
-  ArrowRight
-} from 'lucide-react';
-import { api, tanggal, sejak } from '../api';
-import { Card, Table, Th, Td, Loading, ErrorBox, Pagination, SearchBox } from '../ui';
+import React,{useState,useEffect} from 'react';
+import {api,rupiah,tanggal} from '../api';
+import {PAID_SAAS_PLANS} from '../../config/saasPlans';
+import {Card,Table,Th,Td,Loading,ErrorBox,Pagination,SearchBox} from '../ui';
 
-function SubscriptionStatusBadge({ status }: { status: string }) {
-  if (status === 'ACTIVE') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-        <CheckCircle2 className="w-3 h-3" /> Aktif
-      </span>
-    );
-  }
-  if (status === 'TRIAL') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
-        <Clock className="w-3 h-3" /> Masa Percobaan
-      </span>
-    );
-  }
-  if (status === 'PAST_DUE') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-        <AlertTriangle className="w-3 h-3" /> Menunggak
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-      <XCircle className="w-3 h-3" /> Kedaluwarsa
-    </span>
-  );
-}
-
-export default function Subscriptions() {
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('ALL');
-  const [page, setPage] = useState(1);
-
-  // Minta list merchant (merchants membawa data subscription_status dsb)
-  const [state, setState] = useState<{
-    loading: boolean;
-    data?: any;
-    error?: string;
-  }>({ loading: true });
-
-  React.useEffect(() => {
-    let active = true;
-    setState({ loading: true });
-    api.merchants({ search, status: filter === 'ALL' ? undefined : filter, limit: 15, offset: (page - 1) * 15 })
-      .then(res => {
-        if (active) setState({ loading: false, data: res });
-      })
-      .catch(err => {
-        if (active) setState({ loading: false, error: err.message });
-      });
-    return () => { active = false };
-  }, [search, filter, page]);
-
-  return (
-    <div className="space-y-6">
-      {/* Header Info */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 p-1">
-            <div className="p-3 bg-emerald-100 text-emerald-600 rounded-2xl">
-              <CreditCard className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-500">Tier Aktif & Berbayar</div>
-              <div className="text-2xl font-black text-slate-800">421</div>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 p-1">
-            <div className="p-3 bg-sky-100 text-sky-600 rounded-2xl">
-              <Clock className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-500">Masa Trial (45 Hari)</div>
-              <div className="text-2xl font-black text-slate-800">89</div>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 p-1">
-            <div className="p-3 bg-rose-100 text-rose-600 rounded-2xl">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-500">Menunggak & Kedaluwarsa</div>
-              <div className="text-2xl font-black text-slate-800">12</div>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 p-1">
-            <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl">
-              <RefreshCcw className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-500">Konversi Trial -{'>'} Berbayar</div>
-              <div className="text-2xl font-black text-slate-800">68%</div>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      <Card title="Daftar Langganan Klien (Tenant)">
-        <div className="p-5 border-b border-slate-100 flex flex-wrap gap-4 items-center justify-between">
-          <SearchBox value={search} onChange={setSearch} placeholder="Cari nama toko atau email..." />
-          <div className="flex gap-2">
-            {['ALL', 'ACTIVE', 'TRIAL', 'EXPIRED'].map(f => (
-              <button
-                key={f}
-                onClick={() => { setFilter(f); setPage(1); }}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                  filter === f
-                    ? 'bg-amber-500 text-amber-950 shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {f === 'ALL' ? 'Semua' : f === 'ACTIVE' ? 'Aktif' : f === 'TRIAL' ? 'Trial' : 'Expired'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {state.loading && <Loading />}
-        {state.error && <ErrorBox error={{ message: state.error }} />}
-        
-        {!state.loading && !state.error && state.data && (
-          <div className="overflow-x-auto">
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Tenant & Email</Th>
-                  <Th>Status Langganan</Th>
-                  <Th>Mulai Bergabung</Th>
-                  <Th align="right">Aksi Manual</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.data.rows.map((m: any) => (
-                  <tr key={m.id} className="hover:bg-slate-50/50 transition-colors group">
-                    <Td>
-                      <div className="font-bold text-slate-800">{m.name}</div>
-                      <div className="text-xs text-slate-500 font-medium">{m.email}</div>
-                    </Td>
-                    <Td>
-                      <SubscriptionStatusBadge status={m.subscription_status || 'TRIAL'} />
-                    </Td>
-                    <Td>
-                      <div className="text-sm font-medium text-slate-700">{tanggal(m.created_at)}</div>
-                      <div className="text-[10px] text-slate-400">{sejak(m.created_at)}</div>
-                    </Td>
-                    <Td align="right">
-                      <button className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 shadow-sm">
-                        Ubah Tier <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-            
-            {state.data.rows.length === 0 && (
-              <div className="py-12 text-center text-slate-500 text-sm font-medium">
-                Tidak ada data langganan yang ditemukan.
-              </div>
-            )}
-            
-            <div className="p-4 border-t border-slate-100">
-              <Pagination
-                offset={(page - 1) * 15}
-                total={state.data.total}
-                limit={state.data.limit}
-                onChange={(offset) => setPage(Math.floor(offset / 15) + 1)}
-              />
-            </div>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
+export default function Subscriptions(){
+ const [search,setSearch]=useState(''),[status,setStatus]=useState(''),[offset,setOffset]=useState(0),[version,setVersion]=useState(0);
+ const [data,setData]=useState<any>(null),[payments,setPayments]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
+ const [selected,setSelected]=useState<any>(null),[action,setAction]=useState('NOTE'),[reason,setReason]=useState(''),[busy,setBusy]=useState(false);
+ const [planId,setPlanId]=useState('plan-plus-monthly'),[cycle,setCycle]=useState('MONTHLY'),[extras,setExtras]=useState(0),[days,setDays]=useState(7);
+ const [invoiceId,setInvoiceId]=useState(''),[history,setHistory]=useState<any[]>([]);
+ useEffect(()=>{
+  let active=true;setLoading(true);setError('');
+  api.subscriptions({search,status,offset,limit:20}).then(async result=>{
+   if(!active)return;setData(result);setLoading(false);
+   if(result.canManage){try{const p=await api.payments();if(active)setPayments(p);}catch(e:any){if(active)setError(e.message);}}
+  }).catch(e=>{if(active){setError(e.message);setLoading(false);}});
+  return()=>{active=false;};
+ },[search,status,offset,version]);
+ const choose=(row:any,kind='NOTE',invoice='')=>{setSelected(row);setAction(kind);setReason('');setHistory([]);setInvoiceId(invoice);setPlanId(row.plan_id==='plan-pro-monthly'?row.plan_id:'plan-plus-monthly');setCycle(row.billing_cycle || 'MONTHLY');setExtras(Number(row.extra_outlets || 0));};
+ const submit=async(e:React.FormEvent)=>{
+  e.preventDefault();setBusy(true);setError('');
+  try{await api.support(selected.id,{action,reason,planId,billingCycle:cycle,extraOutlets:extras,days,invoiceId});setSelected(null);setVersion(v=>v+1);}
+  catch(e:any){setError(e.message);}finally{setBusy(false);}
+ };
+ const s=data?.summary;
+ return <div className="space-y-5">
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[['Langganan aktif',s?.active],['Trial aktif',s?.trial],['Read-only / expired',s?.expired],['Konversi trial',s?s.conversionRate+'%':undefined]].map(([label,value])=><Card key={label}><div className="text-xs text-slate-500">{label}</div><div className="text-2xl font-bold">{value ?? '—'}</div></Card>)}</div>
+  {s&&<Card title="Funnel trial · data tersinkronisasi"><p>{s.trialEntrants} mulai trial → {s.activated} transaksi pertama → {s.converted} pembayaran terverifikasi.</p><p className="text-xs text-slate-500 mt-2">Konversi = tenant trial dengan pembayaran berhasil / seluruh tenant trial. Paket kompensasi tidak dihitung sebagai pembayaran.</p></Card>}
+  {error&&<ErrorBox error={{message:error}}/>}
+  <Card title="Langganan, outlet, dan lifecycle">
+   <div className="p-4 flex flex-wrap gap-3"><SearchBox value={search} onChange={v=>{setSearch(v);setOffset(0);}} placeholder="Cari tenant..."/>
+    <select aria-label="Status langganan" value={status} onChange={e=>{setStatus(e.target.value);setOffset(0);}} className="border rounded p-2">{['','TRIAL','ACTIVE','PAST_DUE','EXPIRED'].map(v=><option key={v} value={v}>{v || 'Semua status'}</option>)}</select></div>
+   {loading?<Loading/>:data&&<><div className="overflow-x-auto"><Table><thead><tr><Th>Tenant</Th><Th>Paket / periode</Th><Th>Status</Th><Th>Outlet</Th><Th>Lifecycle</Th><Th>Aksi</Th></tr></thead><tbody>
+   {data.rows.map((r:any)=><tr key={r.id}><Td><div>{r.name}</div><small>{tanggal(r.created_at)}</small></Td><Td>{r.plan_id || 'Trial'}<br/>{r.billing_cycle || '45 hari'}</Td><Td>{r.status}<br/><small>{r.daysLeft} hari • {r.accessMode}</small></Td><Td>{r.outlet_count} / {r.maxOutlets}<br/><small>add-on: {r.extra_outlets || 0}</small></Td><Td>{r.lifecycleStage}<br/><small>Aktivitas: {r.last_transaction_at?tanggal(r.last_transaction_at):'belum ada'}</small></Td><Td><div className="flex flex-col gap-2">
+    {data.canManage&&<button className="underline" onClick={()=>choose(r,'GRANT_PLAN')}>Ubah tier manual</button>}
+    {data.canSupport&&<button className="underline" onClick={()=>choose(r)}>Support</button>}</div></Td></tr>)}
+   </tbody></Table></div>{!data.rows.length&&<p className="p-5">Tidak ada tenant yang cocok.</p>}<Pagination offset={offset} total={data.total} limit={20} onChange={setOffset}/></>}
+  </Card>
+  {selected&&<Card title={'Tindakan untuk '+selected.name}>
+   <form onSubmit={submit} className="space-y-3 p-3">
+    <label className="block">Tindakan <select value={action} onChange={e=>setAction(e.target.value)} className="border rounded p-2 ml-2">
+     <option value="NOTE">Catatan support</option>{data?.canManage&&<><option value="EXTEND_TRIAL">Perpanjang trial (maks. 14 hari)</option><option value="GRANT_PLAN">Berikan paket manual / kompensasi</option>{invoiceId&&<option value="PAYMENT_NOTE">Catatan rekonsiliasi</option>}</>}</select></label>
+    {action==='GRANT_PLAN'&&<><p className="text-sm text-amber-800">Ini pemberian akses manual, bukan bukti pembayaran. Alasan dan nilai sebelum/sesudah akan diaudit.</p>
+     <div className="flex flex-wrap gap-3"><select aria-label="Paket tujuan" value={planId} onChange={e=>setPlanId(e.target.value)} className="border p-2">{PAID_SAAS_PLANS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+     <select aria-label="Periode billing" value={cycle} onChange={e=>setCycle(e.target.value)} className="border p-2"><option>MONTHLY</option><option>YEARLY</option></select>
+     <label>Add-on outlet <input aria-label="Jumlah add-on outlet" type="number" min="0" max="100" value={extras} onChange={e=>setExtras(Number(e.target.value))} className="border p-2 w-20"/></label></div></>}
+    {action==='EXTEND_TRIAL'&&<label>Tambahan hari <input type="number" min="1" max="14" value={days} onChange={e=>setDays(Number(e.target.value))} className="border p-2"/></label>}
+    <label className="block">Alasan / nomor tiket (minimal 10 karakter)<textarea required minLength={10} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="border rounded w-full p-3"/></label>
+    <div className="flex gap-3"><button disabled={busy} className="bg-slate-900 text-white px-4 py-2 rounded">{busy?'Menyimpan…':'Simpan tindakan'}</button><button type="button" onClick={()=>setSelected(null)}>Batal</button>
+    <button type="button" disabled={reason.trim().length<10} onClick={async()=>{try{const h=await api.supportHistory(selected.id,reason);setHistory(h.rows);}catch(e:any){setError(e.message);}}}>Lihat riwayat</button></div>
+    {history.map(h=><p key={h.id} className="text-sm border-t pt-2">{tanggal(h.created_at)} · {h.action} · {h.operator_email}: {h.reason}</p>)}
+   </form>
+  </Card>}
+  {payments&&<Card title="Rekonsiliasi pembayaran · 200 tagihan terakhir"><p className="p-3 text-sm text-slate-500">Nominal dan status dibandingkan dengan notifikasi DOKU bertanda tangan. REVIEW tidak memberi akses otomatis.</p>
+   <div className="overflow-x-auto"><Table><thead><tr><Th>Tenant / invoice</Th><Th>Tagihan</Th><Th>Status gateway</Th><Th>Hasil</Th><Th>Aksi</Th></tr></thead><tbody>{payments.rows.map((i:any)=>{const event=payments.events.find((e:any)=>e.invoice_number===i.invoice_number);return <tr key={i.id}><Td>{i.tenant_name}<br/><small>{i.invoice_number || i.id}</small></Td><Td>{rupiah(i.amount)}<br/>{i.quote?.billingCycle}</Td><Td>{event?rupiah(event.amount)+' · '+event.outcome:'Belum ada notifikasi'}</Td><Td>{i.payment_status} / {i.reconciliation_status}<br/><small>{i.reconciliation_note}</small></Td><Td><button className="underline" onClick={()=>choose({id:i.tenant_id,name:i.tenant_name},'PAYMENT_NOTE',i.id)}>Catat pemeriksaan</button></Td></tr>;})}</tbody></Table></div>
+   {!payments.rows.length&&<p className="p-4">Belum ada tagihan.</p>}
+   {payments.events.filter((e:any)=>e.reason==='INVOICE_NOT_FOUND').map((e:any)=><p key={e.id} className="p-3 text-red-700">Notifikasi tidak cocok: {e.invoice_number} · {rupiah(e.amount)}</p>)}
+  </Card>}
+ </div>;
 }

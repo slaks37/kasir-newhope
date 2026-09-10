@@ -13,7 +13,7 @@ export interface AuthPrincipal {
   email?: string;
 }
 
-const LOCAL_BYPASS = () => process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
+const LOCAL_BYPASS = () => process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
 
 function firstHeader(value: string | string[] | undefined): string {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '');

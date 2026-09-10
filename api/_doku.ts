@@ -154,7 +154,7 @@ export function verifyDokuWebhookSignature(
   const requestTimestamp = getHeader('Request-Timestamp');
   const incomingSignature = getHeader('Signature');
 
-  if (!clientId || !requestId || !requestTimestamp || !incomingSignature) {
+  if (!clientId || clientId !== getDokuClientId() || !requestId || !requestTimestamp || !incomingSignature) {
     return false;
   }
 

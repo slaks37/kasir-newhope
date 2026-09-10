@@ -21,7 +21,9 @@ import {
   requiresJustification,
   resolveEnvironment,
 } from '../lib/rbac/environments';
-import type { Db } from './db';
+import type { Db } from '../../services/shared/db';
+import { authenticateBearer } from '../../services/shared/auth';
+import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import * as repo from './repo';
 
 interface InternalIdentity {
@@ -58,147 +60,43 @@ interface AdminRequest extends express.Request {
   environment?: AppEnvironment | null;
 }
 
-const SEED_INTERNAL = [
-  { email: 'ops@newhopepos.id', fullName: 'Platform Root', role: 'ROLE_SUPERADMIN' },
-  { email: 'growth@newhopepos.id', fullName: 'Growth Analyst', role: 'ROLE_INTERNAL_GROWTH' },
-  { email: 'support@newhopepos.id', fullName: 'Support Agent', role: 'ROLE_INTERNAL_SUPPORT' },
-] as const;
+// Membership is provisioned explicitly with a verified Supabase user subject.
+// No demo identities or email-based elevation are created at service startup.
+export async function ensureInternalUsers(_db: Db): Promise<void> {}
 
-/**
- * Memastikan ketiga akun internal ada.
- *
- * Ini BUKAN autentikasi. Belum ada SSO di deployment ini, jadi panel
- * mengidentifikasi dirinya lewat header `x-internal-user` berisi email. Cukup
- * untuk pengembangan, dan jelas tidak cukup untuk produksi — lihat catatan
- * SECURITY di bawah.
- */
-export async function ensureInternalUsers(db: Db): Promise<void> {
-  for (const u of SEED_INTERNAL) {
-    await db.query(
-      `INSERT INTO internal.internal_users (id, email, full_name, role)
-       VALUES (uuidv7(), $1, $2, $3::internal_role_enum)
-       ON CONFLICT (email) DO NOTHING`,
-      [u.email, u.fullName, u.role]
-    );
-  }
+async function recordAccess(db: Db, who: InternalIdentity, action: string, resource: string,
+  merchantId: string | null, justification: string | null, ip: string | null) {
+  await db.query(`INSERT INTO internal.internal_access_log
+    (id,internal_user_id,internal_role,target_id,action,resource,justification,ip_address)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7)`,
+    [who.id,who.role,merchantId,action,resource,justification,ip]);
 }
 
-async function recordAccess(
-  db: Db,
-  who: InternalIdentity,
-  action: string,
-  resource: string,
-  merchantId: string | null,
-  justification: string | null,
-  ip: string | null
-): Promise<void> {
-  try {
-    await db.query(
-      `INSERT INTO internal.internal_access_log
-         (id, internal_user_id, internal_role, merchant_id, action, resource,
-          justification, ip_address)
-       VALUES (uuidv7(), $1::uuid, $2::internal_role_enum, $3::uuid, $4, $5, $6, $7)`,
-      [who.id, who.role, merchantId, action, resource, justification, ip]
-    );
-  } catch (err) {
-    // Audit yang gagal tidak boleh menjatuhkan request — tapi juga tidak boleh
-    // hilang tanpa jejak.
-    console.error('[audit] gagal mencatat akses internal:', (err as Error).message);
-  }
-}
-
-export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>): void {
-  /**
-   * SECURITY: identitas diambil dari header `x-internal-user`, tanpa password
-   * dan tanpa token. Siapa pun yang bisa mengirim HTTP ke server ini bisa
-   * mengaku sebagai SUPERADMIN.
-   *
-   * Itu dapat diterima SEKARANG karena panel hanya dilayani di localhost dan
-   * belum ada data produksi. Sebelum admin.domainanda.com menyala, header ini
-   * WAJIB diganti dengan SSO (kolom internal_users.sso_subject sudah disiapkan
-   * untuk menampung subject claim-nya). Jangan deploy tanpa itu.
-   */
+export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer): void {
   function guard(capability: InternalCapability) {
-    return async (req: AdminRequest, res: express.Response, next: express.NextFunction) => {
-      const env = resolveEnvironment(
-        hostKlien(req),
-        (req.headers['x-env-override'] as string) || undefined
-      );
-
-      // Gagal tertutup: host yang tidak dikenal menghasilkan null dan ditolak,
-      // bukan ditebak. Menebak salah berarti konsol internal muncul di domain
-      // merchant.
-      if (env !== 'PROVIDER_BO' && env !== 'MERCHANT_BO') {
-        return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
-      }
-
-      let db: Db;
+    return async(req:AdminRequest,res:express.Response,next:express.NextFunction)=>{
       try {
-        db = await getDb();
-      } catch {
-        return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-      }
-
-      const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
-      const { rows } = await db.query(
-        `SELECT id, email, full_name, role FROM internal.internal_users
-          WHERE lower(email) = $1 AND is_active`,
-        [email]
-      );
-
-      // 404, bukan 401: pemanggil tanpa identitas tidak perlu tahu route ini ada.
-      if (!rows.length) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
-
-      const who: InternalIdentity = {
-        id: rows[0].id,
-        email: rows[0].email,
-        fullName: rows[0].full_name,
-        role: rows[0].role,
-      };
-      if (!isInternalRole(who.role)) {
-        return res.status(403).json({ ok: false, error: 'NOT_AN_INTERNAL_IDENTITY' });
-      }
-
-      const targetMerchant =
-        (req.params.merchantId as string) ||
-        (typeof req.query.merchantId === 'string' ? req.query.merchantId : '') ||
-        null;
-      const justification =
-        (req.headers['x-justification'] as string) ||
-        (typeof req.query.justification === 'string' ? req.query.justification : '') ||
-        null;
-      const ip = req.ip || null;
-
-      if (!hasInternalCapability(who.role, capability)) {
-        // Penolakan juga dicatat. "Siapa yang MENCOBA membaca pembukuan
-        // merchant ini" adalah pertanyaan audit yang sah.
-        await recordAccess(db, who, `DENIED_${capability}`, req.path, targetMerchant, justification, ip);
-        return res.status(403).json({
-          ok: false,
-          error: 'CAPABILITY_DENIED',
-          detail: `Role ${who.role} tidak memiliki ${capability}.`,
-        });
-      }
-
-      // Justifikasi hanya wajib ketika satu merchant benar-benar dibidik.
-      // Menuntutnya untuk tampilan agregat hanya melatih staf mengetik "cek"
-      // di setiap kotak, yang justru merusak nilai auditnya.
-      if (targetMerchant && requiresJustification(who.role, capability) && !justification) {
-        await recordAccess(db, who, `BLOCKED_${capability}`, req.path, targetMerchant, null, ip);
-        return res.status(400).json({
-          ok: false,
-          error: 'JUSTIFICATION_REQUIRED',
-          detail: 'Role support wajib menyertakan alasan sebelum membaca data satu merchant.',
-        });
-      }
-
-      if (requiresAudit(capability) && targetMerchant) {
-        await recordAccess(db, who, capability, req.path, targetMerchant, justification, ip);
-      }
-
-      req.internal = who;
-      req.environment = env;
-      next();
+        const principal=await authenticate(req);
+        if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+        const db=await getDb();
+        const {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
+        if(!rows[0] || !isInternalRole(rows[0].role)) return res.status(403).json({ok:false,error:'INTERNAL_MEMBERSHIP_REQUIRED'});
+        const who:InternalIdentity={id:rows[0].id,email:rows[0].email,fullName:rows[0].full_name,role:rows[0].role};
+        const target=String(req.params.merchantId || req.params.tenantId || req.query.merchantId || '') || null;
+        if(target && !/^[0-9a-f-]{36}$/i.test(target)) return res.status(400).json({ok:false,error:'INVALID_ID'});
+        const reason=String(req.headers['x-justification'] || req.body?.reason || req.query.justification || '').trim() || null;
+        if(!hasInternalCapability(who.role,capability)){
+          await recordAccess(db,who,'DENIED_'+capability,req.path,target,reason,req.ip || null);
+          return res.status(403).json({ok:false,error:'CAPABILITY_DENIED'});
+        }
+        // Support cannot enumerate sensitive books by omitting merchantId.
+        if(who.role==='ROLE_INTERNAL_SUPPORT' && requiresAudit(capability) && (!target || !reason || reason.length<10)) {
+          await recordAccess(db,who,'BLOCKED_'+capability,req.path,target,reason,req.ip || null);
+          return res.status(400).json({ok:false,error:'MERCHANT_AND_JUSTIFICATION_REQUIRED'});
+        }
+        if(requiresAudit(capability)) await recordAccess(db,who,capability,req.path,target,reason,req.ip || null);
+        req.internal=who;req.environment='PROVIDER_BO';next();
+      }catch(err){ next(err); }
     };
   }
 
@@ -219,57 +117,23 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   /* SESI                                                                    */
   /* ---------------------------------------------------------------------- */
 
-  // Tanpa guard: panel memakainya untuk mengetahui siapa dirinya dan menu apa
-  // yang boleh ditampilkan. Tidak membocorkan data merchant apa pun.
-  app.get('/api/admin/me', async (req: AdminRequest, res) => {
-    const env = resolveEnvironment(
-      hostKlien(req),
-      (req.headers['x-env-override'] as string) || undefined
-    );
-    if (env !== 'PROVIDER_BO' && env !== 'MERCHANT_BO') {
-      return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
-    }
-
-    let db: Db;
-    try {
-      db = await getDb();
-    } catch {
-      return res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-    }
-
-    const email = String(req.headers['x-internal-user'] || '').trim().toLowerCase();
-    const { rows } = await db.query(
-      `SELECT id, email, full_name, role FROM internal.internal_users
-        WHERE lower(email) = $1 AND is_active`,
-      [email]
-    );
-    if (!rows.length) return res.status(401).json({ ok: false, error: 'UNKNOWN_IDENTITY' });
-
-    res.json({
-      ok: true,
-      user: {
-        email: rows[0].email,
-        fullName: rows[0].full_name,
-        role: rows[0].role,
-      },
-      capabilities: internalCapabilities(rows[0].role),
-      environment: env,
-    });
+  // Identitas dan menu hanya tersedia setelah token dan membership diverifikasi.
+  app.get('/api/admin/me',guard('VIEW_MERCHANT_HEALTH'),(req:AdminRequest,res)=>{
+    res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO'});
   });
-
-  // Daftar akun yang tersedia untuk memilih identitas di layar masuk. Hanya
-  // email, nama, dan role — tidak ada rahasia, karena memang belum ada.
-  app.get('/api/admin/identities', async (_req, res) => {
-    try {
-      const db = await getDb();
-      const { rows } = await db.query(
-        `SELECT email, full_name, role FROM internal.internal_users WHERE is_active ORDER BY role`
-      );
-      res.json({ ok: true, identities: rows });
-    } catch {
-      res.status(503).json({ ok: false, error: 'DATABASE_UNAVAILABLE' });
-    }
-  });
+  app.get('/api/admin/identities',guard('VIEW_ACCESS_AUDIT'),wrap(async(_req,res,db)=>{
+    const {rows}=await db.query('SELECT email,full_name,role FROM internal.internal_users WHERE is_active ORDER BY role');
+    res.json({ok:true,identities:rows});
+  }));
+  registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
+  app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
+    const f=repo.cleanFilter(req.query);
+    const {rows}=await db.query(`SELECT * FROM contract.staff_commission_ledger
+      WHERE ($1::text IS NULL OR business_sector=$1) AND ($2::uuid IS NULL OR merchant_id=$2)
+      AND ($3::text IS NULL OR staff_name ILIKE '%'||$3||'%' OR merchant_name ILIKE '%'||$3||'%')
+      ORDER BY created_at DESC LIMIT 200`,[f.sector,f.merchantId,f.search]);
+    res.json({ok:true,rows});
+  }));
 
   /* ---------------------------------------------------------------------- */
   /* RINGKASAN PER SEKTOR                                                    */
@@ -387,7 +251,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
                 t.name AS merchant_name
            FROM internal.internal_access_log l
            JOIN internal.internal_users u ON u.id = l.internal_user_id
-           LEFT JOIN tenants t ON t.id = l.merchant_id
+           LEFT JOIN internal.tenants t ON t.id::text = COALESCE(l.target_id,l.merchant_id::text)
           ORDER BY l.accessed_at DESC
           LIMIT 200`
       );

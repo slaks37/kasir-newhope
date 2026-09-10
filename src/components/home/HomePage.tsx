@@ -226,16 +226,16 @@ const faqs = [
 const plans = [
   {
     id: "plan-free",
-    name: "Free Tier / Trial",
-    desc: "Kenali cara kerja kasir untuk usaha Anda.",
+    name: "Free Trial 45 Hari",
+    desc: "Bangun kebiasaan operasional tanpa kartu kredit.",
     monthly: 0,
     yearly: 0,
     features: [
-      "1 outlet · hingga 30 produk",
-      "Kasir & struk cetak",
-      "Ringkasan penjualan harian",
-      "AI Analyst 3× per bulan",
-      "Masa coba gratis 45 hari",
+      "Seluruh fitur Pro selama 45 hari",
+      "Hingga 2 outlet",
+      "Produk dan staf tidak terbatas",
+      "Kuota AI trial terbatas",
+      "Data read-only 14 hari setelah trial",
     ],
     cta: "Coba Gratis 45 Hari",
   },
@@ -244,13 +244,13 @@ const plans = [
     name: "Tier Plus",
     desc: "Untuk usaha yang mulai bertumbuh.",
     monthly: 99000,
-    yearly: 79000,
+    yearly: 79200,
     features: [
-      "Hingga 2 outlet · 100 produk/outlet",
+      "Hingga 2 outlet · produk tidak terbatas",
       "Kasir, QRIS & struk digital",
-      "Manajemen stok bahan baku",
-      "Laporan usaha & AI Analyst 30×/bulan",
-      "Outlet tambahan Rp 59.000/bulan",
+      "Inventori dan workflow sektor dasar",
+      "Pelanggan, shift, kas & laporan omzet",
+      "Extra outlet mulai Rp 63.360/bulan",
     ],
     cta: "Pilih Tier Plus",
   },
@@ -259,13 +259,13 @@ const plans = [
     name: "Tier Pro",
     desc: "Kontrol lebih lengkap untuk banyak cabang.",
     monthly: 299000,
-    yearly: 239000,
+    yearly: 248170,
     features: [
       "Hingga 4 outlet · produk tak terbatas",
-      "Resep bahan baku & stok proses",
-      "Laporan gabungan antar-outlet",
-      "AI Analyst 90× per bulan",
-      "Outlet tambahan Rp 49.000/bulan",
+      "Multi-location, transfer stok & recursive BOM",
+      "Smart Labor, payroll & workflow vertikal lengkap",
+      "Advanced AI & laporan gabungan antar-outlet",
+      "Extra outlet mulai Rp 63.360/bulan",
     ],
     cta: "Pilih Tier Pro",
   },
@@ -325,7 +325,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const { setActiveTab, activateBusinessSector, settings } = usePOS();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<BusinessSector>("FNB");
-  const [isYearlyBilling, setIsYearlyBilling] = useState(false);
+  const [isYearlyBilling, setIsYearlyBilling] = useState(true);
   const [aiQuery, setAiQuery] = useState(0);
   const [demoStep, setDemoStep] = useState(0);
   const [notice, setNotice] = useState("");
@@ -929,7 +929,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 aria-pressed={isYearlyBilling}
                 onClick={() => setIsYearlyBilling(true)}
               >
-                Tahunan<span>≈20% lebih hemat</span>
+                Tahunan<span>hemat hingga 20%</span>
               </button>
             </div>
             <div className="nh-pricing-grid">
@@ -986,34 +986,34 @@ export const HomePage: React.FC<HomePageProps> = ({
               </summary>
               <div className="nh-comparison-grid">
                 {[
-                  { label: "Jumlah outlet", values: ["1", "2", "4"] },
+                  { label: "Jumlah outlet", values: ["2", "2", "4"] },
                   {
                     label: "Produk per outlet",
-                    values: ["30", "100", "Tidak terbatas"],
+                    values: ["Tidak terbatas", "Tidak terbatas", "Tidak terbatas"],
                   },
                   {
                     label: "Laporan",
                     values: [
-                      "Ringkasan harian",
-                      "Laba kotor & analitik",
-                      "Gabungan multi-outlet",
+                      "Fitur Pro selama trial",
+                      "Kas & omzet",
+                      "Laba, margin & multi-outlet",
                     ],
                   },
                   {
                     label: "AI Analyst per bulan",
-                    values: ["3 pertanyaan", "30 pertanyaan", "90 pertanyaan"],
+                    values: ["Kuota trial", "Kuota dasar", "Kuota lanjutan"],
                   },
                   {
                     label: "Persediaan",
                     values: [
-                      "Katalog produk",
-                      "Stok bahan baku",
-                      "Resep & stok proses",
+                      "Multi-location Pro",
+                      "Inventori dasar",
+                      "Multi-location & recursive BOM",
                     ],
                   },
                   {
                     label: "Outlet tambahan per bulan",
-                    values: ["—", "Rp 59.000", "Rp 49.000"],
+                    values: ["—", "Rp 79.200", "Rp 79.200"],
                   },
                 ].map((row) => (
                   <div className="nh-comparison-row" key={row.label}>

@@ -425,6 +425,7 @@ export default function AdminApp() {
             </div>
             <button
               onClick={() => {
+                void api.logout();
                 setIdentity(null);
                 setSession(null);
               }}

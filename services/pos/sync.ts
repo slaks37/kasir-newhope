@@ -17,6 +17,7 @@
  */
 
 import type express from 'express';
+import { assertTenantWritable, assertOutletCapacity, BillingError } from '../billing/engine';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
@@ -43,11 +44,8 @@ async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubje
 }
 
 async function productLimitForTenant(db: Db, tenantId: string): Promise<number> {
-  const { rows } = await db.query(
-    `SELECT product_limit FROM contract.merchant_product_entitlement WHERE tenant_id = $1`,
-    [tenantId]
-  );
-  return rows.length ? Number(rows[0].product_limit) : 30;
+  // All three catalog plans allow unlimited products.
+  return -1;
 }
 
 interface SyncItem {
@@ -139,10 +137,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
         if (idemKey) {
           const prev = await c.query(
-            `SELECT rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
+            if (prev.rows[0].business_id !== businessId) throw new BillingError(409, 'IDEMPOTENCY_KEY_CONFLICT');
             return {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
@@ -164,6 +163,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           [storeName, tenantExternalRef, ownerRef]
         );
         const tenantId: string = t.rows[0].id;
+        await assertTenantWritable(c,tenantId);
 
         // Merchant (business level)
         const m = await c.query(
@@ -185,6 +185,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         if (outq.rows.length) {
             outletId = outq.rows[0].id;
         } else {
+            await assertOutletCapacity(c,tenantId);
             const outins = await c.query(
                 `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
                  VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
@@ -409,7 +410,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   await c.query(
                     `INSERT INTO pos.inventory_transactions
                        (id, tenant_id, merchant_id, outlet_id, location_id,
-                        inventory_item_id, quantity_delta, movement_type,
+                        inventory_item_id, quantity_delta, reference_type,
                         reference_id, reason, created_at)
                      VALUES (
                        uuidv7(), $1, $2, $3,
@@ -423,7 +424,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
                 voided++;
                 await writeActivity(c, {
-                  merchantId: tenantId,
+                  merchantId,
+                  tenantId,
                   businessSector: sector as Sector,
                   businessId,
                   appModule: 'POS',
@@ -495,7 +497,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               await c.query(
                 `INSERT INTO pos.inventory_transactions
                    (id, tenant_id, merchant_id, outlet_id, location_id,
-                    inventory_item_id, quantity_delta, movement_type,
+                    inventory_item_id, quantity_delta, reference_type,
                     reference_id, reason, created_at)
                  SELECT
                    uuidv7(), p.tenant_id, p.merchant_id, p.outlet_id,
@@ -503,7 +505,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                      WHERE ib.inventory_item_id = p.inventory_item_id
                        AND ib.outlet_id = p.outlet_id LIMIT 1),
                    p.inventory_item_id,
-                   -$2,
+                   -($2::numeric),
                    'SALE_DEDUCT',
                    $3,
                    'Penjualan POS',
@@ -530,7 +532,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
         if (accepted > 0) {
           await writeActivity(c, {
-            merchantId: tenantId,
+            merchantId,
+            tenantId,
             businessSector: sector as Sector,
             businessId,
             appModule: 'SYNC',
@@ -546,6 +549,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
+      if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
@@ -602,6 +606,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           [storeName, tenantExternalRef, ownerRef]
         );
         const tenantId: string = t.rows[0].id;
+        await assertTenantWritable(c,tenantId);
 
         const m = await c.query(
           `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
@@ -626,6 +631,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         if (outq.rows.length) {
             outletId = outq.rows[0].id;
         } else {
+            await assertOutletCapacity(c,tenantId);
             const outins = await c.query(
                 `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
                  VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
@@ -710,6 +716,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
+      if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] katalog gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
@@ -728,13 +735,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
     }
 
-    const t = await db.query(`SELECT id, business_sector FROM internal.tenants WHERE external_ref = $1`, [
+    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE external_ref = $1`, [
       businessId,
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: 'MERCHANT_NOT_SYNCED' });
 
     const id = await writeActivity(db, {
       merchantId: t.rows[0].id,
+      tenantId: t.rows[0].tenant_id,
       businessSector: t.rows[0].business_sector,
       businessId,
       appModule: String(b.appModule ?? 'POS'),

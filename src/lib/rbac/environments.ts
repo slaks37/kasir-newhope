@@ -148,6 +148,7 @@ export function landingEnvironment(role: PlatformRole): AppEnvironment | null {
 /* -------------------------------------------------------------------------- */
 
 export type InternalCapability =
+  | 'MANAGE_SUPPORT'
   | 'VIEW_MERCHANT_HEALTH'
   | 'VIEW_CHURN_COHORT'
   | 'VIEW_PLATFORM_REVENUE'
@@ -170,6 +171,7 @@ export type InternalCapability =
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   ROLE_SUPERADMIN: [
+    'MANAGE_SUPPORT',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
     'VIEW_PLATFORM_REVENUE',
@@ -197,6 +199,7 @@ const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   // Support troubleshoots one merchant at a time and may not see money
   // platform-wide or change a subscription.
   ROLE_INTERNAL_SUPPORT: [
+    'MANAGE_SUPPORT',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_MERCHANT_DETAIL',
     'VIEW_TRANSACTION_LOG',
@@ -219,6 +222,7 @@ export function hasInternalCapability(role: string, cap: InternalCapability): bo
  * MUST write an `internal_access_log` row.
  */
 export const AUDITED_CAPABILITIES: InternalCapability[] = [
+  'MANAGE_SUPPORT',
   'VIEW_MERCHANT_DETAIL',
   'IMPERSONATE_MERCHANT',
   'MANAGE_SUBSCRIPTION',
