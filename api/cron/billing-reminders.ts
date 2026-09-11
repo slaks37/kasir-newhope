@@ -1,102 +1,27 @@
-import pg from 'pg';
-import { Resend } from 'resend';
+import { connectDb, type Db } from '../../services/shared/db';
+import { runBillingReminders, type ReminderDependencies } from '../../services/billing/reminders';
+import { createReminderProvider } from '../../services/billing/reminderProvider';
 
-type VercelRequest = any;
-type VercelResponse = any;
-
-let pool: pg.Pool | null = null;
-function getPool() {
-  if (!pool) {
-    pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
-      max: 3,
-    });
+let database: Promise<Db> | undefined;
+const dryProvider: ReminderDependencies = {
+  verifiedOwnerEmail:async()=>{throw new Error('DRY_RUN_MUST_NOT_LOOK_UP_USERS');},
+  send:async()=>{throw new Error('DRY_RUN_MUST_NOT_SEND');},
+};
+export default async function handler(req:any,res:any) {
+  if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ok:false,error:'UNAUTHORIZED_CRON'});
   }
-  return pool;
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const authHeader = req.headers.authorization;
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ ok: false, error: 'UNAUTHORIZED_CRON' });
-  }
-
-  const startedAt = Date.now();
-  const runId = `cron-billing-${Date.now()}`;
-  const db = getPool();
-
+  if (req.method !== 'GET') return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
+  if (!process.env.DATABASE_URL) return res.status(503).json({ok:false,error:'DATABASE_NOT_CONFIGURED'});
   try {
-    await db.query(
-      `INSERT INTO batch_job_runs (id, job_name, started_at, status)
-       VALUES ($1, 'billing-reminders', CURRENT_TIMESTAMP, 'RUNNING')
-       ON CONFLICT (id) DO NOTHING`,
-      [runId]
-    );
-
-    const { rows: subscriptions } = await db.query(`
-      SELECT s.id, s.tenant_id, s.status, s.current_period_end, p.name as plan_name, t.name as merchant_name
-        FROM billing.subscriptions s
-        JOIN billing.saas_plans p ON s.plan_id = p.id
-        JOIN internal.tenants t ON t.id = s.tenant_id
-       WHERE s.status IN ('ACTIVE', 'TRIAL')
-         AND s.current_period_end >= NOW() + INTERVAL '2 days'
-         AND s.current_period_end < NOW() + INTERVAL '3 days'
-    `);
-
-    let sentCount = 0;
-    if (process.env.RESEND_API_KEY && subscriptions.length > 0) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      for (const sub of subscriptions) {
-        try {
-          await resend.emails.send({
-            from: 'billing@newhopepos.id',
-            to: 'stefen.maxy.academy@gmail.com', // Notification recipient
-            subject: `Pemberitahuan Tagihan H-3: ${sub.merchant_name} (${sub.plan_name})`,
-            html: `<p>Masa aktif langganan ${sub.merchant_name} (${sub.plan_name}) akan berakhir pada ${new Date(sub.current_period_end).toLocaleDateString('id-ID')}.</p>`,
-          });
-          sentCount++;
-        } catch (mailErr) {
-          console.error('[cron/billing-reminders] email send error:', mailErr);
-        }
-      }
-    }
-
-    const durationMs = Date.now() - startedAt;
-
-    await db.query(
-      `UPDATE batch_job_runs
-          SET finished_at = CURRENT_TIMESTAMP,
-              status = 'SUCCESS',
-              duration_ms = $2,
-              insights_written = $3
-        WHERE id = $1`,
-      [runId, durationMs, subscriptions.length]
-    );
-
-    return res.status(200).json({
-      ok: true,
-      job: 'billing-reminders',
-      runId,
-      expiringCount: subscriptions.length,
-      emailsSent: sentCount,
-      durationMs,
+    const dryRun = process.env.BILLING_REMINDERS_ENABLED !== '1';
+    const provider = dryRun ? dryProvider : createReminderProvider();
+    database ??= connectDb({schema:'billing',max:2}).catch(err=>{database=undefined;throw err;});
+    const result = await runBillingReminders(await database,provider,{
+      dryRun,from:process.env.BILLING_EMAIL_FROM,appUrl:process.env.PUBLIC_APP_URL,
     });
-  } catch (error: any) {
-    const durationMs = Date.now() - startedAt;
-    try {
-      await db.query(
-        `UPDATE batch_job_runs
-            SET finished_at = CURRENT_TIMESTAMP,
-                status = 'FAILED',
-                duration_ms = $2,
-                error_message = $3
-          WHERE id = $1`,
-        [runId, durationMs, error?.message || 'UNKNOWN_ERROR']
-      );
-    } catch {}
-
-    console.error('[cron/billing-reminders] error:', error);
-    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR', runId });
+    return res.status(result.failed || result.review ? 503 : 200).json({ok:!result.failed && !result.review,...result});
+  } catch {
+    return res.status(503).json({ok:false,error:'BILLING_REMINDERS_UNAVAILABLE'});
   }
 }

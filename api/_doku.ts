@@ -56,12 +56,21 @@ export function getDokuSecretKey(): string {
 }
 
 export function getDokuApiUrl(): string {
-  return (process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/\/+$/, '');
+  const url=(process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/\/+$/, '');
+  if(!['https://api-sandbox.doku.com','https://api.doku.com'].includes(url)) throw new Error('DOKU_API_URL_NOT_ALLOWED');
+  return url;
+}
+
+export const DOKU_NOTIFICATION_PATH='/api/v1/webhooks/doku';
+export function getDokuAllowedChannels(): string[] {
+  const channels=(process.env.DOKU_ALLOWED_CHANNELS || '').split(',').map(x=>x.trim()).filter(Boolean);
+  if(!channels.length || channels.some(x=>!/^[A-Z0-9_]{1,100}$/.test(x))) throw new Error('DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');
+  return [...new Set(channels)];
 }
 
 export function generateDigest(body: object | string): string {
-  const content = typeof body === 'string' ? body : JSON.stringify(body);
-  return crypto.createHash('sha256').update(content, 'utf8').digest('base64');
+  const content = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  return crypto.createHash('sha256').update(content).digest('base64');
 }
 
 export function generateSignature(
@@ -112,6 +121,7 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
 
   const response = await fetch(`${apiUrl}${requestTarget}`, {
     method: 'POST',
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'Client-Id': clientId,
@@ -120,13 +130,14 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
       'Signature': signature,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000),
   });
 
   const data = (await response.json()) as DokuCheckoutResponse;
 
   if (!response.ok || !data.response?.payment?.url) {
-    const errorMsg = data.error?.message || `HTTP ${response.status}: ${JSON.stringify(data)}`;
-    throw new Error(`DOKU_API_ERROR: ${errorMsg}`);
+    // Provider bodies can contain customer data and payment tokens.
+    throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
   }
 
   return {
@@ -138,14 +149,17 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
 export function verifyDokuWebhookSignature(
   headers: Record<string, string | string[] | undefined>,
   rawBody: string | Buffer,
-  requestTarget: string
+  requestTarget: string,
+  now = Date.now()
 ): boolean {
   const secretKey = getDokuSecretKey();
   if (!secretKey) return false;
 
   const getHeader = (key: string): string => {
-    const val = headers[key.toLowerCase()] || headers[key];
-    if (Array.isArray(val)) return val[0] || '';
+    const matches=Object.entries(headers).filter(([name])=>name.toLowerCase()===key.toLowerCase());
+    if(matches.length!==1)return '';
+    const val = matches[0][1];
+    if (Array.isArray(val)) return '';
     return typeof val === 'string' ? val : '';
   };
 
@@ -158,8 +172,15 @@ export function verifyDokuWebhookSignature(
     return false;
   }
 
-  const rawString = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
-  const digest = generateDigest(rawString);
+  if(!/^[\x21-\x7e]{1,128}$/.test(requestId) || requestId.includes(','))return false;
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(requestTimestamp))return false;
+  const time=Date.parse(requestTimestamp);
+  if(!Number.isFinite(time) || new Date(time).toISOString().replace('.000Z','Z')!==requestTimestamp.replace('.000Z','Z'))return false;
+  // Local replay policy: 13h accommodates DOKU's documented final retry at
+  // 12h plus clock/delivery allowance. Confirm older manual retries with DOKU.
+  if(time>now+5*60_000 || now-time>13*60*60_000)return false;
+
+  const digest = generateDigest(rawBody);
   const expectedSignature = generateSignature(
     clientId,
     requestId,
