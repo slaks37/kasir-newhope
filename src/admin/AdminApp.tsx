@@ -36,6 +36,7 @@ import UserManagement from "./pages/UserManagement";
 import Subscriptions from "./pages/Subscriptions";
 import BlogManagement from "./pages/BlogManagement";
 import StaffCommissions from "./pages/StaffCommissions";
+import AdminMfa from './AdminMfa';
 
 type PageId =
   | "overview"
@@ -214,6 +215,12 @@ function LoginScreen({
 
 export default function AdminApp() {
   const [session, setSession] = useState<Session | null>(null);
+  const [reauth,setReauth]=useState(false);
+  useEffect(()=>{
+    const requireMfa=()=>setReauth(true);
+    window.addEventListener('admin-mfa-required',requireMfa);
+    return()=>window.removeEventListener('admin-mfa-required',requireMfa);
+  },[]);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState<{ code?: string; message: string } | null>(
     null,
@@ -326,6 +333,8 @@ export default function AdminApp() {
       </>
     );
   }
+
+  if(session.mfaRequired || reauth) return <AdminMfa onVerified={s=>{setSession(s);setReauth(false);}} onLogout={()=>{setSession(null);setReauth(false);}}/>;
 
   const menu = NAV.filter((n) => session.capabilities.includes(n.cap));
   const openSector = (s: string) => {

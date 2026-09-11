@@ -1,9 +1,11 @@
 import React,{useState,useEffect} from 'react';
+import SubscriptionDetail from './SubscriptionDetail';
 import {api,rupiah,tanggal} from '../api';
 import {PAID_SAAS_PLANS} from '../../config/saasPlans';
 import {Card,Table,Th,Td,Loading,ErrorBox,Pagination,SearchBox} from '../ui';
 
 export default function Subscriptions(){
+ const [detail,setDetail]=useState<{id:string;name:string}|null>(null);
  const [search,setSearch]=useState(''),[status,setStatus]=useState(''),[offset,setOffset]=useState(0),[version,setVersion]=useState(0);
  const [data,setData]=useState<any>(null),[payments,setPayments]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
  const [selected,setSelected]=useState<any>(null),[action,setAction]=useState('NOTE'),[reason,setReason]=useState(''),[busy,setBusy]=useState(false);
@@ -33,15 +35,17 @@ export default function Subscriptions(){
     <select aria-label="Status langganan" value={status} onChange={e=>{setStatus(e.target.value);setOffset(0);}} className="border rounded p-2">{['','TRIAL','ACTIVE','PAST_DUE','EXPIRED'].map(v=><option key={v} value={v}>{v || 'Semua status'}</option>)}</select></div>
    {loading?<Loading/>:data&&<><div className="overflow-x-auto"><Table><thead><tr><Th>Tenant</Th><Th>Paket / periode</Th><Th>Status</Th><Th>Outlet</Th><Th>Lifecycle</Th><Th>Aksi</Th></tr></thead><tbody>
    {data.rows.map((r:any)=><tr key={r.id}><Td><div>{r.name}</div><small>{tanggal(r.created_at)}</small></Td><Td>{r.plan_id || 'Trial'}<br/>{r.billing_cycle || '45 hari'}</Td><Td>{r.status}<br/><small>{r.daysLeft} hari • {r.accessMode}</small></Td><Td>{r.outlet_count} / {r.maxOutlets}<br/><small>add-on: {r.extra_outlets || 0}</small></Td><Td>{r.lifecycleStage}<br/><small>Aktivitas: {r.last_transaction_at?tanggal(r.last_transaction_at):'belum ada'}</small></Td><Td><div className="flex flex-col gap-2">
+    {data.canSupport&&<button className="underline" onClick={()=>setDetail({id:r.id,name:r.name})}>Detail langganan</button>}
     {data.canManage&&<button className="underline" onClick={()=>choose(r,'GRANT_PLAN')}>Ubah tier manual</button>}
     {data.canSupport&&<button className="underline" onClick={()=>choose(r)}>Support</button>}</div></Td></tr>)}
    </tbody></Table></div>{!data.rows.length&&<p className="p-5">Tidak ada tenant yang cocok.</p>}<Pagination offset={offset} total={data.total} limit={20} onChange={setOffset}/></>}
   </Card>
+  {detail&&<SubscriptionDetail key={detail.id+':'+version} tenantId={detail.id} name={detail.name} onClose={()=>setDetail(null)}/>}
   {selected&&<Card title={'Tindakan untuk '+selected.name}>
    <form onSubmit={submit} className="space-y-3 p-3">
     <label className="block">Tindakan <select value={action} onChange={e=>setAction(e.target.value)} className="border rounded p-2 ml-2">
      <option value="NOTE">Catatan support</option>{data?.canManage&&<><option value="EXTEND_TRIAL">Perpanjang trial (maks. 14 hari)</option><option value="GRANT_PLAN">Berikan paket manual / kompensasi</option>{invoiceId&&<option value="PAYMENT_NOTE">Catatan rekonsiliasi</option>}</>}</select></label>
-    {action==='GRANT_PLAN'&&<><p className="text-sm text-amber-800">Ini pemberian akses manual, bukan bukti pembayaran. Alasan dan nilai sebelum/sesudah akan diaudit.</p>
+    {action==='GRANT_PLAN'&&<><p className="text-sm text-amber-800">Perubahan akses manual, bukan pembayaran atau refund. Paket aktif mempertahankan tanggal akhir dan nilai pembayaran sebelumnya; siklus paket berbayar tidak dapat diubah lewat kompensasi. Gunakan checkout merchant untuk mengganti siklus billing. Alasan dan nilai sebelum/sesudah diaudit.</p>
      <div className="flex flex-wrap gap-3"><select aria-label="Paket tujuan" value={planId} onChange={e=>setPlanId(e.target.value)} className="border p-2">{PAID_SAAS_PLANS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
      <select aria-label="Periode billing" value={cycle} onChange={e=>setCycle(e.target.value)} className="border p-2"><option>MONTHLY</option><option>YEARLY</option></select>
      <label>Add-on outlet <input aria-label="Jumlah add-on outlet" type="number" min="0" max="100" value={extras} onChange={e=>setExtras(Number(e.target.value))} className="border p-2 w-20"/></label></div></>}

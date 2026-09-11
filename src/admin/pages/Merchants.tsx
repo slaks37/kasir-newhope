@@ -323,13 +323,13 @@ export default function Merchants({
                       {!m.is_active && <span className="ml-6 text-[10px] text-rose-600 font-bold">[Nonaktif]</span>}
                     </Td>
                     <Td><SectorChip sector={m.business_sector} /></Td>
-                    <Td align="right" className="font-semibold">{angka(m.outlet_count)}</Td>
-                    <Td align="right" className="font-mono font-bold text-slate-900">{angka(m.transaction_count || m.tx_count_30d)}</Td>
+                    <Td align="right" className="font-semibold">{m.outlet_count===undefined?'—':angka(m.outlet_count)}</Td>
+                    <Td align="right" className="font-mono font-bold text-slate-900">{data.financialDetail?angka(m.transaction_count || m.tx_count_30d):'Akses terbatas'}</Td>
                     <Td align="right" className="font-mono font-black text-slate-950">
-                      {rupiah(revenue)}
+                      {data.financialDetail?rupiah(revenue):'Akses terbatas'}
                     </Td>
                     <Td align="right" className="font-mono font-black text-emerald-700">
-                      {rupiah(profit)}
+                      {data.financialDetail?rupiah(profit):'Akses terbatas'}
                     </Td>
                     <Td>
                       <span className={`text-xs font-semibold ${!m.last_transaction_at ? 'text-slate-400' : 'text-slate-700'}`}>

@@ -32,6 +32,10 @@ async function buildRuntime() {
   app.get('/api/health',(_req,res)=>res.json({ok:true}));
   app.use((_req,res)=>res.status(404).json({ok:false,error:'NOT_FOUND'}));
   app.use((err:any,_req:any,res:any,_next:any)=>{
+    if(_req.path==='/api/v1/webhooks/doku') {
+      console.warn('[doku] NOTIFICATION_PARSER_OR_RUNTIME_ERROR');
+      return res.status(err.type==='entity.parse.failed'?400:err.type==='entity.too.large'?413:500).json({ok:false,error:'NOTIFICATION_REQUEST_FAILED'});
+    }
     console.error('[api]',err.message);res.status(500).json({ok:false,error:'SERVICE_UNAVAILABLE'});
   });
   return app;

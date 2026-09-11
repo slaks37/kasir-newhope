@@ -37,7 +37,7 @@ export function requestIdSaatIni(): string | null {
 }
 
 export function buatRequestId(): string {
-  return randomUUID().slice(0, 8);
+  return randomUUID();
 }
 
 type Level = 'info' | 'warn' | 'error';

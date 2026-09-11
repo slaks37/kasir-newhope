@@ -4,12 +4,13 @@ import type { Db } from '../shared/db';
 import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus } from './engine';
-import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature } from '../../api/_doku';
+import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH } from '../../api/_doku';
 
 export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
-      if (!(err instanceof BillingError)) console.error('[billing]',(err as Error).message);
+      if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
+      if (!(err instanceof BillingError)) console.error('[billing] INTERNAL_OPERATION_FAILED');
       res.status(err instanceof BillingError?err.status:500).json({ok:false,error:err instanceof BillingError?err.message:'BILLING_UNAVAILABLE'});
     }
   };
@@ -54,7 +55,9 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');
     if (!isDokuConfigured()) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
-    const quote=await createQuote(db,tenantId,req.body || {});
+    let allowedChannels:string[];
+    try{allowedChannels=getDokuAllowedChannels();}catch{throw new BillingError(503,'DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');}
+    const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels};
     if (quote.amount<=0) throw new BillingError(409,'ZERO_CHARGE_REQUIRES_SUPPORT');
     const origin=process.env.PUBLIC_APP_URL;
     if (!origin || !/^https:\/\//.test(origin)) throw new BillingError(503,'PUBLIC_APP_URL_NOT_CONFIGURED');
@@ -83,14 +86,25 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   // Never expose an endpoint that turns a client request into money received.
   app.post('/api/v1/subscription/simulate-payment',(_req,res)=>res.status(403).json({ok:false,error:'PAYMENT_SIMULATION_DISABLED'}));
   app.post('/api/v1/webhooks/payment-gateway',(_req,res)=>res.status(410).json({ok:false,error:'USE_SIGNED_DOKU_WEBHOOK'}));
-  app.post('/api/v1/webhooks/doku',run(async(req,res)=>{
+  app.post(DOKU_NOTIFICATION_PATH,run(async(req,res)=>{
     const raw=(req as any).rawBody;
-    if (!raw || !verifyDokuWebhookSignature(req.headers,raw,'/api/v1/webhooks/doku')) throw new BillingError(401,'INVALID_WEBHOOK_SIGNATURE');
-    const body=req.body;
+    if (!raw || !verifyDokuWebhookSignature(req.headers,raw,DOKU_NOTIFICATION_PATH)) throw new BillingError(401,'INVALID_WEBHOOK_SIGNATURE');
+    let channels:string[];
+    try{channels=getDokuAllowedChannels();}catch{throw new BillingError(503,'DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');}
+    // Interpret exactly the authenticated bytes, never a transformed req.body.
+    let body:any;try{body=JSON.parse(raw.toString('utf8'));}catch{throw new BillingError(400,'INVALID_NOTIFICATION_JSON');}
+    if(!body || typeof body!=='object' || Array.isArray(body))throw new BillingError(400,'INVALID_NOTIFICATION_BODY');
     const status=String(body?.transaction?.status || '');
+    const channel=typeof body?.channel?.id==='string'?body.channel.id:'';
+    const invoice=body?.order?.invoice_number,amount=body?.order?.amount;
+    if(typeof invoice!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(invoice) ||
+      !['string','number'].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount)))throw new BillingError(400,'INVALID_NOTIFICATION_ORDER');
+    const issue=!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':!['SUCCESS','FAILED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined;
     const result=await reconcilePayment(db,{eventKey:String(req.headers['request-id'] || ''),
-      invoiceNumber:String(body?.order?.invoice_number || ''),reference:String(body?.transaction?.original_request_id || req.headers['request-id'] || ''),
-      amount:Number(body?.order?.amount),currency:String(body?.order?.currency || 'IDR'),success:status==='SUCCESS',payload:body});
+      invoiceNumber:invoice,reference:String(body?.transaction?.original_request_id || req.headers['request-id'] || '').slice(0,128),
+      amount:Number(amount),currency:body?.order?.currency===undefined?'IDR':String(body.order.currency),success:status==='SUCCESS',
+      channel,validationIssue:issue,contentDigest:generateDigest(raw),payload:{status,channel,requestTimestamp:req.headers['request-timestamp']}});
     res.json(result);
   }));
+  app.all(DOKU_NOTIFICATION_PATH,(_req,res)=>res.set('Allow','POST').status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'}));
 }

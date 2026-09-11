@@ -1,13 +1,19 @@
 import type express from 'express';
+import { subscriptionDetail } from './subscriptionDetail';
 import type { Db } from '../../services/shared/db';
 import { BillingError } from '../../services/billing/engine';
 import { ensureSubscription, outletUsage, serializeSubscription } from '../../services/billing/engine';
-import { billingQuote, lifecycleStage, subscriptionAccess } from '../config/subscriptionPolicy';
+import { manualTierChange, lifecycleStage, subscriptionAccess } from '../config/subscriptionPolicy';
 import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID } from '../config/saasPlans';
 
 export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Promise<Db>,guard:any,wrap:any) {
+  app.get('/api/admin/tenants/:tenantId/subscription-detail',guard('VIEW_MERCHANT_DETAIL'),wrap(async(req:any,res:any,db:Db)=>{
+    const detail=await subscriptionDetail(db,req.params.tenantId);
+    if(!detail)return res.status(404).json({ok:false,error:'TENANT_NOT_FOUND'});
+    res.json({ok:true,...detail});
+  }));
   app.get('/api/admin/subscriptions',guard('VIEW_MERCHANT_HEALTH'),wrap(async(req:any,res:any,db:Db)=>{
-    const {rows}=await db.query(`SELECT t.id,t.name,t.owner_user_ref,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
+    const {rows}=await db.query(`SELECT t.id,t.name,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
       s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,
       (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) AS outlet_count,
       (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
@@ -57,6 +63,7 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
         const tenant=await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[req.params.tenantId]);
         if(!tenant.rowCount) throw new BillingError(404,'TENANT_NOT_FOUND');
         const before=await ensureSubscription(c,req.params.tenantId);
+        let invoiceBefore:any=null,invoiceAfter:any=null;
         if(action==='EXTEND_TRIAL') {
           const days=Number(req.body.days);
           if(!Number.isInteger(days)||days<1||days>14 || before.plan_id!==TRIAL_PLAN_ID) throw new BillingError(400,'INVALID_TRIAL_EXTENSION');
@@ -64,22 +71,26 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
             grace_period_end=greatest(current_period_end,now())+($2+14)*interval '1 day',status='TRIAL',revision=revision+1,updated_at=now() WHERE id=$1`,[before.id,days]);
         }
         if(action==='GRANT_PLAN') {
-          let q;try{q=billingQuote(before,req.body,await outletUsage(c,req.params.tenantId));}catch(e){throw new BillingError(400,(e as Error).message);}
+          let q;try{q=manualTierChange(before,req.body,await outletUsage(c,req.params.tenantId));}catch(e){throw new BillingError(400,(e as Error).message);}
           // Explicit complimentary override, not a fabricated payment.
-          await c.query(`UPDATE billing.subscriptions SET plan_id=$2,billing_cycle=$3,extra_outlets=$4,recurring_amount=0,
+          await c.query(`UPDATE billing.subscriptions SET plan_id=$2,billing_cycle=$3,extra_outlets=$4,recurring_amount=$7,
             status='ACTIVE',current_period_start=$5,current_period_end=$6,grace_period_end=$6::timestamptz+interval '14 days',revision=revision+1,updated_at=now() WHERE id=$1`,
-            [before.id,q.planId,q.billingCycle,q.extraOutlets,q.periodStart,q.periodEnd]);
+            [before.id,q.planId,q.billingCycle,q.extraOutlets,q.periodStart,q.periodEnd,q.recurringAmount]);
         }
         if(action==='PAYMENT_NOTE') {
-          const invoice=await c.query('SELECT id FROM billing.invoices WHERE id=$1 AND tenant_id=$2',[req.body.invoiceId,req.params.tenantId]);
+          const invoice=await c.query('SELECT id,reconciliation_note,reconciliation_status,payment_status FROM billing.invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE',[req.body.invoiceId,req.params.tenantId]);
           if(!invoice.rowCount) throw new BillingError(404,'INVOICE_NOT_FOUND');
+          invoiceBefore=invoice.rows[0];
           await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[req.body.invoiceId,reason]);
+          invoiceAfter={...invoiceBefore,reconciliation_note:reason};
         }
         const after=(await c.query('SELECT * FROM billing.subscriptions WHERE id=$1',[before.id])).rows[0];
         // Required audit and mutation share one transaction: audit failure rolls
         // back the grant/extension. There is no best-effort success here.
-        await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state)
-          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,[req.params.tenantId,req.internal.id,action,reason,JSON.stringify(before),JSON.stringify({...after,invoiceId:req.body.invoiceId})]);
+        await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)
+          VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)`,[req.params.tenantId,req.internal.id,action,reason,
+          JSON.stringify({...before,invoice:invoiceBefore}),JSON.stringify({...after,invoice:invoiceAfter}),req.auditRequestId,
+          req.ip || null,String(req.headers['user-agent'] || '').slice(0,512)]);
         return serializeSubscription(after);
       });
       res.json({ok:true,subscription:result});

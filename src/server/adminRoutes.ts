@@ -10,6 +10,8 @@
  */
 
 import type express from 'express';
+import { randomUUID } from 'node:crypto';
+import { adminSecurityError } from './adminSecurity';
 import {
   AppEnvironment,
   InternalCapability,
@@ -58,6 +60,8 @@ function hostKlien(req: express.Request): string | undefined {
 interface AdminRequest extends express.Request {
   internal?: InternalIdentity;
   environment?: AppEnvironment | null;
+  auditRequestId?: string;
+  mfaRequired?: boolean;
 }
 
 // Membership is provisioned explicitly with a verified Supabase user subject.
@@ -65,15 +69,21 @@ interface AdminRequest extends express.Request {
 export async function ensureInternalUsers(_db: Db): Promise<void> {}
 
 async function recordAccess(db: Db, who: InternalIdentity, action: string, resource: string,
-  merchantId: string | null, justification: string | null, ip: string | null) {
+  merchantId: string | null, justification: string | null, ip: string | null, req: AdminRequest) {
   await db.query(`INSERT INTO internal.internal_access_log
-    (id,internal_user_id,internal_role,target_id,action,resource,justification,ip_address)
-    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7)`,
-    [who.id,who.role,merchantId,action,resource,justification,ip]);
+    (id,internal_user_id,internal_role,target_id,action,resource,justification,ip_address,request_id,user_agent)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [who.id,who.role,merchantId,action,resource,justification,ip,req.auditRequestId,String(req.headers['user-agent'] || '').slice(0,512)]);
 }
 
 export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer): void {
-  function guard(capability: InternalCapability) {
+  app.use('/api/admin',(req:AdminRequest,res,next)=>{
+    const forwarded=String(req.headers['x-request-id'] || '');
+    const trusted=process.env.INTERNAL_GATEWAY_TOKEN && req.headers['x-newhope-gateway-token']===process.env.INTERNAL_GATEWAY_TOKEN;
+    req.auditRequestId=trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded)?forwarded:randomUUID();
+    res.setHeader('X-Request-ID',req.auditRequestId);res.setHeader('Cache-Control','no-store');next();
+  });
+  function guard(capability: InternalCapability, enrollmentOnly=false) {
     return async(req:AdminRequest,res:express.Response,next:express.NextFunction)=>{
       try {
         const principal=await authenticate(req);
@@ -82,19 +92,30 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         const {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
         if(!rows[0] || !isInternalRole(rows[0].role)) return res.status(403).json({ok:false,error:'INTERNAL_MEMBERSHIP_REQUIRED'});
         const who:InternalIdentity={id:rows[0].id,email:rows[0].email,fullName:rows[0].full_name,role:rows[0].role};
+        req.mfaRequired=principal.aal!=='aal2';
+        const securityError=adminSecurityError(principal,req.method);
+        if(!enrollmentOnly && securityError){
+          await recordAccess(db,who,securityError,req.path,null,null,req.ip || null,req);
+          return res.status(403).json({ok:false,error:securityError,requestId:req.auditRequestId});
+        }
+        // Reject malformed/array filters, never let cleanFilter turn a required
+        // scope into null (which would mean every merchant).
+        const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        for(const value of [req.params.merchantId,req.params.tenantId,req.query.merchantId]) {
+          if(value!==undefined && (typeof value!=='string' || !uuid.test(value))) return res.status(400).json({ok:false,error:'INVALID_ID'});
+        }
         const target=String(req.params.merchantId || req.params.tenantId || req.query.merchantId || '') || null;
-        if(target && !/^[0-9a-f-]{36}$/i.test(target)) return res.status(400).json({ok:false,error:'INVALID_ID'});
         const reason=String(req.headers['x-justification'] || req.body?.reason || req.query.justification || '').trim() || null;
         if(!hasInternalCapability(who.role,capability)){
-          await recordAccess(db,who,'DENIED_'+capability,req.path,target,reason,req.ip || null);
+          await recordAccess(db,who,'DENIED_'+capability,req.path,target,reason,req.ip || null,req);
           return res.status(403).json({ok:false,error:'CAPABILITY_DENIED'});
         }
         // Support cannot enumerate sensitive books by omitting merchantId.
         if(who.role==='ROLE_INTERNAL_SUPPORT' && requiresAudit(capability) && (!target || !reason || reason.length<10)) {
-          await recordAccess(db,who,'BLOCKED_'+capability,req.path,target,reason,req.ip || null);
+          await recordAccess(db,who,'BLOCKED_'+capability,req.path,target,reason,req.ip || null,req);
           return res.status(400).json({ok:false,error:'MERCHANT_AND_JUSTIFICATION_REQUIRED'});
         }
-        if(requiresAudit(capability)) await recordAccess(db,who,capability,req.path,target,reason,req.ip || null);
+        if(requiresAudit(capability)) await recordAccess(db,who,capability,req.path,target,reason,req.ip || null,req);
         req.internal=who;req.environment='PROVIDER_BO';next();
       }catch(err){ next(err); }
     };
@@ -118,8 +139,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   /* ---------------------------------------------------------------------- */
 
   // Identitas dan menu hanya tersedia setelah token dan membership diverifikasi.
-  app.get('/api/admin/me',guard('VIEW_MERCHANT_HEALTH'),(req:AdminRequest,res)=>{
-    res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO'});
+  app.get('/api/admin/me',guard('VIEW_MERCHANT_HEALTH',true),(req:AdminRequest,res)=>{
+    res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO',mfaRequired:req.mfaRequired});
   });
   app.get('/api/admin/identities',guard('VIEW_ACCESS_AUDIT'),wrap(async(_req,res,db)=>{
     const {rows}=await db.query('SELECT email,full_name,role FROM internal.internal_users WHERE is_active ORDER BY role');
@@ -160,7 +181,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     '/api/admin/merchants',
     guard('VIEW_MERCHANT_HEALTH'),
     wrap(async (req, res, db) => {
-      res.json({ ok: true, ...(await repo.merchantDirectory(db, req.query as repo.ListFilter)) });
+      res.json({ ok: true, ...(await repo.merchantDirectory(db, req.query as repo.ListFilter,req.internal!.role==='ROLE_SUPERADMIN')) });
     })
   );
 
@@ -190,7 +211,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     '/api/admin/transactions/:id',
     guard('VIEW_TRANSACTION_LOG'),
     wrap(async (req, res, db) => {
-      const detail = await repo.transactionDetail(db, req.params.id);
+      const detail = await repo.transactionDetail(db, req.params.id,repo.cleanFilter(req.query).merchantId);
       if (!detail) return res.status(404).json({ ok: false, error: 'TRANSACTION_NOT_FOUND' });
       res.json({ ok: true, ...detail });
     })
@@ -232,8 +253,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   app.get(
     '/api/admin/activity/breakdown',
     guard('VIEW_ACTIVITY_LOG'),
-    wrap(async (_req, res, db) => {
-      res.json({ ok: true, rows: await repo.activityBreakdown(db) });
+    wrap(async (req, res, db) => {
+      res.json({ ok: true, rows: await repo.activityBreakdown(db,repo.cleanFilter(req.query).merchantId) });
     })
   );
 
@@ -247,7 +268,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     wrap(async (_req, res, db) => {
       const { rows } = await db.query(
         `SELECT l.id, l.internal_role, l.action, l.resource, l.justification,
-                l.accessed_at, u.email AS internal_email, u.full_name AS internal_name,
+                l.accessed_at,l.request_id,l.user_agent,l.ip_address, u.email AS internal_email, u.full_name AS internal_name,
                 t.name AS merchant_name
            FROM internal.internal_access_log l
            JOIN internal.internal_users u ON u.id = l.internal_user_id

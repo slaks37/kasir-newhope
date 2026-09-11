@@ -11,6 +11,8 @@ import type { Db } from './db';
 export interface AuthPrincipal {
   subject: string;
   email?: string;
+  aal?: 'aal1' | 'aal2';
+  mfaVerifiedAt?: number;
 }
 
 const LOCAL_BYPASS = () => process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
@@ -45,7 +47,14 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
     if (!upstream.ok) return null;
     const user = (await upstream.json()) as { id?: unknown; email?: unknown };
     if (typeof user.id !== 'string' || !user.id) return null;
-    return { subject: user.id, email: typeof user.email === 'string' ? user.email : undefined };
+    // Decode ONLY after Auth has verified this exact bearer token. Never trust
+    // browser headers, user_metadata, or token_refresh as proof of recent MFA.
+    const claims = JSON.parse(Buffer.from(match[1].split('.')[1], 'base64url').toString('utf8'));
+    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now()/1000) return null;
+    const times = Array.isArray(claims.amr) ? claims.amr.filter((a:any)=>a.method==='totp' &&
+      Number.isFinite(a.timestamp) && a.timestamp<=Date.now()/1000+30).map((a:any)=>a.timestamp) : [];
+    return { subject: user.id, email: typeof user.email === 'string' ? user.email : undefined,
+      aal: claims.aal === 'aal2' ? 'aal2' : 'aal1', mfaVerifiedAt: times.length ? Math.max(...times) : undefined };
   } catch {
     return null;
   }

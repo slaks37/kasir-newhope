@@ -181,7 +181,7 @@ export async function dailyRevenue(db: Db, days = 30) {
 /* MERCHANT                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export async function merchantDirectory(db: Db, f: ListFilter = {}) {
+export async function merchantDirectory(db: Db, f: ListFilter = {}, financialDetail=true) {
   const c = cleanFilter(f);
   const w = new Where();
   w.add((p) => `d.business_sector = ${p}`, c.sector);
@@ -197,7 +197,7 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
        LEFT JOIN LATERAL (SELECT count(*)::int AS transaction_count,COALESCE(sum(total_amount),0) AS gross_revenue,max(created_at) AS last_transaction_at
          FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) r ON true
        ${w.sql()}
-      ORDER BY d.gross_revenue DESC, d.merchant_name
+      ORDER BY d.merchant_name,d.merchant_id
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
     [...w.params, c.limit, c.offset]
   );
@@ -206,7 +206,10 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}) {
     `SELECT COUNT(*)::int AS total FROM contract.merchant_directory d ${w.sql()}`,
     w.params
   );
-  return { rows:rows.map(withSubscription), total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
+  return { rows:rows.map(withSubscription).map(r=>financialDetail?r:{merchant_id:r.merchant_id,merchant_name:r.merchant_name,
+    business_sector:r.business_sector,is_active:r.is_active,joined_at:r.joined_at,subscription_status:r.subscription_status,
+    access_mode:r.access_mode,plan_name:r.plan_name,churn_risk_score:r.churn_risk_score,days_since_last_txn:r.days_since_last_txn}),
+    financialDetail,total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
 }
 
 export async function merchantDetail(db: Db, merchantId: string) {
@@ -299,11 +302,11 @@ export async function transactionLog(db: Db, f: ListFilter = {}) {
   };
 }
 
-export async function transactionDetail(db: Db, id: string) {
+export async function transactionDetail(db: Db, id: string, merchantId:string|null=null) {
   if (!UUID_RE.test(id)) return null;
   const head = await db.query(
-    `SELECT * FROM contract.transaction_log WHERE id = $1`,
-    [id]
+    `SELECT * FROM contract.transaction_log WHERE id = $1 AND ($2::uuid IS NULL OR merchant_id=$2)`,
+    [id,merchantId]
   );
   if (!head.rows.length) return null;
 
@@ -435,12 +438,12 @@ export async function activityLog(db: Db, f: ListFilter = {}) {
   return { rows, total: cnt[0]?.total ?? 0, limit: c.limit, offset: c.offset };
 }
 
-export async function activityBreakdown(db: Db) {
+export async function activityBreakdown(db: Db, merchantId:string|null=null) {
   const { rows } = await db.query(
     `SELECT business_sector, app_module, event_type, severity,
-            event_count::int, merchants_affected::int, last_seen_at
-       FROM contract.admin_activity_by_sector
-      ORDER BY event_count DESC`
+            count(*)::int AS event_count,count(DISTINCT merchant_id)::int AS merchants_affected,max(occurred_at) AS last_seen_at
+       FROM contract.admin_activity_log WHERE ($1::uuid IS NULL OR merchant_id=$1)
+       GROUP BY business_sector,app_module,event_type,severity ORDER BY event_count DESC`,[merchantId]
   );
   return rows;
 }

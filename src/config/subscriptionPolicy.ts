@@ -49,3 +49,14 @@ export function billingQuote(sub: any, input: any, outletCount: number, now = ne
     periodStart: start.toISOString(), periodEnd: addBillingPeriod(start, cycle).toISOString(),
     revision: Number(sub.revision || 0), maxOutlets: plan.maxOutlets + extras };
 }
+
+/** A complimentary admin tier override is not a new paid billing period. */
+export function manualTierChange(sub:any,input:any,outletCount:number,now=new Date()) {
+  const active=sub.status==='ACTIVE' && Date.parse(sub.current_period_end)>now.getTime();
+  const paid=active && Number(sub.recurring_amount)>0;
+  if(paid && input.billingCycle && input.billingCycle!==sub.billing_cycle) throw new Error('PAID_CYCLE_CHANGE_REQUIRES_CHECKOUT');
+  const quote=billingQuote({...sub,status:'EXPIRED',recurring_amount:0},input,outletCount,now);
+  return {...quote,periodStart:active?new Date(sub.current_period_start).toISOString():quote.periodStart,
+    periodEnd:active?new Date(sub.current_period_end).toISOString():quote.periodEnd,
+    recurringAmount:active?Number(sub.recurring_amount || 0):0};
+}

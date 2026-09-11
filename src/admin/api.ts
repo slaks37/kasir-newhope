@@ -21,6 +21,7 @@ export interface Session {
   user: { email: string; fullName: string; role: InternalRole };
   capabilities: string[];
   environment: string;
+  mfaRequired?: boolean;
 }
 
 export const ROLE_LABEL: Record<InternalRole, string> = {
@@ -176,6 +177,10 @@ async function request(path:string,params?:Record<string,unknown>,body?:any):Pro
   const response=await fetch('/api/admin/'+path+(query.size?'?'+query:''),
     {method:body?'POST':'GET',headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   const result=await response.json();
+  if(response.status===403 && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {
+    window.dispatchEvent(new Event('admin-mfa-required'));
+    throw new ApiError(403,result.error,'Verifikasi autentikator diperlukan. Setelah verifikasi, tinjau dan kirim kembali tindakan Anda.');
+  }
   if(!response.ok || result.ok===false) throw new ApiError(response.status,result.error || 'API_ERROR',result.detail || result.error || 'Permintaan gagal.');
   return result;
 }
@@ -208,4 +213,5 @@ export const api={
   payments:()=>request('payments'),
   support:(tenantId:string,body:any)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',undefined,body),
   supportHistory:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',{justification}),
+  subscriptionDetail:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/subscription-detail',{justification}),
 };

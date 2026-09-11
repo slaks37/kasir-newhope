@@ -141,6 +141,11 @@ export async function startService(opts: ServiceOptions): Promise<void> {
   // async membuat Express menjawab dengan stack trace HTML — yang membocorkan
   // nama tabel dan jalur berkas ke siapa pun yang memanggil.
   app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if(req.path==='/api/v1/webhooks/doku') {
+      log.warn('NOTIFICATION_PARSER_OR_RUNTIME_ERROR');
+      if(!res.headersSent)res.status(err.type==='entity.parse.failed'?400:err.type==='entity.too.large'?413:500).json({ok:false,error:'NOTIFICATION_REQUEST_FAILED'});
+      return;
+    }
     log.error('handler gagal', { method: req.method, path: req.path, sebab: err?.message || String(err) });
     if (res.headersSent) return;
     res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
