@@ -583,6 +583,7 @@ export type PermissionFeature =
   | 'stock_adjustment' 
   | 'user_management'
   | 'billing_subscription'
+  | 'payment'
   | 'labor';
 
 export interface PromoCode {

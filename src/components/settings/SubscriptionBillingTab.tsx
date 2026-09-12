@@ -8,7 +8,7 @@ async function billingRequest(path:string,body?:any){
  const data=await r.json();if(!r.ok || !data.ok)throw new Error(data.error || 'Permintaan billing gagal');return data;
 }
 export const SubscriptionBillingTab:React.FC=()=>{
- const {currentUser}=usePOS();
+ const {currentUser,setActiveTab}=usePOS();
  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [yearly,setYearly]=useState(true),[extras,setExtras]=useState(0),[quote,setQuote]=useState<any>(null);
  const load=async()=>{setLoading(true);setError('');try{const s=await billingRequest('status');setData(s);setExtras(s.outlets.extra);window.dispatchEvent(new Event('subscription-updated'));}catch(e:any){setError(e.message);}finally{setLoading(false);}};
@@ -22,7 +22,12 @@ export const SubscriptionBillingTab:React.FC=()=>{
  };
  return <div className="space-y-6">
   <section className="rounded-3xl bg-slate-900 text-white p-6">
-   <div className="flex justify-between gap-3"><h2 className="text-xl font-bold">Langganan & outlet</h2><button disabled={loading} onClick={load} className="underline">Muat ulang status</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold">Langganan & outlet</h2>
+      <div className="flex items-center gap-3">
+        <button onClick={()=>setActiveTab('payment')} className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs cursor-pointer shadow-sm">Buka Halaman Pembayaran &rarr;</button>
+        <button disabled={loading} onClick={load} className="underline text-xs">Muat ulang status</button>
+      </div>
+    </div>
    {loading?<p className="mt-4">Memeriksa langganan…</p>:data?<div className="grid sm:grid-cols-3 gap-5 mt-5">
     <div><p className="text-slate-400 text-xs">PAKET</p><p className="font-bold">{data.plan?.name}</p><p>{data.subscription.billingCycle}</p></div>
     <div><p className="text-slate-400 text-xs">AKSES</p><p>{data.subscription.status} · {data.accessMode}</p><p>{data.daysLeft} hari tersisa</p><small>Berakhir {formatDateTime(data.subscription.currentPeriodEnd)}</small></div>

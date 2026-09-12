@@ -95,8 +95,8 @@ interface POSContextType {
    */
   tenant: TenantInfo;
 
-  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor';
-  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor') => void;
+  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment';
+  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment') => void;
   
   categories: Category[];
   products: Product[];
@@ -394,7 +394,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     createdAt: authUser?.created_at || new Date().toISOString(),
   };
 
-  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor'>('overview');
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment'>('overview');
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {

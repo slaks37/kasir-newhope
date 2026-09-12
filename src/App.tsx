@@ -56,6 +56,9 @@ const SettingsManager = lazy(() =>
 const SmartLaborManager = lazy(() =>
   import('./components/labor/SmartLaborManager').then((m) => ({ default: m.SmartLaborManager }))
 );
+const SubscriptionPaymentPage = lazy(() =>
+  import('./components/payment/SubscriptionPaymentPage').then((m) => ({ default: m.SubscriptionPaymentPage }))
+);
 
 const TabLoading: React.FC = () => (
   <div className="flex-1 flex items-center justify-center bg-slate-50/70">
@@ -135,9 +138,11 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   React.useEffect(() => {
     const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan');
     const pendingTab = sessionStorage.getItem('nhpos_pending_tab');
-    if (pendingPlan || pendingTab) {
+    if (pendingPlan) {
+      setActiveTab('payment');
+    } else if (pendingTab) {
       sessionStorage.removeItem('nhpos_pending_tab');
-      setActiveTab((pendingTab as any) || 'settings');
+      setActiveTab(pendingTab as any);
     }
   }, [setActiveTab]);
 
@@ -306,6 +311,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
               {activeTab === 'labor' && (
                 <Suspense fallback={<TabLoading />}>
                   <SmartLaborManager />
+                </Suspense>
+              )}
+
+              {activeTab === 'payment' && (
+                <Suspense fallback={<TabLoading />}>
+                  <SubscriptionPaymentPage />
                 </Suspense>
               )}
             </>

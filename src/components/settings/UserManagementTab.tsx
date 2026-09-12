@@ -109,6 +109,7 @@ export const UserManagementTab: React.FC = () => {
     stock_adjustment: 'Penyesuaian Stok Barang',
     user_management: 'Kelola Pengguna (RBAC)',
     billing_subscription: 'Langganan SaaS & Billing',
+    payment: 'Halaman Pembayaran Langganan',
     labor: 'Penggajian & Komisi Karyawan',
   };
 
