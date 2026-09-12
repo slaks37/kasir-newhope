@@ -18,6 +18,7 @@ import {
   Shield,
   Home,
   Coins,
+  CreditCard,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 
@@ -113,6 +114,12 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
       icon: Coins,
       desc: 'Perhitungan komisi, bagi hasil tim & slip gaji',
     },
+    {
+      id: 'payment' as const,
+      label: 'Langganan & Bayar',
+      icon: CreditCard,
+      desc: 'Kelola paket langganan toko & pembayaran',
+    },
   ];
 
   return (
@@ -168,14 +175,14 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
           aria-expanded={showMoreMenu}
           onClick={() => setShowMoreMenu(true)}
           className={`relative flex flex-col items-center justify-center flex-1 py-1.5 px-1 rounded-xl transition-all ${
-            showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor'].includes(activeTab)
+            showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor', 'payment'].includes(activeTab)
               ? 'text-amber-600 font-bold'
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <MoreHorizontal className="w-5 h-5" />
           <span className="text-[11px] tracking-tight mt-0.5">Lainnya</span>
-          {(showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor'].includes(activeTab)) && (
+          {(showMoreMenu || ['customers', 'reports', 'ai', 'settings', 'labor', 'payment'].includes(activeTab)) && (
             <span className="absolute bottom-0 w-8 h-0.5 bg-amber-500 rounded-full" />
           )}
         </button>

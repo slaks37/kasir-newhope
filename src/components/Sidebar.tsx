@@ -19,6 +19,7 @@ import {
   Home,
   BookOpen,
   Coins,
+  CreditCard,
 } from "lucide-react";
 
 import { BUSINESS_PRESETS } from "../data/businessPresets";
@@ -108,6 +109,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: "settings" as const,
       label: "Pengaturan",
       icon: Settings,
+    },
+    {
+      id: "payment" as const,
+      label: "Langganan & Bayar",
+      icon: CreditCard,
     },
   ];
 
