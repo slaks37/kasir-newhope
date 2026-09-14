@@ -135,16 +135,25 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const totalCartAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
 
+  const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
+  const isPendingPaidPlan = Boolean(pendingPlan && (pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly'));
+  const isSubscriptionLocked = settings.subscription?.status === 'EXPIRED' ||
+    settings.subscription?.status === 'PENDING_PAYMENT' ||
+    settings.subscription?.accessMode === 'RESTRICTED';
+
+  const isPaymentRequired = isPendingPaidPlan || isSubscriptionLocked;
+
   React.useEffect(() => {
-    const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan');
     const pendingTab = sessionStorage.getItem('nhpos_pending_tab');
-    if (pendingPlan) {
-      setActiveTab('payment');
+    if (isPaymentRequired) {
+      if (activeTab !== 'payment') {
+        setActiveTab('payment');
+      }
     } else if (pendingTab) {
       sessionStorage.removeItem('nhpos_pending_tab');
       setActiveTab(pendingTab as any);
     }
-  }, [setActiveTab]);
+  }, [isPaymentRequired, activeTab, setActiveTab]);
 
   const handleProductSelect = (product: Product) => {
     if (
@@ -192,6 +201,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
             onOpenEndShift={() => setShowShiftModal(true)}
             onOpenClockIn={() => setShowClockInModal(true)}
             onGoToHome={onGoToHome}
+            isPaymentRequired={isPaymentRequired}
           />
         </div>
 
@@ -352,6 +362,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
         onOpenClockIn={() => setShowClockInModal(true)}
         onOpenSwitchUser={() => setShowSwitchUserModal(true)}
         onGoToHome={onGoToHome}
+        isPaymentRequired={isPaymentRequired}
       />
 
       {showCustomerModal && (

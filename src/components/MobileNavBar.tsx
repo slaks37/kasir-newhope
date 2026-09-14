@@ -28,6 +28,7 @@ interface MobileNavBarProps {
   onOpenClockIn: () => void;
   onOpenSwitchUser: () => void;
   onGoToHome?: () => void;
+  isPaymentRequired?: boolean;
 }
 
 export const MobileNavBar: React.FC<MobileNavBarProps> = ({
@@ -36,6 +37,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
   onOpenClockIn,
   onOpenSwitchUser,
   onGoToHome,
+  isPaymentRequired = false,
 }) => {
   const {
     activeTab,
@@ -133,6 +135,8 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
           const Icon = item.icon;
           const isActive = activeTab === item.id && !showMoreMenu;
           const isAllowed = hasPermission(item.id as PermissionFeature);
+          const isBlockedByPayment = isPaymentRequired && item.id !== 'payment';
+          const isLocked = !isAllowed || isBlockedByPayment;
 
           return (
             <button
@@ -140,9 +144,15 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
               aria-current={isActive ? 'page' : undefined}
               onClick={() => {
                 setShowMoreMenu(false);
+                if (isBlockedByPayment) {
+                  setActiveTab('payment');
+                  return;
+                }
                 setActiveTab(item.id);
               }}
               className={`relative flex flex-col items-center justify-center flex-1 py-1.5 px-1 rounded-xl transition-all ${
+                isLocked ? 'opacity-50' : ''
+              } ${
                 isActive
                   ? 'text-amber-600 font-bold'
                   : 'text-slate-500 hover:text-slate-800'
@@ -150,7 +160,11 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
             >
               <div className="relative">
                 <Icon className={`w-5 h-5 transition-transform ${isActive ? 'scale-110' : ''}`} />
-                {item.badge !== undefined && (
+                {isLocked ? (
+                  <span className="absolute -top-1 -right-2 text-amber-500">
+                    <Lock size={10} />
+                  </span>
+                ) : item.badge !== undefined ? (
                   <span
                     className={`absolute -top-1.5 -right-2.5 min-w-4 h-4 px-1 rounded-full text-[10px] font-extrabold flex items-center justify-center shadow-xs ${
                       item.badgeColor || 'bg-amber-500 text-slate-950'
@@ -158,7 +172,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
                   >
                     {item.badge}
                   </span>
-                )}
+                ) : null}
               </div>
               <span className="text-[11px] tracking-tight mt-0.5 truncate max-w-full">
                 {item.label}
@@ -219,15 +233,23 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
                 const isAllowed = hasPermission(item.id as PermissionFeature);
+                const isBlockedByPayment = isPaymentRequired && item.id !== 'payment';
+                const isLocked = !isAllowed || isBlockedByPayment;
 
                 return (
                   <button
                     key={item.id}
                     onClick={() => {
                       setShowMoreMenu(false);
+                      if (isBlockedByPayment) {
+                        setActiveTab('payment');
+                        return;
+                      }
                       setActiveTab(item.id);
                     }}
                     className={`w-full flex items-center gap-3.5 p-3 rounded-2xl text-left transition-all ${
+                      isLocked ? 'opacity-60' : ''
+                    } ${
                       isActive
                         ? 'bg-amber-500/10 text-amber-900 border border-amber-300 shadow-xs'
                         : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200/70'
@@ -249,11 +271,15 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
                         <span className="font-bold text-xs text-slate-900 truncate">
                           {item.label}
                         </span>
-                        {!isAllowed && (
+                        {isBlockedByPayment ? (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold flex items-center gap-1">
+                            <Lock size={9} /> Perlu Bayar
+                          </span>
+                        ) : !isAllowed ? (
                           <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[9px] font-bold">
                             Terkunci
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <p className="text-[11px] text-slate-500 truncate">{item.desc}</p>
                     </div>

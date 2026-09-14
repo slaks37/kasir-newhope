@@ -47,24 +47,31 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
   // Check if user just arrived from onboarding
   const [isOnboarding, setIsOnboarding] = useState<boolean>(() => {
-    return Boolean(sessionStorage.getItem('nhpos_pending_checkout_plan'));
+    return Boolean(sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan'));
   });
 
   // Selected plan state
   const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
-    const pending = sessionStorage.getItem('nhpos_pending_checkout_plan');
+    const pending = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
     if (pending && (pending === 'plan-plus-monthly' || pending === 'plan-pro-monthly')) {
       return pending;
     }
     return 'plan-plus-monthly';
   });
 
-  const [yearly, setYearly] = useState<boolean>(true);
+  const [yearly, setYearly] = useState<boolean>(() => {
+    const cycle = sessionStorage.getItem('nhpos_pending_checkout_cycle') || localStorage.getItem('nhpos_pending_checkout_cycle');
+    return cycle ? cycle === 'YEARLY' : true;
+  });
   const [extraOutlets, setExtraOutlets] = useState<number>(0);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Status verification state
+  const [verifying, setVerifying] = useState<boolean>(false);
+  const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
 
   // Success Celebration State
   const [paymentSuccess, setPaymentSuccess] = useState<{
@@ -193,11 +200,80 @@ export const SubscriptionPaymentPage: React.FC = () => {
     });
   };
 
+  // Check payment verification with server & DOKU
+  const checkPaymentVerification = async (invId?: string, silent = false) => {
+    if (!silent) {
+      setVerifying(true);
+      setVerifyNotice(null);
+    }
+    try {
+      const url = invId
+        ? `/api/v1/subscription/verify?invoiceId=${encodeURIComponent(invId)}`
+        : '/api/v1/subscription/verify';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.ok && (data.paid || data.status === 'ACTIVE')) {
+        sessionStorage.removeItem('nhpos_pending_checkout_plan');
+        sessionStorage.removeItem('nhpos_pending_checkout_cycle');
+        localStorage.removeItem('nhpos_pending_checkout_plan');
+        localStorage.removeItem('nhpos_pending_checkout_cycle');
+        window.dispatchEvent(new CustomEvent('subscription-updated'));
+        fireConfetti();
+        const activeSub = data.subscription || settings.subscription;
+        setPaymentSuccess({
+          planName: activeSub?.plan?.name || selectedPlan.name,
+          billingCycle: activeSub?.billingCycle === 'YEARLY' ? 'Tahunan (12 Bulan)' : 'Bulanan',
+          validUntil: activeSub?.currentPeriodEnd ? formatDateTime(activeSub.currentPeriodEnd) : 'Aktif',
+          invoiceNumber: data.invoice?.invoiceNumber || (invId ? `NH-${invId}` : 'PAID'),
+        });
+        return true;
+      } else {
+        if (!silent) {
+          setVerifyNotice('Pembayaran belum terkonfirmasi oleh server. Jika Anda baru saja menyelesaikan transaksi di DOKU, mohon tunggu beberapa saat lalu coba periksa status kembali.');
+        }
+        return false;
+      }
+    } catch (e) {
+      if (!silent) {
+        setVerifyNotice('Gagal memeriksa status pembayaran. Pastikan koneksi internet aktif.');
+      }
+      return false;
+    } finally {
+      if (!silent) setVerifying(false);
+    }
+  };
+
+  // Check URL on mount / return from DOKU
+  useEffect(() => {
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    const match = hash.match(/invoice=([a-zA-Z0-9_-]+)/) || search.match(/invoice=([a-zA-Z0-9_-]+)/);
+    const invoiceId = match ? match[1] : undefined;
+
+    if (invoiceId) {
+      void checkPaymentVerification(invoiceId);
+      let attempts = 0;
+      const interval = window.setInterval(async () => {
+        attempts++;
+        if (attempts > 5) {
+          window.clearInterval(interval);
+          return;
+        }
+        const done = await checkPaymentVerification(invoiceId, true);
+        if (done) {
+          window.clearInterval(interval);
+        }
+      }, 3000);
+      return () => window.clearInterval(interval);
+    }
+  }, []);
+
   // Handle DOKU Checkout
   const handleProceedToPayment = async () => {
     if (!quote) return;
     setCheckoutLoading(true);
     setError(null);
+    setVerifyNotice(null);
 
     const requestKey = crypto.randomUUID();
 
@@ -217,67 +293,22 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
       if (res.ok && result.ok && result.paymentUrl && result.paymentUrl.startsWith('https://')) {
         // Redirect to DOKU Checkout Gateway
-        sessionStorage.removeItem('nhpos_pending_checkout_plan');
+        // We DO NOT remove pending_checkout_plan here so user cannot bypass by clicking back.
         window.location.assign(result.paymentUrl);
         return;
       }
 
-      // If DOKU Gateway is not configured or in dev fallback mode
       throw new Error(result.error || 'Gateway pembayaran sedang dalam konfigurasi.');
     } catch (err: any) {
       console.warn('DOKU checkout not completed:', err.message);
-      // If payment gateway isn't connected yet in local sandbox, allow simulated completion
       setError(
         err.message?.includes('PAYMENT_GATEWAY_NOT_CONFIGURED') || err.message?.includes('PUBLIC_APP_URL')
-          ? 'Gateway pembayaran DOKU sedang dalam mode sandbox/dev. Anda dapat menggunakan tombol "Simulasi Bayar (Dev Mode)" di bawah untuk mengaktifkan paket secara instan.'
+          ? 'Gateway pembayaran DOKU sedang dalam konfigurasi. Pastikan kredensial DOKU dan PUBLIC_APP_URL telah terkonfigurasi di server.'
           : err.message || 'Gagal memulai checkout. Silakan coba kembali.'
       );
     } finally {
       setCheckoutLoading(false);
     }
-  };
-
-  // Instant Activation / Simulated Payment (Dev & Demo Friendly)
-  const handleSimulatePaymentSuccess = () => {
-    sessionStorage.removeItem('nhpos_pending_checkout_plan');
-    const now = new Date();
-    const end = new Date(now);
-    if (yearly) {
-      end.setFullYear(end.getFullYear() + 1);
-    } else {
-      end.setMonth(end.getMonth() + 1);
-    }
-
-    const updatedSub = {
-      id: `sub-${crypto.randomUUID().slice(0, 8)}`,
-      tenantId: settings.subscription?.tenantId || 'tenant-default',
-      planId: selectedPlan.id,
-      status: 'ACTIVE' as const,
-      billingCycle: yearly ? ('YEARLY' as const) : ('MONTHLY' as const),
-      extraOutlets,
-      currentPeriodStart: now.toISOString(),
-      currentPeriodEnd: end.toISOString(),
-      cancelAtPeriodEnd: false,
-      accessMode: 'FULL' as const,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      plan: selectedPlan,
-    };
-
-    updateSettings({
-      ...settings,
-      subscription: updatedSub,
-    });
-
-    window.dispatchEvent(new Event('subscription-updated'));
-    fireConfetti();
-
-    setPaymentSuccess({
-      planName: selectedPlan.name,
-      billingCycle: yearly ? 'Tahunan (12 Bulan)' : 'Bulanan',
-      validUntil: formatDateTime(end.toISOString()),
-      invoiceNumber: `INV-NH-${Date.now().toString().slice(-6)}`,
-    });
   };
 
   // Start Free Trial Option
@@ -684,9 +715,18 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
           {/* Action Buttons */}
           <div className="space-y-3 pt-2">
+            {verifyNotice && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5 animate-slide-up">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold">{verifyNotice}</p>
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
-              disabled={checkoutLoading || quoteLoading}
+              disabled={checkoutLoading || quoteLoading || verifying}
               onClick={handleProceedToPayment}
               className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
@@ -703,25 +743,26 @@ export const SubscriptionPaymentPage: React.FC = () => {
               )}
             </button>
 
-            {/* Fallback / Testing Simulated Button */}
+            {/* Anti-Bypass Secure Controls */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={handleStartFreeTrial}
-                className="text-xs font-bold text-slate-300 hover:text-white underline cursor-pointer py-1 flex items-center gap-1.5"
+                className="text-xs font-bold text-slate-400 hover:text-white underline cursor-pointer py-1 flex items-center gap-1.5"
               >
                 <Gift className="w-3.5 h-3.5 text-amber-400" />
-                <span>Mulai Coba Gratis 45 Hari Dulu</span>
+                <span>Ganti ke Coba Gratis 45 Hari</span>
               </button>
 
               <button
                 type="button"
-                onClick={handleSimulatePaymentSuccess}
-                className="text-xs font-medium text-slate-500 hover:text-amber-400 cursor-pointer py-1 flex items-center gap-1"
-                title="Gunakan untuk menguji alur di environment lokal / sandbox tanpa gateway sungguhan"
+                onClick={() => void checkPaymentVerification()}
+                disabled={verifying}
+                className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                title="Cek verifikasi status pembayaran real-time ke server"
               >
-                <RefreshCw className="w-3 h-3" />
-                <span>Simulasi Bayar Berhasil (Dev Mode)</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
+                <span>{verifying ? 'Memverifikasi...' : 'Periksa Status Pembayaran'}</span>
               </button>
             </div>
           </div>

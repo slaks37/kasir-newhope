@@ -249,12 +249,16 @@ async function main(){
   const checkoutBody={planId:'plan-plus-monthly',billingCycle:'YEARLY',extraOutlets:2,requestKey:randomUUID()};
   const checkout=()=>fetch(url+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':'owner-two','content-type':'application/json'},body:JSON.stringify(checkoutBody)});
   const first=await checkout();assert.equal(first.status,200,await first.clone().text());const invoiceData=await first.json();
+  const verifyPending=await fetch(url+'/api/v1/subscription/verify?invoiceId='+invoiceData.invoice.id,{headers:{'x-auth-sub':'owner-two'}});
+  assert.equal(verifyPending.status,200);assert.equal((await verifyPending.json()).paid,false);
   const replay=await checkout();assert.equal(replay.status,200);assert.equal((await replay.json()).invoice.id,invoiceData.invoice.id);assert.equal(checkoutCalls,1);
   const raw=JSON.stringify({order:{invoice_number:invoiceData.invoice.invoiceNumber,amount:invoiceData.invoice.amount,currency:'IDR'},transaction:{status:'SUCCESS'},channel:{id:'VIRTUAL_ACCOUNT_BCA'}});
   const timestamp=new Date().toISOString();
   const headers={'content-type':'application/json','client-id':'test-client','request-id':'signed-event','request-timestamp':timestamp,
    signature:generateSignature('test-client','signed-event',timestamp,'/api/v1/webhooks/doku',generateDigest(raw),'test-secret')};
   const signed=await fetch(url+'/api/v1/webhooks/doku',{method:'POST',headers,body:raw});assert.equal(signed.status,200);assert.equal((await signed.json()).outcome,'APPLIED');
+  const verifyPaid=await fetch(url+'/api/v1/subscription/verify?invoiceId='+invoiceData.invoice.id,{headers:{'x-auth-sub':'owner-two'}});
+  assert.equal(verifyPaid.status,200);assert.equal((await verifyPaid.json()).paid,true);
   assert.equal((await ensureSubscription(db,other)).billing_cycle,'YEARLY');
   assert.equal((await fetch(url+'/api/v1/webhooks/doku',{method:'POST',headers,body:raw.replace('SUCCESS','FAILED')})).status,401);
   console.log('PASS: support RBAC, failed-audit rollback, trial extension, manual plan grant, checkout idempotency, real signed webhook and tamper rejection');

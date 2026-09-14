@@ -29,6 +29,7 @@ interface SidebarProps {
   onOpenEndShift: () => void;
   onOpenClockIn: () => void;
   onGoToHome?: () => void;
+  isPaymentRequired?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -36,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenEndShift,
   onOpenClockIn,
   onGoToHome,
+  isPaymentRequired = false,
 }) => {
   const {
     activeTab,
@@ -125,24 +127,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isAllowed = hasPermission(item.id as PermissionFeature);
+            const isBlockedByPayment = isPaymentRequired && item.id !== "payment";
+            const isLocked = !isAllowed || isBlockedByPayment;
             return (
               <button
                 key={item.id}
                 aria-current={activeTab === item.id ? "page" : undefined}
-                className={`nh-sidebar-item ${!isAllowed ? "is-locked" : ""}`}
+                className={`nh-sidebar-item ${isLocked ? "is-locked opacity-70" : ""}`}
                 title={
-                  !isAllowed
+                  isBlockedByPayment
+                    ? "Selesaikan pembayaran paket terlebih dahulu untuk membuka akses kasir & fitur lainnya"
+                    : !isAllowed
                     ? `Akses ${item.label} memerlukan izin Manager / Admin`
                     : undefined
                 }
-                onClick={() =>
-                  item.id === "ai" ? onOpenAiCopilot() : setActiveTab(item.id)
-                }
+                onClick={() => {
+                  if (isBlockedByPayment) {
+                    setActiveTab("payment");
+                    return;
+                  }
+                  if (item.id === "ai") onOpenAiCopilot();
+                  else setActiveTab(item.id);
+                }}
               >
                 <Icon />
                 <span>{item.label}</span>
-                {!isAllowed && <Lock size={13} className="ml-auto" />}
-                {isAllowed && item.badge ? (
+                {isLocked && <Lock size={13} className="ml-auto text-amber-500" />}
+                {!isLocked && item.badge ? (
                   <span className="nh-sidebar-count">{item.badge}</span>
                 ) : null}
               </button>
@@ -152,7 +163,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
       <div className="nh-sidebar-foot">
         <p className="nh-sidebar-caption">OPERASIONAL</p>
-        <button onClick={onOpenClockIn} className="nh-sidebar-item">
+        <button
+          onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenClockIn())}
+          className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
+          title={isPaymentRequired ? "Selesaikan pembayaran terlebih dahulu" : undefined}
+        >
           <UserCheck />
           <span>
             Absensi staf
@@ -161,8 +176,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               staf sedang bertugas
             </small>
           </span>
+          {isPaymentRequired && <Lock size={13} className="ml-auto text-amber-500" />}
         </button>
-        <button onClick={onOpenEndShift} className="nh-sidebar-item">
+        <button
+          onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenEndShift())}
+          className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
+          title={isPaymentRequired ? "Selesaikan pembayaran terlebih dahulu" : undefined}
+        >
           <Clock />
           <span>
             {shift.status === "OPEN" ? "Kelola shift" : "Mulai shift"}
@@ -172,9 +192,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 : "Belum ada shift aktif"}
             </small>
           </span>
-          <span
-            className={`nh-status-dot ${shift.status === "OPEN" ? "is-open" : ""}`}
-          />
+          {isPaymentRequired ? (
+            <Lock size={13} className="ml-auto text-amber-500" />
+          ) : (
+            <span
+              className={`nh-status-dot ${shift.status === "OPEN" ? "is-open" : ""}`}
+            />
+          )}
         </button>
         {onGoToHome && (
           <>

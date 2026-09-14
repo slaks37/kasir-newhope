@@ -1,7 +1,7 @@
 // Mocked outbound HTTP only; never counts as DOKU sandbox evidence.
 import assert from 'node:assert/strict';
 import {captureSandboxCheckout} from '../batch/doku-sandbox-evidence';
-import {createDokuCheckout,getDokuApiUrl,generateDigest,generateSignature} from '../../api/_doku';
+import {createDokuCheckout,getDokuApiUrl,generateDigest,generateSignature,generateGetSignature,checkDokuOrderStatus} from '../../api/_doku';
 
 const secret='MOCK_SECRET_NEVER_EXPORT',client='MOCK_CLIENT';
 const transport=(async(url:any,init:any)=>{
@@ -22,6 +22,24 @@ try {
   process.env.DOKU_API_URL='https://api-sandbox.doku.com';process.env.DOKU_CLIENT_ID=client;process.env.DOKU_SECRET_KEY=secret;
   globalThis.fetch=(async()=>new Response(JSON.stringify({error:{message:'PRIVATE_PROVIDER_RESPONSE'}}),{status:422})) as typeof fetch;
   await assert.rejects(()=>createDokuCheckout({order:{invoice_number:'test',amount:10000},payment:{payment_due_date:60}}),e=>String(e)==='Error: DOKU_API_ERROR_HTTP_422');
+
+  // Test GET signature and order status inquiry
+  globalThis.fetch=(async(url:any,init:any)=>{
+    assert.equal(url,'https://api-sandbox.doku.com/orders/v1/status/INV-123');
+    assert.equal(init.method,'GET');
+    assert.equal(init.headers.Signature,generateGetSignature(client,init.headers['Request-Id'],init.headers['Request-Timestamp'],'/orders/v1/status/INV-123',secret));
+    return new Response(JSON.stringify({
+      order:{invoice_number:'INV-123'},
+      transaction:{status:'SUCCESS',original_request_id:'REQ-999'},
+      channel:{id:'VIRTUAL_ACCOUNT_BCA'}
+    }),{status:200});
+  }) as typeof fetch;
+
+  const inquirySuccess=await checkDokuOrderStatus('INV-123');
+  assert.equal(inquirySuccess.ok,true);
+  assert.equal(inquirySuccess.status,'SUCCESS');
+  assert.equal(inquirySuccess.channelId,'VIRTUAL_ACCOUNT_BCA');
+  assert.equal(inquirySuccess.transactionId,'REQ-999');
 } finally {
   globalThis.fetch=savedFetch;
   for(const key of ['DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY']) {if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key];}

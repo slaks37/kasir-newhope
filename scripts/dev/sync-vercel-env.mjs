@@ -5,6 +5,11 @@ const envs = [
   { key: 'VITE_SUPABASE_URL', val: process.env.VITE_SUPABASE_URL },
   { key: 'VITE_SUPABASE_ANON_KEY', val: process.env.VITE_SUPABASE_ANON_KEY },
   { key: 'DATABASE_URL', val: process.env.DATABASE_URL },
+  { key: 'PUBLIC_APP_URL', val: process.env.PUBLIC_APP_URL },
+  { key: 'DOKU_CLIENT_ID', val: process.env.DOKU_CLIENT_ID },
+  { key: 'DOKU_SECRET_KEY', val: process.env.DOKU_SECRET_KEY },
+  { key: 'DOKU_API_URL', val: process.env.DOKU_API_URL },
+  { key: 'DOKU_ALLOWED_CHANNELS', val: process.env.DOKU_ALLOWED_CHANNELS },
   { key: 'DEEPSEEK_API_KEY', val: process.env.DEEPSEEK_API_KEY },
   { key: 'DEEPSEEK_BASE_URL', val: process.env.DEEPSEEK_BASE_URL },
   { key: 'DEEPSEEK_MODEL', val: process.env.DEEPSEEK_MODEL }

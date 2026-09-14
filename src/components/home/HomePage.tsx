@@ -335,9 +335,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [savingRate, setSavingRate] = useState(6.5);
   const sector = sectors.find((s) => s.id === selectedSector)!;
   const ai = aiExamples[aiQuery];
-  const openPOS = (targetTab: "pos" | "settings" | "overview" = "pos") => {
+  const openPOS = (targetTab: "pos" | "settings" | "overview" | "payment" = "pos") => {
     if (user) {
-      setActiveTab(targetTab);
+      setActiveTab(targetTab as any);
       onOpenPOS?.(targetTab);
     } else if (onOpenRegister) onOpenRegister();
     else onOpenLogin?.();
@@ -347,8 +347,24 @@ export const HomePage: React.FC<HomePageProps> = ({
     else openPOS();
   };
   const choosePlan = (id: string) => {
+    if (id === "plan-free") {
+      sessionStorage.removeItem("nhpos_pending_checkout_plan");
+      sessionStorage.removeItem("nhpos_pending_checkout_cycle");
+      localStorage.removeItem("nhpos_pending_checkout_plan");
+      localStorage.removeItem("nhpos_pending_checkout_cycle");
+      register();
+      return;
+    }
+    const cycle = isYearlyBilling ? "YEARLY" : "MONTHLY";
     sessionStorage.setItem("nhpos_pending_checkout_plan", id);
-    register();
+    sessionStorage.setItem("nhpos_pending_checkout_cycle", cycle);
+    localStorage.setItem("nhpos_pending_checkout_plan", id);
+    localStorage.setItem("nhpos_pending_checkout_cycle", cycle);
+    if (user) {
+      openPOS("payment");
+    } else {
+      register();
+    }
   };
   const navClose = () => setMenuOpen(false);
   const selectSector = (id: BusinessSector) => {

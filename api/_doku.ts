@@ -94,6 +94,25 @@ export function generateSignature(
   return `HMACSHA256=${hmacBase64}`;
 }
 
+export function generateGetSignature(
+  clientId: string,
+  requestId: string,
+  requestTimestamp: string,
+  requestTarget: string,
+  secretKey: string
+): string {
+  const componentSignature = `Client-Id:${clientId}\n` +
+    `Request-Id:${requestId}\n` +
+    `Request-Timestamp:${requestTimestamp}\n` +
+    `Request-Target:${requestTarget}`;
+
+  const hmac = crypto.createHmac('sha256', secretKey);
+  hmac.update(componentSignature, 'utf8');
+  const hmacBase64 = hmac.digest('base64');
+
+  return `HMACSHA256=${hmacBase64}`;
+}
+
 export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<{
   paymentUrl: string;
   rawResponse: DokuCheckoutResponse;
@@ -142,6 +161,69 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
 
   return {
     paymentUrl: data.response.payment.url,
+    rawResponse: data,
+  };
+}
+
+export interface DokuOrderStatusResponse {
+  ok: boolean;
+  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN';
+  transactionId?: string;
+  channelId?: string;
+  rawResponse?: any;
+}
+
+export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuOrderStatusResponse> {
+  const clientId = getDokuClientId();
+  const secretKey = getDokuSecretKey();
+  const apiUrl = getDokuApiUrl();
+
+  if (!clientId || !secretKey) {
+    throw new Error('DOKU_CREDENTIALS_NOT_CONFIGURED');
+  }
+
+  const requestId = crypto.randomUUID();
+  const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
+  const requestTarget = `/orders/v1/status/${invoiceNumber}`;
+  const signature = generateGetSignature(
+    clientId,
+    requestId,
+    requestTimestamp,
+    requestTarget,
+    secretKey
+  );
+
+  const response = await fetch(`${apiUrl}${requestTarget}`, {
+    method: 'GET',
+    redirect: 'error',
+    headers: {
+      'Client-Id': clientId,
+      'Request-Id': requestId,
+      'Request-Timestamp': requestTimestamp,
+      'Signature': signature,
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { ok: false, status: 'UNKNOWN' };
+    }
+    throw new Error(`DOKU_STATUS_INQUIRY_HTTP_${response.status}`);
+  }
+
+  const data = (await response.json()) as any;
+  const txStatus = String(data?.transaction?.status || data?.order?.status || '').toUpperCase();
+  const status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN' =
+    txStatus === 'SUCCESS' ? 'SUCCESS' :
+    ['FAILED', 'EXPIRED', 'CANCELLED', 'ORDER_EXPIRED'].includes(txStatus) ? 'FAILED' :
+    ['PENDING', 'WAITING', 'ORDER_GENERATED'].includes(txStatus) ? 'PENDING' : 'UNKNOWN';
+
+  return {
+    ok: true,
+    status,
+    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
+    channelId: data?.channel?.id,
     rawResponse: data,
   };
 }

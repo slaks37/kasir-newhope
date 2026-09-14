@@ -4,7 +4,7 @@ import type { Db } from '../shared/db';
 import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus } from './engine';
-import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH } from '../../api/_doku';
+import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
 export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
@@ -74,7 +74,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     }
     try {
       const checkout=await checkoutProvider({order:{invoice_number:invoiceNumber,amount:quote.amount,currency:'IDR',
-        callback_url:`${origin.replace(/\/$/,'')}/#settings?invoice=${id}`,auto_redirect:true,
+        callback_url:`${origin.replace(/\/$/,'')}/#payment?invoice=${id}`,auto_redirect:true,
         line_items:[{name:`${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`,price:quote.amount,quantity:1}]},payment:{payment_due_date:1440}});
       await db.query('UPDATE billing.invoices SET payment_link_url=$2 WHERE id=$1',[id,checkout.paymentUrl]);
       res.json({ok:true,paymentUrl:checkout.paymentUrl,invoice:serializeInvoice({...result.rows[0],payment_link_url:checkout.paymentUrl}),quote});
@@ -82,6 +82,53 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='CHECKOUT_RESPONSE_FAILED' WHERE id=$1 AND payment_status<>'PAID'",[id]);
       throw err;
     }
+  }));
+  app.get('/api/v1/subscription/verify',run(async(req,res)=>{
+    const tenantId=await tenant(req);
+    const invoiceId=typeof req.query?.invoiceId==='string'?req.query.invoiceId:undefined;
+    const invoiceNumber=typeof req.query?.invoiceNumber==='string'?req.query.invoiceNumber:undefined;
+    let query='SELECT * FROM billing.invoices WHERE tenant_id=$1';
+    const params:any[]=[tenantId];
+    if(invoiceId){query+=' AND id=$2';params.push(invoiceId);}
+    else if(invoiceNumber){query+=' AND invoice_number=$2';params.push(invoiceNumber);}
+    else {query+=' ORDER BY created_at DESC LIMIT 1';}
+    const {rows}=await db.query(query,params);
+    const inv=rows[0];
+    if(!inv){
+      const statusData=await subscriptionStatus(db,tenantId);
+      return res.json({ok:true,status:statusData.subscription.status,paid:statusData.subscription.status==='ACTIVE'});
+    }
+    if(inv.payment_status==='PAID'){
+      const statusData=await subscriptionStatus(db,tenantId);
+      return res.json({ok:true,paid:true,status:statusData.subscription.status,invoice:serializeInvoice(inv),subscription:statusData.subscription});
+    }
+    if(isDokuConfigured()){
+      try{
+        const inquiry=await checkDokuOrderStatus(inv.invoice_number);
+        if(inquiry.ok && inquiry.status==='SUCCESS'){
+          let allowedChannels:string[];
+          try{allowedChannels=getDokuAllowedChannels();}catch{allowedChannels=['VIRTUAL_ACCOUNT_BCA'];}
+          const rawChannel=inquiry.channelId || inv.quote?.allowedChannels?.[0] || 'VIRTUAL_ACCOUNT_BCA';
+          const channel=allowedChannels.includes(rawChannel)?rawChannel:allowedChannels[0];
+          await reconcilePayment(db,{
+            eventKey:`inquiry-${inv.invoice_number}-${Date.now()}`,
+            invoiceNumber:inv.invoice_number,
+            reference:String(inquiry.transactionId || `inquiry-${Date.now()}`),
+            amount:Number(inv.amount),
+            currency:inv.currency || 'IDR',
+            success:true,
+            channel,
+            contentDigest:generateDigest(JSON.stringify(inquiry.rawResponse || {})),
+            payload:{status:'SUCCESS',channel,source:'INQUIRY'}
+          });
+          const statusData=await subscriptionStatus(db,tenantId);
+          return res.json({ok:true,paid:true,reconciled:true,status:statusData.subscription.status,subscription:statusData.subscription});
+        }
+      }catch(err:any){
+        console.warn('[doku-verify] Inquiry check failed:',err.message);
+      }
+    }
+    res.json({ok:true,paid:false,status:'PENDING_PAYMENT',invoice:serializeInvoice(inv)});
   }));
   // Never expose an endpoint that turns a client request into money received.
   app.post('/api/v1/subscription/simulate-payment',(_req,res)=>res.status(403).json({ok:false,error:'PAYMENT_SIMULATION_DISABLED'}));
