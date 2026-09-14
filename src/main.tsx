@@ -26,7 +26,7 @@ import { createRoot } from 'react-dom/client';
 import { AuthProvider } from './context/AuthContext';
 import { POSProvider } from './context/POSContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
-import App from './App.tsx';
+import App from './App';
 import './index.css';
 import './styles/app-theme.css';
 
