@@ -598,7 +598,7 @@ export interface PromoCode {
 // --- SAAS SUBSCRIPTION TYPES ---
 
 export type BillingCycle = 'MONTHLY' | 'YEARLY';
-export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'EXPIRED' | 'CANCELED';
+export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'EXPIRED' | 'CANCELED' | 'PENDING_PAYMENT';
 export type SaaSPaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
 export type PlanTierLevel = 1 | 2 | 3 | 4;
 

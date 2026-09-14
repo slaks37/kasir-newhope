@@ -19,6 +19,7 @@ import {
   Home,
   Coins,
   CreditCard,
+  Lock,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 
@@ -135,7 +136,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
           const Icon = item.icon;
           const isActive = activeTab === item.id && !showMoreMenu;
           const isAllowed = hasPermission(item.id as PermissionFeature);
-          const isBlockedByPayment = isPaymentRequired && item.id !== 'payment';
+          const isBlockedByPayment = Boolean(isPaymentRequired);
           const isLocked = !isAllowed || isBlockedByPayment;
 
           return (
