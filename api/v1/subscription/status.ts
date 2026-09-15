@@ -1,5 +1,3 @@
-import { SAAS_PLANS } from '../../../src/config/saasPlans';
-
 export default function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -18,7 +16,6 @@ export default function handler(req: any, res: any) {
       id: 'sub-trial-active',
       tenantId: req.query?.tenantId || 'tenant-default',
       planId: 'plan-plus-monthly',
-      plan: SAAS_PLANS[1],
       status: 'ACTIVE',
       currentPeriodStart: now.toISOString(),
       currentPeriodEnd: periodEnd.toISOString(),

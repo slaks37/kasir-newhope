@@ -1,4 +1,32 @@
-import { SAAS_PLANS, annualTotal } from '../../../src/config/saasPlans';
+const SAAS_PLANS: Record<string, { id: string; name: string; tierLevel: number; priceIdr: number; priceYearlyIdr: number; extraOutletPriceIdr: number; extraOutletYearlyIdr: number }> = {
+  'plan-free': {
+    id: 'plan-free',
+    name: 'Free Trial 45 Hari',
+    tierLevel: 1,
+    priceIdr: 0,
+    priceYearlyIdr: 0,
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+  },
+  'plan-plus-monthly': {
+    id: 'plan-plus-monthly',
+    name: 'Tier Plus',
+    tierLevel: 2,
+    priceIdr: 99000,
+    priceYearlyIdr: 79200,
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+  },
+  'plan-pro-monthly': {
+    id: 'plan-pro-monthly',
+    name: 'Tier Pro',
+    tierLevel: 3,
+    priceIdr: 299000,
+    priceYearlyIdr: 248170,
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+  },
+};
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,14 +41,14 @@ export default async function handler(req: any, res: any) {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const { planId, targetPlanId, billingCycle, extraOutlets } = body;
     const chosenPlanId = targetPlanId || planId || 'plan-plus-monthly';
-    const selectedPlan = SAAS_PLANS.find((p) => p.id === chosenPlanId) || SAAS_PLANS[1];
+    const plan = SAAS_PLANS[chosenPlanId] || SAAS_PLANS['plan-plus-monthly'];
 
     const isYearly = billingCycle === 'YEARLY';
-    const basePrice = isYearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr;
+    const basePrice = isYearly ? plan.priceYearlyIdr * 12 : plan.priceIdr;
     const extraOutletsCount = Math.max(0, Number(extraOutlets) || 0);
     const outletPrice = isYearly
-      ? (selectedPlan.extraOutletYearlyIdr || 760320) * extraOutletsCount
-      : (selectedPlan.extraOutletPriceIdr || 79200) * extraOutletsCount;
+      ? plan.extraOutletYearlyIdr * 12 * extraOutletsCount
+      : plan.extraOutletPriceIdr * extraOutletsCount;
 
     const totalAmount = basePrice + outletPrice;
     const now = new Date();
@@ -30,8 +58,8 @@ export default async function handler(req: any, res: any) {
 
     return res.status(200).json({
       ok: true,
-      planId: selectedPlan.id,
-      planName: selectedPlan.name,
+      planId: plan.id,
+      planName: plan.name,
       billingCycle: isYearly ? 'YEARLY' : 'MONTHLY',
       amount: totalAmount,
       recurringAmount: totalAmount,

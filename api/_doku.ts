@@ -44,28 +44,32 @@ export interface DokuCheckoutResponse {
 }
 
 export function isDokuConfigured(): boolean {
-  return Boolean(process.env.DOKU_CLIENT_ID && process.env.DOKU_SECRET_KEY);
+  const clientId = getDokuClientId();
+  const secretKey = getDokuSecretKey();
+  return Boolean(clientId && secretKey && !clientId.includes('sandbox_dummy'));
 }
 
 export function getDokuClientId(): string {
-  return process.env.DOKU_CLIENT_ID || '';
+  return (process.env.DOKU_CLIENT_ID || process.env.DOKU_SANDBOX_CLIENT_ID || '').replace(/["']/g, '').trim();
 }
 
 export function getDokuSecretKey(): string {
-  return process.env.DOKU_SECRET_KEY || '';
+  return (process.env.DOKU_SECRET_KEY || process.env.DOKU_SANDBOX_SECRET_KEY || '').replace(/["']/g, '').trim();
 }
 
 export function getDokuApiUrl(): string {
-  const url=(process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/\/+$/, '');
-  if(!['https://api-sandbox.doku.com','https://api.doku.com'].includes(url)) throw new Error('DOKU_API_URL_NOT_ALLOWED');
-  return url;
+  const raw = (process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
+  if (raw.includes('api.doku.com') && !raw.includes('sandbox')) {
+    return 'https://api.doku.com';
+  }
+  return 'https://api-sandbox.doku.com';
 }
 
-export const DOKU_NOTIFICATION_PATH='/api/v1/webhooks/doku';
+export const DOKU_NOTIFICATION_PATH = '/api/v1/webhooks/doku';
 export function getDokuAllowedChannels(): string[] {
-  const raw = process.env.DOKU_ALLOWED_CHANNELS || 'VIRTUAL_ACCOUNT_BCA,VIRTUAL_ACCOUNT_MANDIRI,VIRTUAL_ACCOUNT_BNI,VIRTUAL_ACCOUNT_BRI,VIRTUAL_ACCOUNT_PERMATA,QRIS,CREDIT_CARD,OVO,SHOPEEPAY';
-  const channels = raw.split(',').map(x=>x.trim()).filter(Boolean);
-  return [...new Set(channels)];
+  const raw = (process.env.DOKU_ALLOWED_CHANNELS || 'VIRTUAL_ACCOUNT_BCA,VIRTUAL_ACCOUNT_MANDIRI,VIRTUAL_ACCOUNT_BNI,VIRTUAL_ACCOUNT_BRI,VIRTUAL_ACCOUNT_PERMATA,QRIS,CREDIT_CARD,OVO,SHOPEEPAY').replace(/["']/g, '').trim();
+  const channels = raw.split(',').map((x) => x.trim()).filter(Boolean);
+  return channels.length > 0 ? [...new Set(channels)] : ['VIRTUAL_ACCOUNT_BCA', 'QRIS'];
 }
 
 export function generateDigest(body: object | string): string {
