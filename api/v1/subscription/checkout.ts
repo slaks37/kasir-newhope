@@ -214,12 +214,13 @@ export default async function handler(req: any, res: any) {
 
       // If DOKU API returned an error response
       const errorMessage = data?.error?.message || data?.message || (Array.isArray(data?.error) ? data.error.join(', ') : `DOKU API Error (HTTP ${dokuResponse.status})`);
+      const maskedClient = clientId.length > 8 ? `${clientId.slice(0, 4)}...${clientId.slice(-4)}` : clientId;
       console.warn('DOKU API error response:', data);
 
       return sendJson(res, 200, {
         ok: false,
         error: 'DOKU_API_ERROR',
-        message: `Gagal membuat pembayaran di DOKU: ${errorMessage}`,
+        message: `Gagal membuat pembayaran di DOKU: ${errorMessage} (Target: ${apiUrl}, Client-ID: ${maskedClient})`,
         details: data,
         httpStatus: dokuResponse.status,
       });
@@ -228,7 +229,7 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 200, {
         ok: false,
         error: 'DOKU_CONNECTION_ERROR',
-        message: `Tidak dapat terhubung ke server DOKU Sandbox: ${fetchErr.message}. Periksa URL API DOKU (${apiUrl}).`,
+        message: `Tidak dapat terhubung ke server DOKU: ${fetchErr.message}. Target URL: ${apiUrl}.`,
       });
     }
   } catch (err: any) {
