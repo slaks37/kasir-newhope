@@ -394,7 +394,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     createdAt: authUser?.created_at || new Date().toISOString(),
   };
 
-  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment'>('overview');
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment'>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash || '';
+      const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
+      if (hash.includes('payment') || pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly') {
+        return 'payment';
+      }
+    }
+    return 'overview';
+  });
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
@@ -454,10 +463,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const loaded = loadGlobalUserData('settings', uId, INITIAL_SETTINGS);
     const storeName = authUser?.user_metadata?.store_name || authUser?.user_metadata?.full_name;
     const sector = (authUser?.user_metadata?.business_sector || authUser?.user_metadata?.sector || loaded.businessSector || 'FNB') as BusinessSector;
+    
+    // Check if there is an active pending paid plan
+    const pendingPlan = typeof window !== 'undefined'
+      ? (sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan'))
+      : null;
+    const isPendingPlan = pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly';
+
+    let sub = loaded.subscription;
+    if (isPendingPlan && (!sub || sub.status !== 'ACTIVE')) {
+      const nowIso = new Date().toISOString();
+      sub = {
+        id: 'sub-pending',
+        tenantId: uId,
+        planId: pendingPlan || 'plan-plus-monthly',
+        status: 'PENDING_PAYMENT' as const,
+        accessMode: 'RESTRICTED' as const,
+        currentPeriodStart: nowIso,
+        currentPeriodEnd: nowIso,
+        cancelAtPeriodEnd: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+    }
+
     return {
       ...loaded,
       storeName: storeName || (loaded.storeName && loaded.storeName !== 'New Hope POS' ? loaded.storeName : 'Toko Saya'),
       businessSector: sector,
+      subscription: sub,
     };
   });
 

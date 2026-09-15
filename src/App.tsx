@@ -207,7 +207,11 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
 
         {/* View Switcher Container */}
         <main className="flex-1 min-w-0 flex overflow-hidden bg-slate-100/60 relative">
-          {!isTabAllowed ? (
+          {isPaymentRequired ? (
+            <Suspense fallback={<TabLoading />}>
+              <SubscriptionPaymentPage />
+            </Suspense>
+          ) : !isTabAllowed ? (
             /* RBAC Restricted Access View Guard */
             <div className="flex-1 flex items-center justify-center p-6 bg-slate-50">
               <div className="bg-white border border-slate-200 rounded-3xl p-8 max-w-lg w-full text-center shadow-xl space-y-5 animate-scale-up">
