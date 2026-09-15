@@ -319,19 +319,19 @@ export const SubscriptionPaymentPage: React.FC = () => {
         }
       }
 
-      if (res.ok && result.ok && result.paymentUrl && result.paymentUrl.startsWith('https://')) {
+      if (res.ok && result.ok && result.paymentUrl && result.paymentUrl.startsWith('https://') && !result.paymentUrl.includes('example.test')) {
         // Redirect to DOKU Checkout Gateway
         // We DO NOT remove pending_checkout_plan here so user cannot bypass by clicking back.
         window.location.assign(result.paymentUrl);
         return;
       }
 
-      const errMsg = result.error || result.detail || result.message;
+      const errMsg = result.message || result.error || result.detail;
       if (errMsg === 'AUTHENTICATION_REQUIRED') {
         throw new Error('Sesi otentikasi diperlukan. Silakan login terlebih dahulu.');
       }
       if (errMsg === 'PAYMENT_GATEWAY_NOT_CONFIGURED') {
-        throw new Error('Gateway pembayaran DOKU sedang dalam konfigurasi. Pastikan kredensial DOKU telah terpasang di environment Vercel.');
+        throw new Error('Kredensial DOKU belum aktif di Vercel Production. Pastikan DOKU_CLIENT_ID dan DOKU_SECRET_KEY sudah diisi dan disimpan di Environment Variables Vercel (centang Production).');
       }
       if (errMsg === 'PUBLIC_APP_URL_NOT_CONFIGURED') {
         throw new Error('PUBLIC_APP_URL belum dikonfigurasi di environment Vercel (contoh: https://kasir.newhope.space).');

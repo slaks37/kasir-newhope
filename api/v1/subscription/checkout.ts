@@ -136,104 +136,107 @@ export default async function handler(req: any, res: any) {
 
     const { clientId, secretKey, apiUrl, isConfigured } = getDokuCredentials();
 
-    if (isConfigured) {
-      const host = req.headers['x-forwarded-host'] || req.headers.host || 'kasir.newhope.space';
-      const proto = req.headers['x-forwarded-proto'] || 'https';
-      const origin = (process.env.PUBLIC_APP_URL || `${proto}://${host}`).replace(/["']/g, '').trim();
-      const callbackUrl = `${origin.replace(/\/$/, '')}/#payment?invoice=${invoiceNumber}`;
-
-      const payload = {
-        order: {
-          invoice_number: invoiceNumber,
-          amount,
-          currency: 'IDR',
-          callback_url: callbackUrl,
-          auto_redirect: true,
-          line_items: [
-            {
-              name: `Paket ${plan.name} (${isYearly ? 'Tahunan' : 'Bulanan'})` + (extraOutletsCount > 0 ? ` + ${extraOutletsCount} Outlet` : ''),
-              price: amount,
-              quantity: 1,
-            },
-          ],
+    if (!isConfigured) {
+      return sendJson(res, 200, {
+        ok: false,
+        error: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
+        message: 'Kredensial DOKU belum terdeteksi di Vercel Environment Variables. Pastikan DOKU_CLIENT_ID (dari API Key DOKU) dan DOKU_SECRET_KEY (dari Active Secret Key DOKU) sudah ditambahkan di Vercel Project Settings > Environment Variables (centang opsi Production) lalu lakukan Redeploy.',
+        debug: {
+          hasClientId: Boolean(clientId),
+          hasSecretKey: Boolean(secretKey),
+          apiUrl,
         },
-        payment: {
-          payment_due_date: 1440,
-        },
-      };
-
-      try {
-        const requestId = crypto.randomUUID();
-        const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
-        const requestTarget = '/checkout/v1/payment';
-        const digest = generateDigest(payload);
-        const signature = generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest, secretKey);
-
-        const dokuResponse = await fetch(`${apiUrl}${requestTarget}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Client-Id': clientId,
-            'Request-Id': requestId,
-            'Request-Timestamp': requestTimestamp,
-            'Signature': signature,
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(15000),
-        });
-
-        const data: any = await dokuResponse.json().catch(() => ({}));
-
-        if (dokuResponse.ok && data?.response?.payment?.url) {
-          return sendJson(res, 200, {
-            ok: true,
-            success: true,
-            paymentUrl: data.response.payment.url,
-            invoice: {
-              id: invoiceNumber,
-              invoiceNumber,
-              planId: plan.id,
-              amountIdr: amount,
-              status: 'UNPAID',
-              createdAt: new Date().toISOString(),
-            },
-          });
-        }
-
-        console.warn('DOKU returned error or missing payment URL:', data);
-      } catch (err: any) {
-        console.warn('DOKU fetch error:', err.message);
-      }
+      });
     }
 
-    // Fallback simulation URL if DOKU is not configured or sandbox returns error
-    return sendJson(res, 200, {
-      ok: true,
-      success: true,
-      paymentUrl: `https://checkout.example.test/pay/${invoiceNumber}`,
-      invoice: {
-        id: invoiceNumber,
-        invoiceNumber,
-        planId: plan.id,
-        amountIdr: amount,
-        status: 'UNPAID',
-        createdAt: new Date().toISOString(),
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'kasir.newhope.space';
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const origin = (process.env.PUBLIC_APP_URL || `${proto}://${host}`).replace(/["']/g, '').trim();
+    const callbackUrl = `${origin.replace(/\/$/, '')}/#payment?invoice=${invoiceNumber}`;
+
+    const payload = {
+      order: {
+        invoice_number: invoiceNumber,
+        amount,
+        currency: 'IDR',
+        callback_url: callbackUrl,
+        auto_redirect: true,
+        line_items: [
+          {
+            name: `Paket ${plan.name} (${isYearly ? 'Tahunan' : 'Bulanan'})` + (extraOutletsCount > 0 ? ` + ${extraOutletsCount} Outlet` : ''),
+            price: amount,
+            quantity: 1,
+          },
+        ],
       },
-    });
+      payment: {
+        payment_due_date: 1440,
+      },
+    };
+
+    try {
+      const requestId = crypto.randomUUID();
+      const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
+      const requestTarget = '/checkout/v1/payment';
+      const digest = generateDigest(payload);
+      const signature = generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest, secretKey);
+
+      const dokuResponse = await fetch(`${apiUrl}${requestTarget}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Client-Id': clientId,
+          'Request-Id': requestId,
+          'Request-Timestamp': requestTimestamp,
+          'Signature': signature,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const data: any = await dokuResponse.json().catch(() => ({}));
+
+      if (dokuResponse.ok && data?.response?.payment?.url) {
+        return sendJson(res, 200, {
+          ok: true,
+          success: true,
+          paymentUrl: data.response.payment.url,
+          invoice: {
+            id: invoiceNumber,
+            invoiceNumber,
+            planId: plan.id,
+            amountIdr: amount,
+            status: 'UNPAID',
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      // If DOKU API returned an error response
+      const errorMessage = data?.error?.message || data?.message || (Array.isArray(data?.error) ? data.error.join(', ') : `DOKU API Error (HTTP ${dokuResponse.status})`);
+      console.warn('DOKU API error response:', data);
+
+      return sendJson(res, 200, {
+        ok: false,
+        error: 'DOKU_API_ERROR',
+        message: `Gagal membuat pembayaran di DOKU: ${errorMessage}`,
+        details: data,
+        httpStatus: dokuResponse.status,
+      });
+    } catch (fetchErr: any) {
+      console.warn('DOKU fetch error:', fetchErr.message);
+      return sendJson(res, 200, {
+        ok: false,
+        error: 'DOKU_CONNECTION_ERROR',
+        message: `Tidak dapat terhubung ke server DOKU Sandbox: ${fetchErr.message}. Periksa URL API DOKU (${apiUrl}).`,
+      });
+    }
   } catch (err: any) {
     console.error('Server error in checkout handler:', err);
     return sendJson(res, 200, {
-      ok: true,
-      success: true,
-      paymentUrl: `https://checkout.example.test/pay/NH-${Date.now().toString().slice(-8)}`,
-      invoice: {
-        id: `NH-${Date.now().toString().slice(-8)}`,
-        invoiceNumber: `NH-${Date.now().toString().slice(-8)}`,
-        planId: 'plan-plus-monthly',
-        amountIdr: 99000,
-        status: 'UNPAID',
-        createdAt: new Date().toISOString(),
-      },
+      ok: false,
+      error: 'SERVER_ERROR',
+      message: `Terjadi kendala pada server checkout: ${err.message}`,
     });
   }
 }
