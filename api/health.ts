@@ -1,18 +1,20 @@
-import { isDokuConfigured } from './_doku';
-
 export default function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Content-Type', 'application/json');
+  } catch {}
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  return res.status(200).json({
+  const data = {
     ok: true,
     status: 'healthy',
     runtime: 'vercel-serverless',
-    dokuConfigured: isDokuConfigured(),
     timestamp: new Date().toISOString(),
-  });
+  };
+
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(200).json(data);
+  }
+  res.statusCode = 200;
+  return res.end(JSON.stringify(data));
 }

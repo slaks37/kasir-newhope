@@ -68,16 +68,27 @@ const SAAS_PLANS = [
   },
 ];
 
-export default function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-device-id, x-tenant-id');
+function sendJson(res: any, status: number, data: any) {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-device-id, x-tenant-id');
+    res.setHeader('Content-Type', 'application/json');
+  } catch {}
 
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  return res.end(JSON.stringify(data));
+}
+
+export default function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return sendJson(res, 200, { ok: true });
   }
 
-  return res.status(200).json({
+  return sendJson(res, 200, {
     ok: true,
     plans: SAAS_PLANS,
   });
