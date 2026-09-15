@@ -75,8 +75,8 @@ async function getJsonBody(req: any): Promise<any> {
 function getDokuCredentials() {
   const clientId = (process.env.DOKU_CLIENT_ID || process.env.DOKU_SANDBOX_CLIENT_ID || '').replace(/["']/g, '').trim();
   const secretKey = (process.env.DOKU_SECRET_KEY || process.env.DOKU_SANDBOX_SECRET_KEY || '').replace(/["']/g, '').trim();
-  const rawUrl = (process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
-  const apiUrl = rawUrl.includes('api.doku.com') && !rawUrl.includes('sandbox') ? 'https://api.doku.com' : 'https://api-sandbox.doku.com';
+  const rawUrl = (process.env.DOKU_API_URL || 'https://api.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
+  const apiUrl = rawUrl.includes('sandbox') ? 'https://api-sandbox.doku.com' : 'https://api.doku.com';
   const isConfigured = Boolean(clientId && secretKey && !clientId.includes('sandbox_dummy'));
   return { clientId, secretKey, apiUrl, isConfigured };
 }

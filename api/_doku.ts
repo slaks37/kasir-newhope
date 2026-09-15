@@ -58,11 +58,11 @@ export function getDokuSecretKey(): string {
 }
 
 export function getDokuApiUrl(): string {
-  const raw = (process.env.DOKU_API_URL || 'https://api-sandbox.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
-  if (raw.includes('api.doku.com') && !raw.includes('sandbox')) {
-    return 'https://api.doku.com';
+  const raw = (process.env.DOKU_API_URL || 'https://api.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
+  if (raw.includes('sandbox')) {
+    return 'https://api-sandbox.doku.com';
   }
-  return 'https://api-sandbox.doku.com';
+  return 'https://api.doku.com';
 }
 
 export const DOKU_NOTIFICATION_PATH = '/api/v1/webhooks/doku';
