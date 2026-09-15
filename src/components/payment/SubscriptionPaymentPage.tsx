@@ -211,6 +211,13 @@ export const SubscriptionPaymentPage: React.FC = () => {
         ? `/api/v1/subscription/verify?invoiceId=${encodeURIComponent(invId)}`
         : '/api/v1/subscription/verify';
       const res = await fetch(url);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        if (!silent) {
+          setVerifyNotice('Pembayaran belum terkonfirmasi oleh server. Jika Anda baru saja menyelesaikan transaksi di DOKU, mohon tunggu beberapa saat lalu coba periksa status kembali.');
+        }
+        return false;
+      }
       const data = await res.json();
       if (data.ok && (data.paid || data.status === 'ACTIVE')) {
         sessionStorage.removeItem('nhpos_pending_checkout_plan');
@@ -289,7 +296,28 @@ export const SubscriptionPaymentPage: React.FC = () => {
         }),
       });
 
-      const result = await res.json();
+      let result: any = null;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        try {
+          result = await res.json();
+        } catch {
+          result = null;
+        }
+      }
+
+      if (!result) {
+        const text = await res.text().catch(() => '');
+        if (res.status === 401) {
+          throw new Error('Sesi otentikasi diperlukan. Silakan login terlebih dahulu.');
+        } else if (res.status === 404) {
+          throw new Error('Layanan endpoint checkout tidak ditemukan di server (404). Silakan coba lagi setelah deployment selesai.');
+        } else if (res.status === 503) {
+          throw new Error('Database atau gateway pembayaran sedang tidak tersedia (503). Pastikan DATABASE_URL telah dikonfigurasi di Vercel.');
+        } else {
+          throw new Error(text && text.length < 120 && !text.includes('<') ? text : `Terjadi kendala pada server (HTTP ${res.status}).`);
+        }
+      }
 
       if (res.ok && result.ok && result.paymentUrl && result.paymentUrl.startsWith('https://')) {
         // Redirect to DOKU Checkout Gateway
@@ -298,14 +326,24 @@ export const SubscriptionPaymentPage: React.FC = () => {
         return;
       }
 
-      throw new Error(result.error || 'Gateway pembayaran sedang dalam konfigurasi.');
+      const errMsg = result.error || result.detail || result.message;
+      if (errMsg === 'AUTHENTICATION_REQUIRED') {
+        throw new Error('Sesi otentikasi diperlukan. Silakan login terlebih dahulu.');
+      }
+      if (errMsg === 'PAYMENT_GATEWAY_NOT_CONFIGURED') {
+        throw new Error('Gateway pembayaran DOKU sedang dalam konfigurasi. Pastikan kredensial DOKU telah terpasang di environment Vercel.');
+      }
+      if (errMsg === 'PUBLIC_APP_URL_NOT_CONFIGURED') {
+        throw new Error('PUBLIC_APP_URL belum dikonfigurasi di environment Vercel (contoh: https://kasir.newhope.space).');
+      }
+      if (errMsg === 'DATABASE_UNAVAILABLE') {
+        throw new Error('Database server tidak dapat dihubungi. Pastikan DATABASE_URL telah dikonfigurasi di Vercel.');
+      }
+
+      throw new Error(errMsg || 'Gateway pembayaran sedang dalam konfigurasi.');
     } catch (err: any) {
       console.warn('DOKU checkout not completed:', err.message);
-      setError(
-        err.message?.includes('PAYMENT_GATEWAY_NOT_CONFIGURED') || err.message?.includes('PUBLIC_APP_URL')
-          ? 'Gateway pembayaran DOKU sedang dalam konfigurasi. Pastikan kredensial DOKU dan PUBLIC_APP_URL telah terkonfigurasi di server.'
-          : err.message || 'Gagal memulai checkout. Silakan coba kembali.'
-      );
+      setError(err.message || 'Gagal memulai checkout. Silakan coba kembali.');
     } finally {
       setCheckoutLoading(false);
     }
