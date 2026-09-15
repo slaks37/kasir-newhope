@@ -34,9 +34,10 @@ export default async function handler(req: any, res: any) {
   if (!invoiceId) {
     return sendJson(res, 200, {
       ok: true,
-      paid: true,
-      status: 'ACTIVE',
-      subscription: { status: 'ACTIVE' },
+      paid: false,
+      status: 'PENDING_PAYMENT',
+      subscription: { status: 'PENDING_PAYMENT', accessMode: 'RESTRICTED' },
+      message: 'INVOICE_REQUIRED',
     });
   }
 

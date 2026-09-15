@@ -388,6 +388,31 @@ export const SubscriptionPaymentPage: React.FC = () => {
     });
   };
 
+  const handleResetToLocked = () => {
+    const nowIso = new Date().toISOString();
+    sessionStorage.setItem('nhpos_pending_checkout_plan', selectedPlanId || 'plan-plus-monthly');
+    localStorage.setItem('nhpos_pending_checkout_plan', selectedPlanId || 'plan-plus-monthly');
+    updateSettings({
+      ...settings,
+      subscription: {
+        id: 'sub-pending',
+        tenantId: settings.subscription?.tenantId || 'tenant-default',
+        planId: selectedPlanId || 'plan-plus-monthly',
+        status: 'PENDING_PAYMENT',
+        accessMode: 'RESTRICTED',
+        currentPeriodStart: nowIso,
+        currentPeriodEnd: nowIso,
+        cancelAtPeriodEnd: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+    });
+    setPaymentSuccess(null);
+    setIsOnboarding(true);
+    setVerifyNotice(null);
+    window.dispatchEvent(new CustomEvent('subscription-updated'));
+  };
+
   // SUCCESS CELEBRATION VIEW
   if (paymentSuccess) {
     return (
@@ -433,13 +458,21 @@ export const SubscriptionPaymentPage: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={() => setActiveTab('pos')}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer group"
-          >
-            <span>Mulai Buka Kasir Sekarang</span>
-            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => setActiveTab('pos')}
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer group"
+            >
+              <span>Mulai Buka Kasir Sekarang</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </button>
+            <button
+              onClick={handleResetToLocked}
+              className="w-full py-2.5 rounded-xl border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-all cursor-pointer"
+            >
+              Kunci Ulang Kasir (Uji Pembayaran DOKU)
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -792,16 +825,27 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 <span>Ganti ke Coba Gratis 45 Hari</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => void checkPaymentVerification()}
-                disabled={verifying}
-                className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
-                title="Cek verifikasi status pembayaran real-time ke server"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
-                <span>{verifying ? 'Memverifikasi...' : 'Periksa Status Pembayaran'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetToLocked}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-300 cursor-pointer py-1.5 px-2.5 rounded-xl border border-slate-800 hover:border-slate-700 transition-all"
+                  title="Kunci ulang status kasir ke belum bayar untuk menguji checkout DOKU"
+                >
+                  <span>Reset / Kunci Ulang</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void checkPaymentVerification()}
+                  disabled={verifying}
+                  className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                  title="Cek verifikasi status pembayaran real-time ke server"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
+                  <span>{verifying ? 'Memverifikasi...' : 'Periksa Status Pembayaran'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

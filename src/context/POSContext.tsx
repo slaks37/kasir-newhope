@@ -466,7 +466,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let active = true;
     const refresh = async () => {
       try {
-        const response = await fetch('/api/v1/subscription/status');
+        const queryParams = new URLSearchParams({
+          tenantId: authUser?.id || '',
+          userId: authUser?.id || '',
+          email: authUser?.email || '',
+        });
+        const response = await fetch(`/api/v1/subscription/status?${queryParams.toString()}`);
         const data = await response.json();
         if (active && response.ok && data.ok && data.subscription) {
           setSettings(prev => ({ ...prev, subscription: data.subscription }));
