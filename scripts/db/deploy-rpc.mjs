@@ -74,15 +74,22 @@ BEGIN
   INSERT INTO internal.memberships (id, user_id, tenant_id, merchant_id, role, pin, is_active)
   VALUES (gen_random_uuid(), new_user_id, new_tenant_id, new_tenant_id, 'OWNER', '1234', true);
 
-  -- Insert Trial Subscription (45 hari)
-  INSERT INTO billing.subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end)
+  -- Insert Trial Subscription (15 hari, 1x pakai)
+  INSERT INTO billing.subscriptions (
+    id, tenant_id, plan_id, status, current_period_start, current_period_end,
+    grace_period_end, trial_started_at, trial_ends_at, has_used_trial
+  )
   VALUES (
     gen_random_uuid(), 
     new_tenant_id, 
     'plan-free', 
     'TRIAL'::subscription_status_enum, 
     NOW(), 
-    NOW() + INTERVAL '45 days'
+    NOW() + INTERVAL '15 days',
+    NOW() + INTERVAL '29 days',
+    NOW(),
+    NOW() + INTERVAL '15 days',
+    true
   );
 
   -- Insert AI Credits: merchant_id = new_tenant_id, tenant_id = new_tenant_id

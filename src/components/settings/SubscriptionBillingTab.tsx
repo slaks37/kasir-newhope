@@ -28,10 +28,47 @@ export const SubscriptionBillingTab:React.FC=()=>{
         <button disabled={loading} onClick={load} className="underline text-xs">Muat ulang status</button>
       </div>
     </div>
-   {loading?<p className="mt-4">Memeriksa langganan…</p>:data?<div className="grid sm:grid-cols-3 gap-5 mt-5">
-    <div><p className="text-slate-400 text-xs">PAKET</p><p className="font-bold">{data.plan?.name}</p><p>{data.subscription.billingCycle}</p></div>
-    <div><p className="text-slate-400 text-xs">AKSES</p><p>{data.subscription.status} · {data.accessMode}</p><p>{data.daysLeft} hari tersisa</p><small>Berakhir {formatDateTime(data.subscription.currentPeriodEnd)}</small></div>
-    <div><p className="text-slate-400 text-xs">OUTLET AKTIF</p><p className="text-2xl font-bold">{data.outlets.used} / {data.outlets.limit}</p><small>{data.outlets.included} termasuk + {data.outlets.extra} add-on</small></div>
+   {loading?<p className="mt-4">Memeriksa langganan…</p>:data?<div className="space-y-4 mt-5">
+    <div className="grid sm:grid-cols-4 gap-4">
+      <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
+        <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Paket Aktif</p>
+        <p className="font-bold text-base text-white mt-1">{data.plan?.name}</p>
+        <p className="text-xs text-slate-300">{data.subscription.billingCycle === 'YEARLY' ? 'Siklus Tahunan' : 'Siklus Bulanan'}</p>
+        {data.subscription.status === 'TRIAL' && (
+          <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            Trial 15 Hari (1x Pakai)
+          </span>
+        )}
+      </div>
+      <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
+        <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Durasi Masa Aktif</p>
+        <p className="font-bold text-base text-white mt-1">Hari ke-{data.activeDays} <span className="text-xs font-normal text-slate-400">/ {data.totalPeriodDays} hari</span></p>
+        <p className="text-xs text-amber-400 font-medium">{data.daysLeft} hari tersisa</p>
+      </div>
+      <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
+        <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Jatuh Tempo Perpanjangan</p>
+        <p className="font-bold text-sm text-white mt-1">{formatDateTime(data.renewalDueDate || data.subscription.currentPeriodEnd)}</p>
+        <p className={`text-xs font-semibold mt-1 ${data.requiresRenewal ? 'text-red-400' : 'text-emerald-400'}`}>
+          {data.requiresRenewal ? '⚠️ Perlu Diperpanjang' : '✓ Status Aktif Normal'}
+        </p>
+      </div>
+      <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
+        <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Outlet Aktif</p>
+        <p className="text-xl font-bold text-white mt-1">{data.outlets.used} / {data.outlets.limit}</p>
+        <p className="text-xs text-slate-400">{data.outlets.included} bawaan + {data.outlets.extra} add-on</p>
+      </div>
+    </div>
+    {data.requiresRenewal && (
+      <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-between gap-3 text-xs text-amber-200">
+        <div>
+          <span className="font-bold text-amber-300">Waktunya Perpanjang Langganan: </span>
+          <span>{data.daysLeft > 0 ? `Tersisa ${data.daysLeft} hari sebelum sistem beralih ke mode hanya baca.` : 'Masa aktif telah habis. Segera perpanjang agar operasional kasir tidak terhenti.'}</span>
+        </div>
+        <button onClick={()=>setActiveTab('payment')} className="whitespace-nowrap px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-xl text-xs transition-colors cursor-pointer">
+          Perpanjang Sekarang
+        </button>
+      </div>
+    )}
    </div>:<p className="mt-4">Status belum dapat diverifikasi. Tidak ada trial atau pembayaran yang dianggap aktif tanpa data server.</p>}
   </section>
   {error&&<div role="alert" className="p-4 rounded-xl bg-red-50 text-red-800 border border-red-200">{error}</div>}

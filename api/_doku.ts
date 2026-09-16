@@ -67,9 +67,12 @@ export function getDokuApiUrl(): string {
 
 export const DOKU_NOTIFICATION_PATH = '/api/v1/webhooks/doku';
 export function getDokuAllowedChannels(): string[] {
-  const raw = (process.env.DOKU_ALLOWED_CHANNELS || 'VIRTUAL_ACCOUNT_BCA,VIRTUAL_ACCOUNT_MANDIRI,VIRTUAL_ACCOUNT_BNI,VIRTUAL_ACCOUNT_BRI,VIRTUAL_ACCOUNT_PERMATA,QRIS,CREDIT_CARD,OVO,SHOPEEPAY').replace(/["']/g, '').trim();
+  const raw = (process.env.DOKU_ALLOWED_CHANNELS || '').replace(/["']/g, '').trim();
   const channels = raw.split(',').map((x) => x.trim()).filter(Boolean);
-  return channels.length > 0 ? [...new Set(channels)] : ['VIRTUAL_ACCOUNT_BCA', 'QRIS'];
+  if (!channels.length || channels.some((x) => !/^[A-Z0-9_]{1,100}$/.test(x))) {
+    throw new Error('DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');
+  }
+  return [...new Set(channels)];
 }
 
 export function generateDigest(body: object | string): string {

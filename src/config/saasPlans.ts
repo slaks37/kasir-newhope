@@ -1,16 +1,16 @@
 import type { SaaSPlan } from '../types';
 
 // `plan-free` dipertahankan sebagai ID legacy agar langganan lama tidak putus.
-// Secara produk paket ini bukan free tier permanen lagi, melainkan trial 45 hari.
+// Secara produk paket ini bukan free tier permanen lagi, melainkan trial 15 hari (hanya 1x per tenant).
 export const TRIAL_PLAN_ID = 'plan-free';
-export const TRIAL_DAYS = 45;
+export const TRIAL_DAYS = 15;
 export const TRIAL_READ_ONLY_DAYS = 14;
 export const DAY_MS = 86_400_000;
 
 export const SAAS_PLANS: SaaSPlan[] = [
   {
     id: TRIAL_PLAN_ID,
-    name: 'Free Trial 45 Hari',
+    name: 'Free Trial 15 Hari',
     tierLevel: 1,
     billingCycle: 'MONTHLY',
     priceIdr: 0,
@@ -24,12 +24,12 @@ export const SAAS_PLANS: SaaSPlan[] = [
     aiQuotaMonthly: 30,
     dashboardAccessLevel: 'ADVANCED',
     features: [
-      'Seluruh fitur Tier Pro selama 45 hari',
+      'Seluruh fitur Tier Pro selama 15 hari',
       'Hingga 2 outlet',
       'Produk dan pengguna tidak terbatas',
       'Kuota AI trial terbatas',
       'WhatsApp assisted melalui wa.me',
-      'Tanpa kartu kredit',
+      'Tanpa kartu kredit (berlaku 1x per akun toko)',
       'Data tetap dapat dibaca 14 hari setelah trial',
     ],
   },

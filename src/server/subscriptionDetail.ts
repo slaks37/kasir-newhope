@@ -1,5 +1,5 @@
 import type { Db } from '../../services/shared/db';
-import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID } from '../config/saasPlans';
+import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID, TRIAL_DAYS } from '../config/saasPlans';
 import { subscriptionAccess } from '../config/subscriptionPolicy';
 
 // Read-only snapshot: opening a detail page must never create a subscription.
@@ -10,7 +10,7 @@ export async function subscriptionDetail(db: Db, tenantId: string) {
     if (!tenant) return null;
     const stored = (await c.query('SELECT * FROM billing.subscriptions WHERE tenant_id=$1', [tenantId])).rows[0];
     const start = new Date(tenant.created_at).toISOString();
-    const end = new Date(Date.parse(start) + 45 * DAY_MS).toISOString();
+    const end = new Date(Date.parse(start) + TRIAL_DAYS * DAY_MS).toISOString();
     const s = stored || {plan_id:TRIAL_PLAN_ID,status:'TRIAL',current_period_start:start,current_period_end:end,
       grace_period_end:new Date(Date.parse(end)+14*DAY_MS).toISOString(),trial_started_at:start,trial_ends_at:end,extra_outlets:0};
     const plan = SAAS_PLANS.find(p => p.id === s.plan_id);

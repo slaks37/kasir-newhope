@@ -3,7 +3,7 @@ import crypto from 'crypto';
 const SAAS_PLANS: Record<string, { id: string; name: string; tierLevel: number; priceIdr: number; priceYearlyIdr: number; extraOutletPriceIdr: number; extraOutletYearlyIdr: number }> = {
   'plan-free': {
     id: 'plan-free',
-    name: 'Free Trial 45 Hari',
+    name: 'Free Trial 15 Hari',
     tierLevel: 1,
     priceIdr: 0,
     priceYearlyIdr: 0,

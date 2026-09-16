@@ -1,7 +1,7 @@
 const SAAS_PLANS = [
   {
     id: 'plan-free',
-    name: 'Free Trial 45 Hari',
+    name: 'Free Trial 15 Hari',
     tierLevel: 1,
     billingCycle: 'MONTHLY',
     priceIdr: 0,
@@ -10,7 +10,7 @@ const SAAS_PLANS = [
     isActive: true,
     isTrial: true,
     features: [
-      'Seluruh fitur Tier Pro selama 45 hari',
+      'Seluruh fitur Tier Pro selama 15 hari',
       'Hingga 2 outlet',
       'Produk dan pengguna tidak terbatas',
       'Kuota AI trial terbatas',

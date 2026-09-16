@@ -89,8 +89,46 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         const principal=await authenticate(req);
         if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
         const db=await getDb();
-        const {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
-        if(!rows[0] || !isInternalRole(rows[0].role)) return res.status(403).json({ok:false,error:'INTERNAL_MEMBERSHIP_REQUIRED'});
+        let {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
+        if(!rows[0] && principal.email) {
+          const byEmail = await db.query(
+            'SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active',
+            [principal.email]
+          );
+          if (byEmail.rows[0] && isInternalRole(byEmail.rows[0].role)) {
+            await db.query(
+              'UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2',
+              [principal.subject, byEmail.rows[0].id]
+            );
+            rows = byEmail.rows;
+          } else {
+            try {
+              const fromPublic = await db.query(
+                'SELECT id,email,full_name,role FROM public.admin_users WHERE LOWER(email)=LOWER($1) AND is_active',
+                [principal.email]
+              );
+              if (fromPublic.rows[0] && isInternalRole(fromPublic.rows[0].role)) {
+                const inserted = await db.query(
+                  `INSERT INTO internal.internal_users (id, email, full_name, role, sso_subject, is_active)
+                   VALUES (gen_random_uuid(), $1, $2, $3, $4, true)
+                   ON CONFLICT (email) DO UPDATE SET sso_subject=$4, role=EXCLUDED.role, is_active=true
+                   RETURNING id, email, full_name, role`,
+                  [principal.email, fromPublic.rows[0].full_name || 'Administrator', fromPublic.rows[0].role, principal.subject]
+                );
+                rows = inserted.rows;
+              }
+            } catch {
+              // Ignore if public.admin_users does not exist
+            }
+          }
+        }
+        if(!rows[0] || !isInternalRole(rows[0].role)) {
+          return res.status(403).json({
+            ok: false,
+            error: 'INTERNAL_MEMBERSHIP_REQUIRED',
+            detail: 'Akun terdaftar, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di sistem internal.',
+          });
+        }
         const who:InternalIdentity={id:rows[0].id,email:rows[0].email,fullName:rows[0].full_name,role:rows[0].role};
         req.mfaRequired=principal.aal!=='aal2';
         const securityError=adminSecurityError(principal,req.method);

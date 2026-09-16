@@ -12,13 +12,13 @@ export function subscriptionAccess(sub: { status: string; currentPeriodEnd: stri
 }
 
 export function lifecycleStage(day: number) {
-  if (day <= 3) return 'ACTIVATION';
-  if (day <= 10) return 'DAILY_OPERATIONS';
-  if (day <= 21) return 'WORKFLOW';
-  if (day <= 35) return 'OWNER_INSIGHTS';
-  if (day <= 42) return 'CONVERSION';
-  if (day <= 45) return 'FINAL_REMINDER';
-  if (day <= 59) return 'READ_ONLY';
+  if (day <= 2) return 'ACTIVATION';
+  if (day <= 5) return 'DAILY_OPERATIONS';
+  if (day <= 8) return 'WORKFLOW';
+  if (day <= 11) return 'OWNER_INSIGHTS';
+  if (day <= 13) return 'CONVERSION';
+  if (day <= 15) return 'FINAL_REMINDER';
+  if (day <= 29) return 'READ_ONLY';
   return 'EXPIRED';
 }
 

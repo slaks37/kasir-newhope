@@ -191,7 +191,14 @@ export const api={
     const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
     if(error) throw new ApiError(401,'INVALID_CREDENTIALS','Email atau kata sandi salah.');
     try{const session=await api.me();setIdentity(email);return session;}
-    catch(err){await supabase.auth.signOut();setIdentity(null);throw err;}
+    catch(err: any){
+      await supabase.auth.signOut();
+      setIdentity(null);
+      if (err?.code === 'INTERNAL_MEMBERSHIP_REQUIRED' || err?.message === 'INTERNAL_MEMBERSHIP_REQUIRED') {
+        throw new ApiError(403, 'INTERNAL_MEMBERSHIP_REQUIRED', 'Akun terdaftar di Supabase Auth, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di database internal.');
+      }
+      throw err;
+    }
   },
   me:():Promise<Session>=>request('me'),
   identities:():Promise<{identities:Identity[]}>=>request('identities'),

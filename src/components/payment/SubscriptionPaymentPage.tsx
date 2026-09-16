@@ -20,11 +20,10 @@ import {
   Clock,
   ChevronRight,
   RefreshCw,
-  Gift,
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useAuth } from '../../context/AuthContext';
-import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan, TRIAL_PLAN_ID, TRIAL_DAYS } from '../../config/saasPlans';
+import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan } from '../../config/saasPlans';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BusinessSector } from '../../types';
 
@@ -349,69 +348,6 @@ export const SubscriptionPaymentPage: React.FC = () => {
     }
   };
 
-  // Start Free Trial Option
-  const handleStartFreeTrial = () => {
-    sessionStorage.removeItem('nhpos_pending_checkout_plan');
-    const now = new Date();
-    const end = new Date(now.getTime() + TRIAL_DAYS * 86_400_000);
-    const trialPlan = findSaaSPlan(TRIAL_PLAN_ID);
-
-    const trialSub = {
-      id: 'sub-trial-active',
-      tenantId: settings.subscription?.tenantId || 'tenant-default',
-      planId: TRIAL_PLAN_ID,
-      status: 'TRIAL' as const,
-      billingCycle: 'MONTHLY' as const,
-      extraOutlets: 0,
-      currentPeriodStart: now.toISOString(),
-      currentPeriodEnd: end.toISOString(),
-      cancelAtPeriodEnd: false,
-      accessMode: 'FULL' as const,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      plan: trialPlan || undefined,
-    };
-
-    updateSettings({
-      ...settings,
-      subscription: trialSub,
-    });
-
-    window.dispatchEvent(new Event('subscription-updated'));
-    fireConfetti();
-
-    setPaymentSuccess({
-      planName: 'Free Trial 45 Hari',
-      billingCycle: 'Masa Uji Coba',
-      validUntil: formatDateTime(end.toISOString()),
-      invoiceNumber: `TRIAL-NH-${Date.now().toString().slice(-6)}`,
-    });
-  };
-
-  const handleResetToLocked = () => {
-    const nowIso = new Date().toISOString();
-    sessionStorage.setItem('nhpos_pending_checkout_plan', selectedPlanId || 'plan-plus-monthly');
-    localStorage.setItem('nhpos_pending_checkout_plan', selectedPlanId || 'plan-plus-monthly');
-    updateSettings({
-      ...settings,
-      subscription: {
-        id: 'sub-pending',
-        tenantId: settings.subscription?.tenantId || 'tenant-default',
-        planId: selectedPlanId || 'plan-plus-monthly',
-        status: 'PENDING_PAYMENT',
-        accessMode: 'RESTRICTED',
-        currentPeriodStart: nowIso,
-        currentPeriodEnd: nowIso,
-        cancelAtPeriodEnd: false,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      },
-    });
-    setPaymentSuccess(null);
-    setIsOnboarding(true);
-    setVerifyNotice(null);
-    window.dispatchEvent(new CustomEvent('subscription-updated'));
-  };
 
   // SUCCESS CELEBRATION VIEW
   if (paymentSuccess) {
@@ -465,12 +401,6 @@ export const SubscriptionPaymentPage: React.FC = () => {
             >
               <span>Mulai Buka Kasir Sekarang</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </button>
-            <button
-              onClick={handleResetToLocked}
-              className="w-full py-2.5 rounded-xl border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200 text-xs font-semibold transition-all cursor-pointer"
-            >
-              Kunci Ulang Kasir (Uji Pembayaran DOKU)
             </button>
           </div>
         </div>
@@ -816,36 +746,21 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
             {/* Anti-Bypass Secure Controls */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Pembayaran aman terenkripsi & verifikasi server otomatis</span>
+              </div>
+
               <button
                 type="button"
-                onClick={handleStartFreeTrial}
-                className="text-xs font-bold text-slate-400 hover:text-white underline cursor-pointer py-1 flex items-center gap-1.5"
+                onClick={() => void checkPaymentVerification()}
+                disabled={verifying}
+                className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm ml-auto"
+                title="Cek verifikasi status pembayaran real-time ke server"
               >
-                <Gift className="w-3.5 h-3.5 text-amber-400" />
-                <span>Ganti ke Coba Gratis 45 Hari</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
+                <span>{verifying ? 'Memverifikasi...' : 'Periksa Status Pembayaran'}</span>
               </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleResetToLocked}
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-300 cursor-pointer py-1.5 px-2.5 rounded-xl border border-slate-800 hover:border-slate-700 transition-all"
-                  title="Kunci ulang status kasir ke belum bayar untuk menguji checkout DOKU"
-                >
-                  <span>Reset / Kunci Ulang</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void checkPaymentVerification()}
-                  disabled={verifying}
-                  className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
-                  title="Cek verifikasi status pembayaran real-time ke server"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
-                  <span>{verifying ? 'Memverifikasi...' : 'Periksa Status Pembayaran'}</span>
-                </button>
-              </div>
             </div>
           </div>
         </div>

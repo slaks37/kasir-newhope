@@ -23,6 +23,7 @@ import { CustomerManager } from './components/customers/CustomerManager';
 import { SwitchUserModal } from './components/auth/SwitchUserModal';
 import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
 import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
+import { subscriptionAccess } from './config/subscriptionPolicy';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
 import { formatRupiah } from './utils/formatters';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag } from 'lucide-react';
@@ -396,9 +397,16 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
         <RecentTransactionsModal onClose={() => setShowRecentTransactionsModal(false)} />
       )}
 
-      {settings.subscription?.status === 'EXPIRED' && (
-        <SubscriptionLockScreen onRenewSuccess={() => {}} />
-      )}
+      {activeTab !== 'payment' && (() => {
+        const sub = settings.subscription;
+        if (!sub) return null;
+        const access = subscriptionAccess(sub);
+        const isLocked = sub.status === 'EXPIRED' ||
+          sub.accessMode === 'RESTRICTED' ||
+          sub.status === 'PENDING_PAYMENT' ||
+          access.accessMode === 'RESTRICTED';
+        return isLocked ? <SubscriptionLockScreen onRenewSuccess={() => {}} /> : null;
+      })()}
 
       {showShiftModal && (
         <ShiftManagerModal onClose={() => setShowShiftModal(false)} />

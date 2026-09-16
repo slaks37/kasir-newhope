@@ -11,8 +11,8 @@ export async function ensureSubscription(db: Db, tenantId: string) {
   // Caller has already authenticated ownership. Creation anchored to tenant
   // signup, with a unique tenant constraint to survive concurrent requests.
   await db.query(`INSERT INTO billing.subscriptions
-    (id,tenant_id,plan_id,status,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at)
-    SELECT $1,id,$3,'TRIAL',created_at,created_at+interval '45 days',created_at+interval '59 days',created_at,created_at+interval '45 days'
+    (id,tenant_id,plan_id,status,billing_cycle,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
+    SELECT $1,id,$3,'TRIAL','MONTHLY',created_at,created_at+interval '15 days',created_at+interval '29 days',created_at,created_at+interval '15 days',true
     FROM internal.tenants WHERE id=$2 ON CONFLICT(tenant_id) DO NOTHING`, [randomUUID(),tenantId,TRIAL_PLAN_ID]);
   const { rows } = await db.query('SELECT * FROM billing.subscriptions WHERE tenant_id=$1', [tenantId]);
   if (!rows[0]) throw new BillingError(404,'TENANT_NOT_FOUND');
@@ -26,7 +26,8 @@ export function serializeSubscription(s: any) {
     gracePeriodEnd:s.grace_period_end ? iso(s.grace_period_end) : undefined,
     billingCycle:s.billing_cycle,extraOutlets:s.extra_outlets,
     trialStartedAt:s.trial_started_at ? iso(s.trial_started_at) : null,
-    trialEndsAt:s.trial_ends_at ? iso(s.trial_ends_at) : null };
+    trialEndsAt:s.trial_ends_at ? iso(s.trial_ends_at) : null,
+    hasUsedTrial:Boolean(s.has_used_trial) };
 }
 export function serializeInvoice(i: any) {
   return { id:i.id,invoiceNumber:i.invoice_number,subscriptionId:i.subscription_id,tenantId:i.tenant_id,
@@ -45,10 +46,19 @@ export async function subscriptionStatus(db: Db, tenantId: string) {
   const access = subscriptionAccess(sub);
   const tenant = await db.query('SELECT is_active FROM internal.tenants WHERE id=$1',[tenantId]);
   if (!tenant.rows[0]?.is_active) Object.assign(access,{accessMode:'RESTRICTED',status:'EXPIRED'});
+  if (access.status !== s.status) {
+    await db.query('UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2', [access.status, s.id]).catch(() => {});
+  }
   const invoices = await db.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100',[tenantId]);
-  const trialDay = Math.max(1,Math.floor((Date.now()-Date.parse(s.trial_started_at || s.created_at))/DAY_MS)+1);
+  const startMs = Date.parse(sub.currentPeriodStart);
+  const endMs = Date.parse(sub.currentPeriodEnd);
+  const nowMs = Date.now();
+  const activeDays = Math.max(0, Math.floor((nowMs - startMs) / DAY_MS));
+  const totalPeriodDays = Math.max(1, Math.round((endMs - startMs) / DAY_MS));
+  const trialDay = Math.max(1,Math.floor((nowMs-Date.parse(s.trial_started_at || s.created_at))/DAY_MS)+1);
+  const requiresRenewal = access.accessMode !== 'FULL' || access.daysLeft <= 3;
   return { ok:true,subscription:{...sub,status:access.status,accessMode:access.accessMode},plan:sub.plan,
-    ...access,trialDay,lifecycleStage:lifecycleStage(trialDay),trialDays:TRIAL_DAYS,
+    ...access,activeDays,totalPeriodDays,requiresRenewal,renewalDueDate:sub.currentPeriodEnd,trialDay,lifecycleStage:lifecycleStage(trialDay),trialDays:TRIAL_DAYS,hasUsedTrial:Boolean(s.has_used_trial),
     outlets:{used:await outletUsage(db,tenantId),included:sub.plan?.maxOutlets ?? 2,extra:Number(s.extra_outlets),limit:(sub.plan?.maxOutlets ?? 2)+Number(s.extra_outlets)},
     invoices:invoices.rows.map(serializeInvoice) };
 }
@@ -118,7 +128,7 @@ export async function assertTenantWritable(db: Pick<Db,'query'>,tenantId:string)
     FROM internal.tenants t LEFT JOIN contract.subscription_operations s ON s.tenant_id=t.id WHERE t.id=$1`,[tenantId]);
   const s=rows[0];
   if (!s) throw new BillingError(403,'TENANT_NOT_FOUND');
-  const end=s.current_period_end || new Date(Date.parse(s.created_at)+45*DAY_MS).toISOString();
+  const end=s.current_period_end || new Date(Date.parse(s.created_at)+TRIAL_DAYS*DAY_MS).toISOString();
   const access=subscriptionAccess({status:s.status || 'TRIAL',currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:s.grace_period_end ? new Date(s.grace_period_end).toISOString():undefined});
   if (!s.is_active || access.accessMode!=='FULL') throw new BillingError(403,'SUBSCRIPTION_READ_ONLY');
 }
