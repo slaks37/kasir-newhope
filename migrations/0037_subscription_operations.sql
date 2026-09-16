@@ -56,38 +56,38 @@ ALTER TABLE billing.payment_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE internal.support_actions ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON billing.payment_events,internal.support_actions FROM PUBLIC;
 -- Contract is private to server roles. UI cannot choose its tenant through it.
-CREATE VIEW contract.subscription_operations AS
+CREATE OR REPLACE VIEW contract.subscription_operations AS
 SELECT s.*,t.is_active AS tenant_active,t.created_at AS tenant_created_at
 FROM billing.subscriptions s JOIN internal.tenants t ON t.id=s.tenant_id;
 REVOKE ALL ON contract.subscription_operations FROM PUBLIC;
 -- Dedicated read models: older migration CASCADEs removed the old aggregate
 -- views. New names leave existing consumer views and production rows untouched.
-CREATE VIEW contract.admin_sector_summary AS
+CREATE OR REPLACE VIEW contract.admin_sector_summary AS
  SELECT business_sector,count(DISTINCT merchant_id)::int AS merchant_count,
  count(DISTINCT business_id)::int AS business_unit_count,count(*)::int AS transaction_count,
  COALESCE(sum(total_amount),0) AS gross_revenue,COALESCE(avg(total_amount),0) AS avg_basket,
  COALESCE(sum(discount_amount),0) AS total_discount,max(created_at) AS last_transaction_at
  FROM contract.merchant_revenue GROUP BY business_sector;
-CREATE VIEW contract.admin_daily_sector_revenue AS
+CREATE OR REPLACE VIEW contract.admin_daily_sector_revenue AS
  SELECT business_sector,(created_at AT TIME ZONE 'Asia/Jakarta')::date AS sales_date,count(*)::int AS transaction_count,
  COALESCE(sum(total_amount),0) AS gross_revenue,count(DISTINCT merchant_id)::int AS active_merchants
  FROM contract.merchant_revenue GROUP BY business_sector,(created_at AT TIME ZONE 'Asia/Jakarta')::date;
-CREATE VIEW contract.admin_product_sales AS
+CREATE OR REPLACE VIEW contract.admin_product_sales AS
  SELECT r.business_sector,r.merchant_id,m.name AS merchant_name,i.product_id,i.product_name,i.category_name,
  max(i.product_description) AS product_description,sum(i.quantity) AS units_sold,
  sum(i.total_price) AS revenue,sum(i.unit_cost*i.quantity) AS cogs,
  sum(i.total_price-i.unit_cost*i.quantity) AS gross_profit,count(DISTINCT i.transaction_id) AS appeared_in_transactions,
  max(r.created_at) AS last_sold_at
- FROM pos.transaction_items i JOIN contract.merchant_revenue r ON r.transaction_id=i.transaction_id
+ FROM pos.transaction_items i JOIN contract.merchant_revenue r ON r.id=i.transaction_id
  JOIN internal.merchants m ON m.id=r.merchant_id
  GROUP BY r.business_sector,r.merchant_id,m.name,i.product_id,i.product_name,i.category_name;
-CREATE VIEW contract.admin_activity_log AS
+CREATE OR REPLACE VIEW contract.admin_activity_log AS
  SELECT a.id,a.tenant_id,a.merchant_id,COALESCE(m.business_sector,a.detail->>'businessSector',t.business_sector) AS business_sector,
  COALESCE(m.external_ref,a.detail->>'businessId') AS business_id,a.domain AS app_module,a.event_type,a.severity,
  a.actor_name,a.actor_role,a.amount_idr,a.summary,a.detail,a.occurred_at,a.detail->>'transactionId' AS transaction_id,
  COALESCE(m.name,t.name) AS merchant_name FROM internal.audit_logs a
  LEFT JOIN internal.merchants m ON m.id=a.merchant_id LEFT JOIN internal.tenants t ON t.id=a.tenant_id;
-CREATE VIEW contract.admin_activity_by_sector AS
+CREATE OR REPLACE VIEW contract.admin_activity_by_sector AS
  SELECT business_sector,app_module,event_type,severity,count(*)::int AS event_count,
  count(DISTINCT merchant_id)::int AS merchants_affected,max(occurred_at) AS last_seen_at
  FROM contract.admin_activity_log GROUP BY business_sector,app_module,event_type,severity;
@@ -108,6 +108,7 @@ DO $$ DECLARE r text; BEGIN
  GRANT SELECT ON internal.merchants TO svc_billing;
  GRANT SELECT,INSERT,UPDATE ON internal.outlets TO svc_billing;
  GRANT SELECT,INSERT ON billing.payment_events TO svc_billing;
+ DROP POLICY IF EXISTS payment_events_billing ON billing.payment_events;
  CREATE POLICY payment_events_billing ON billing.payment_events TO svc_billing USING(true) WITH CHECK(true);
  END IF;
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='svc_internal') THEN
@@ -117,7 +118,9 @@ DO $$ DECLARE r text; BEGIN
  GRANT SELECT,INSERT,UPDATE ON billing.subscriptions,billing.invoices TO svc_internal;
  GRANT SELECT ON billing.plans,billing.payment_events TO svc_internal;
  GRANT SELECT,INSERT ON internal.support_actions TO svc_internal;
+ DROP POLICY IF EXISTS support_actions_internal ON internal.support_actions;
  CREATE POLICY support_actions_internal ON internal.support_actions TO svc_internal USING(true) WITH CHECK(true);
+ DROP POLICY IF EXISTS payment_events_internal ON billing.payment_events;
  CREATE POLICY payment_events_internal ON billing.payment_events FOR SELECT TO svc_internal USING(true);
  END IF;
 END $$;
