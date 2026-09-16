@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
-import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus } from './engine';
+import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus, activateFreeTrial } from './engine';
 import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
 export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
@@ -23,6 +23,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   };
   app.get('/api/v1/subscription/plans',(_req,res)=>res.json({ok:true,plans:SAAS_PLANS}));
   app.get('/api/v1/subscription/status',run(async(req,res)=>res.json(await subscriptionStatus(db,await tenant(req)))));
+  app.post('/api/v1/subscription/start-trial',run(async(req,res)=>res.json({ok:true,subscription:await activateFreeTrial(db,await tenant(req))})));
   app.get('/api/v1/subscription/outlets',run(async(req,res)=>{
     const {rows}=await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`,[await tenant(req)]);
     res.json({ok:true,rows});

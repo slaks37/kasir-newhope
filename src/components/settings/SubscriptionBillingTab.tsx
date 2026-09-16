@@ -36,7 +36,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
         <p className="text-xs text-slate-300">{data.subscription.billingCycle === 'YEARLY' ? 'Siklus Tahunan' : 'Siklus Bulanan'}</p>
         {data.subscription.status === 'TRIAL' && (
           <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-            Trial 15 Hari (1x Pakai)
+            Trial 45 Hari (1x Pakai)
           </span>
         )}
       </div>

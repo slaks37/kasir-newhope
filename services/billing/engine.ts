@@ -12,11 +12,39 @@ export async function ensureSubscription(db: Db, tenantId: string) {
   // signup, with a unique tenant constraint to survive concurrent requests.
   await db.query(`INSERT INTO billing.subscriptions
     (id,tenant_id,plan_id,status,billing_cycle,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
-    SELECT $1,id,$3,'TRIAL','MONTHLY',created_at,created_at+interval '15 days',created_at+interval '29 days',created_at,created_at+interval '15 days',true
+    SELECT $1,id,$3,'TRIAL','MONTHLY',created_at,created_at+interval '45 days',created_at+interval '59 days',created_at,created_at+interval '45 days',true
     FROM internal.tenants WHERE id=$2 ON CONFLICT(tenant_id) DO NOTHING`, [randomUUID(),tenantId,TRIAL_PLAN_ID]);
   const { rows } = await db.query('SELECT * FROM billing.subscriptions WHERE tenant_id=$1', [tenantId]);
   if (!rows[0]) throw new BillingError(404,'TENANT_NOT_FOUND');
   return rows[0];
+}
+
+export async function activateFreeTrial(db: Db, tenantId: string) {
+  const existing = await ensureSubscription(db, tenantId);
+  if (existing.has_used_trial && existing.status !== 'TRIAL' && existing.status !== 'PENDING_PAYMENT') {
+    throw new BillingError(400, 'TRIAL_ALREADY_USED');
+  }
+  if (existing.status === 'TRIAL' && Date.parse(existing.current_period_end) > Date.now()) {
+    return serializeSubscription(existing);
+  }
+  const { rows } = await db.query(`
+    UPDATE billing.subscriptions
+    SET plan_id = $2,
+        status = 'TRIAL',
+        billing_cycle = 'MONTHLY',
+        current_period_start = now(),
+        current_period_end = now() + interval '45 days',
+        grace_period_end = now() + interval '59 days',
+        trial_started_at = COALESCE(trial_started_at, now()),
+        trial_ends_at = now() + interval '45 days',
+        has_used_trial = true,
+        revision = revision + 1,
+        updated_at = now()
+    WHERE tenant_id = $1
+    RETURNING *
+  `, [tenantId, TRIAL_PLAN_ID]);
+  if (!rows[0]) throw new BillingError(400, 'TRIAL_ALREADY_USED');
+  return serializeSubscription(rows[0]);
 }
 
 export function serializeSubscription(s: any) {

@@ -226,18 +226,18 @@ const faqs = [
 const plans = [
   {
     id: "plan-free",
-    name: "Free Trial 15 Hari",
+    name: "Free Trial 45 Hari",
     desc: "Bangun kebiasaan operasional tanpa kartu kredit.",
     monthly: 0,
     yearly: 0,
     features: [
-      "Seluruh fitur Pro selama 15 hari",
+      "Seluruh fitur Pro selama 45 hari",
       "Hingga 2 outlet",
       "Produk dan staf tidak terbatas",
       "Kuota AI trial terbatas",
       "Data read-only 14 hari setelah trial",
     ],
-    cta: "Coba Gratis 15 Hari",
+    cta: "Coba Gratis 45 Hari",
   },
   {
     id: "plan-plus-monthly",
@@ -527,7 +527,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className="nh-button nh-button-primary"
                 onClick={register}
               >
-                Coba Gratis 15 Hari
+                Coba Gratis 45 Hari
                 <ArrowUpRight size={19} />
               </button>
               <a className="nh-button nh-button-secondary" href="#demo-kasir">
@@ -930,7 +930,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <SectionTitle
               eyebrow="Investasi sederhana untuk usaha"
               title="Mulai gratis. Bertumbuh sesuai kebutuhan."
-              description="Coba selama 15 hari tanpa kartu kredit, lalu pilih paket yang sesuai dengan usaha Anda."
+              description="Coba selama 45 hari tanpa kartu kredit, lalu pilih paket yang sesuai dengan usaha Anda."
             />
             <div className="nh-billing-toggle" aria-label="Periode harga">
               <button
@@ -967,7 +967,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                         isYearlyBilling ? plan.yearly : plan.monthly,
                       )}
                     </strong>
-                    <span>{i === 0 ? "/ 15 hari" : "/ bulan"}</span>
+                    <span>{i === 0 ? "/ 45 hari" : "/ bulan"}</span>
                   </div>
                   <div className="nh-billing-note">
                     {i === 0
@@ -1092,7 +1092,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               className="nh-button nh-button-primary"
               onClick={register}
             >
-              Coba Gratis 15 Hari
+              Coba Gratis 45 Hari
               <ArrowUpRight size={19} />
             </button>
             <a

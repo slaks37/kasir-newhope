@@ -190,7 +190,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
             className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center space-x-1.5"
           >
             <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-            <span>Coba Gratis 15 Hari</span>
+            <span>Coba Gratis 45 Hari</span>
           </button>
         </div>
       </header>
@@ -385,7 +385,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                 onClick={onOpenRegister || onBackToHome}
                 className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer"
               >
-                Mulai Uji Coba Gratis 15 Hari
+                Mulai Uji Coba Gratis 45 Hari
               </button>
               <button
                 onClick={handleBackToList}

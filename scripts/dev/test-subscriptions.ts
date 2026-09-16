@@ -40,14 +40,14 @@ async function main(){
  await db.query(`INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Test Merchant','owner-one'),($2,'Other Tenant','owner-two')`,[tenant,other]);
  await db.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Test Brand','FNB','test-brand')`,[merchant,tenant]);
   const sub=await ensureSubscription(db,tenant),again=await ensureSubscription(db,tenant);
-  assert.equal(sub.id,again.id);assert.equal(new Date(sub.current_period_end).getTime()-new Date(sub.current_period_start).getTime(),15*DAY_MS);
-  assert.equal((await subscriptionStatus(db,tenant)).daysLeft,15);
-  const epoch=Date.parse('2026-01-01T00:00:00Z'),s={status:'TRIAL',currentPeriodEnd:new Date(epoch+15*DAY_MS).toISOString()};
-  assert.equal(subscriptionAccess(s,epoch+15*DAY_MS-1).accessMode,'FULL');
-  assert.equal(subscriptionAccess(s,epoch+15*DAY_MS).accessMode,'READ_ONLY');
-  assert.equal(subscriptionAccess(s,epoch+29*DAY_MS).accessMode,'RESTRICTED');
+  assert.equal(sub.id,again.id);assert.equal(new Date(sub.current_period_end).getTime()-new Date(sub.current_period_start).getTime(),45*DAY_MS);
+  assert.equal((await subscriptionStatus(db,tenant)).daysLeft,45);
+  const epoch=Date.parse('2026-01-01T00:00:00Z'),s={status:'TRIAL',currentPeriodEnd:new Date(epoch+45*DAY_MS).toISOString()};
+  assert.equal(subscriptionAccess(s,epoch+45*DAY_MS-1).accessMode,'FULL');
+  assert.equal(subscriptionAccess(s,epoch+45*DAY_MS).accessMode,'READ_ONLY');
+  assert.equal(subscriptionAccess(s,epoch+59*DAY_MS).accessMode,'RESTRICTED');
   assert.equal(subscriptionAccess({...s,status:'SUSPENDED'},epoch).accessMode,'RESTRICTED');
-  assert.equal(lifecycleStage(2),'ACTIVATION');assert.equal(lifecycleStage(15),'FINAL_REMINDER');
+  assert.equal(lifecycleStage(3),'ACTIVATION');assert.equal(lifecycleStage(43),'FINAL_REMINDER');
   assert.equal(addBillingPeriod(new Date('2026-01-31T18:30:00Z'),'MONTHLY').toISOString(),'2026-02-28T18:30:00.000Z');
   assert.equal(addBillingPeriod(new Date('2024-02-29T00:00:00Z'),'YEARLY').toISOString(),'2025-02-28T00:00:00.000Z');
   for(const [plan,monthly,yearly] of [['plan-plus-monthly',99000,950400],['plan-pro-monthly',299000,2978040]] as const){
@@ -59,7 +59,7 @@ async function main(){
   assert.throws(()=>billingQuote(sub,{planId:'plan-free'},0),/INVALID_PAID_PLAN/);
   assert.throws(()=>billingQuote(sub,{planId:'plan-plus-monthly',extraOutlets:-1},0),/INVALID_EXTRA/);
   assert.throws(()=>billingQuote(sub,{planId:'plan-plus-monthly'},3),/OUTLET_LIMIT/);
-  console.log('PASS: persistent 15-day trial, exact 15/29-day boundaries, lifecycle, prices and outlet quotes');
+  console.log('PASS: persistent 45-day trial, exact 45/59-day boundaries, lifecycle, prices and outlet quotes');
  for(let n=0;n<2;n++){
   await db.tx(async c=>{await assertOutletCapacity(c,tenant);await c.query('INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,$4)',[randomUUID(),tenant,merchant,'Outlet '+n]);});
  }
@@ -140,7 +140,7 @@ async function main(){
   assert.equal(isolated.invoices.length,0);assert.equal(isolated.payments.length,0);assert.equal(isolated.outlets.length,0);
   const unpersisted=randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'No subscription yet','owner-detail')",[unpersisted]);
   const derived=await (await fetch(url+'/api/admin/tenants/'+unpersisted+'/subscription-detail',{headers:{authorization:'Bearer test-admin'}})).json();
-  assert.equal(derived.derivedTrial,true);assert.equal(derived.subscription.daysLeft,15);
+  assert.equal(derived.derivedTrial,true);assert.equal(derived.subscription.daysLeft,45);
   assert.equal((await db.query('SELECT id FROM billing.subscriptions WHERE tenant_id=$1',[unpersisted])).rows.length,0);
   assert.equal((await fetch(url+'/api/admin/tenants/'+randomUUID()+'/subscription-detail',{headers:{authorization:'Bearer test-admin'}})).status,404);
   const detailAudit=await db.query("SELECT target_id,justification FROM internal.internal_access_log WHERE resource LIKE '%/subscription-detail' AND internal_role='ROLE_INTERNAL_SUPPORT' AND action='VIEW_MERCHANT_DETAIL'");

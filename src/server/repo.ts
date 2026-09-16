@@ -18,7 +18,7 @@ import { findSaaSPlan, DAY_MS, TRIAL_DAYS } from '../config/saasPlans';
 function withSubscription(row:any) {
   const end=row.current_period_end || new Date(Date.parse(row.joined_at)+TRIAL_DAYS*DAY_MS);
   const state=subscriptionAccess({status:row.is_active?(row.raw_status || 'TRIAL'):'EXPIRED',currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:row.grace_period_end?new Date(row.grace_period_end).toISOString():undefined});
-  return {...row,subscription_status:state.status,access_mode:state.accessMode,plan_name:findSaaSPlan(row.plan_id)?.name || 'Trial 15 Hari'};
+  return {...row,subscription_status:state.status,access_mode:state.accessMode,plan_name:findSaaSPlan(row.plan_id)?.name || 'Trial 45 Hari'};
 }
 
 export const SECTORS = ['FNB', 'LAUNDRY', 'RETAIL', 'CARWASH', 'BARBERSHOP'] as const;

@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../../context/POSContext';
 import { useAuth } from '../../context/AuthContext';
-import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan } from '../../config/saasPlans';
+import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan, TRIAL_PLAN_ID, TRIAL_DAYS } from '../../config/saasPlans';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BusinessSector } from '../../types';
+import { newId, newDocumentNumber } from '../../lib/ids';
 
 interface QuoteResponse {
   ok: boolean;
@@ -49,13 +50,20 @@ export const SubscriptionPaymentPage: React.FC = () => {
     return Boolean(sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan'));
   });
 
+  // Check if trial has been used
+  const hasUsedTrial = Boolean(
+    settings.subscription?.hasUsedTrial ||
+    settings.subscription?.trialStartedAt ||
+    (settings.subscription?.status === 'TRIAL' && Date.parse(settings.subscription?.currentPeriodEnd) <= Date.now())
+  );
+
   // Selected plan state
   const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
     const pending = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
-    if (pending && (pending === 'plan-plus-monthly' || pending === 'plan-pro-monthly')) {
+    if (pending && (pending === 'plan-plus-monthly' || pending === 'plan-pro-monthly' || pending === TRIAL_PLAN_ID)) {
       return pending;
     }
-    return 'plan-plus-monthly';
+    return !hasUsedTrial ? TRIAL_PLAN_ID : 'plan-plus-monthly';
   });
 
   const [yearly, setYearly] = useState<boolean>(() => {
@@ -80,7 +88,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
     invoiceNumber: string;
   } | null>(null);
 
-  const selectedPlan = findSaaSPlan(selectedPlanId) || PAID_SAAS_PLANS[0];
+  const selectedPlan = findSaaSPlan(selectedPlanId) || findSaaSPlan(TRIAL_PLAN_ID) || PAID_SAAS_PLANS[0];
+  const isTrial = selectedPlanId === TRIAL_PLAN_ID;
 
   // Map sector to readable label and icon
   const getSectorMeta = (sector: BusinessSector) => {
@@ -107,6 +116,28 @@ export const SubscriptionPaymentPage: React.FC = () => {
   useEffect(() => {
     let isCurrent = true;
     const fetchQuote = async () => {
+      if (selectedPlanId === TRIAL_PLAN_ID) {
+        const now = new Date();
+        const end = new Date(now.getTime() + TRIAL_DAYS * 86_400_000);
+        if (isCurrent) {
+          setQuote({
+            ok: true,
+            planId: TRIAL_PLAN_ID,
+            planName: `Free Trial ${TRIAL_DAYS} Hari`,
+            billingCycle: 'MONTHLY',
+            amount: 0,
+            recurringAmount: 0,
+            unusedCredit: 0,
+            extraOutlets: 0,
+            periodStart: now.toISOString(),
+            periodEnd: end.toISOString(),
+          });
+          setQuoteLoading(false);
+          setError(null);
+        }
+        return;
+      }
+
       setQuoteLoading(true);
       setError(null);
       try {
@@ -274,13 +305,78 @@ export const SubscriptionPaymentPage: React.FC = () => {
     }
   }, []);
 
-  // Handle DOKU Checkout
+  // Handle DOKU Checkout or Free Trial
   const handleProceedToPayment = async () => {
-    if (!quote) return;
-    setCheckoutLoading(true);
     setError(null);
     setVerifyNotice(null);
 
+    // Free Trial Activation Flow
+    if (selectedPlanId === TRIAL_PLAN_ID) {
+      if (hasUsedTrial) {
+        setError('Masa Free Trial 45 Hari hanya dapat digunakan 1 kali per akun toko. Silakan pilih paket Tier Plus atau Tier Pro.');
+        return;
+      }
+      setCheckoutLoading(true);
+      try {
+        const res = await fetch('/api/v1/subscription/start-trial', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: settings.subscription?.tenantId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.message || data.error || 'Gagal mengaktifkan Free Trial.');
+        }
+
+        const now = new Date();
+        const end = new Date(now.getTime() + TRIAL_DAYS * 86_400_000);
+        const trialSub = {
+          ...settings.subscription,
+          id: data.subscription?.id || newId('sub-trial'),
+          tenantId: data.subscription?.tenantId || settings.subscription?.tenantId || 'tenant-default',
+          planId: TRIAL_PLAN_ID,
+          status: 'TRIAL' as const,
+          billingCycle: 'MONTHLY' as const,
+          extraOutlets: 0,
+          currentPeriodStart: data.subscription?.currentPeriodStart || now.toISOString(),
+          currentPeriodEnd: data.subscription?.currentPeriodEnd || end.toISOString(),
+          accessMode: 'FULL' as const,
+          hasUsedTrial: true,
+          plan: findSaaSPlan(TRIAL_PLAN_ID) || undefined,
+        };
+
+        updateSettings({
+          ...settings,
+          subscription: trialSub,
+        });
+
+        sessionStorage.removeItem('nhpos_pending_checkout_plan');
+        sessionStorage.removeItem('nhpos_pending_checkout_cycle');
+        localStorage.removeItem('nhpos_pending_checkout_plan');
+        localStorage.removeItem('nhpos_pending_checkout_cycle');
+
+        window.dispatchEvent(new CustomEvent('subscription-updated'));
+        fireConfetti();
+
+        setPaymentSuccess({
+          planName: `Free Trial ${TRIAL_DAYS} Hari`,
+          billingCycle: 'Masa Uji Coba',
+          validUntil: formatDateTime(data.subscription?.currentPeriodEnd || end.toISOString()),
+          invoiceNumber: newDocumentNumber('TRIAL-NH'),
+        });
+      } catch (err: any) {
+        console.warn('Free trial activation error:', err.message);
+        setError(err.message || 'Gagal mengaktifkan Free Trial. Silakan coba kembali.');
+      } finally {
+        setCheckoutLoading(false);
+      }
+      return;
+    }
+
+    if (!quote) return;
+    setCheckoutLoading(true);
     const requestKey = crypto.randomUUID();
 
     try {
@@ -505,7 +601,92 @@ export const SubscriptionPaymentPage: React.FC = () => {
             <span className="text-xs text-slate-500">Dapat diganti atau dibatalkan kapan saja</span>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-5">
+          <div className="grid lg:grid-cols-3 gap-5">
+            {/* Card 1: Free Trial 45 Hari */}
+            {(() => {
+              const trialPlan = findSaaSPlan(TRIAL_PLAN_ID);
+              const isSelected = selectedPlanId === TRIAL_PLAN_ID;
+              return (
+                <div
+                  key={TRIAL_PLAN_ID}
+                  onClick={() => !hasUsedTrial && setSelectedPlanId(TRIAL_PLAN_ID)}
+                  className={`relative rounded-3xl p-6 transition-all border flex flex-col justify-between ${
+                    hasUsedTrial
+                      ? 'bg-slate-900/30 border-slate-800/60 opacity-60 cursor-not-allowed'
+                      : isSelected
+                      ? 'bg-slate-900/95 border-amber-500 shadow-2xl shadow-amber-500/10 ring-2 ring-amber-500/30 cursor-pointer'
+                      : 'bg-slate-900/50 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/80 cursor-pointer'
+                  }`}
+                >
+                  <div className="absolute -top-3 left-6 px-3 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-black text-[10px] tracking-wider uppercase shadow-md flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    <span>{hasUsedTrial ? 'Sudah Digunakan' : 'Uji Coba Gratis'}</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xl font-black text-white">{trialPlan?.name || 'Free Trial 45 Hari'}</h3>
+                        <p className="text-xs text-slate-400 mt-0.5">Termasuk hingga 2 outlet aktif</p>
+                      </div>
+                      <div
+                        className={`w-6 h-6 rounded-full border flex items-center justify-center ${
+                          isSelected && !hasUsedTrial
+                            ? 'border-amber-400 bg-amber-400 text-slate-950'
+                            : 'border-slate-700 bg-slate-800 text-transparent'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/80">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black text-white font-mono">Rp 0</span>
+                        <span className="text-xs font-semibold text-slate-400">/ 45 hari</span>
+                      </div>
+                      <p className="text-[11px] text-emerald-400 font-semibold mt-1">
+                        {hasUsedTrial ? 'Masa uji coba telah selesai digunakan' : 'Coba gratis 45 hari tanpa kartu kredit'}
+                      </p>
+                    </div>
+
+                    <ul className="space-y-2.5 pt-2 text-xs text-slate-300">
+                      {(trialPlan?.features || [
+                        'Seluruh fitur Tier Pro selama 45 hari',
+                        'Hingga 2 outlet aktif',
+                        'Produk dan pengguna tidak terbatas',
+                        'Kuota AI trial terbatas',
+                        'Tanpa kartu kredit (berlaku 1x)',
+                      ]).slice(0, 5).map((feature, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="pt-6">
+                    <button
+                      type="button"
+                      disabled={hasUsedTrial}
+                      onClick={() => !hasUsedTrial && setSelectedPlanId(TRIAL_PLAN_ID)}
+                      className={`w-full py-3 rounded-xl font-bold text-xs transition-all ${
+                        hasUsedTrial
+                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 cursor-pointer'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                      }`}
+                    >
+                      {hasUsedTrial ? 'Sudah Digunakan (1x)' : isSelected ? 'Paket Terpilih' : 'Pilih Coba Gratis'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Cards 2 & 3: PAID_SAAS_PLANS */}
             {PAID_SAAS_PLANS.map((plan) => {
               const isSelected = selectedPlanId === plan.id;
               const price = yearly ? annualTotal(plan) : plan.priceIdr;
@@ -588,46 +769,53 @@ export const SubscriptionPaymentPage: React.FC = () => {
         </div>
 
         {/* Add-on Outlet Stepper */}
-        <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-6 backdrop-blur-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h3 className="font-bold text-white text-sm">Tambahan Outlet (Add-on Cabang)</h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Paket {selectedPlan.name} sudah mencakup <b>{selectedPlan.maxOutlets} outlet</b>. Tambahkan jika Anda memiliki cabang lain.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setExtraOutlets((prev) => Math.max(0, prev - 1))}
-                disabled={extraOutlets === 0}
-                className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
-              >
-                -
-              </button>
-              <div className="px-4 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-center min-w-[70px]">
-                <span className="font-mono font-bold text-sm text-amber-400">+{extraOutlets}</span>
-                <span className="block text-[10px] text-slate-400">outlet</span>
+        {isTrial ? (
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-5 text-xs text-slate-300 flex items-center gap-3 backdrop-blur-sm">
+            <Info className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Paket <b>Free Trial 45 Hari</b> mencakup hingga <b>2 outlet aktif</b> secara gratis. Tambahan cabang dapat diaktifkan setelah memilih paket Tier Plus atau Pro.</span>
+          </div>
+        ) : (
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-6 backdrop-blur-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-white text-sm">Tambahan Outlet (Add-on Cabang)</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Paket {selectedPlan.name} sudah mencakup <b>{selectedPlan.maxOutlets} outlet</b>. Tambahkan jika Anda memiliki cabang lain.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setExtraOutlets((prev) => prev + 1)}
-                className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 transition-all cursor-pointer"
-              >
-                +
-              </button>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setExtraOutlets((prev) => Math.max(0, prev - 1))}
+                  disabled={extraOutlets === 0}
+                  className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+                >
+                  -
+                </button>
+                <div className="px-4 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-center min-w-[70px]">
+                  <span className="font-mono font-bold text-sm text-amber-400">+{extraOutlets}</span>
+                  <span className="block text-[10px] text-slate-400">outlet</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExtraOutlets((prev) => prev + 1)}
+                  className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 transition-all cursor-pointer"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
+              <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span>
+                Add-on dihitung {yearly ? 'Rp760.320/outlet/tahun' : 'Rp79.200/outlet/bulan'}. Total kapasitas:{' '}
+                <b className="text-white">{selectedPlan.maxOutlets + extraOutlets} outlet aktif</b>.
+              </span>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
-            <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span>
-              Add-on dihitung {yearly ? 'Rp760.320/outlet/tahun' : 'Rp79.200/outlet/bulan'}. Total kapasitas:{' '}
-              <b className="text-white">{selectedPlan.maxOutlets + extraOutlets} outlet aktif</b>.
-            </span>
-          </div>
-        </div>
+        )}
 
         {/* Invoice Summary & Checkout Action */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
@@ -689,30 +877,52 @@ export const SubscriptionPaymentPage: React.FC = () => {
             <div className="border-t border-slate-800 pt-4 flex items-baseline justify-between">
               <div>
                 <span className="text-sm font-black text-white block">Total Pembayaran</span>
-                <span className="text-[11px] text-slate-400">Termasuk seluruh modul & sinkronisasi</span>
+                <span className="text-[11px] text-slate-400">
+                  {isTrial ? 'Masa Uji Coba 45 Hari Tanpa Biaya' : 'Termasuk seluruh modul & sinkronisasi'}
+                </span>
               </div>
               <span className="text-2xl sm:text-3xl font-black text-amber-400 font-mono">
-                {formatRupiah(quote ? quote.amount : yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr)}
+                {isTrial
+                  ? 'Gratis (Rp 0)'
+                  : formatRupiah(quote ? quote.amount : yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr)}
               </span>
             </div>
           </div>
 
           {/* Payment Method Badges */}
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
-              <span className="font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                <QrCode className="w-3.5 h-3.5 text-amber-400" />
-                Metode Pembayaran DOKU Gateway
-              </span>
-              <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Aman & Terverifikasi
-              </span>
+          {isTrial ? (
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span className="font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  Aktivasi Instan Tanpa Kartu Kredit
+                </span>
+                <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Masa Coba 45 Hari Resmi (1x Pakai)
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Buka kasir dan nikmati seluruh fitur Tier Pro, transaksi, resep bahan baku, QRIS dinamis, dan AI Copilot selama 45 hari tanpa biaya.
+              </p>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Mendukung <b>QRIS</b> (Gopay, OVO, Dana, ShopeePay, BCA Mobile), <b>Virtual Account</b> (BCA, Mandiri, BRI, BNI), dan <b>Kartu Kredit/Debit</b>.
-            </p>
-          </div>
+          ) : (
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span className="font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                  <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                  Metode Pembayaran DOKU Gateway
+                </span>
+                <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Aman & Terverifikasi
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Mendukung <b>QRIS</b> (Gopay, OVO, Dana, ShopeePay, BCA Mobile), <b>Virtual Account</b> (BCA, Mandiri, BRI, BNI), dan <b>Kartu Kredit/Debit</b>.
+              </p>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="space-y-3 pt-2">
@@ -725,24 +935,48 @@ export const SubscriptionPaymentPage: React.FC = () => {
               </div>
             )}
 
-            <button
-              type="button"
-              disabled={checkoutLoading || quoteLoading || verifying}
-              onClick={handleProceedToPayment}
-              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {checkoutLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Membuka Gerbang Pembayaran DOKU…</span>
-                </>
-              ) : (
-                <>
-                  <span>Bayar Sekarang dengan DOKU Checkout</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
+            {isTrial ? (
+              <button
+                type="button"
+                disabled={checkoutLoading || verifying || hasUsedTrial}
+                onClick={handleProceedToPayment}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {checkoutLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Mengaktifkan Free Trial 45 Hari…</span>
+                  </>
+                ) : hasUsedTrial ? (
+                  <span>Masa Trial Telah Digunakan (Pilih Plus / Pro)</span>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Mulai Uji Coba Gratis 45 Hari Sekarang</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={checkoutLoading || quoteLoading || verifying}
+                onClick={handleProceedToPayment}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {checkoutLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Membuka Gerbang Pembayaran DOKU…</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Bayar Sekarang dengan DOKU Checkout</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Anti-Bypass Secure Controls */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2">

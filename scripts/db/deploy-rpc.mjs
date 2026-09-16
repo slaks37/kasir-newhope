@@ -2,6 +2,7 @@ import 'dotenv/config';
 import pg from 'pg';
 
 const sql = `
+DROP FUNCTION IF EXISTS public.custom_signup CASCADE;
 CREATE OR REPLACE FUNCTION public.custom_signup(
   user_email TEXT,
   user_password TEXT,
@@ -74,7 +75,7 @@ BEGIN
   INSERT INTO internal.memberships (id, user_id, tenant_id, merchant_id, role, pin, is_active)
   VALUES (gen_random_uuid(), new_user_id, new_tenant_id, new_tenant_id, 'OWNER', '1234', true);
 
-  -- Insert Trial Subscription (15 hari, 1x pakai)
+  -- Insert Trial Subscription (45 hari, 1x pakai)
   INSERT INTO billing.subscriptions (
     id, tenant_id, plan_id, status, current_period_start, current_period_end,
     grace_period_end, trial_started_at, trial_ends_at, has_used_trial
@@ -85,10 +86,10 @@ BEGIN
     'plan-free', 
     'TRIAL'::subscription_status_enum, 
     NOW(), 
-    NOW() + INTERVAL '15 days',
-    NOW() + INTERVAL '29 days',
+    NOW() + INTERVAL '45 days',
+    NOW() + INTERVAL '59 days',
     NOW(),
-    NOW() + INTERVAL '15 days',
+    NOW() + INTERVAL '45 days',
     true
   );
 

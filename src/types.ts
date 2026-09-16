@@ -639,8 +639,9 @@ export interface SaaSSubscription {
   gracePeriodEnd?: string; // ISO Date String
   cancelAtPeriodEnd: boolean;
   canceledAt?: string;
-  createdAt: string;
-  updatedAt: string;
+  hasUsedTrial?: boolean;
+  trialStartedAt?: string;
+  trialEndsAt?: string;
   plan?: SaaSPlan;
 }
 
