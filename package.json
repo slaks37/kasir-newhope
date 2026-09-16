@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_admin_bundle.js",
+    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_admin_bundle.js && esbuild src/server/subscriptionDispatcher.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_subscription_bundle.js && esbuild src/server/dokuHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_doku_bundle.js && esbuild src/server/billingRemindersHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_billing_reminders_bundle.js",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

@@ -325,7 +325,21 @@ export const SubscriptionPaymentPage: React.FC = () => {
             tenantId: settings.subscription?.tenantId,
           }),
         });
-        const data = await res.json();
+        let data: any = null;
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          try {
+            data = await res.json();
+          } catch {
+            data = null;
+          }
+        }
+
+        if (!data) {
+          const text = await res.text().catch(() => '');
+          throw new Error(text && text.length < 120 && !text.includes('<') ? text : `Terjadi kendala pada server (HTTP ${res.status}). Silakan coba beberapa saat lagi.`);
+        }
+
         if (!res.ok || !data.ok) {
           throw new Error(data.message || data.error || 'Gagal mengaktifkan Free Trial.');
         }
