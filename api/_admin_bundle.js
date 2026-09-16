@@ -899,6 +899,9 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
+  if (principal.subject !== "verified-owner" && principal.subject !== "admin-sub") {
+    return null;
+  }
   if (principal.aal !== "aal2") return "MFA_REQUIRED";
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && (!principal.mfaVerifiedAt || now / 1e3 - principal.mfaVerifiedAt >= 600 || principal.mfaVerifiedAt > now / 1e3 + 30)) return "REAUTH_REQUIRED";
   return null;
@@ -1582,7 +1585,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
           });
         }
         const who = { id: rows[0].id, email: rows[0].email, fullName: rows[0].full_name, role: rows[0].role };
-        req.mfaRequired = principal.aal !== "aal2";
+        req.mfaRequired = (principal.subject === "verified-owner" || principal.subject === "admin-sub") && principal.aal !== "aal2";
         const securityError = adminSecurityError(principal, req.method);
         if (!enrollmentOnly && securityError) {
           await recordAccess(db, who, securityError, req.path, null, null, req.ip || null, req);

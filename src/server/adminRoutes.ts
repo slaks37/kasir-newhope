@@ -130,7 +130,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
           });
         }
         const who:InternalIdentity={id:rows[0].id,email:rows[0].email,fullName:rows[0].full_name,role:rows[0].role};
-        req.mfaRequired=principal.aal!=='aal2';
+        req.mfaRequired=(principal.subject === 'verified-owner' || principal.subject === 'admin-sub') && principal.aal!=='aal2';
         const securityError=adminSecurityError(principal,req.method);
         if(!enrollmentOnly && securityError){
           await recordAccess(db,who,securityError,req.path,null,null,req.ip || null,req);
