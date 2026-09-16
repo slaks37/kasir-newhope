@@ -99,8 +99,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setError("Email dan password wajib diisi.");
       return;
     }
-    if (password.length < 6) {
-      setError("Password minimal 6 karakter.");
+    if (mode === "register" && password.length < 8) {
+      setError("Password minimal 8 karakter.");
       return;
     }
 
@@ -134,7 +134,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         }
       } else {
-        const { error: err } = await signUpWithEmail(email, password, {
+        const { error: err, requiresEmailConfirmation } = await signUpWithEmail(email, password, {
           fullName: fullName.trim() || storeName.trim(),
           storeName: storeName.trim(),
           sector,
@@ -155,6 +155,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           } else {
             setError(err.message);
           }
+        } else if (requiresEmailConfirmation) {
+          setPassword('');
+          setSuccess('Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
+          setMode('login');
         } else {
           if (storeName.trim()) {
             try {

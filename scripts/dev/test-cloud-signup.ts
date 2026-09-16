@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { registerCloudAccount } from '../../src/lib/auth/cloudSignup';
+
+const input = { email: 'test@example.invalid', password: 'test-only-password', fullName: 'Owner', storeName: 'Test', sector: 'FNB', redirectTo: 'https://example.invalid' };
+let calls = 0;
+let response: any = { data: { user: { id: 'test' }, session: null }, error: null };
+const client: any = { auth: { signUp: async (args: any) => {
+  calls++;
+  assert.equal(args.email, input.email);
+  assert.equal(args.options.emailRedirectTo, input.redirectTo);
+  assert.deepEqual(Object.keys(args.options.data).sort(), ['business_sector', 'full_name', 'store_name']);
+  return response;
+} } };
+assert.deepEqual(await registerCloudAccount(client, input), { error: null, session: null, requiresEmailConfirmation: true });
+response = { data: { user: null, session: null }, error: { message: 'rate limited' } };
+assert.equal((await registerCloudAccount(client, input)).error?.message, 'rate limited');
+response = { data: { user: { identities: [] }, session: null }, error: null };
+assert.equal((await registerCloudAccount(client, input)).requiresEmailConfirmation, true);
+const session: any = { user: { id: 'verified' }, access_token: 'test-token' };
+response = { data: { session }, error: null };
+assert.equal((await registerCloudAccount(client, input)).session, session);
+client.auth.signUp = async () => { throw new Error('network failure'); };
+assert.equal((await registerCloudAccount(client, input)).session, null);
+assert.equal(calls, 4);
+const context = readFileSync(new URL('../../src/context/AuthContext.tsx', import.meta.url), 'utf8');
+assert.ok(!context.includes("rpc('custom_signup'"));
+const cloudBranch = context.split('const signUpWithEmail = useCallback(')[1].split('// Explicit unconfigured demo')[0];
+assert.ok(!cloudBranch.includes('saveLocalUser('));
+assert.ok(!cloudBranch.includes('createLocalSession('));
+console.log('PASS: cloud signup confirmation, success, duplicate privacy, server error, network error and no synthetic session');
