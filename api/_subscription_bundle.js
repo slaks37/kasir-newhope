@@ -572,19 +572,27 @@ async function handler5(req, res) {
       await pool.end();
       if (resSub.rows.length > 0) {
         const sub = resSub.rows[0];
+        const isTrial = sub.status === "TRIAL";
         const isPaid = sub.status === "ACTIVE" || sub.payment_status === "PAID";
+        const periodEnd = sub.current_period_end ? new Date(sub.current_period_end) : now;
+        const isNotExpired = periodEnd.getTime() > now.getTime();
+        const isActive = (isTrial || isPaid) && isNotExpired;
+        const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24)));
         return sendJson5(res, 200, {
           ok: true,
           subscription: {
             id: sub.id,
             tenantId: sub.tenant_id,
-            planId: sub.plan_id || "plan-plus-monthly",
-            status: isPaid ? "ACTIVE" : "PENDING_PAYMENT",
-            accessMode: isPaid ? "FULL" : "RESTRICTED",
+            planId: sub.plan_id || (isTrial ? "plan-free" : "plan-plus-monthly"),
+            status: isTrial ? "TRIAL" : isPaid ? "ACTIVE" : sub.status || "PENDING_PAYMENT",
+            billingCycle: sub.billing_cycle || "MONTHLY",
+            extraOutlets: sub.extra_outlets || 0,
+            accessMode: isActive ? "FULL" : "RESTRICTED",
+            hasUsedTrial: Boolean(sub.has_used_trial || isTrial),
             currentPeriodStart: sub.current_period_start || now.toISOString(),
             currentPeriodEnd: sub.current_period_end || now.toISOString()
           },
-          daysLeft: isPaid ? 30 : 0,
+          daysLeft,
           invoices: []
         });
       }
