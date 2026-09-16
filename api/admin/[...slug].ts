@@ -1,5 +1,3 @@
-import { proxyToGateway } from '../_gateway';
+import handler from '../_admin_bundle.js';
 
-export default async function handler(req: any, res: any) {
-  return proxyToGateway(req, res);
-}
+export default handler;
