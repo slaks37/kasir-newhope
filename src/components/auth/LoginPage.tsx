@@ -332,7 +332,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 autoComplete={
                   mode === "login" ? "current-password" : "new-password"
                 }
-                minLength={6}
+                minLength={mode === 'register' ? 8 : undefined}
                 aria-describedby={
                   mode === "register" ? "password-hint" : undefined
                 }
@@ -354,7 +354,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
             {mode === "register" && (
               <p id="password-hint" className="nh-field-hint">
-                Gunakan minimal 6 karakter.
+                {mode === 'register' ? 'Gunakan minimal 8 karakter.' : 'Masukkan kata sandi akun Anda.'}
               </p>
             )}
           </div>
