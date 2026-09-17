@@ -28,6 +28,7 @@ async function main(){
  for(const file of files){try{await pg.exec(fs.readFileSync(file,'utf8'));}catch(e){throw new Error('Migration '+file+': '+(e as Error).message);}}
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
+ await pg.exec(fs.readFileSync('docs/security/restrict-browser-rls-policies.sql','utf8'));
  // Repeat application must preserve data and permissions.
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));

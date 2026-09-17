@@ -29,6 +29,7 @@ const MIGRATIONS = [
   // SQL artifacts already applied through Supabase migration history.
   'docs/security/free-plan-selection.sql',
   'docs/security/free-plan-ai-credit-access.sql',
+  'docs/security/restrict-browser-rls-policies.sql',
 ];
 
 async function main() {
