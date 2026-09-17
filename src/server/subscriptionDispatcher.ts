@@ -1,4 +1,5 @@
 import plansHandler from '../../api/_subscription/plans';
+import freePlanHandler from '../../api/_subscription/free-plan';
 import verifyHandler from '../../api/_subscription/verify';
 import checkoutHandler from '../../api/_subscription/checkout';
 import startTrialHandler from '../../api/_subscription/start-trial';
@@ -18,6 +19,8 @@ export default async function handler(req: any, res: any) {
   }
 
   switch (action) {
+    case 'free-plan':
+      return freePlanHandler(req, res);
     case 'plans':
       return plansHandler(req, res);
     case 'verify':
@@ -37,7 +40,7 @@ export default async function handler(req: any, res: any) {
         ok: false,
         error: 'ENDPOINT_NOT_FOUND',
         requestedAction: action,
-        availableActions: ['plans', 'verify', 'checkout', 'start-trial', 'status', 'outlets', 'prorated-upgrade'],
+        availableActions: ['plans', 'verify', 'checkout', 'start-trial', 'status', 'outlets', 'prorated-upgrade', 'free-plan'],
       });
   }
 }

@@ -148,12 +148,43 @@ async function tenantForPrincipal(db, principal) {
   return rows[0]?.id ?? null;
 }
 
+// src/config/freePlanPolicy.ts
+var FREE_PLAN_ID = "plan-free-lifetime";
+var FREE_PRODUCT_LIMIT = 10;
+function isFreePlan(sub, now = Date.now()) {
+  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
+  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
+  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
+  const end = Date.parse(sub.currentPeriodEnd);
+  return trial && Number.isFinite(end) && now >= end;
+}
+function validateFreeSelection(value) {
+  const v = value;
+  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
+  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
+  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
+}
+
 // src/config/saasPlans.ts
 var TRIAL_PLAN_ID = "plan-free";
 var TRIAL_DAYS = 45;
 var TRIAL_READ_ONLY_DAYS = 14;
 var DAY_MS = 864e5;
 var SAAS_PLANS = [
+  {
+    id: FREE_PLAN_ID,
+    name: "Free Selamanya",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 1,
+    isActive: true,
+    productLimit: 10,
+    aiQuotaMonthly: 0,
+    dashboardAccessLevel: "BASIC",
+    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
+  },
   {
     id: TRIAL_PLAN_ID,
     name: "Free Trial 45 Hari",
@@ -176,7 +207,7 @@ var SAAS_PLANS = [
       "Kuota AI trial terbatas",
       "WhatsApp assisted melalui wa.me",
       "Tanpa kartu kredit (berlaku 1x per akun toko)",
-      "Data tetap dapat dibaca 14 hari setelah trial"
+      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
     ]
   },
   {
@@ -233,7 +264,7 @@ var SAAS_PLANS = [
     ]
   }
 ];
-var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => !plan.isTrial);
+var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
 function findSaaSPlan(planId) {
   return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;
 }
@@ -248,11 +279,63 @@ function addBillingPeriod(start, cycle) {
   return end;
 }
 
+// services/billing/freePlan.ts
+var FreePlanAccessError = class extends Error {
+};
+async function validateFreeBranchSelection(db, ownerId, value) {
+  const selection = validateFreeSelection(value);
+  const { rows } = await db.query(`SELECT o.tenant_id FROM internal.outlets o
+    JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active AND o.is_active
+      AND m.business_sector=$3`, [selection.branchId, ownerId, selection.sector]);
+  if (!rows.length) throw new FreePlanAccessError("BRANCH_NOT_OWNED");
+  const existing = await db.query(
+    `SELECT p.external_ref FROM pos.products p
+    JOIN internal.tenants t ON t.id=p.tenant_id WHERE t.owner_user_ref=$1
+      AND p.external_ref=ANY($2::text[]) AND p.business_sector=$3
+      AND (p.tenant_id<>$4::uuid OR p.outlet_id IS DISTINCT FROM $5::uuid)`,
+    [ownerId, selection.productIds, selection.sector, rows[0].tenant_id, selection.branchId]
+  );
+  if (existing.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+  return selection;
+}
+async function freePlanState(db, tenantId) {
+  const { rows } = await db.query("SELECT * FROM contract.free_plan_entitlements WHERE tenant_id=$1", [tenantId]);
+  const s = rows[0];
+  if (!s || !s.is_active) return { free: false };
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() });
+  return { free, ownerId: s.owner_user_ref, selection: free && s.free_selection ? validateFreeSelection(s.free_selection) : void 0 };
+}
+function assertFreeScope(state, sector, productRefs) {
+  if (!state.free) return;
+  if (!state.selection || state.selection.sector !== sector) throw new FreePlanAccessError("FREE_SELECTION_REQUIRED");
+  if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
+}
+async function resolveFreeSyncScope(db, ownerId, sector) {
+  const { rows } = await db.query(`SELECT * FROM contract.free_plan_entitlements
+    WHERE owner_user_ref=$1 ORDER BY tenant_id LIMIT 1`, [ownerId]);
+  const entitlement = rows[0];
+  if (!entitlement) return void 0;
+  if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
+  if (!isFreePlan({ status: entitlement.status, planId: entitlement.plan_id, currentPeriodEnd: new Date(entitlement.current_period_end).toISOString() })) return void 0;
+  const selection = entitlement.free_selection ? validateFreeSelection(entitlement.free_selection) : void 0;
+  assertFreeScope({ free: true, selection }, sector, []);
+  const result = await db.query(`SELECT o.tenant_id, o.merchant_id, o.id AS outlet_id
+    FROM internal.outlets o JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active
+      AND o.is_active AND m.business_sector=$3`, [selection.branchId, ownerId, sector]);
+  if (!result.rows.length) throw new FreePlanAccessError("FREE_BRANCH_UNAVAILABLE");
+  return result.rows[0];
+}
+
 // services/billing/engine.ts
 import { randomUUID } from "node:crypto";
 
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
+  if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
   const end = Date.parse(sub.currentPeriodEnd);
   const grace = sub.gracePeriodEnd ? Date.parse(sub.gracePeriodEnd) : end + 14 * DAY_MS;
   const terminal = ["EXPIRED", "CANCELED", "CANCELLED", "SUSPENDED"].includes(sub.status);
@@ -271,12 +354,11 @@ function lifecycleStage(day) {
   if (day <= 30) return "OWNER_INSIGHTS";
   if (day <= 40) return "CONVERSION";
   if (day <= 45) return "FINAL_REMINDER";
-  if (day <= 59) return "READ_ONLY";
-  return "EXPIRED";
+  return "FREE";
 }
 function billingQuote(sub, input, outletCount, now = /* @__PURE__ */ new Date()) {
   const plan = findSaaSPlan(input.planId || input.targetPlanId);
-  if (!plan || plan.id === TRIAL_PLAN_ID) throw new Error("INVALID_PAID_PLAN");
+  if (!plan || plan.priceIdr <= 0) throw new Error("INVALID_PAID_PLAN");
   const cycle = input.billingCycle ?? sub.billing_cycle ?? "MONTHLY";
   if (!["MONTHLY", "YEARLY"].includes(cycle)) throw new Error("INVALID_BILLING_CYCLE");
   const extras = Number(input.extraOutlets ?? sub.extra_outlets ?? 0);
@@ -336,10 +418,10 @@ async function ensureSubscription(db, tenantId) {
 }
 async function activateFreeTrial(db, tenantId) {
   const existing = await ensureSubscription(db, tenantId);
-  if (existing.has_used_trial && existing.status !== "TRIAL" && existing.status !== "PENDING_PAYMENT") {
+  if (existing.has_used_trial && existing.status !== "TRIAL") {
     throw new BillingError(400, "TRIAL_ALREADY_USED");
   }
-  if (existing.status === "TRIAL" && Date.parse(existing.current_period_end) > Date.now()) {
+  if (existing.status === "TRIAL") {
     return serializeSubscription(existing);
   }
   const { rows } = await db.query(`
@@ -363,17 +445,20 @@ async function activateFreeTrial(db, tenantId) {
 }
 function serializeSubscription(s) {
   const iso = (x) => new Date(x).toISOString();
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: iso(s.current_period_end) });
+  const planId = free ? FREE_PLAN_ID : s.plan_id;
   return {
     id: s.id,
     tenantId: s.tenant_id,
-    planId: s.plan_id,
-    status: s.status,
-    plan: findSaaSPlan(s.plan_id),
+    planId,
+    status: free ? "FREE" : s.status,
+    plan: findSaaSPlan(planId),
+    freeSelection: free ? s.free_selection : void 0,
     currentPeriodStart: iso(s.current_period_start),
     currentPeriodEnd: iso(s.current_period_end),
     gracePeriodEnd: s.grace_period_end ? iso(s.grace_period_end) : void 0,
     billingCycle: s.billing_cycle,
-    extraOutlets: s.extra_outlets,
+    extraOutlets: free ? 0 : s.extra_outlets,
     trialStartedAt: s.trial_started_at ? iso(s.trial_started_at) : null,
     trialEndsAt: s.trial_ends_at ? iso(s.trial_ends_at) : null,
     hasUsedTrial: Boolean(s.has_used_trial)
@@ -409,7 +494,7 @@ async function subscriptionStatus(db, tenantId) {
   const access = subscriptionAccess(sub);
   const tenant = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
   if (!tenant.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
-  if (access.status !== s.status) {
+  if (access.status !== s.status && access.status !== "FREE") {
     await db.query("UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2", [access.status, s.id]).catch(() => {
     });
   }
@@ -420,10 +505,12 @@ async function subscriptionStatus(db, tenantId) {
   const activeDays = Math.max(0, Math.floor((nowMs - startMs) / DAY_MS));
   const totalPeriodDays = Math.max(1, Math.round((endMs - startMs) / DAY_MS));
   const trialDay = Math.max(1, Math.floor((nowMs - Date.parse(s.trial_started_at || s.created_at)) / DAY_MS) + 1);
-  const requiresRenewal = access.accessMode !== "FULL" || access.daysLeft <= 3;
+  const free = access.status === "FREE";
+  const requiresRenewal = !free && (access.accessMode !== "FULL" || access.daysLeft <= 3);
+  const retainedOutlets = await outletUsage(db, tenantId);
   return {
     ok: true,
-    subscription: { ...sub, status: access.status, accessMode: access.accessMode },
+    subscription: { ...sub, status: access.status, accessMode: access.accessMode, isActive: !!tenant.rows[0]?.is_active },
     plan: sub.plan,
     ...access,
     activeDays,
@@ -434,7 +521,7 @@ async function subscriptionStatus(db, tenantId) {
     lifecycleStage: lifecycleStage(trialDay),
     trialDays: TRIAL_DAYS,
     hasUsedTrial: Boolean(s.has_used_trial),
-    outlets: { used: await outletUsage(db, tenantId), included: sub.plan?.maxOutlets ?? 2, extra: Number(s.extra_outlets), limit: (sub.plan?.maxOutlets ?? 2) + Number(s.extra_outlets) },
+    outlets: { used: free ? sub.freeSelection ? 1 : 0 : retainedOutlets, retained: retainedOutlets, included: sub.plan?.maxOutlets ?? 2, extra: free ? 0 : Number(s.extra_outlets), limit: free ? 1 : (sub.plan?.maxOutlets ?? 2) + Number(s.extra_outlets) },
     invoices: invoices.rows.map(serializeInvoice)
   };
 }
@@ -507,6 +594,11 @@ async function reconcilePayment(db, notice) {
   });
 }
 async function assertTenantWritable(db, tenantId) {
+  const free = await freePlanState(db, tenantId);
+  if (free.free) {
+    if (!free.selection) throw new BillingError(403, "FREE_SELECTION_REQUIRED");
+    return;
+  }
   const { rows } = await db.query(`SELECT t.is_active,t.created_at,s.status,s.current_period_end,s.grace_period_end
     FROM internal.tenants t LEFT JOIN contract.subscription_operations s ON s.tenant_id=t.id WHERE t.id=$1`, [tenantId]);
   const s = rows[0];
@@ -516,6 +608,11 @@ async function assertTenantWritable(db, tenantId) {
   if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
 }
 async function assertOutletCapacity(db, tenantId, excludeId) {
+  const free = await freePlanState(db, tenantId);
+  if (free.free) {
+    if (!excludeId || excludeId !== free.selection?.branchId) throw new BillingError(403, "FREE_BRANCH_LIMIT");
+    return;
+  }
   await db.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
   await assertTenantWritable(db, tenantId);
   const { rows } = await db.query("SELECT plan_id,extra_outlets FROM contract.subscription_operations WHERE tenant_id=$1", [tenantId]);
@@ -726,6 +823,27 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   app.get("/api/v1/subscription/plans", (_req, res) => res.json({ ok: true, plans: SAAS_PLANS }));
   app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant(req)))));
   app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant(req)) })));
+  app.post("/api/v1/subscription/free-plan", run(async (req, res) => {
+    const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
+    if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    res.setHeader("Cache-Control", "no-store");
+    const tenantId = await db.tx(async (c) => {
+      const { rows } = await c.query(`SELECT s.* FROM billing.subscriptions s JOIN internal.tenants t ON t.id=s.tenant_id
+        WHERE t.owner_user_ref=$1 AND t.is_active ORDER BY t.created_at,t.id LIMIT 1 FOR UPDATE OF s`, [principal.subject]);
+      const s = rows[0];
+      if (!s || !isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() })) throw new BillingError(409, "FREE_PLAN_NOT_ELIGIBLE");
+      try {
+        const selection = await validateFreeBranchSelection(c, principal.subject, req.body);
+        await c.query("UPDATE billing.subscriptions SET free_selection=$2::jsonb,updated_at=now() WHERE id=$1", [s.id, JSON.stringify(selection)]);
+      } catch (error) {
+        if (error instanceof FreePlanAccessError) throw new BillingError(409, error.message);
+        if (error instanceof Error && error.message === "INVALID_FREE_SELECTION") throw new BillingError(400, error.message);
+        throw error;
+      }
+      return s.tenant_id;
+    });
+    res.json(await subscriptionStatus(db, tenantId));
+  }));
   app.get("/api/v1/subscription/outlets", run(async (req, res) => {
     const { rows } = await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`, [await tenant(req)]);
     res.json({ ok: true, rows });
@@ -1729,6 +1847,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
   );
 }
 
+// services/pos/sync.ts
+import { randomBytes } from "node:crypto";
+
 // services/pos/activity.ts
 var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES2 = [
@@ -1854,41 +1975,51 @@ function registerSyncRoutes(app, db) {
             };
           }
         }
-        const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-        const t = await c.query(
-          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId;
+        let merchantId;
+        let outletId;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          outletId = freeScope.outlet_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [storeName, tenantExternalRef, ownerRef]
-        );
-        const tenantId = t.rows[0].id;
-        await assertTenantWritable(c, tenantId);
-        const m = await c.query(
-          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [tenantId, storeName, sector, businessId]
-        );
-        const merchantId = m.rows[0].id;
-        const outq = await c.query(
-          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-          [merchantId]
-        );
-        let outletId;
-        if (outq.rows.length) {
-          outletId = outq.rows[0].id;
-        } else {
-          await assertOutletCapacity(c, tenantId);
-          const outins = await c.query(
-            `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-            [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            [tenantId, storeName, sector, businessId]
           );
-          outletId = outins.rows[0].id;
+          merchantId = m.rows[0].id;
+          const outq = await c.query(
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+            [merchantId]
+          );
+          if (outq.rows.length) {
+            outletId = outq.rows[0].id;
+          } else {
+            await assertOutletCapacity(c, tenantId);
+            const outins = await c.query(
+              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
+                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
+              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            );
+            outletId = outins.rows[0].id;
+          }
         }
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
@@ -1899,6 +2030,25 @@ function registerSyncRoutes(app, db) {
         );
         let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
         const resolveCashier = async (ref, name, role) => {
+          const free = await freePlanState(c, tenantId);
+          if (free.free) {
+            if (ref !== free.ownerId) throw new SyncAccessError("FREE_OWNER_ONLY");
+            if (cashierCache.has(ref)) return cashierCache.get(ref);
+            await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref)
+              SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1
+              ON CONFLICT(id) DO NOTHING`, [tenantId]);
+            const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
+              SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
+              FROM internal.users u WHERE u.id::text=$2 AND u.is_active
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes(32).toString("hex")]);
+            if (!owner.rows.length) {
+              const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
+                WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
+              if (!existing.rows.length) throw new SyncAccessError("FREE_OWNER_UNAVAILABLE");
+            }
+            cashierCache.set(ref, free.ownerId);
+            return free.ownerId;
+          }
           const key = ref || name;
           if (!key) return null;
           if (cashierCache.has(key)) return cashierCache.get(key);
@@ -1924,13 +2074,18 @@ function registerSyncRoutes(app, db) {
           return userId;
         };
         const resolveProduct = async (i) => {
+          assertFreeScope(await freePlanState(c, tenantId), sector, [i.productRef || ""]);
           const key = i.productRef || i.productName;
           if (!key) return null;
           if (productCache.has(key)) return productCache.get(key);
           const found = await c.query(
-            `SELECT id FROM pos.products WHERE tenant_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
-            [tenantId, i.productRef ?? null, i.productName]
+            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1
+              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) LIMIT 1`,
+            [tenantId, i.productRef ?? null, i.productName, !!freeScope]
           );
+          if (freeScope && found.rows[0] && found.rows[0].outlet_id !== outletId) {
+            throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+          }
           let id;
           if (found.rows.length) {
             id = found.rows[0].id;
@@ -2170,6 +2325,7 @@ function registerSyncRoutes(app, db) {
       });
       res.json({ ok: true, ...out });
     } catch (err) {
+      if (err instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: err.message });
       if (err instanceof BillingError) return res.status(err.status).json({ ok: false, error: err.message });
       console.error("[sync] gagal:", err.message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: "FORBIDDEN" });
@@ -2198,47 +2354,66 @@ function registerSyncRoutes(app, db) {
     try {
       const out = await db.tx(async (c) => {
         await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-        const t = await c.query(
-          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId;
+        let merchantId;
+        let outletId;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          outletId = freeScope.outlet_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [storeName, tenantExternalRef, ownerRef]
-        );
-        const tenantId = t.rows[0].id;
-        await assertTenantWritable(c, tenantId);
-        const m = await c.query(
-          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
              DO UPDATE SET name = EXCLUDED.name
            RETURNING id`,
-          [tenantId, storeName, sector, businessId]
-        );
-        const merchantId = m.rows[0].id;
-        const productLimit = await productLimitForTenant(c, tenantId);
-        if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
-          throw new ProductLimitError("PRODUCT_LIMIT_EXCEEDED");
-        }
-        const outq = await c.query(
-          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-          [merchantId]
-        );
-        let outletId;
-        if (outq.rows.length) {
-          outletId = outq.rows[0].id;
-        } else {
-          await assertOutletCapacity(c, tenantId);
-          const outins = await c.query(
-            `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-            [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            [tenantId, storeName, sector, businessId]
           );
-          outletId = outins.rows[0].id;
+          merchantId = m.rows[0].id;
+          const productLimit = await productLimitForTenant(c, tenantId);
+          if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
+            throw new ProductLimitError("PRODUCT_LIMIT_EXCEEDED");
+          }
+          const outq = await c.query(
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+            [merchantId]
+          );
+          if (outq.rows.length) {
+            outletId = outq.rows[0].id;
+          } else {
+            await assertOutletCapacity(c, tenantId);
+            const outins = await c.query(
+              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
+                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
+              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
+            );
+            outletId = outins.rows[0].id;
+          }
         }
         const seen = [];
+        assertFreeScope(await freePlanState(c, tenantId), sector, [...desiredProductRefs]);
+        if (freeScope) {
+          const misplaced = await c.query(
+            `SELECT id FROM pos.products WHERE tenant_id=$1
+            AND external_ref=ANY($2::text[]) AND outlet_id IS DISTINCT FROM $3::uuid LIMIT 1`,
+            [tenantId, [...desiredProductRefs], outletId]
+          );
+          if (misplaced.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+        }
         let upserted = 0;
         for (const p of products) {
           const ref = str(p.id, 96);
@@ -2283,7 +2458,7 @@ function registerSyncRoutes(app, db) {
           upserted++;
         }
         let retired = 0;
-        if (seen.length > 0) {
+        if (!freeScope && seen.length > 0) {
           const r = await c.query(
             `UPDATE pos.products
                 SET is_available = FALSE
@@ -2300,6 +2475,7 @@ function registerSyncRoutes(app, db) {
       });
       res.json({ ok: true, ...out });
     } catch (err) {
+      if (err instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: err.message });
       if (err instanceof BillingError) return res.status(err.status).json({ ok: false, error: err.message });
       console.error("[sync] katalog gagal:", err.message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: "FORBIDDEN" });

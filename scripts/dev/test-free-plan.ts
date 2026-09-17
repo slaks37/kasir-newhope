@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { isFreePlan, validateFreeSelection, freeProductAllowed } from '../../src/config/freePlanPolicy';
+import { subscriptionAccess } from '../../src/config/subscriptionPolicy';
+const deadline = '2026-10-01T00:00:00.000Z';
+const trial = { status: 'TRIAL', planId: 'plan-free', currentPeriodEnd: deadline };
+assert.equal(isFreePlan(trial, Date.parse(deadline)-1), false);
+assert.equal(isFreePlan(trial, Date.parse(deadline)), true);
+assert.equal(subscriptionAccess(trial, Date.parse(deadline)).status, 'FREE');
+assert.equal(isFreePlan({ ...trial, status: 'ACTIVE', planId: 'plan-pro-monthly' }, Date.parse(deadline)), false);
+assert.equal(isFreePlan({ ...trial, status: 'CANCELED' }), false);
+assert.equal(isFreePlan({ ...trial, status: 'FREE' }, Date.parse('2100-01-01')), true);
+const selection = validateFreeSelection({ productIds: ['a','b'], branchId: 'main', sector: 'FNB' });
+assert.equal(freeProductAllowed(selection, 'a', 'FNB'), true);
+assert.equal(freeProductAllowed(selection, 'a', 'RETAIL'), false);
+assert.equal(freeProductAllowed(selection, 'c', 'FNB'), false);
+assert.throws(() => validateFreeSelection({ ...selection, productIds: Array.from({length:11}, (_,i)=>String(i)) }));
+assert.throws(() => validateFreeSelection({ ...selection, productIds: ['a','a'] }));
+console.log('PASS: trial boundary, permanent Free, paid/canceled protection and selection limits');

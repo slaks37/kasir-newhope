@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { billingQuote, lifecycleStage, subscriptionAccess } from '../../src/config/subscriptionPolicy';
 import { DAY_MS, findSaaSPlan, TRIAL_DAYS, TRIAL_PLAN_ID } from '../../src/config/saasPlans';
+import { freePlanState } from './freePlan';
+import { FREE_PLAN_ID, isFreePlan } from '../../src/config/freePlanPolicy';
 
 export class BillingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -21,10 +23,10 @@ export async function ensureSubscription(db: Db, tenantId: string) {
 
 export async function activateFreeTrial(db: Db, tenantId: string) {
   const existing = await ensureSubscription(db, tenantId);
-  if (existing.has_used_trial && existing.status !== 'TRIAL' && existing.status !== 'PENDING_PAYMENT') {
+  if (existing.has_used_trial && existing.status !== 'TRIAL') {
     throw new BillingError(400, 'TRIAL_ALREADY_USED');
   }
-  if (existing.status === 'TRIAL' && Date.parse(existing.current_period_end) > Date.now()) {
+  if (existing.status === 'TRIAL') {
     return serializeSubscription(existing);
   }
   const { rows } = await db.query(`
@@ -49,10 +51,13 @@ export async function activateFreeTrial(db: Db, tenantId: string) {
 
 export function serializeSubscription(s: any) {
   const iso = (x: any) => new Date(x).toISOString();
-  return { id:s.id,tenantId:s.tenant_id,planId:s.plan_id,status:s.status,plan:findSaaSPlan(s.plan_id),
+  const free=isFreePlan({status:s.status,planId:s.plan_id,currentPeriodEnd:iso(s.current_period_end)});
+  const planId=free?FREE_PLAN_ID:s.plan_id;
+  return { id:s.id,tenantId:s.tenant_id,planId,status:free?'FREE':s.status,plan:findSaaSPlan(planId),
+    freeSelection:free?s.free_selection:undefined,
     currentPeriodStart:iso(s.current_period_start),currentPeriodEnd:iso(s.current_period_end),
     gracePeriodEnd:s.grace_period_end ? iso(s.grace_period_end) : undefined,
-    billingCycle:s.billing_cycle,extraOutlets:s.extra_outlets,
+    billingCycle:s.billing_cycle,extraOutlets:free?0:s.extra_outlets,
     trialStartedAt:s.trial_started_at ? iso(s.trial_started_at) : null,
     trialEndsAt:s.trial_ends_at ? iso(s.trial_ends_at) : null,
     hasUsedTrial:Boolean(s.has_used_trial) };
@@ -74,7 +79,7 @@ export async function subscriptionStatus(db: Db, tenantId: string) {
   const access = subscriptionAccess(sub);
   const tenant = await db.query('SELECT is_active FROM internal.tenants WHERE id=$1',[tenantId]);
   if (!tenant.rows[0]?.is_active) Object.assign(access,{accessMode:'RESTRICTED',status:'EXPIRED'});
-  if (access.status !== s.status) {
+  if (access.status !== s.status && access.status !== 'FREE') {
     await db.query('UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2', [access.status, s.id]).catch(() => {});
   }
   const invoices = await db.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100',[tenantId]);
@@ -84,10 +89,12 @@ export async function subscriptionStatus(db: Db, tenantId: string) {
   const activeDays = Math.max(0, Math.floor((nowMs - startMs) / DAY_MS));
   const totalPeriodDays = Math.max(1, Math.round((endMs - startMs) / DAY_MS));
   const trialDay = Math.max(1,Math.floor((nowMs-Date.parse(s.trial_started_at || s.created_at))/DAY_MS)+1);
-  const requiresRenewal = access.accessMode !== 'FULL' || access.daysLeft <= 3;
-  return { ok:true,subscription:{...sub,status:access.status,accessMode:access.accessMode},plan:sub.plan,
+  const free=access.status==='FREE';
+  const requiresRenewal = !free && (access.accessMode !== 'FULL' || access.daysLeft <= 3);
+  const retainedOutlets=await outletUsage(db,tenantId);
+  return { ok:true,subscription:{...sub,status:access.status,accessMode:access.accessMode,isActive:!!tenant.rows[0]?.is_active},plan:sub.plan,
     ...access,activeDays,totalPeriodDays,requiresRenewal,renewalDueDate:sub.currentPeriodEnd,trialDay,lifecycleStage:lifecycleStage(trialDay),trialDays:TRIAL_DAYS,hasUsedTrial:Boolean(s.has_used_trial),
-    outlets:{used:await outletUsage(db,tenantId),included:sub.plan?.maxOutlets ?? 2,extra:Number(s.extra_outlets),limit:(sub.plan?.maxOutlets ?? 2)+Number(s.extra_outlets)},
+    outlets:{used:free?(sub.freeSelection?1:0):retainedOutlets,retained:retainedOutlets,included:sub.plan?.maxOutlets ?? 2,extra:free?0:Number(s.extra_outlets),limit:free?1:(sub.plan?.maxOutlets ?? 2)+Number(s.extra_outlets)},
     invoices:invoices.rows.map(serializeInvoice) };
 }
 export async function createQuote(db: Db, tenantId: string, input: any) {
@@ -152,6 +159,11 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
 }
 
 export async function assertTenantWritable(db: Pick<Db,'query'>,tenantId:string) {
+  const free=await freePlanState(db,tenantId);
+  if(free.free) {
+    if(!free.selection) throw new BillingError(403,'FREE_SELECTION_REQUIRED');
+    return;
+  }
   const {rows}=await db.query(`SELECT t.is_active,t.created_at,s.status,s.current_period_end,s.grace_period_end
     FROM internal.tenants t LEFT JOIN contract.subscription_operations s ON s.tenant_id=t.id WHERE t.id=$1`,[tenantId]);
   const s=rows[0];
@@ -162,6 +174,11 @@ export async function assertTenantWritable(db: Pick<Db,'query'>,tenantId:string)
 }
 
 export async function assertOutletCapacity(db:Db,tenantId:string,excludeId?:string) {
+  const free=await freePlanState(db,tenantId);
+  if(free.free) {
+    if(!excludeId || excludeId!==free.selection?.branchId) throw new BillingError(403,'FREE_BRANCH_LIMIT');
+    return;
+  }
   await db.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
   await assertTenantWritable(db,tenantId);
   const {rows}=await db.query('SELECT plan_id,extra_outlets FROM contract.subscription_operations WHERE tenant_id=$1',[tenantId]);

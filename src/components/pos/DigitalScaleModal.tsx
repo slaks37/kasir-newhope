@@ -121,7 +121,7 @@ export const DigitalScaleModal: React.FC<DigitalScaleModalProps> = ({ isOpen, on
         </div>
 
         {/* Digital Scale LED/LCD Display Screen */}
-        <div className="bg-slate-950 rounded-3xl p-6 text-white border-4 border-slate-800 shadow-inner relative overflow-hidden">
+        <div className="nh-light-panel bg-slate-950 rounded-3xl p-6 text-white border-4 border-slate-800 shadow-inner relative overflow-hidden">
           {/* Subtle reflection overlay */}
           <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
 

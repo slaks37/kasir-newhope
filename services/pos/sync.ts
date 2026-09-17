@@ -17,7 +17,9 @@
  */
 
 import type express from 'express';
+import { randomBytes } from 'node:crypto';
 import { assertTenantWritable, assertOutletCapacity, BillingError } from '../billing/engine';
+import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessError } from '../billing/freePlan';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
@@ -152,6 +154,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         }
 
         /* -- MODEL B: TENANT -> MERCHANT -> OUTLET ------------------------- */
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId: string;
+        let merchantId: string;
+        let outletId: string;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          outletId = freeScope.outlet_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
         // Tenant (owner level)
         const tenantExternalRef = ownerRef || `tenant_${businessId}`;
         const t = await c.query(
@@ -162,7 +174,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
            RETURNING id`,
           [storeName, tenantExternalRef, ownerRef]
         );
-        const tenantId: string = t.rows[0].id;
+        tenantId = t.rows[0].id;
         await assertTenantWritable(c,tenantId);
 
         // Merchant (business level)
@@ -174,14 +186,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
            RETURNING id`,
           [tenantId, storeName, sector, businessId]
         );
-        const merchantId: string = m.rows[0].id;
+        merchantId = m.rows[0].id;
 
         // Outlet (store branch level)
         const outq = await c.query(
           `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
           [merchantId]
         );
-        let outletId: string;
         if (outq.rows.length) {
             outletId = outq.rows[0].id;
         } else {
@@ -192,6 +203,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                  [tenantId, merchantId, `${storeName} (Cabang Utama)`]
             );
             outletId = outins.rows[0].id;
+        }
         }
 
         /* -- STAF & PRODUK -------------------------------------------------- */
@@ -205,6 +217,28 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
 
         const resolveCashier = async (ref: string | null, name: string | null, role: string | null) => {
+          const free=await freePlanState(c,tenantId);
+          if(free.free) {
+            if(ref!==free.ownerId) throw new SyncAccessError('FREE_OWNER_ONLY');
+            if (cashierCache.has(ref!)) return cashierCache.get(ref!)!;
+            // The historical transaction FK still targets pos.users. Mirror the
+            // SAME verified owner ID, not a new Auth identity or staff membership.
+            // No shared/default PIN and no update to existing identity records.
+            await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref)
+              SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1
+              ON CONFLICT(id) DO NOTHING`,[tenantId]);
+            const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
+              SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
+              FROM internal.users u WHERE u.id::text=$2 AND u.is_active
+              ON CONFLICT(id) DO NOTHING RETURNING id`,[tenantId,free.ownerId,randomBytes(32).toString('hex')]);
+            if (!owner.rows.length) {
+              const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
+                WHERE p.id::text=$1 AND u.is_active`,[free.ownerId]);
+              if (!existing.rows.length) throw new SyncAccessError('FREE_OWNER_UNAVAILABLE');
+            }
+            cashierCache.set(ref!,free.ownerId!);
+            return free.ownerId!;
+          }
           const key = ref || name;
           if (!key) return null;
           if (cashierCache.has(key)) return cashierCache.get(key)!;
@@ -241,14 +275,19 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         };
 
         const resolveProduct = async (i: SyncItem) => {
+          assertFreeScope(await freePlanState(c,tenantId),sector,[i.productRef || '']);
           const key = i.productRef || i.productName;
           if (!key) return null;
           if (productCache.has(key)) return productCache.get(key)!;
 
           const found = await c.query(
-            `SELECT id FROM pos.products WHERE tenant_id = $1 AND (external_ref = $2 OR name = $3) LIMIT 1`,
-            [tenantId, i.productRef ?? null, i.productName]
+            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1
+              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) LIMIT 1`,
+            [tenantId, i.productRef ?? null, i.productName, !!freeScope]
           );
+          if (freeScope && found.rows[0] && found.rows[0].outlet_id !== outletId) {
+            throw new FreePlanAccessError('FREE_PRODUCT_BRANCH_MISMATCH');
+          }
           let id: string;
           if (found.rows.length) {
             id = found.rows[0].id;
@@ -549,6 +588,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
+      if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});
       if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
@@ -596,6 +636,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     try {
       const out = await db.tx(async (c) => {
         await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId: string;
+        let merchantId: string;
+        let outletId: string;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          outletId = freeScope.outlet_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
         const tenantExternalRef = ownerRef || `tenant_${businessId}`;
         const t = await c.query(
           `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
@@ -605,7 +655,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
            RETURNING id`,
           [storeName, tenantExternalRef, ownerRef]
         );
-        const tenantId: string = t.rows[0].id;
+        tenantId = t.rows[0].id;
         await assertTenantWritable(c,tenantId);
 
         const m = await c.query(
@@ -616,7 +666,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
            RETURNING id`,
           [tenantId, storeName, sector, businessId]
         );
-        const merchantId: string = m.rows[0].id;
+        merchantId = m.rows[0].id;
 
         const productLimit = await productLimitForTenant(c, tenantId);
         if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
@@ -627,7 +677,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
           [merchantId]
         );
-        let outletId: string;
         if (outq.rows.length) {
             outletId = outq.rows[0].id;
         } else {
@@ -639,7 +688,15 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             );
             outletId = outins.rows[0].id;
         }
+        }
         const seen: string[] = [];
+        assertFreeScope(await freePlanState(c,tenantId),sector,[...desiredProductRefs]);
+        if (freeScope) {
+          const misplaced = await c.query(`SELECT id FROM pos.products WHERE tenant_id=$1
+            AND external_ref=ANY($2::text[]) AND outlet_id IS DISTINCT FROM $3::uuid LIMIT 1`,
+          [tenantId,[...desiredProductRefs],outletId]);
+          if (misplaced.rows.length) throw new FreePlanAccessError('FREE_PRODUCT_BRANCH_MISMATCH');
+        }
         let upserted = 0;
 
         for (const p of products) {
@@ -697,7 +754,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
         // Produk yang tidak ada lagi di perangkat: disembunyikan, bukan dibuang.
         let retired = 0;
-        if (seen.length > 0) {
+        if (!freeScope && seen.length > 0) {
           const r = await c.query(
             `UPDATE pos.products
                 SET is_available = FALSE
@@ -716,6 +773,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
+      if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});
       if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] katalog gagal:', (err as Error).message);
       if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });

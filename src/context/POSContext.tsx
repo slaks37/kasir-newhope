@@ -63,6 +63,7 @@ import {
   resetPinAttempts,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
+import { isFreePlan, freeProductAllowed } from '../config/freePlanPolicy';
 import { mergeServerOutlets } from '../lib/sync/outlets';
 import { subscriptionAccess } from '../config/subscriptionPolicy';
 import {
@@ -380,7 +381,7 @@ const purgeLegacyMockData = () => {
 purgeLegacyMockData();
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { user: authUser } = useAuth();
+  const { user: authUser, session: authSession } = useAuth();
 
   const defaultOwnerUser: User = {
     id: authUser?.id || 'usr-owner',
@@ -500,15 +501,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let active = true;
     const refresh = async () => {
       try {
-        const queryParams = new URLSearchParams({
-          tenantId: authUser?.id || '',
-          userId: authUser?.id || '',
-          email: authUser?.email || '',
-        });
-        const response = await fetch(`/api/v1/subscription/status?${queryParams.toString()}`);
+        const response = await fetch('/api/v1/subscription/status', {headers:{Authorization:`Bearer ${authSession?.access_token || ''}`}});
         const data = await response.json();
         if (active && response.ok && data.ok && data.subscription) {
-          setSettings(prev => ({ ...prev, subscription: data.subscription }));
+          setSettings(prev => ({ ...prev, subscription: data.subscription,
+            ...(data.subscription.status==='FREE' && data.subscription.freeSelection ? {activeBranchId:data.subscription.freeSelection.branchId}:{}),
+          }));
         }
       } catch { /* Offline uses the last verified deadline; never resets it. */ }
     };
@@ -517,19 +515,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     window.addEventListener('focus', refresh);
     window.addEventListener('subscription-updated', refresh);
     return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', refresh); window.removeEventListener('subscription-updated', refresh); };
-  }, [authUser?.id]);
+  }, [authUser?.id, authSession?.access_token]);
 
   useEffect(() => {
     if (!authUser?.id) return;
     let active = true;
     const refresh = async () => {
       try {
-        const response = await fetch('/api/v1/subscription/outlets');
+        const response = await fetch('/api/v1/subscription/outlets',{headers:{Authorization:`Bearer ${authSession?.access_token || ''}`}});
         const data = await response.json();
         if (!active || !response.ok || !data.ok || !Array.isArray(data.rows)) return;
         setSettings(prev => {
           const merged = mergeServerOutlets(prev.branches || INITIAL_BRANCHES, data.rows);
-          const selected = merged.find(branch => branch.id === prev.activeBranchId && branch.isActive);
+          const selected = merged.find(branch => branch.id === (isFreePlan(prev.subscription)?prev.subscription?.freeSelection?.branchId:prev.activeBranchId) && branch.isActive);
           return { ...prev, branches: merged, activeBranchId: selected?.id || merged.find(branch => branch.isActive)?.id };
         });
       } catch { /* Keep offline branches when the server cannot be reached. */ }
@@ -537,11 +535,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     void refresh();
     window.addEventListener('focus', refresh);
     return () => { active = false; window.removeEventListener('focus', refresh); };
-  }, [authUser?.id]);
+  }, [authUser?.id, authSession?.access_token]);
+
+  const freeOwnerOnly=isFreePlan(settings.subscription);
+  useEffect(()=>{
+    if(freeOwnerOnly && authUser?.id && currentUser.id!==authUser.id) switchUser(defaultOwnerUser);
+  },[freeOwnerOnly,authUser?.id,currentUser.id]);
 
   function requireWritable<T extends (...args: any[]) => any>(fn: T): T {
     return ((...args: Parameters<T>) => {
       const sub = settings.subscription;
+      if (isFreePlan(sub) && (!sub?.freeSelection || currentUser.id !== authUser?.id ||
+        sub.freeSelection.sector !== (settings.businessSector || 'FNB') || sub.freeSelection.branchId !== settings.activeBranchId)) {
+        throw new Error('FREE_SELECTION_OR_OWNER_REQUIRED');
+      }
       if (!sub || sub.id === 'sub-trial-active' || subscriptionAccess(sub).accessMode !== 'FULL' || sub.accessMode === 'RESTRICTED') {
         window.alert('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
@@ -990,7 +997,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           storeName: settings.storeName,
           ownerRef: currentUser.id,
         },
-        products.map((p) => ({
+        products.filter(p=>!isFreePlan(settings.subscription) || freeProductAllowed(settings.subscription?.freeSelection,p.id,activeSector)).map((p) => ({
           id: p.id,
           name: p.name,
           sku: p.sku,
@@ -1005,7 +1012,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 8_000);
 
     return () => window.clearTimeout(timer);
-  }, [products, categories, currentUser.id, activeSector, settings.storeName]);
+  }, [products, categories, currentUser.id, activeSector, settings.storeName, settings.subscription]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -1027,6 +1034,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     selectedStaff && belongsToBusiness(selectedStaff, tenant) ? selectedStaff : null;
 
   const addStaffMember = (staff: Omit<StaffMember, 'id'>) => {
+    if (isFreePlan(settings.subscription)) throw new Error('FREE_OWNER_ONLY');
     // Shared collection: stamp the partition key so the row can never be read
     // by another business unit.
     const newStaff: StaffMember = stampBusiness(
@@ -1041,10 +1049,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activeBranch = branches.find((b) => b.id === settings.activeBranchId) || branches[0];
 
   const setActiveBranchId = (branchId: string) => {
+    if (isFreePlan(settings.subscription) && branchId !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LOCKED');
     setSettings((prev) => ({ ...prev, activeBranchId: branchId }));
   };
 
   const saveBranch = async (branchToSave: StoreBranch) => {
+    if (isFreePlan(settings.subscription) && branchToSave.id !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LIMIT');
     const originalId = branchToSave.id;
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1236,6 +1246,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [cashMovements, authUser?.id, currentUser.id, activeSector]);
 
   const switchUser = (user: User) => {
+    if (isFreePlan(settings.subscription) && user.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
     const oldUId = currentUser.id;
     const currentSec = settings.businessSector || 'FNB';
 
@@ -1303,6 +1314,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const saveUser = (userToSave: User) => {
+    if (isFreePlan(settings.subscription) && userToSave.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
     setUsers((prev) => {
       const exists = prev.some((u) => u.id === userToSave.id);
       if (exists) {
@@ -1420,6 +1432,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     notes = ''
   ) => {
     if (soundEnabled) playPOSSound('add_item');
+    if (isFreePlan(settings.subscription) && !freeProductAllowed(settings.subscription?.freeSelection,product.id,activeSector)) {
+      window.alert('Produk ini tersimpan tetapi terkunci di paket Free. Ubah pilihan 10 produk atau upgrade.');
+      return;
+    }
 
     let unitPrice = product.price;
     if (variant) unitPrice += variant.priceExtra;
@@ -1551,6 +1567,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const skipClear = !!extraOptions?.skipClearCart;
 
     const effectiveItems = splitItems && splitItems.length > 0 ? splitItems : [...cart];
+    if (isFreePlan(settings.subscription) && effectiveItems.some(item=>!freeProductAllowed(settings.subscription?.freeSelection,item.productId,activeSector))) throw new Error('FREE_PRODUCT_LOCKED');
     const subtotal = effectiveItems.reduce((sum, item) => sum + item.totalPrice, 0);
     const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
     const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
@@ -2003,6 +2020,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Save / Edit Product
   const saveProduct = (product: Product) => {
+    // Saving inventory never silently replaces the owner's active Free selection.
+    // New products are retained here and must be selected before use in POS.
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === product.id);
       if (idx > -1) {
@@ -2098,6 +2117,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const activateBusinessSector = (sector: BusinessSector, customStoreName?: string) => {
+    if (isFreePlan(settings.subscription) && sector !== settings.subscription?.freeSelection?.sector) throw new Error('FREE_SINGLE_BUSINESS');
     const preset = BUSINESS_PRESETS[sector];
     if (!preset) return;
 

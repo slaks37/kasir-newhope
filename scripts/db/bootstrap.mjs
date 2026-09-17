@@ -33,6 +33,7 @@ function migrationFiles() {
   return [
     ...ORDER.map((f) => ({ name: f, path: join(ROOT, f) })),
     ...numbered.map((f) => ({ name: f, path: join(MIGRATION_DIR, f) })),
+    ...['free-plan-selection.sql','free-plan-ai-credit-access.sql'].map(f=>({name:f,path:join(ROOT,'docs/security',f)})),
   ];
 }
 

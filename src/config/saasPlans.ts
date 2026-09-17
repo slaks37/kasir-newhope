@@ -1,4 +1,5 @@
 import type { SaaSPlan } from '../types';
+import { FREE_PLAN_ID } from './freePlanPolicy';
 
 // `plan-free` dipertahankan sebagai ID legacy agar langganan lama tidak putus.
 // Secara produk paket ini adalah Free Trial 45 hari (hanya 1x per akun toko).
@@ -8,6 +9,11 @@ export const TRIAL_READ_ONLY_DAYS = 14;
 export const DAY_MS = 86_400_000;
 
 export const SAAS_PLANS: SaaSPlan[] = [
+  {
+    id:FREE_PLAN_ID,name:'Free Selamanya',tierLevel:1,billingCycle:'MONTHLY',priceIdr:0,currency:'IDR',
+    maxOutlets:1,isActive:true,productLimit:10,aiQuotaMonthly:0,dashboardAccessLevel:'BASIC',
+    features:['Otomatis setelah trial 45 hari','10 produk pilihan owner','1 cabang pilihan owner','Hanya akun owner','Tanpa AI','Data lainnya tetap disimpan'],
+  },
   {
     id: TRIAL_PLAN_ID,
     name: 'Free Trial 45 Hari',
@@ -30,7 +36,7 @@ export const SAAS_PLANS: SaaSPlan[] = [
       'Kuota AI trial terbatas',
       'WhatsApp assisted melalui wa.me',
       'Tanpa kartu kredit (berlaku 1x per akun toko)',
-      'Data tetap dapat dibaca 14 hari setelah trial',
+      'Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI',
     ],
   },
   {
@@ -88,7 +94,7 @@ export const SAAS_PLANS: SaaSPlan[] = [
   },
 ];
 
-export const PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => !plan.isTrial);
+export const PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
 
 export function findSaaSPlan(planId: string) {
   return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;

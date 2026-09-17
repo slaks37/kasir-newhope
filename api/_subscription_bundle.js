@@ -1,7 +1,42 @@
-// api/_subscription/plans.ts
+// src/config/freePlanPolicy.ts
+var FREE_PLAN_ID = "plan-free-lifetime";
+var FREE_PRODUCT_LIMIT = 10;
+function isFreePlan(sub, now = Date.now()) {
+  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
+  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
+  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
+  const end = Date.parse(sub.currentPeriodEnd);
+  return trial && Number.isFinite(end) && now >= end;
+}
+function validateFreeSelection(value) {
+  const v = value;
+  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
+  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
+  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
+}
+
+// src/config/saasPlans.ts
+var TRIAL_PLAN_ID = "plan-free";
+var TRIAL_DAYS = 45;
+var TRIAL_READ_ONLY_DAYS = 14;
+var DAY_MS = 864e5;
 var SAAS_PLANS = [
   {
-    id: "plan-free",
+    id: FREE_PLAN_ID,
+    name: "Free Selamanya",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 1,
+    isActive: true,
+    productLimit: 10,
+    aiQuotaMonthly: 0,
+    dashboardAccessLevel: "BASIC",
+    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
+  },
+  {
+    id: TRIAL_PLAN_ID,
     name: "Free Trial 45 Hari",
     tierLevel: 1,
     billingCycle: "MONTHLY",
@@ -10,14 +45,19 @@ var SAAS_PLANS = [
     maxOutlets: 2,
     isActive: true,
     isTrial: true,
+    trialDays: TRIAL_DAYS,
+    gracePeriodDays: TRIAL_READ_ONLY_DAYS,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "ADVANCED",
     features: [
       "Seluruh fitur Tier Pro selama 45 hari",
       "Hingga 2 outlet",
       "Produk dan pengguna tidak terbatas",
       "Kuota AI trial terbatas",
       "WhatsApp assisted melalui wa.me",
-      "Tanpa kartu kredit",
-      "Data tetap dapat dibaca 14 hari setelah trial"
+      "Tanpa kartu kredit (berlaku 1x per akun toko)",
+      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
     ]
   },
   {
@@ -31,6 +71,9 @@ var SAAS_PLANS = [
     currency: "IDR",
     maxOutlets: 2,
     isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "FULL",
     extraOutletPriceIdr: 79200,
     extraOutletYearlyIdr: 63360,
     features: [
@@ -54,6 +97,9 @@ var SAAS_PLANS = [
     currency: "IDR",
     maxOutlets: 4,
     isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 90,
+    dashboardAccessLevel: "ADVANCED",
     extraOutletPriceIdr: 79200,
     extraOutletYearlyIdr: 63360,
     features: [
@@ -68,6 +114,12 @@ var SAAS_PLANS = [
     ]
   }
 ];
+var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
+function findSaaSPlan(planId) {
+  return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;
+}
+
+// api/_subscription/plans.ts
 function sendJson(res, status, data) {
   try {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -90,6 +142,188 @@ function handler(req, res) {
     ok: true,
     plans: SAAS_PLANS
   });
+}
+
+// api/_subscription/free-plan.ts
+import { Pool } from "pg";
+
+// services/shared/auth.ts
+var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+function firstHeader(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+function supabaseConfig() {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  return { url, apiKey };
+}
+async function authenticateBearer(req) {
+  const authorization = firstHeader(req.headers.authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  if (!match) {
+    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  }
+  const { url, apiKey } = supabaseConfig();
+  if (!url || !apiKey) return null;
+  try {
+    const upstream = await fetch(`${url}/auth/v1/user`, {
+      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
+      signal: AbortSignal.timeout(5e3)
+    });
+    if (!upstream.ok) return null;
+    const user = await upstream.json();
+    if (typeof user.id !== "string" || !user.id) return null;
+    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
+    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
+    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
+    return {
+      subject: user.id,
+      email: typeof user.email === "string" ? user.email : void 0,
+      aal: claims.aal === "aal2" ? "aal2" : "aal1",
+      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
+    };
+  } catch {
+    return null;
+  }
+}
+
+// src/config/subscriptionPolicy.ts
+function subscriptionAccess(sub, now = Date.now()) {
+  if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
+  const end = Date.parse(sub.currentPeriodEnd);
+  const grace = sub.gracePeriodEnd ? Date.parse(sub.gracePeriodEnd) : end + 14 * DAY_MS;
+  const terminal = ["EXPIRED", "CANCELED", "CANCELLED", "SUSPENDED"].includes(sub.status);
+  const accessMode = terminal || !Number.isFinite(end) || now >= grace ? "RESTRICTED" : now >= end ? "READ_ONLY" : "FULL";
+  return {
+    accessMode,
+    status: accessMode === "RESTRICTED" ? "EXPIRED" : accessMode === "READ_ONLY" ? "PAST_DUE" : sub.status === "TRIALING" ? "TRIAL" : sub.status,
+    daysLeft: Math.max(0, Math.ceil((end - now) / DAY_MS)),
+    graceDaysLeft: Math.max(0, Math.ceil((grace - Math.max(now, end)) / DAY_MS))
+  };
+}
+
+// services/billing/freePlan.ts
+var FreePlanAccessError = class extends Error {
+};
+async function validateFreeBranchSelection(db, ownerId, value) {
+  const selection = validateFreeSelection(value);
+  const { rows } = await db.query(`SELECT o.tenant_id FROM internal.outlets o
+    JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active AND o.is_active
+      AND m.business_sector=$3`, [selection.branchId, ownerId, selection.sector]);
+  if (!rows.length) throw new FreePlanAccessError("BRANCH_NOT_OWNED");
+  const existing = await db.query(
+    `SELECT p.external_ref FROM pos.products p
+    JOIN internal.tenants t ON t.id=p.tenant_id WHERE t.owner_user_ref=$1
+      AND p.external_ref=ANY($2::text[]) AND p.business_sector=$3
+      AND (p.tenant_id<>$4::uuid OR p.outlet_id IS DISTINCT FROM $5::uuid)`,
+    [ownerId, selection.productIds, selection.sector, rows[0].tenant_id, selection.branchId]
+  );
+  if (existing.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+  return selection;
+}
+
+// services/billing/engine.ts
+function serializeInvoice(i) {
+  return {
+    id: i.id,
+    invoiceNumber: i.invoice_number,
+    subscriptionId: i.subscription_id,
+    tenantId: i.tenant_id,
+    amount: Number(i.amount),
+    currency: i.currency,
+    paymentStatus: i.payment_status,
+    paymentGatewayRef: i.payment_gateway_ref,
+    paymentLinkUrl: i.payment_link_url,
+    paidAt: i.paid_at,
+    dueDate: i.due_date,
+    createdAt: i.created_at,
+    planName: i.quote?.planName || "Tagihan legacy",
+    billingCycle: i.quote?.billingCycle,
+    extraOutlets: i.quote?.extraOutlets,
+    reconciliationStatus: i.reconciliation_status
+  };
+}
+
+// api/_subscription/free-plan.ts
+async function ownedSubscription(req, res, selectFree = false) {
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== (selectFree ? "POST" : "GET")) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  const principal = await authenticateBearer(req);
+  if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 5e3 });
+  let c;
+  try {
+    c = await pool.connect();
+    await c.query("BEGIN");
+    const { rows } = await c.query(`SELECT s.*,t.is_active FROM billing.subscriptions s
+      JOIN internal.tenants t ON t.id=s.tenant_id WHERE t.owner_user_ref=$1
+      ORDER BY t.created_at,t.id LIMIT 1 FOR UPDATE OF s`, [principal.subject]);
+    const s = rows[0];
+    if (!s) {
+      await c.query("ROLLBACK");
+      return res.status(404).json({ ok: false, error: "SUBSCRIPTION_NOT_FOUND" });
+    }
+    const source = { status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString(), gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0 };
+    const free = s.is_active && isFreePlan(source);
+    if (selectFree) {
+      if (!free) {
+        await c.query("ROLLBACK");
+        return res.status(409).json({ ok: false, error: "FREE_PLAN_NOT_ELIGIBLE" });
+      }
+      const selection = await validateFreeBranchSelection(c, principal.subject, req.body);
+      await c.query("UPDATE billing.subscriptions SET free_selection=$2::jsonb,updated_at=now() WHERE id=$1", [s.id, JSON.stringify(selection)]);
+      s.free_selection = selection;
+    }
+    const access = subscriptionAccess(source);
+    const plan = findSaaSPlan(free ? FREE_PLAN_ID : s.plan_id);
+    const outletCount = await c.query("SELECT count(*)::int AS used FROM internal.outlets WHERE tenant_id=$1 AND is_active", [s.tenant_id]);
+    const invoices = await c.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100", [s.tenant_id]);
+    await c.query("COMMIT");
+    return res.status(200).json({
+      ok: true,
+      daysLeft: free ? 0 : access.daysLeft,
+      subscription: {
+        id: s.id,
+        tenantId: s.tenant_id,
+        planId: free ? FREE_PLAN_ID : s.plan_id,
+        isActive: s.is_active,
+        status: !s.is_active ? "EXPIRED" : free ? "FREE" : access.status,
+        accessMode: !s.is_active ? "RESTRICTED" : access.accessMode,
+        billingCycle: s.billing_cycle,
+        extraOutlets: free ? 0 : s.extra_outlets,
+        currentPeriodStart: s.current_period_start,
+        currentPeriodEnd: s.current_period_end,
+        gracePeriodEnd: s.grace_period_end,
+        cancelAtPeriodEnd: s.cancel_at_period_end,
+        hasUsedTrial: s.has_used_trial,
+        freeSelection: free ? s.free_selection : void 0
+      },
+      plan,
+      accessMode: !s.is_active ? "RESTRICTED" : access.accessMode,
+      activeDays: Math.max(0, Math.floor((Date.now() - Date.parse(s.current_period_start)) / DAY_MS)),
+      totalPeriodDays: Math.max(1, Math.round((Date.parse(s.current_period_end) - Date.parse(s.current_period_start)) / DAY_MS)),
+      requiresRenewal: !free && (access.accessMode !== "FULL" || access.daysLeft <= 3),
+      renewalDueDate: free ? null : s.current_period_end,
+      outlets: { used: free ? s.free_selection ? 1 : 0 : outletCount.rows[0].used, retained: outletCount.rows[0].used, included: plan?.maxOutlets ?? 2, extra: free ? 0 : Number(s.extra_outlets || 0), limit: free ? 1 : (plan?.maxOutlets ?? 2) + Number(s.extra_outlets || 0) },
+      invoices: invoices.rows.map(serializeInvoice),
+      limits: free ? { products: 10, outlets: 1, accounts: 1, ai: false } : void 0
+    });
+  } catch (error) {
+    await c?.query("ROLLBACK").catch(() => {
+    });
+    const invalid = error instanceof Error && error.message === "INVALID_FREE_SELECTION";
+    if (error instanceof FreePlanAccessError) return res.status(error.message === "BRANCH_NOT_OWNED" ? 403 : 409).json({ ok: false, error: error.message });
+    return res.status(invalid ? 400 : 503).json({ ok: false, error: invalid ? "INVALID_FREE_SELECTION" : "SUBSCRIPTION_UNAVAILABLE" });
+  } finally {
+    c?.release();
+    await pool.end();
+  }
+}
+async function handler2(req, res) {
+  return ownedSubscription(req, res, true);
 }
 
 // api/_subscription/verify.ts
@@ -116,7 +350,7 @@ function getDokuCredentials() {
   const isConfigured = Boolean(clientId && secretKey && !clientId.includes("sandbox_dummy"));
   return { clientId, secretKey, apiUrl, isConfigured };
 }
-async function handler2(req, res) {
+async function handler3(req, res) {
   if (req.method === "OPTIONS") {
     return sendJson2(res, 200, { ok: true });
   }
@@ -282,7 +516,7 @@ Digest:${digest}`;
   hmac.update(componentSignature, "utf8");
   return `HMACSHA256=${hmac.digest("base64")}`;
 }
-async function handler3(req, res) {
+async function handler4(req, res) {
   if (req.method === "OPTIONS") {
     return sendJson3(res, 200, { ok: true });
   }
@@ -411,254 +645,35 @@ async function handler3(req, res) {
 }
 
 // api/_subscription/start-trial.ts
-import { randomUUID } from "crypto";
-function sendJson4(res, status, data) {
-  try {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-device-id, x-tenant-id");
-    res.setHeader("Content-Type", "application/json");
-  } catch {
-  }
-  if (typeof res.status === "function" && typeof res.json === "function") {
-    return res.status(status).json(data);
-  }
-  res.statusCode = status;
-  return res.end(JSON.stringify(data));
-}
-async function handler4(req, res) {
-  if (req.method === "OPTIONS") {
-    return sendJson4(res, 200, { ok: true });
-  }
-  if (req.method !== "POST") {
-    return sendJson4(res, 405, { ok: false, error: "METHOD_NOT_ALLOWED" });
-  }
-  const now = /* @__PURE__ */ new Date();
-  const end = new Date(now.getTime() + 45 * 864e5);
-  const grace = new Date(now.getTime() + 59 * 864e5);
-  const tenantId = req.body?.tenantId || req.query?.tenantId || req.headers["x-tenant-id"] || "tenant-default";
-  if (process.env.DATABASE_URL) {
-    let pool;
-    try {
-      const { Pool } = await import("pg");
-      pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5e3
-      });
-      const tenantCheck = await pool.query("SELECT id, is_active FROM internal.tenants WHERE id = $1", [tenantId]);
-      if (tenantCheck.rows.length === 0) {
-        await pool.query(
-          `INSERT INTO internal.tenants (id, name, is_active) VALUES ($1, 'Tenant User', true) ON CONFLICT (id) DO NOTHING`,
-          [tenantId]
-        );
-      }
-      const subCheck = await pool.query("SELECT * FROM billing.subscriptions WHERE tenant_id = $1", [tenantId]);
-      const existing = subCheck.rows[0];
-      if (existing && existing.has_used_trial && existing.status !== "TRIAL" && existing.status !== "PENDING_PAYMENT") {
-        await pool.end();
-        return sendJson4(res, 400, {
-          ok: false,
-          error: "TRIAL_ALREADY_USED",
-          message: "Masa Free Trial 45 Hari hanya berlaku 1 kali per akun toko. Silakan pilih paket Tier Plus atau Pro."
-        });
-      }
-      const upsertRes = await pool.query(
-        `INSERT INTO billing.subscriptions
-          (id, tenant_id, plan_id, status, billing_cycle, current_period_start, current_period_end, grace_period_end, trial_started_at, trial_ends_at, has_used_trial, extra_outlets, revision, updated_at)
-         VALUES
-          ($1, $2, 'plan-free', 'TRIAL', 'MONTHLY', $3, $4, $5, $3, $4, true, 0, 1, now())
-         ON CONFLICT (tenant_id) DO UPDATE
-          SET plan_id = 'plan-free',
-              status = 'TRIAL',
-              billing_cycle = 'MONTHLY',
-              current_period_start = $3,
-              current_period_end = $4,
-              grace_period_end = $5,
-              trial_started_at = COALESCE(billing.subscriptions.trial_started_at, $3),
-              trial_ends_at = $4,
-              has_used_trial = true,
-              revision = billing.subscriptions.revision + 1,
-              updated_at = now()
-         RETURNING *`,
-        [randomUUID(), tenantId, now.toISOString(), end.toISOString(), grace.toISOString()]
-      );
-      await pool.end();
-      const updated = upsertRes.rows[0];
-      return sendJson4(res, 200, {
-        ok: true,
-        subscription: {
-          id: updated.id,
-          tenantId: updated.tenant_id,
-          planId: "plan-free",
-          status: "TRIAL",
-          billingCycle: "MONTHLY",
-          extraOutlets: 0,
-          currentPeriodStart: updated.current_period_start,
-          currentPeriodEnd: updated.current_period_end,
-          accessMode: "FULL",
-          hasUsedTrial: true
-        }
-      });
-    } catch (err) {
-      if (pool) {
-        try {
-          await pool.end();
-        } catch {
-        }
-      }
-      console.error("start-trial DB error:", err?.message);
-      return sendJson4(res, 500, {
-        ok: false,
-        error: "TRIAL_ACTIVATION_FAILED",
-        message: err?.message || "Gagal mengaktifkan masa uji coba gratis."
-      });
-    }
-  }
-  return sendJson4(res, 200, {
-    ok: true,
-    subscription: {
-      id: `sub-trial-${Date.now()}`,
-      tenantId,
-      planId: "plan-free",
-      status: "TRIAL",
-      billingCycle: "MONTHLY",
-      extraOutlets: 0,
-      currentPeriodStart: now.toISOString(),
-      currentPeriodEnd: end.toISOString(),
-      accessMode: "FULL",
-      hasUsedTrial: true
-    }
-  });
+async function handler5(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  return ownedSubscription({ ...req, method: "GET", headers: req.headers }, res);
 }
 
 // api/_subscription/status.ts
-function sendJson5(res, status, data) {
-  try {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-device-id, x-tenant-id");
-    res.setHeader("Content-Type", "application/json");
-  } catch {
-  }
-  if (typeof res.status === "function" && typeof res.json === "function") {
-    return res.status(status).json(data);
-  }
-  res.statusCode = status;
-  return res.end(JSON.stringify(data));
-}
-async function handler5(req, res) {
-  if (req.method === "OPTIONS") {
-    return sendJson5(res, 200, { ok: true });
-  }
-  const now = /* @__PURE__ */ new Date();
-  if (process.env.DATABASE_URL) {
-    try {
-      const { Pool } = await import("pg");
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5e3
-      });
-      const tenantId = req.query?.tenantId || req.headers["x-tenant-id"] || "tenant-default";
-      const resSub = await pool.query(
-        `SELECT s.*, i.payment_status, i.paid_at 
-         FROM billing.subscriptions s
-         LEFT JOIN billing.invoices i ON i.subscription_id = s.id AND i.payment_status = 'PAID'
-         WHERE s.tenant_id = $1 OR s.id = $1
-         ORDER BY s.updated_at DESC LIMIT 1`,
-        [tenantId]
-      );
-      await pool.end();
-      if (resSub.rows.length > 0) {
-        const sub = resSub.rows[0];
-        const isTrial = sub.status === "TRIAL";
-        const isPaid = sub.status === "ACTIVE" || sub.payment_status === "PAID";
-        const periodEnd = sub.current_period_end ? new Date(sub.current_period_end) : now;
-        const isNotExpired = periodEnd.getTime() > now.getTime();
-        const isActive = (isTrial || isPaid) && isNotExpired;
-        const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24)));
-        return sendJson5(res, 200, {
-          ok: true,
-          subscription: {
-            id: sub.id,
-            tenantId: sub.tenant_id,
-            planId: sub.plan_id || (isTrial ? "plan-free" : "plan-plus-monthly"),
-            status: isTrial ? "TRIAL" : isPaid ? "ACTIVE" : sub.status || "PENDING_PAYMENT",
-            billingCycle: sub.billing_cycle || "MONTHLY",
-            extraOutlets: sub.extra_outlets || 0,
-            accessMode: isActive ? "FULL" : "RESTRICTED",
-            hasUsedTrial: Boolean(sub.has_used_trial || isTrial),
-            currentPeriodStart: sub.current_period_start || now.toISOString(),
-            currentPeriodEnd: sub.current_period_end || now.toISOString()
-          },
-          daysLeft,
-          invoices: []
-        });
-      }
-    } catch (dbErr) {
-      console.warn("Status DB lookup fallback:", dbErr?.message);
-    }
-  }
-  return sendJson5(res, 200, {
-    ok: true,
-    subscription: {
-      id: "sub-pending",
-      tenantId: req.query?.tenantId || "tenant-default",
-      planId: req.query?.planId || "plan-plus-monthly",
-      status: "PENDING_PAYMENT",
-      accessMode: "RESTRICTED",
-      currentPeriodStart: now.toISOString(),
-      currentPeriodEnd: now.toISOString()
-    },
-    daysLeft: 0,
-    invoices: []
-  });
+async function handler6(req, res) {
+  return ownedSubscription(req, res);
 }
 
 // api/_subscription/outlets.ts
-function sendJson6(res, status, data) {
+import { Pool as Pool2 } from "pg";
+async function handler7(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  const principal = await authenticateBearer(req);
+  if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
+  const pool = new Pool2({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 5e3 });
   try {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-device-id, x-tenant-id");
-    res.setHeader("Content-Type", "application/json");
+    const { rows } = await pool.query(`SELECT o.*,m.business_sector FROM internal.outlets o
+      JOIN internal.tenants t ON t.id=o.tenant_id JOIN internal.merchants m ON m.id=o.merchant_id
+      WHERE t.owner_user_ref=$1 ORDER BY o.created_at`, [principal.subject]);
+    return res.status(200).json({ ok: true, rows });
   } catch {
+    return res.status(503).json({ ok: false, error: "OUTLETS_UNAVAILABLE" });
+  } finally {
+    await pool.end();
   }
-  if (typeof res.status === "function" && typeof res.json === "function") {
-    return res.status(status).json(data);
-  }
-  res.statusCode = status;
-  return res.end(JSON.stringify(data));
-}
-async function handler6(req, res) {
-  if (req.method === "OPTIONS") {
-    return sendJson6(res, 200, { ok: true });
-  }
-  if (process.env.DATABASE_URL) {
-    try {
-      const { Pool } = await import("pg");
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5e3
-      });
-      const tenantId = req.query?.tenantId || req.headers["x-tenant-id"] || "tenant-default";
-      const { rows } = await pool.query(
-        `SELECT o.*, m.business_sector 
-         FROM internal.outlets o 
-         LEFT JOIN internal.merchants m ON m.id = o.merchant_id 
-         WHERE o.tenant_id = $1 
-         ORDER BY o.created_at`,
-        [tenantId]
-      );
-      await pool.end();
-      return sendJson6(res, 200, { ok: true, rows });
-    } catch (err) {
-      console.warn("Outlets DB fallback:", err.message);
-    }
-  }
-  return sendJson6(res, 200, { ok: true, rows: [] });
 }
 
 // api/_subscription/prorated-upgrade.ts
@@ -691,7 +706,7 @@ var SAAS_PLANS3 = {
     extraOutletYearlyIdr: 63360
   }
 };
-function sendJson7(res, status, data) {
+function sendJson4(res, status, data) {
   try {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -731,9 +746,9 @@ async function getJsonBody2(req) {
     req.on("error", () => resolve({}));
   });
 }
-async function handler7(req, res) {
+async function handler8(req, res) {
   if (req.method === "OPTIONS") {
-    return sendJson7(res, 200, { ok: true });
+    return sendJson4(res, 200, { ok: true });
   }
   try {
     const body = await getJsonBody2(req);
@@ -749,7 +764,7 @@ async function handler7(req, res) {
     const end = new Date(now);
     if (isYearly) end.setFullYear(end.getFullYear() + 1);
     else end.setMonth(end.getMonth() + 1);
-    return sendJson7(res, 200, {
+    return sendJson4(res, 200, {
       ok: true,
       planId: plan.id,
       planName: plan.name,
@@ -764,7 +779,7 @@ async function handler7(req, res) {
       proratedAmountIdr: totalAmount
     });
   } catch (err) {
-    return sendJson7(res, 200, {
+    return sendJson4(res, 200, {
       ok: true,
       planId: "plan-plus-monthly",
       planName: "Tier Plus",
@@ -782,7 +797,7 @@ async function handler7(req, res) {
 }
 
 // src/server/subscriptionDispatcher.ts
-async function handler8(req, res) {
+async function handler9(req, res) {
   let action = "";
   if (req.query?.slug) {
     action = Array.isArray(req.query.slug) ? req.query.slug[0] : req.query.slug;
@@ -793,29 +808,31 @@ async function handler8(req, res) {
     action = segments[segments.length - 1];
   }
   switch (action) {
+    case "free-plan":
+      return handler2(req, res);
     case "plans":
       return handler(req, res);
     case "verify":
-      return handler2(req, res);
-    case "checkout":
       return handler3(req, res);
-    case "start-trial":
+    case "checkout":
       return handler4(req, res);
-    case "status":
+    case "start-trial":
       return handler5(req, res);
-    case "outlets":
+    case "status":
       return handler6(req, res);
-    case "prorated-upgrade":
+    case "outlets":
       return handler7(req, res);
+    case "prorated-upgrade":
+      return handler8(req, res);
     default:
       return res.status(404).json({
         ok: false,
         error: "ENDPOINT_NOT_FOUND",
         requestedAction: action,
-        availableActions: ["plans", "verify", "checkout", "start-trial", "status", "outlets", "prorated-upgrade"]
+        availableActions: ["plans", "verify", "checkout", "start-trial", "status", "outlets", "prorated-upgrade", "free-plan"]
       });
   }
 }
 export {
-  handler8 as default
+  handler9 as default
 };

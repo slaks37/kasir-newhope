@@ -80,7 +80,7 @@ export const LaundryPipelineView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
+      <div className="nh-light-panel bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
         <div className="flex items-center space-x-3.5">
           <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
             <Waves className="w-7 h-7" />

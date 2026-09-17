@@ -598,7 +598,7 @@ export interface PromoCode {
 // --- SAAS SUBSCRIPTION TYPES ---
 
 export type BillingCycle = 'MONTHLY' | 'YEARLY';
-export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'EXPIRED' | 'CANCELED' | 'PENDING_PAYMENT';
+export type SubscriptionStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'EXPIRED' | 'CANCELED' | 'PENDING_PAYMENT' | 'FREE';
 export type SaaSPaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
 export type PlanTierLevel = 1 | 2 | 3 | 4;
 
@@ -627,6 +627,10 @@ export interface SaaSPlan {
 }
 
 export interface SaaSSubscription {
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  freeSelection?: import('./config/freePlanPolicy').FreeSelection;
   accessMode?: 'FULL' | 'READ_ONLY' | 'RESTRICTED';
   billingCycle?: 'MONTHLY' | 'YEARLY';
   extraOutlets?: number;

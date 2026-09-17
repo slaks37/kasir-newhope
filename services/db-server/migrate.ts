@@ -26,6 +26,9 @@ const MIGRATIONS = [
     .filter((file) => /^\d{4}_.*\.sql$/.test(file) && file !== '0001_compat.sql')
     .sort()
     .map((file) => `migrations/${file}`),
+  // SQL artifacts already applied through Supabase migration history.
+  'docs/security/free-plan-selection.sql',
+  'docs/security/free-plan-ai-credit-access.sql',
 ];
 
 async function main() {

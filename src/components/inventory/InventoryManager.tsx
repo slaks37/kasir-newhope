@@ -1232,7 +1232,7 @@ export const InventoryManager: React.FC = () => {
                 </div>
 
                 {/* Live Margin & Markup Calculator Box */}
-                <div className="col-span-2 p-3.5 bg-slate-900 text-white rounded-2xl space-y-2 border border-slate-800">
+                <div className="nh-light-panel col-span-2 p-3.5 bg-slate-900 text-white rounded-2xl space-y-2 border border-slate-800">
                   <div className="flex items-center justify-between">
                     <span className="font-black text-amber-400 flex items-center space-x-1.5 text-xs">
                       <Percent className="w-3.5 h-3.5" />

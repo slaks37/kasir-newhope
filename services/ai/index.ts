@@ -36,6 +36,7 @@ import { parseIntent, resolveIntentFromAggregates, QUICK_CHIPS } from '../../src
 import { newId } from '../../src/lib/ids';
 import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
 import { assertTenantWritable, BillingError } from '../billing/engine';
+import { freePlanState } from '../billing/freePlan';
 
 startService({
   name: 'ai',
@@ -110,7 +111,10 @@ startService({
 
     if (!(await requireBusiness(req, res, ctx.businessId))) return;
     const owner = await svc.db.query('SELECT tenant_id FROM internal.merchants WHERE external_ref=$1',[ctx.businessId]);
-    try { await assertTenantWritable(svc.db,owner.rows[0]?.tenant_id); }
+    try {
+      if((await freePlanState(svc.db,owner.rows[0]?.tenant_id)).free) throw new BillingError(403,'AI_DISABLED_ON_FREE');
+      await assertTenantWritable(svc.db,owner.rows[0]?.tenant_id);
+    }
     catch(err) { return res.status(err instanceof BillingError?err.status:503).json({ok:false,error:err instanceof BillingError?err.message:'ENTITLEMENT_UNAVAILABLE'}); }
 
     // Dompet diambil SESUDAH ctx terbentuk: kredit dimiliki UNIT USAHA, dan

@@ -1,8 +1,10 @@
 import { addBillingPeriod, DAY_MS, findSaaSPlan, TRIAL_PLAN_ID } from './saasPlans';
+import { isFreePlan } from './freePlanPolicy';
 
 export type BillingCycle = 'MONTHLY' | 'YEARLY';
 export type AccessMode = 'FULL' | 'READ_ONLY' | 'RESTRICTED';
-export function subscriptionAccess(sub: { status: string; currentPeriodEnd: string; gracePeriodEnd?: string }, now = Date.now()) {
+export function subscriptionAccess(sub: { status: string; planId?: string; currentPeriodEnd: string; gracePeriodEnd?: string }, now = Date.now()) {
+  if (isFreePlan(sub, now)) return { accessMode: 'FULL' as AccessMode, status: 'FREE', daysLeft: 0, graceDaysLeft: 0 };
   const end = Date.parse(sub.currentPeriodEnd);
   const grace = sub.gracePeriodEnd ? Date.parse(sub.gracePeriodEnd) : end + 14 * DAY_MS;
   const terminal = ['EXPIRED', 'CANCELED', 'CANCELLED', 'SUSPENDED'].includes(sub.status);
@@ -18,13 +20,12 @@ export function lifecycleStage(day: number) {
   if (day <= 30) return 'OWNER_INSIGHTS';
   if (day <= 40) return 'CONVERSION';
   if (day <= 45) return 'FINAL_REMINDER';
-  if (day <= 59) return 'READ_ONLY';
-  return 'EXPIRED';
+  return 'FREE';
 }
 
 export function billingQuote(sub: any, input: any, outletCount: number, now = new Date()) {
   const plan = findSaaSPlan(input.planId || input.targetPlanId);
-  if (!plan || plan.id === TRIAL_PLAN_ID) throw new Error('INVALID_PAID_PLAN');
+  if (!plan || plan.priceIdr <= 0) throw new Error('INVALID_PAID_PLAN');
   const cycle: BillingCycle = input.billingCycle ?? sub.billing_cycle ?? 'MONTHLY';
   if (!['MONTHLY', 'YEARLY'].includes(cycle)) throw new Error('INVALID_BILLING_CYCLE');
   const extras = Number(input.extraOutlets ?? sub.extra_outlets ?? 0);

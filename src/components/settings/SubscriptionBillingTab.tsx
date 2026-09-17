@@ -20,7 +20,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
    window.location.assign(result.paymentUrl);
   }catch(e:any){setError(e.message);setBusy(false);}
  };
- return <div className="space-y-6">
+ return <div className="nh-light-panel space-y-6">
   <section className="rounded-3xl bg-slate-900 text-white p-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold">Langganan & outlet</h2>
       <div className="flex items-center gap-3">
@@ -33,7 +33,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
       <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
         <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Paket Aktif</p>
         <p className="font-bold text-base text-white mt-1">{data.plan?.name}</p>
-        <p className="text-xs text-slate-300">{data.subscription.billingCycle === 'YEARLY' ? 'Siklus Tahunan' : 'Siklus Bulanan'}</p>
+        <p className="text-xs text-slate-300">{data.subscription.status==='FREE'?'Gratis selamanya':data.subscription.billingCycle === 'YEARLY' ? 'Siklus Tahunan' : 'Siklus Bulanan'}</p>
         {data.subscription.status === 'TRIAL' && (
           <span className="inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
             Trial 45 Hari (1x Pakai)
@@ -42,12 +42,12 @@ export const SubscriptionBillingTab:React.FC=()=>{
       </div>
       <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
         <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Durasi Masa Aktif</p>
-        <p className="font-bold text-base text-white mt-1">Hari ke-{data.activeDays} <span className="text-xs font-normal text-slate-400">/ {data.totalPeriodDays} hari</span></p>
-        <p className="text-xs text-amber-400 font-medium">{data.daysLeft} hari tersisa</p>
+        <p className="font-bold text-base text-white mt-1">{data.subscription.status==='FREE'?'Tanpa batas waktu':`Hari ke-${data.activeDays} / ${data.totalPeriodDays} hari`}</p>
+        <p className="text-xs text-amber-400 font-medium">{data.subscription.status==='FREE'?'10 produk · 1 cabang · owner saja':`${data.daysLeft} hari tersisa`}</p>
       </div>
       <div className="bg-slate-800/60 p-3.5 rounded-2xl border border-slate-700/50">
         <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Jatuh Tempo Perpanjangan</p>
-        <p className="font-bold text-sm text-white mt-1">{formatDateTime(data.renewalDueDate || data.subscription.currentPeriodEnd)}</p>
+        <p className="font-bold text-sm text-white mt-1">{data.subscription.status==='FREE'?'Tidak ada tagihan':formatDateTime(data.renewalDueDate || data.subscription.currentPeriodEnd)}</p>
         <p className={`text-xs font-semibold mt-1 ${data.requiresRenewal ? 'text-red-400' : 'text-emerald-400'}`}>
           {data.requiresRenewal ? '⚠️ Perlu Diperpanjang' : '✓ Status Aktif Normal'}
         </p>

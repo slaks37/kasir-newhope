@@ -23,7 +23,7 @@ try {
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { POSProvider } from './context/POSContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App';
@@ -32,12 +32,18 @@ import './styles/app-theme.css';
 
 installAuthenticatedFetch();
 
+// Do not initialize or persist account-scoped POS state under an anonymous
+// fallback while the saved Auth session is still being restored.
+function POSSession() {
+  const {user,loading}=useAuth();
+  if(loading) return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;
+  return <POSProvider key={user?.id || 'guest'}><App /></POSProvider>;
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
-      <POSProvider>
-        <App />
-      </POSProvider>
+      <POSSession />
     </AuthProvider>
   </StrictMode>,
 );

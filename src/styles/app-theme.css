@@ -568,6 +568,54 @@
 .nh-workspace {
   background: #f7f8fa;
 }
+/* Legacy dark panels share the same light surface palette as the workspace.
+   Opt-in only: printed receipts, images and modal scrims are not recolored. */
+.nh-light-panel {
+  color: #17223b;
+  background-color: #fcfcfb;
+  color-scheme: light;
+}
+.nh-light-panel:is([class*="from-slate-9"], [class*="bg-slate-9"]),
+.nh-light-panel :is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="from-slate-9"], [class*="via-slate-9"]) {
+  background: #fff;
+  color: #17223b;
+  border-color: #e7eaf0;
+}
+.nh-light-panel :is(.text-white, .text-slate-100, .text-slate-200) { color: #17223b; }
+.nh-light-panel :is(.text-slate-300, .text-slate-400) { color: #526077; }
+.nh-light-panel :is(.text-amber-200, .text-amber-300, .text-amber-400) { color: #946409; }
+.nh-light-panel :is(.text-emerald-300, .text-emerald-400) { color: #16734c; }
+.nh-light-panel :is(.text-cyan-300, .text-cyan-400, .text-indigo-300, .text-indigo-400) { color: #526077; }
+.nh-light-panel :is(.text-red-300, .text-red-400, .text-rose-300) { color: #a42239; }
+.nh-light-panel [class*="border-slate-7"],
+.nh-light-panel [class*="border-slate-8"] { border-color: #e7eaf0; }
+.nh-light-panel :is(button, a)[class*="bg-slate-8"],
+.nh-light-panel :is(button, a)[class*="bg-slate-9"],
+.nh-workspace :is(button, a):is(.bg-slate-800, .bg-slate-900, .bg-slate-950) {
+  background: #fff0c9;
+  color: #17223b;
+  border-color: #ead9ac;
+}
+.nh-workspace :is(button, a):is(.bg-slate-800, .bg-slate-900, .bg-slate-950):hover {
+  background: #ffe39a;
+  color: #17223b;
+}
+.nh-light-panel button[class*="hover:text-white"]:hover { color: #17223b; }
+.nh-light-panel button[class*="hover:bg-slate-"]:hover { background: #fff6df; }
+.nh-light-panel input::placeholder { color: #667085; }
+.nh-light-panel .bg-amber-500 { color: #17223b; }
+.nh-light-panel .text-transparent { color: transparent; }
+.nh-light-panel .border-amber-500 { border-color: #f5b82e; }
+.nh-free-dialog {
+  background: #f0f2f5cc;
+  backdrop-filter: blur(5px);
+}
+.nh-free-banner {
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px;
+  padding:10px 24px; background:#fff9ed; border-bottom:1px solid #f0dfa9;
+  color:#765113; font-size:11px; flex-shrink:0;
+}
+.nh-free-banner button { text-decoration:underline; min-height:32px; font-weight:700; }
 .nh-workspace-header {
   min-height: 76px;
   box-shadow: none;

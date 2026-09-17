@@ -342,7 +342,7 @@ export const UserManagementTab: React.FC = () => {
       {isEditing && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-scale-up">
-            <div className="p-5 bg-gradient-to-r from-slate-900 to-amber-950 text-white flex items-center justify-between">
+            <div className="nh-light-panel p-5 bg-gradient-to-r from-slate-900 to-amber-950 text-white flex items-center justify-between">
               <h4 className="font-extrabold text-base">
                 {editingUser.id ? 'Edit Akun Pengguna' : 'Tambah Pengguna Baru'}
               </h4>

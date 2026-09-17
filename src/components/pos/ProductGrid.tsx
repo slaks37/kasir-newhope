@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { isFreePlan, freeProductAllowed } from '../../config/freePlanPolicy';
 import { Product, ProductBundle } from '../../types';
 import { ProductCard } from './ProductCard';
 import {
@@ -27,6 +28,7 @@ interface ProductGridProps {
 }
 
 export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => {
+  const {settings}=usePOS();
   const {
     products,
     categories,
@@ -44,6 +46,11 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [scanToast, setScanToast] = useState<{ name: string; barcode: string } | null>(null);
+  const free = isFreePlan(settings.subscription);
+  const posProducts = useMemo(() => free
+    ? products.filter(product => freeProductAllowed(settings.subscription?.freeSelection, product.id, settings.businessSector || 'FNB'))
+    : products, [free, products, settings.subscription?.freeSelection, settings.businessSector]);
+  const activeCategory = free && selectedCategory === 'bundles' ? 'all' : selectedCategory;
 
   // Global Hardware USB / Bluetooth Barcode Scanner Listener
   useEffect(() => {
@@ -67,7 +74,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
         if (buffer.length >= 3) {
           e.preventDefault();
           const cleanCode = buffer.trim();
-          const found = products.find(
+          const found = posProducts.find(
             (p) => p.barcode === cleanCode || p.sku.toLowerCase() === cleanCode.toLowerCase()
           );
           if (found) {
@@ -84,7 +91,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products, onSelectProduct]);
+  }, [posProducts, onSelectProduct]);
 
   // Icon map for categories
   const getCategoryIcon = (iconName: string) => {
@@ -107,9 +114,9 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   };
 
   // Filter logic
-  const filteredProducts = products.filter((product) => {
+  const filteredProducts = posProducts.filter((product) => {
     const matchesCategory =
-      selectedCategory === 'all' || product.categoryId === selectedCategory;
+      activeCategory === 'all' || product.categoryId === activeCategory;
     const matchesSearch =
       product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       product.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -123,7 +130,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!barcodeInput) return;
-    const found = products.find(
+    const found = posProducts.find(
       (p) => p.barcode === barcodeInput || p.sku.toLowerCase() === barcodeInput.toLowerCase()
     );
     if (found) {
@@ -238,16 +245,16 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
         <button
           onClick={() => setSelectedCategory('all')}
           className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-            selectedCategory === 'all'
+            activeCategory === 'all'
               ? 'bg-amber-500 text-slate-950 shadow-xs font-bold'
               : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>Semua Menu ({products.length})</span>
+          <span>Semua Menu ({posProducts.length})</span>
         </button>
 
-        <button
+        {!free && <button
           onClick={() => setSelectedCategory('bundles')}
           className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
             selectedCategory === 'bundles'
@@ -257,11 +264,11 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
         >
           <Sparkles className="w-4 h-4 text-amber-600" />
           <span>🎁 Paket Bundling ({bundles?.length || 0})</span>
-        </button>
+        </button>}
 
         {categories.map((cat) => {
-          const count = products.filter((p) => p.categoryId === cat.id).length;
-          const isSelected = selectedCategory === cat.id;
+          const count = posProducts.filter((p) => p.categoryId === cat.id).length;
+          const isSelected = activeCategory === cat.id;
 
           return (
             <button
@@ -284,7 +291,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
       {/* Product Display Area */}
       <div className="flex-1 overflow-y-auto pr-1 pb-32 lg:pb-4">
-        {selectedCategory === 'bundles' ? (
+        {activeCategory === 'bundles' ? (
           (bundles || []).length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
               <Sparkles className="w-10 h-10 stroke-1 text-slate-300" />
@@ -502,7 +509,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
                 <span className="text-[10px] text-slate-400 font-medium">Klik untuk uji coba</span>
               </div>
               <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
-                {products.filter((p) => p.barcode).slice(0, 6).map((p) => (
+                {posProducts.filter((p) => p.barcode).slice(0, 6).map((p) => (
                   <button
                     key={p.id}
                     onClick={() => {

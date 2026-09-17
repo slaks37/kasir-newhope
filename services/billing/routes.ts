@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
+import { isFreePlan } from '../../src/config/freePlanPolicy';
+import { validateFreeBranchSelection, FreePlanAccessError } from './freePlan';
 import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus, activateFreeTrial } from './engine';
 import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
@@ -24,6 +26,27 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   app.get('/api/v1/subscription/plans',(_req,res)=>res.json({ok:true,plans:SAAS_PLANS}));
   app.get('/api/v1/subscription/status',run(async(req,res)=>res.json(await subscriptionStatus(db,await tenant(req)))));
   app.post('/api/v1/subscription/start-trial',run(async(req,res)=>res.json({ok:true,subscription:await activateFreeTrial(db,await tenant(req))})));
+  app.post('/api/v1/subscription/free-plan',run(async(req,res)=>{
+    const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
+    if(!principal || principal.subject==='local-development') throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    res.setHeader('Cache-Control','no-store');
+    const tenantId=await db.tx(async c=>{
+      const {rows}=await c.query(`SELECT s.* FROM billing.subscriptions s JOIN internal.tenants t ON t.id=s.tenant_id
+        WHERE t.owner_user_ref=$1 AND t.is_active ORDER BY t.created_at,t.id LIMIT 1 FOR UPDATE OF s`,[principal.subject]);
+      const s=rows[0];
+      if(!s || !isFreePlan({status:s.status,planId:s.plan_id,currentPeriodEnd:new Date(s.current_period_end).toISOString()})) throw new BillingError(409,'FREE_PLAN_NOT_ELIGIBLE');
+      try {
+        const selection=await validateFreeBranchSelection(c,principal.subject,req.body);
+        await c.query('UPDATE billing.subscriptions SET free_selection=$2::jsonb,updated_at=now() WHERE id=$1',[s.id,JSON.stringify(selection)]);
+      } catch(error) {
+        if(error instanceof FreePlanAccessError) throw new BillingError(409,error.message);
+        if(error instanceof Error && error.message==='INVALID_FREE_SELECTION') throw new BillingError(400,error.message);
+        throw error;
+      }
+      return s.tenant_id;
+    });
+    res.json(await subscriptionStatus(db,tenantId));
+  }));
   app.get('/api/v1/subscription/outlets',run(async(req,res)=>{
     const {rows}=await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`,[await tenant(req)]);
     res.json({ok:true,rows});

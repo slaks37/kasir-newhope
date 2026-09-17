@@ -24,6 +24,7 @@ import {
 import { usePOS } from '../../context/POSContext';
 import { useAuth } from '../../context/AuthContext';
 import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan, TRIAL_PLAN_ID, TRIAL_DAYS } from '../../config/saasPlans';
+import { isFreePlan } from '../../config/freePlanPolicy';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BusinessSector } from '../../types';
 import { newId, newDocumentNumber } from '../../lib/ids';
@@ -43,7 +44,7 @@ interface QuoteResponse {
 
 export const SubscriptionPaymentPage: React.FC = () => {
   const { settings, updateSettings, setActiveTab } = usePOS();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
 
   // Check if user just arrived from onboarding
   const [isOnboarding, setIsOnboarding] = useState<boolean>(() => {
@@ -320,7 +321,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
       try {
         const res = await fetch('/api/v1/subscription/start-trial', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Authorization:`Bearer ${session?.access_token || ''}` },
           body: JSON.stringify({
             tenantId: settings.subscription?.tenantId,
           }),
@@ -352,6 +353,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
           tenantId: data.subscription?.tenantId || settings.subscription?.tenantId || 'tenant-default',
           planId: TRIAL_PLAN_ID,
           status: 'TRIAL' as const,
+          cancelAtPeriodEnd: false,
           billingCycle: 'MONTHLY' as const,
           extraOutlets: 0,
           currentPeriodStart: data.subscription?.currentPeriodStart || now.toISOString(),
@@ -462,7 +464,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
   // SUCCESS CELEBRATION VIEW
   if (paymentSuccess) {
     return (
-      <div className="flex-1 overflow-y-auto bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 p-6 flex items-center justify-center min-h-full">
+      <div className="nh-light-panel flex-1 overflow-y-auto bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 p-6 flex items-center justify-center min-h-full">
         <div className="max-w-md w-full bg-slate-900/90 border border-slate-700/80 rounded-3xl p-8 text-center shadow-2xl backdrop-blur-xl animate-scale-up space-y-6">
           <div className="relative mx-auto w-20 h-20 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-xl shadow-emerald-500/20">
             <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
@@ -519,7 +521,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-950 text-slate-100 p-4 sm:p-8 relative selection:bg-amber-500 selection:text-slate-950">
+    <div className="nh-light-panel flex-1 overflow-y-auto bg-slate-950 text-slate-100 p-4 sm:p-8 relative selection:bg-amber-500 selection:text-slate-950">
       {/* Background Decorative Glow */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute top-1/3 right-10 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -575,7 +577,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
               <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                 <span>Pemilik: <b>{user?.email || 'Admin'}</b></span>
                 <span className="text-slate-600">•</span>
-                <span>Status Toko: <span className="text-amber-400 font-semibold">Menunggu Aktivasi</span></span>
+                <span>Status Toko: <span className="text-amber-400 font-semibold">{isFreePlan(settings.subscription) ? 'Free selamanya' : settings.subscription?.status === 'ACTIVE' ? 'Paket aktif' : settings.subscription?.status === 'TRIAL' ? 'Trial aktif' : 'Menunggu Aktivasi'}</span></span>
               </p>
             </div>
           </div>

@@ -111,7 +111,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     <div className="flex flex-col h-full overflow-hidden">
       {/* Mobile Drawer Header */}
       {isMobileModal && (
-        <div className="p-3 bg-slate-900 text-white flex items-center justify-between shadow-xs">
+        <div className="nh-light-panel p-3 bg-slate-900 text-white flex items-center justify-between shadow-xs">
           <div className="flex items-center space-x-2">
             <ShoppingBag className="w-5 h-5 text-amber-400" />
             <h3 id="mobile-cart-title" className="font-extrabold text-sm text-white">Keranjang pesanan ({cart.reduce((s, i) => s + i.quantity, 0)} item)</h3>

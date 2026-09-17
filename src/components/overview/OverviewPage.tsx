@@ -535,7 +535,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
 
           {/* Progress Margin Bar */}
-          <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-2">
+          <div className="nh-light-panel p-4 rounded-2xl bg-slate-900 text-white space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-amber-400">Komposisi Omzet Terhadap Modal &amp; Laba:</span>
               <span className="text-slate-300 font-mono">
@@ -664,7 +664,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
 
           {/* Active Preset Feature Highlights */}
-          <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-2.5">
+          <div className="nh-light-panel p-4 rounded-2xl bg-slate-900 text-white space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
                 Fitur Unggulan Format {activePreset.name}:

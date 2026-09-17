@@ -16,15 +16,24 @@ import { generateDigest, generateSignature } from '../../api/_doku';
 import { testDokuNotifications } from './test-doku-notifications';
 import { mergeServerOutlets } from '../../src/lib/sync/outlets';
 import { INITIAL_BRANCHES } from '../../src/data/initialData';
+import { testFreeSync } from './test-free-sync';
 
 async function main(){
  const pg=new PGlite();
  let failAudit=false,failPayment=false;
  const wrap=(runner:any):Db=>({query:async(sql,params)=>{if(failAudit && sql.includes('INSERT INTO internal.support_actions'))throw new Error('TEST_AUDIT_UNAVAILABLE');if(failPayment && sql.includes('UPDATE billing.subscriptions SET plan_id'))throw new Error('TEST_SUBSCRIPTION_UNAVAILABLE');const r=await runner.query(sql,params);return{rows:r.rows,rowCount:r.rows.length || r.affectedRows || 0};},exec:async(sql)=>{await runner.exec(sql);},tx:async(fn)=>pg.transaction(t=>fn(wrap(t))),close:()=>pg.close()});
  const db=wrap(pg);
- await pg.exec('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;');
+ await pg.exec('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;');
  const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
  for(const file of files){try{await pg.exec(fs.readFileSync(file,'utf8'));}catch(e){throw new Error('Migration '+file+': '+(e as Error).message);}}
+ await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
+ await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
+ // Repeat application must preserve data and permissions.
+ await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
+ await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
+ for (const role of ['anon','authenticated']) {
+  await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE '+role);await c.query('SELECT public.consume_ai_credit($1::uuid)',[randomUUID()]);}),/permission denied/);
+ }
  console.log('PASS: all migrations apply to isolated PGlite');
  // Simulate exposed schema usage; sensitive new tables/views must remain denied.
  await pg.exec('GRANT USAGE ON SCHEMA contract,billing,internal TO anon,authenticated;');
@@ -44,8 +53,8 @@ async function main(){
   assert.equal((await subscriptionStatus(db,tenant)).daysLeft,45);
   const epoch=Date.parse('2026-01-01T00:00:00Z'),s={status:'TRIAL',currentPeriodEnd:new Date(epoch+45*DAY_MS).toISOString()};
   assert.equal(subscriptionAccess(s,epoch+45*DAY_MS-1).accessMode,'FULL');
-  assert.equal(subscriptionAccess(s,epoch+45*DAY_MS).accessMode,'READ_ONLY');
-  assert.equal(subscriptionAccess(s,epoch+59*DAY_MS).accessMode,'RESTRICTED');
+  assert.equal(subscriptionAccess(s,epoch+45*DAY_MS).status,'FREE');
+  assert.equal(subscriptionAccess(s,epoch+59*DAY_MS).status,'FREE');
   assert.equal(subscriptionAccess({...s,status:'SUSPENDED'},epoch).accessMode,'RESTRICTED');
   assert.equal(lifecycleStage(3),'ACTIVATION');assert.equal(lifecycleStage(43),'FINAL_REMINDER');
   assert.equal(addBillingPeriod(new Date('2026-01-31T18:30:00Z'),'MONTHLY').toISOString(),'2026-02-28T18:30:00.000Z');
@@ -65,7 +74,7 @@ async function main(){
  }
  await assert.rejects(()=>db.tx(c=>assertOutletCapacity(c,tenant)),/OUTLET_LIMIT_REACHED/);
  await db.query("UPDATE billing.subscriptions SET current_period_end=now()-interval '1 day',grace_period_end=now()+interval '13 days' WHERE id=$1",[sub.id]);
- await assert.rejects(()=>assertTenantWritable(db,tenant),/SUBSCRIPTION_READ_ONLY/);
+ await assert.rejects(()=>assertTenantWritable(db,tenant),/FREE_SELECTION_REQUIRED/);
  await db.query('UPDATE billing.subscriptions SET current_period_end=$2,grace_period_end=$3 WHERE id=$1',[sub.id,sub.current_period_end,sub.grace_period_end]);
  const q=await createQuote(db,tenant,{planId:'plan-pro-monthly',billingCycle:'YEARLY',extraOutlets:1});
  const invoice=randomUUID(),number='TEST-'+invoice;
@@ -268,6 +277,7 @@ async function main(){
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
   console.log('PASS: billing and internal service roles can read their authorized data');
   await testDokuNotifications(db,url,value=>{failPayment=value;});
+  await testFreeSync(db,url);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

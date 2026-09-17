@@ -24,6 +24,8 @@ import { SwitchUserModal } from './components/auth/SwitchUserModal';
 import { PinAuthorizationModal } from './components/auth/PinAuthorizationModal';
 import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen';
 import { subscriptionAccess } from './config/subscriptionPolicy';
+import { isFreePlan } from './config/freePlanPolicy';
+import { FreePlanSelection } from './components/auth/FreePlanSelection';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
 import { formatRupiah } from './utils/formatters';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag } from 'lucide-react';
@@ -108,6 +110,7 @@ interface POSAppContentProps {
 }
 
 const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) => {
+  const [editFreeSelection,setEditFreeSelection]=useState(false);
   const {
     activeTab,
     setActiveTab,
@@ -138,11 +141,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
 
   const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
   const isPendingPaidPlan = Boolean(pendingPlan && (pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly'));
-  const isSubscriptionLocked = settings.subscription?.status === 'EXPIRED' ||
+  const free = isFreePlan(settings.subscription);
+  const isSubscriptionLocked = !free && (settings.subscription?.status === 'EXPIRED' ||
     settings.subscription?.status === 'PENDING_PAYMENT' ||
-    settings.subscription?.accessMode === 'RESTRICTED';
+    settings.subscription?.accessMode === 'RESTRICTED');
 
-  const isPaymentRequired = isPendingPaidPlan || isSubscriptionLocked;
+  const isPaymentRequired = !free && (isPendingPaidPlan || isSubscriptionLocked);
 
   React.useEffect(() => {
     const pendingTab = sessionStorage.getItem('nhpos_pending_tab');
@@ -194,6 +198,10 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
       />
 
       {/* Main Container */}
+      {free && <div className="nh-free-banner">
+        <span>Free selamanya · 10 produk · 1 cabang · Owner saja · Tanpa AI</span>
+        <button onClick={()=>setEditFreeSelection(true)}>Ubah pilihan</button>
+      </div>}
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Navigation Sidebar (Desktop only) */}
         <div className="hidden lg:flex shrink-0">
@@ -309,7 +317,8 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                 </Suspense>
               )}
 
-              {activeTab === 'ai' && (
+              {activeTab === 'ai' && free && <div className="p-6">AI tidak aktif pada paket Free. Upgrade ke Plus atau Pro untuk menggunakan AI.</div>}
+              {activeTab === 'ai' && !free && (
                 <AIErrorBoundary>
                   <Suspense fallback={<TabLoading />}>
                     <AIAssistant />
@@ -397,7 +406,8 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
         <RecentTransactionsModal onClose={() => setShowRecentTransactionsModal(false)} />
       )}
 
-      {activeTab !== 'payment' && (() => {
+      {free && (!settings.subscription?.freeSelection || settings.subscription.freeSelection.sector!==settings.businessSector || editFreeSelection) && <FreePlanSelection onClose={settings.subscription?.freeSelection?.sector===settings.businessSector?()=>setEditFreeSelection(false):undefined}/>}
+      {!free && activeTab !== 'payment' && (() => {
         const sub = settings.subscription;
         if (!sub) return null;
         const access = subscriptionAccess(sub);

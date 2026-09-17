@@ -175,7 +175,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-3xl max-w-4xl w-full text-slate-900 overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header Banner */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white p-5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-700">
+        <div className="nh-light-panel bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white p-5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-700">
           <div className="flex items-center space-x-3">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
               <Clock className="w-6 h-6 text-amber-400 animate-pulse" />
@@ -214,7 +214,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
         </div>
 
         {/* Geo-Tagging Status Bar */}
-        <div className="bg-slate-900 text-white px-5 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="nh-light-panel bg-slate-900 text-white px-5 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-1.5 font-bold text-amber-400">
               <Building2 className="w-4 h-4 text-amber-400" />
