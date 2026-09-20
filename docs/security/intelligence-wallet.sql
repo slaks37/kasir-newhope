@@ -25,7 +25,9 @@ BEGIN
   LOOP
     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',fk.relation,fk.conname);
     EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES internal.tenants(id) ON DELETE %s',
-      fk.relation,fk.conname,fk.attname,CASE WHEN fk.confdeltype='c' THEN 'CASCADE' ELSE 'NO ACTION' END);
+      fk.relation,fk.conname,fk.attname,CASE fk.confdeltype
+        WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT'
+        WHEN 'r' THEN 'RESTRICT' ELSE 'NO ACTION' END);
   END LOOP;
 END $$;
 COMMIT;

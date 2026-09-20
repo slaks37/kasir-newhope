@@ -23,6 +23,7 @@ try {
   for(const file of ['free-plan-selection.sql','free-plan-ai-credit-access.sql','restrict-browser-rls-policies.sql','intelligence-cache.sql','intelligence-wallet.sql'])await pg.exec(fs.readFileSync('docs/security/'+file,'utf8'));
   // Repeat reviewed SQL: reruns must not erase balances or create duplicate FKs.
   await pg.exec(fs.readFileSync('docs/security/intelligence-wallet.sql','utf8'));
+  assert.equal((await db.query("SELECT confdeltype FROM pg_constraint WHERE conrelid='ai.ai_query_logs'::regclass AND conname='fk_ai_query_logs_merchant_id'")).rows[0].confdeltype,'n','wallet migration must preserve audit ON DELETE SET NULL');
   const tenant=randomUUID(), merchant=randomUUID();
   await db.query(`INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Intelligence test','brain-owner')`,[tenant]);
   await db.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Test brain','FNB','brain-test')`,[merchant,tenant]);
