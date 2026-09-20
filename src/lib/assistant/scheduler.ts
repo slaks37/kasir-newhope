@@ -1,5 +1,6 @@
 import { runDailyBatch } from './insights';
 import { BatchRunOptions, BatchRunResult, MerchantSnapshot } from './types';
+import { businessDate } from './periods';
 
 /**
  * LAYER 1 DRIVER (browser side).
@@ -16,10 +17,11 @@ import { BatchRunOptions, BatchRunResult, MerchantSnapshot } from './types';
  */
 
 const KEY_PREFIX = 'newhope_ai_insights_';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 interface CachedEnvelope {
   version: number;
+  fingerprint: string;
   result: BatchRunResult;
 }
 
@@ -27,10 +29,7 @@ interface CachedEnvelope {
 const memoryCache = new Map<string, CachedEnvelope>();
 
 function todayKey(now: Date): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return businessDate(now);
 }
 
 /**
@@ -105,10 +104,14 @@ function pruneOldRuns(businessId: string, keepDate: string): void {
   }
 }
 
-function completedOrderCount(snapshot: MerchantSnapshot): number {
-  let n = 0;
-  for (const o of snapshot.orders) if (o.status === 'COMPLETED') n++;
-  return n;
+// Include all analytical inputs, not just sales count. No data is persisted in
+// the fingerprint. generatedAt is excluded; the minute bucket expires live data.
+function fingerprint(snapshot: MerchantSnapshot, options: BatchRunOptions, now: Date): string {
+  const { generatedAt: _, ...data } = snapshot;
+  const input = JSON.stringify([data, options, Math.floor(now.getTime() / 60_000)]);
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) hash = Math.imul(hash ^ input.charCodeAt(i), 16777619);
+  return `${input.length}:${hash >>> 0}`;
 }
 
 /**
@@ -122,12 +125,14 @@ export function ensureDailyInsights(
   snapshot: MerchantSnapshot,
   options: BatchRunOptions = {}
 ): BatchRunResult {
-  const now = options.now || new Date(snapshot.generatedAt) || new Date();
+  const candidate = options.now || new Date(snapshot.generatedAt);
+  const now = Number.isFinite(candidate.getTime()) ? candidate : new Date();
   const date = todayKey(now);
   const key = cacheKey(snapshot.businessId, date);
 
+  const revision = fingerprint(snapshot, options, now);
   const cached = readCache(key);
-  if (cached && cached.result.aggregates.ordersAnalysed === completedOrderCount(snapshot)) {
+  if (cached && cached.version === SCHEMA_VERSION && cached.fingerprint === revision) {
     return cached.result;
   }
 
@@ -143,6 +148,7 @@ export function ensureDailyInsights(
       insightDate: date,
       generatedAt: now.toISOString(),
       durationMs: 0,
+      unavailable: true,
       insights: [],
       aggregates: {
         windowDays: options.windowDays ?? 30,
@@ -174,7 +180,7 @@ export function ensureDailyInsights(
     };
   }
 
-  writeCache(key, { version: SCHEMA_VERSION, result });
+  writeCache(key, { version: SCHEMA_VERSION, fingerprint: revision, result });
   pruneOldRuns(snapshot.businessId, date);
   return result;
 }

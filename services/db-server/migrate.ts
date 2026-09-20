@@ -30,6 +30,8 @@ const MIGRATIONS = [
   'docs/security/free-plan-selection.sql',
   'docs/security/free-plan-ai-credit-access.sql',
   'docs/security/restrict-browser-rls-policies.sql',
+  'docs/security/intelligence-cache.sql',
+  'docs/security/intelligence-wallet.sql',
 ];
 
 async function main() {

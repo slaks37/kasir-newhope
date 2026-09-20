@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { FirstSaleGuide } from './FirstSaleGuide';
+import { BusinessBrief } from '../ai/BusinessBrief';
 import { usePOS } from '../../context/POSContext';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
@@ -297,6 +298,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
 
   return (
     <div className="nh-overview flex-1 min-w-0 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
+      <BusinessBrief/>
       {/* Toast Alert */}
       {successMsg && (
         <div className="bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center justify-between animate-bounce">

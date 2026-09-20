@@ -28,6 +28,8 @@ export function getLlmConfig(): LlmConfig | null {
 
   const rawBase = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim();
   const baseUrl = rawBase.replace(/\/+$/, '');
+  // Consent is for DeepSeek only. No arbitrary gateway or redirect destination.
+  if (!['https://api.deepseek.com', 'https://api.deepseek.com/v1'].includes(baseUrl)) return null;
   const model = (process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim() || 'deepseek-chat';
 
   return { apiKey, baseUrl, model };
@@ -128,6 +130,7 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      redirect: 'error',
       signal: controller.signal,
     });
 
@@ -148,6 +151,7 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
 
     const data = (await response.json()) as ChatCompletionResponse;
     const text = data.choices?.[0]?.message?.content ?? '';
+    if (typeof text !== 'string' || !text.trim()) throw new Error('DeepSeek mengembalikan jawaban kosong.');
 
     return {
       text: typeof text === 'string' ? text : '',

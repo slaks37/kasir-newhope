@@ -19,7 +19,6 @@
  */
 
 import type { Db } from '../shared/db';
-import { resolveTenant } from '../shared/identity';
 import type { AiCreditWallet } from '../../src/lib/assistant/types';
 
 const MONTHLY_GRANT = 30;
@@ -33,14 +32,26 @@ const MONTHLY_GRANT = 30;
  * satu pun error yang terlihat. Lihat services/shared/identity.ts.
  */
 async function keUuid(db: Db, merchantId: string, businessId?: string): Promise<string> {
-  const r = await resolveTenant(db, { merchantId, businessId });
-  return r.tenantId;
+  // merchantId MUST be the verified session subject, never a supplied UUID.
+  if (!merchantId || merchantId === 'local-development' || !businessId) throw new Error('AUTHENTICATION_REQUIRED');
+  const owned = await db.query(
+    'SELECT t.id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2',
+    [businessId, merchantId]);
+  if (!owned.rows.length) throw new Error('BUSINESS_NOT_OWNED');
+  const wallets = await db.query(
+    `SELECT t.id, w.merchant_id AS wallet_id FROM internal.tenants t
+       LEFT JOIN ai.merchant_ai_credits w ON w.merchant_id=t.id
+       WHERE t.owner_user_ref=$1 ORDER BY t.created_at,t.id`, [merchantId]);
+  const existing = wallets.rows.filter((row: any) => row.wallet_id);
+  // Preserve every historical balance; ambiguous legacy wallets need reconciliation.
+  if (existing.length > 1) throw new Error('AI_MEMBER_WALLET_MERGE_REQUIRED');
+  return String((existing[0] || wallets.rows[0]).id);
 }
 
 /** Awal periode berikutnya, WIB. Kredit diperbarui tiap awal bulan. */
 function periodeBerikutnya(): string {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+  const now = new Date(Date.now() + 7 * 3600000);
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1) - 7 * 3600000).toISOString();
 }
 
 function keWallet(row: any): AiCreditWallet {
@@ -128,16 +139,29 @@ async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet
  * paywall dan TIDAK BOLEH memanggil model.
  */
 export async function pakaiKredit(db: Db, merchantIdMentah: string, businessId?: string): Promise<boolean> {
-  await ambilDompet(db, merchantIdMentah, businessId);
-  const merchantId = await keUuid(db, merchantIdMentah, businessId);
-  const { rows } = await db.query(`SELECT consume_ai_credit($1::uuid) AS ok`, [merchantId]);
-  return rows[0]?.ok === true;
+  return !!(await reserveMemberCredit(db,merchantIdMentah,businessId));
+}
+
+export async function reserveMemberCredit(db:Db,memberId:string,businessId?:string):Promise<{periodResetAt:string}|null> {
+  return db.tx(async c=>{
+    const wallet=await ambilDompet(c,memberId,businessId);
+    const result=await c.query(`UPDATE ai.merchant_ai_credits SET balance=balance-1,
+      used_this_month=used_this_month+1,updated_at=now()
+      WHERE merchant_id=$1 AND balance>0 RETURNING period_reset_at`,[wallet.merchantId]);
+    return result.rows[0]?{periodResetAt:new Date(result.rows[0].period_reset_at).toISOString()}:null;
+  });
 }
 
 /** Mengembalikan kredit ketika panggilan model gagal SETELAH kredit terpotong. */
-export async function kembalikanKredit(db: Db, merchantIdMentah: string, businessId?: string): Promise<void> {
+export async function kembalikanKredit(db: Db, merchantIdMentah: string, businessId: string, periodResetAt: string): Promise<void> {
   const merchantId = await keUuid(db, merchantIdMentah, businessId);
-  await db.query(`SELECT refund_ai_credit($1::uuid)`, [merchantId]);
+  await db.tx(async c=>{
+    await c.query("SELECT set_config('app.ai_credit_ledger_type','REFUND',true)");
+    // Never move an old period's failed request into the new monthly allowance.
+    await c.query(`UPDATE ai.merchant_ai_credits SET balance=balance+1,
+      used_this_month=greatest(0,used_this_month-1),updated_at=now()
+      WHERE merchant_id=$1 AND period_reset_at=$2::timestamptz`,[merchantId,periodResetAt]);
+  });
 }
 
 /** Menambah kredit hasil pembelian add-on. */
@@ -195,8 +219,8 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
     await db.query(
       `INSERT INTO ai.ai_query_logs
          (id, merchant_id, tenant_id, query_text, resolved_intent, source,
-          credits_charged, latency_ms, model, prompt_tokens, completion_tokens)
-       VALUES (uuidv7(), $1, $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          credits_charged, latency_ms, model, prompt_tokens, completion_tokens,business_id)
+       VALUES (uuidv7(), $1, $1, $2, $3, $4, $5, $6, $7, $8, $9,$10)`,
       [
         merchantId,
         a.query.slice(0, 2000),
@@ -207,6 +231,7 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
         a.model ?? null,
         a.promptTokens ?? null,
         a.completionTokens ?? null,
+        a.businessId ?? null,
       ]
     );
   } catch (err) {
@@ -221,9 +246,9 @@ export async function ringkasanAudit(db: Db, merchantIdMentah: string, limit = 5
     `SELECT id, asked_at, query_text, resolved_intent, source, credits_charged,
             latency_ms, model, prompt_tokens, completion_tokens
        FROM ai.ai_query_logs
-      WHERE merchant_id = $1
-      ORDER BY asked_at DESC LIMIT $2`,
-    [merchantId, Math.min(Math.max(limit, 1), 200)]
+      WHERE merchant_id = $1 AND business_id=$2
+      ORDER BY asked_at DESC LIMIT $3`,
+    [merchantId, businessId, Math.min(Math.max(limit, 1), 200)]
   );
 
   const { rows: agg } = await db.query(
@@ -232,14 +257,14 @@ export async function ringkasanAudit(db: Db, merchantIdMentah: string, limit = 5
             COALESCE(SUM(credits_charged), 0)::int              AS kredit,
             COALESCE(SUM(prompt_tokens), 0)::int                AS prompt_tokens,
             COALESCE(SUM(completion_tokens), 0)::int            AS completion_tokens
-       FROM ai.ai_query_logs WHERE merchant_id = $1`,
-    [merchantId]
+       FROM ai.ai_query_logs WHERE merchant_id = $1 AND business_id=$2`,
+    [merchantId,businessId]
   );
 
   const { rows: perSumber } = await db.query(
     `SELECT source, COUNT(*)::int AS n FROM ai.ai_query_logs
-      WHERE merchant_id = $1 GROUP BY source`,
-    [merchantId]
+      WHERE merchant_id = $1 AND business_id=$2 GROUP BY source`,
+    [merchantId,businessId]
   );
 
   const a = agg[0];

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_admin_bundle.js && esbuild src/server/subscriptionDispatcher.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_subscription_bundle.js && esbuild src/server/dokuHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_doku_bundle.js && esbuild src/server/billingRemindersHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_billing_reminders_bundle.js && esbuild src/server/syncHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_sync_bundle.js",
+    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_admin_bundle.js && esbuild src/server/subscriptionDispatcher.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_subscription_bundle.js && esbuild src/server/dokuHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_doku_bundle.js && esbuild src/server/billingRemindersHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_billing_reminders_bundle.js && esbuild src/server/syncHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_sync_bundle.js && esbuild src/server/assistantHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_assistant_bundle.js && esbuild src/server/dailyInsightsHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_daily_insights_bundle.js",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -17,6 +17,7 @@
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts",
+    "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
     "batch:insights:dry": "node scripts/batch/daily-insights.mjs --dry-run",
     "batch:health": "node scripts/batch/merchant-health.mjs",

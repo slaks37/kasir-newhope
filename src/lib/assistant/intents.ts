@@ -38,6 +38,8 @@ import {
 } from '../../types';
 import { ROLE_PERMISSIONS } from '../../data/rolePermissions';
 import { formatRupiah } from '../../utils/formatters';
+import { parsePeriod, reportWindow } from './periods';
+import { reportAggregates } from './reportAggregates';
 
 /* ========================================================================== */
 /* 0. SMALL FORMATTING HELPERS                                                */
@@ -928,7 +930,7 @@ function scoreToConfidence(score: number): number {
   return Math.min(0.95, 0.62 + 0.08 * (score - 3));
 }
 
-export function parseIntent(text: string): ParsedIntent {
+export function parseIntent(text: string, now = Date.now()): ParsedIntent {
   const empty: ParsedIntent = { intent: 'UNKNOWN', confidence: 0, entities: {}, matchedKeywords: [] };
   if (!text || !text.trim()) return empty;
 
@@ -939,13 +941,7 @@ export function parseIntent(text: string): ParsedIntent {
   const tokens = new Set(tokenList);
 
   /* --- entities ---------------------------------------------------------- */
-  const entities: IntentEntities = {};
-  for (const [re, p] of PERIOD_PATTERNS) {
-    if (re.test(norm)) {
-      entities.period = p;
-      break;
-    }
-  }
+  const entities: IntentEntities = parsePeriod(text, now);
   const limit = extractLimit(norm);
   if (limit !== undefined) entities.limit = limit;
 
@@ -1173,22 +1169,8 @@ interface Win {
   days: number;
 }
 
-function resolveWindow(period: IntentPeriod | undefined, nowMs: number): Win {
-  const now = new Date(nowMs);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  switch (period) {
-    case 'YESTERDAY':
-      return { start: startOfToday - DAY_MS, end: startOfToday - 1, label: 'kemarin', days: 1 };
-    case 'WEEK':
-      return { start: startOfToday - 6 * DAY_MS, end: startOfToday + DAY_MS - 1, label: '7 hari terakhir', days: 7 };
-    case 'MONTH':
-      return { start: startOfToday - 29 * DAY_MS, end: startOfToday + DAY_MS - 1, label: '30 hari terakhir', days: 30 };
-    case 'ALL':
-      return { start: 0, end: startOfToday + DAY_MS - 1, label: 'sepanjang waktu', days: 0 };
-    case 'TODAY':
-    default:
-      return { start: startOfToday, end: startOfToday + DAY_MS - 1, label: 'hari ini', days: 1 };
-  }
+function resolveWindow(period: IntentPeriod | undefined, nowMs: number, entities: IntentEntities = {}): Win {
+  return reportWindow(period, nowMs, entities);
 }
 
 function ordersIn(orders: Order[], win: Win, status?: Order['status']): Order[] {
@@ -1337,9 +1319,15 @@ export function resolveIntent(
   // RBAC before data: the assistant must not become a way around a locked tab.
   const denied = enforceRole(p.intent, s.userRole, t0);
   if (denied) return denied;
+  if (b.unavailable) return {source:'ERROR',intent:p.intent,title:'Analisis belum tersedia',markdown:'Perhitungan data gagal. Coba muat ulang; angka nol tidak boleh dianggap sebagai hasil analisis.',costCredits:0};
+  if (p.entities.clarification) return { source: 'RULE_ENGINE', intent: p.intent, title: 'Perjelas periode', markdown: p.entities.clarification, costCredits: 0 };
+
+  if (['GET_REVENUE_SUMMARY','GET_PROFIT_MARGIN','GET_PAYMENT_MIX','GET_TOP_SELLING_ITEM','GET_SLOW_MOVING'].includes(p.intent)) {
+    return resolveIntentFromAggregates(p,reportAggregates(s,p.entities),[],{storeName:s.storeName,businessSector:s.businessSector,slotNoun:s.slotNoun,userRole:s.userRole});
+  }
 
   const nowMs = toMs(s.generatedAt) ?? Date.now();
-  const win = resolveWindow(p.entities.period, nowMs);
+  const win = resolveWindow(p.entities.period, nowMs, p.entities);
   const limit = clamp(p.entities.limit ?? 5, 1, 20);
   const insights = Array.isArray(b?.insights) ? b.insights : [];
   const agg = b?.aggregates;
@@ -3062,13 +3050,17 @@ export function resolveIntentFromAggregates(
   // Same RBAC gate as the in-app path — a direct API call must not bypass it.
   const denied = enforceRole(p.intent, ctx?.userRole, t0);
   if (denied) return denied;
+  if (p.entities.clarification) return { source: 'RULE_ENGINE', intent: p.intent, title: 'Perjelas periode', markdown: p.entities.clarification, costCredits: 0 };
 
   const list = Array.isArray(insights) ? insights : [];
   const limit = clamp(p.entities.limit ?? 5, 1, 20);
   const slot = ctx?.slotNoun && ctx.slotNoun.trim() ? ctx.slotNoun.trim() : 'Meja';
   const store = ctx?.storeName || 'toko Anda';
-  const windowLabel = `${num(a.windowDays || 30)} hari terakhir`;
+  const windowLabel = a.reportPeriod?.label || `${num(a.windowDays || 30)} hari terakhir`;
   const isToday = p.entities.period === 'TODAY' || p.entities.period === undefined;
+  if (p.entities.period && p.entities.period !== 'TODAY' && !a.reportPeriod) {
+    return { source: 'RULE_ENGINE', intent: p.intent, title: 'Periode belum tersedia', markdown: 'Ringkasan ini belum memiliki rentang tanggal terverifikasi. Muat ulang data atau gunakan laporan perangkat; saya tidak akan menggantinya dengan angka 30 hari.', costCredits: 0 };
+  }
 
   switch (p.intent) {
     /* ---------------------------------------------------------------- */
@@ -3338,10 +3330,13 @@ export function resolveIntentFromAggregates(
           t0
         );
       }
-      const grossProfit = a.revenueTotal * (a.grossMarginPct / 100);
+      if(a.costCoveragePct!==100||a.netSales===undefined||a.cogs===undefined) return answer(p.intent,'RULE_ENGINE','HPP belum lengkap',[
+        `Cakupan HPP historis ${pct(a.costCoveragePct||0)}%. Laba belum dapat dipastikan; lengkapi HPP transaksi. Modal katalog saat ini tidak menggantikan HPP historis.`
+      ],{costCoveragePct:a.costCoveragePct||0},[Q.revenue],t0);
+      const grossProfit = a.netSales - a.cogs;
       const lines: string[] = [
         `**Margin kotor ${windowLabel}: ${pct(a.grossMarginPct)}**`,
-        `Dari omset ${rp(a.revenueTotal)}, laba kotor sekitar **${rp(grossProfit)}** (modal ${rp(a.revenueTotal - grossProfit)}).`,
+        `Penjualan setelah diskon ${rp(a.netSales)}, sebelum pajak dan service charge: kontribusi kotor **${rp(grossProfit)}** (HPP ${rp(a.cogs)}). Belum dikurangi biaya operasional.`,
         `- Rata-rata per struk ${rp(a.avgTicket)}, laba kotor per struk sekitar ${rp(div(grossProfit, a.ordersAnalysed))}.`,
         `- Diskon menggerus ${pct(a.discountRatePct)} dari omset.`,
       ];

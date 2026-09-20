@@ -13,9 +13,8 @@
  *  - order lines may reference product ids that no longer exist in the catalog,
  *    so the catalog is treated as *enrichment*: the line's own name/unitPrice
  *    is always the source of truth,
- *  - `Order.date` may be an ISO string without a timezone suffix (parsed as
- *    local time — consistently, everywhere),
- *  - only COMPLETED orders feed revenue/quantity maths; VOID orders only feed
+ *  - ISO timestamps without a timezone suffix are interpreted in store time (WIB),
+ *  - only paid COMPLETED orders at or before the snapshot time feed revenue/quantity maths; VOID orders only feed
  *    the void-rate metric,
  *  - every division is guarded.
  */
@@ -30,6 +29,7 @@ import type {
   StockItem,
 } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
+import { businessDate, businessHour, businessTime, dayStart, weekday } from './periods';
 import type {
   BatchRunOptions,
   BatchRunResult,
@@ -95,27 +95,33 @@ interface ResolvedOptions {
   minShiftsForJudgement: number;
   cashVarianceTolerancePct: number;
   now: Date;
-  /** Local-midnight timestamp of `now`. */
+  /** WIB-midnight timestamp of `now`. */
   todayStart: number;
-  /** Local-midnight timestamp of the first day inside the window. */
+  /** WIB-midnight timestamp of the first day inside the window. */
   windowStart: number;
 }
 
 function toDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const d = new Date(value);
+  const d = new Date(businessTime(value));
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function calendarParts(date: Date): { year: number; month: number; day: number } {
+  const [year, month, day] = businessDate(date).split('-').map(Number);
+  return { year, month: month - 1, day };
+}
+
+function daysInBusinessMonth(date: Date): number {
+  const { year, month } = calendarParts(date);
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
 function startOfDayTime(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return dayStart(businessDate(d));
 }
 
 function dateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return businessDate(d);
 }
 
 function keyToTime(key: string): number {
@@ -124,12 +130,11 @@ function keyToTime(key: string): number {
   const m = Number(parts[1]);
   const d = Number(parts[2]);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return 0;
-  return new Date(y, m - 1, d).getTime();
+  return dayStart(key);
 }
 
 function addDays(time: number, days: number): number {
-  const base = new Date(time);
-  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + days).getTime();
+  return time + days * MS_PER_DAY;
 }
 
 function round2(n: number): number {
@@ -178,8 +183,8 @@ function hourLabel(hour: number): string {
 }
 
 function shortDate(time: number): string {
-  const d = new Date(time);
-  return `${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'][d.getMonth()]}`;
+  const { day, month } = calendarParts(new Date(time));
+  return `${day} ${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'][month]}`;
 }
 
 function resolveOptions(snapshot: MerchantSnapshot, options?: BatchRunOptions): ResolvedOptions {
@@ -245,11 +250,12 @@ function buildCatalog(products: Product[]): Catalog {
   return { byId, byName };
 }
 
-function datedOrders(orders: Order[]): DatedOrder[] {
+function datedOrders(orders: Order[], opt: ResolvedOptions): DatedOrder[] {
   const out: DatedOrder[] = [];
   for (const order of orders || []) {
     const date = toDate(order?.date);
-    if (!date) continue;
+    if (!date || date.getTime() > opt.now.getTime()) continue;
+    if (order.status === 'COMPLETED' && order.paymentStatus !== 'PAID') continue;
     const dayTime = startOfDayTime(date);
     out.push({ order, date, time: date.getTime(), dayKey: dateKey(date), dayTime });
   }
@@ -257,7 +263,7 @@ function datedOrders(orders: Order[]): DatedOrder[] {
 }
 
 function inWindow(o: DatedOrder, opt: ResolvedOptions): boolean {
-  return o.dayTime >= opt.windowStart;
+  return o.dayTime >= opt.windowStart && o.time <= opt.now.getTime();
 }
 
 function linesOf(order: Order, catalog: Catalog): LineRef[] {
@@ -427,7 +433,7 @@ function productConsumption(orders: DatedOrder[], catalog: Catalog): Map<string,
   return map;
 }
 
-function stockItemConsumption(logs: InventoryLog[], stockItems: StockItem[]): Map<string, ConsumptionSeries> {
+function stockItemConsumption(logs: InventoryLog[], stockItems: StockItem[], now: Date): Map<string, ConsumptionSeries> {
   const byId = new Map<string, StockItem>();
   const byName = new Map<string, StockItem>();
   for (const si of stockItems || []) {
@@ -443,7 +449,7 @@ function stockItemConsumption(logs: InventoryLog[], stockItems: StockItem[]): Ma
     const target = (log.productId ? byId.get(log.productId) : undefined) || byName.get(normName(log.productName));
     if (!target) continue;
     const stamped = toDate(log.timestamp);
-    if (!stamped) continue;
+    if (!stamped || stamped.getTime() > now.getTime()) continue;
     let series = map.get(target.id);
     if (!series) {
       series = emptySeries();
@@ -460,10 +466,10 @@ export function computeInventoryInsight(
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
-  const orders = datedOrders(snapshot.orders || []);
+  const orders = datedOrders(snapshot.orders || [], opt);
 
   const productSeries = productConsumption(orders, catalog);
-  const stockSeries = stockItemConsumption(snapshot.inventoryLogs || [], snapshot.stockItems || []);
+  const stockSeries = stockItemConsumption(snapshot.inventoryLogs || [], snapshot.stockItems || [], opt.now);
 
   const items: InventoryAlertPayload['items'] = [];
 
@@ -607,7 +613,7 @@ export function computeCrossSellInsight(
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
-  const orders = datedOrders(snapshot.orders || []).filter(
+  const orders = datedOrders(snapshot.orders || [], opt).filter(
     (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
   );
 
@@ -822,7 +828,7 @@ function offerFor(segment: Segment, stat: CustomerStat): string {
 
 function buildCustomerStats(snapshot: MerchantSnapshot, opt: ResolvedOptions): CustomerStat[] {
   const catalog = buildCatalog(snapshot.products || []);
-  const completed = datedOrders(snapshot.orders || []).filter((o) => o.order.status === 'COMPLETED');
+  const completed = datedOrders(snapshot.orders || [], opt).filter((o) => o.order.status === 'COMPLETED');
 
   interface Agg {
     customer: Customer;
@@ -866,7 +872,7 @@ function buildCustomerStats(snapshot: MerchantSnapshot, opt: ResolvedOptions): C
   const stats: CustomerStat[] = [];
   agg.forEach((row) => {
     const lastVisit = toDate(row.customer.lastVisit);
-    const lastVisitTime = lastVisit ? lastVisit.getTime() : null;
+    const lastVisitTime = lastVisit && lastVisit.getTime() <= opt.now.getTime() ? lastVisit.getTime() : null;
     const mostRecent =
       row.lastTime !== null && lastVisitTime !== null
         ? Math.max(row.lastTime, lastVisitTime)
@@ -1010,7 +1016,7 @@ export function computePeakHoursInsight(
   options?: BatchRunOptions
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
-  const completed = datedOrders(snapshot.orders || []).filter(
+  const completed = datedOrders(snapshot.orders || [], opt).filter(
     (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
   );
   if (completed.length === 0) return null;
@@ -1023,8 +1029,8 @@ export function computePeakHoursInsight(
   let minHour = 23;
   let maxHour = 0;
   for (const o of completed) {
-    const h = o.date.getHours();
-    const d = o.date.getDay();
+    const h = businessHour(o.date);
+    const d = weekday(o.dayKey);
     const total = Number(o.order.total) || 0;
     hourOrders[h] += 1;
     hourRevenue[h] += total;
@@ -1163,12 +1169,13 @@ function stdDevOf(values: number[], mean: number): number {
   return Math.sqrt(Math.max(0, variance));
 }
 
-/** Revenue of COMPLETED orders falling in a given calendar month. */
+/** Revenue of paid COMPLETED orders falling in a given WIB calendar month. */
 function revenueOfMonth(orders: DatedOrder[], year: number, month: number): number {
   let total = 0;
   for (const o of orders) {
     if (o.order.status !== 'COMPLETED') continue;
-    if (o.date.getFullYear() === year && o.date.getMonth() === month) {
+    const calendar = calendarParts(o.date);
+    if (calendar.year === year && calendar.month === month) {
       total += Number(o.order.total) || 0;
     }
   }
@@ -1190,11 +1197,12 @@ export function resolveMonthlyTarget(
   const manual = Number(snapshot.settings?.monthlyRevenueTarget) || 0;
   if (manual > 0) return { target: round0(manual), source: 'MERCHANT', monthsUsed: 0 };
 
-  const all = datedOrders(snapshot.orders || []);
+  const all = datedOrders(snapshot.orders || [], opt);
   const totals: number[] = [];
+  const calendar = calendarParts(opt.now);
   for (let back = 1; back <= 3; back++) {
-    const ref = new Date(opt.now.getFullYear(), opt.now.getMonth() - back, 1);
-    const rev = revenueOfMonth(all, ref.getFullYear(), ref.getMonth());
+    const ref = new Date(Date.UTC(calendar.year, calendar.month - back, 1));
+    const rev = revenueOfMonth(all, ref.getUTCFullYear(), ref.getUTCMonth());
     if (rev > 0) totals.push(rev);
   }
 
@@ -1209,7 +1217,7 @@ export function computeFinancialPerformanceInsight(
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
-  const orders = datedOrders(snapshot.orders || []).filter((o) => inWindow(o, opt));
+  const orders = datedOrders(snapshot.orders || [], opt).filter((o) => inWindow(o, opt));
 
   const days = new Map<string, DayFinance>();
   const ensureDay = (key: string, dayTime: number): DayFinance => {
@@ -1335,7 +1343,7 @@ export function computeFinancialPerformanceInsight(
   for (const shift of snapshot.shifts || []) {
     if (!shift || shift.difference === undefined || shift.difference === null) continue;
     const start = toDate(shift.startTime);
-    if (!start) continue;
+    if (!start || start.getTime() > opt.now.getTime()) continue;
     const dayTime = startOfDayTime(start);
     if (dayTime < opt.windowStart) continue;
     const key = dateKey(start);
@@ -1358,12 +1366,13 @@ export function computeFinancialPerformanceInsight(
   anomalies.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
 
   /* --- Spec #5: run rate vs target (the headline) ------------------------ */
-  const allOrders = datedOrders(snapshot.orders || []);
+  const allOrders = datedOrders(snapshot.orders || [], opt);
   const { target, source: targetSource } = resolveMonthlyTarget(snapshot, options);
-  const mtdRevenue = round0(revenueOfMonth(allOrders, opt.now.getFullYear(), opt.now.getMonth()));
+  const calendar = calendarParts(opt.now);
+  const mtdRevenue = round0(revenueOfMonth(allOrders, calendar.year, calendar.month));
 
-  const dayOfMonth = opt.now.getDate();
-  const daysInMonth = new Date(opt.now.getFullYear(), opt.now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = calendar.day;
+  const daysInMonth = daysInBusinessMonth(opt.now);
   const expectedPct = round2(pctOf(dayOfMonth, daysInMonth));
   const hasTarget = target > 0;
 
@@ -1380,7 +1389,7 @@ export function computeFinancialPerformanceInsight(
   // Nothing to say at all: no target to track AND no statistical signal.
   if (!hasTarget && anomalies.length === 0) return null;
 
-  const monthLabel = opt.now.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+  const monthLabel = opt.now.toLocaleDateString('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
 
   const payload: FinancialPerformancePayload = {
     kind: 'FINANCIAL_PERFORMANCE',
@@ -1459,7 +1468,7 @@ export function computeLayoutInsight(
   if (tables.length === 0) return null;
 
   const noun = snapshot.slotNoun || 'Meja';
-  const completed = datedOrders(snapshot.orders || []).filter(
+  const completed = datedOrders(snapshot.orders || [], opt).filter(
     (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
   );
 
@@ -1579,7 +1588,7 @@ function attendanceInWindow(records: AttendanceRecord[], opt: ResolvedOptions): 
   const out: AttendanceRecord[] = [];
   for (const r of records || []) {
     const clockIn = toDate(r?.clockInTime);
-    if (!clockIn) continue;
+    if (!clockIn || clockIn.getTime() > opt.now.getTime()) continue;
     if (startOfDayTime(clockIn) < opt.windowStart) continue;
     out.push(r);
   }
@@ -1595,7 +1604,7 @@ export function computeStaffBehaviourInsight(
   if (staffList.length === 0) return null;
 
   const catalog = buildCatalog(snapshot.products || []);
-  const completed = datedOrders(snapshot.orders || []).filter(
+  const completed = datedOrders(snapshot.orders || [], opt).filter(
     (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
   );
   const records = attendanceInWindow(snapshot.attendance || [], opt);
@@ -1614,6 +1623,7 @@ export function computeStaffBehaviourInsight(
     items: number;
     shifts: number;
     hours: number;
+    intervals: [number, number][];
     late: number;
     offSite: number;
     presentDays: Set<string>;
@@ -1622,7 +1632,7 @@ export function computeStaffBehaviourInsight(
   const ensure = (id: string): StaffAgg => {
     let row = agg.get(id);
     if (!row) {
-      row = { orders: 0, revenue: 0, items: 0, shifts: 0, hours: 0, late: 0, offSite: 0, presentDays: new Set<string>() };
+      row = { orders: 0, revenue: 0, items: 0, shifts: 0, hours: 0, intervals: [], late: 0, offSite: 0, presentDays: new Set<string>() };
       agg.set(id, row);
     }
     return row;
@@ -1654,14 +1664,14 @@ export function computeStaffBehaviourInsight(
     row.presentDays.add(dayKeyValue);
 
     const clockOut = toDate(r.clockOutTime);
-    if (clockOut) {
+    if (clockOut && clockOut.getTime() <= opt.now.getTime()) {
       const hours = (clockOut.getTime() - clockIn.getTime()) / 3_600_000;
-      if (Number.isFinite(hours) && hours > 0) row.hours += Math.min(24, hours);
+      if (Number.isFinite(hours) && hours > 0 && hours <= 24) row.intervals.push([clockIn.getTime(), clockOut.getTime()]);
     }
-    // Late = clocked in after 09:00 local.
-    const h = clockIn.getHours();
-    const m = clockIn.getMinutes();
-    if (h > 9 || (h === 9 && (m > 0 || clockIn.getSeconds() > 0))) row.late += 1;
+    // This is a 09:00 WIB reference, not proof of lateness against a roster.
+    const h = businessHour(clockIn);
+    const m = clockIn.getUTCMinutes();
+    if (h > 9 || (h === 9 && (m > 0 || clockIn.getUTCSeconds() > 0))) row.late += 1;
     if (r.clockInGeo && r.clockInGeo.isWithinRadius === false) row.offSite += 1;
   }
 
@@ -1671,13 +1681,27 @@ export function computeStaffBehaviourInsight(
     const row = ensure(s.id);
     const avgTicket = safeDiv(row.revenue, row.orders);
     const itemsPerOrder = safeDiv(row.items, row.orders);
-    const revenuePerHour = row.hours > 0 ? row.revenue / row.hours : 0;
+    const intervals: [number, number][] = [];
+    for (const interval of row.intervals.sort((a, b) => a[0] - b[0])) {
+      const last = intervals[intervals.length - 1];
+      if (last && interval[0] <= last[1]) last[1] = Math.max(last[1], interval[1]);
+      else intervals.push([...interval]);
+    }
+    row.hours = intervals.reduce((sum, [start, end]) => sum + (end - start) / 3_600_000, 0);
+    const measuredRevenue = completed.reduce((sum, o) => {
+      const staffId = (o.order.servedByStaffId ? staffById.get(o.order.servedByStaffId) : undefined)
+        || staffByName.get(normName(o.order.servedByStaffName));
+      return staffId === s.id && intervals.some(([start, end]) => o.time >= start && o.time <= end)
+        ? sum + (Number(o.order.total) || 0) : sum;
+    }, 0);
+    const revenuePerHour = safeDiv(measuredRevenue, row.hours);
     const attendanceRatePct = Math.min(100, pctOf(row.presentDays.size, dayDenominator));
 
     const notes: string[] = [];
     if (row.orders > 0) notes.push(`${row.orders} order, rata-rata ${formatRupiah(avgTicket)} per struk`);
     else notes.push('belum ada order atas namanya');
     if (row.hours > 0) notes.push(`${num(row.hours)} jam kerja`);
+    if (row.shifts > row.intervals.length) notes.push('Omzet/jam hanya memakai transaksi dalam absensi dengan clock-out valid');
     if (row.late > 0) notes.push(`${row.late}x clock-in lewat jam 09:00`);
     if (row.offSite > 0) notes.push(`${row.offSite}x absen di luar radius toko`);
 
@@ -1780,15 +1804,16 @@ export function computeAggregates(
 ): MerchantAggregates {
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
-  const all = datedOrders(snapshot.orders || []);
+  const all = datedOrders(snapshot.orders || [], opt);
   const windowed = all.filter((o) => inWindow(o, opt));
   const completed = windowed.filter((o) => o.order.status === 'COMPLETED');
   const voided = windowed.filter((o) => o.order.status === 'VOID');
 
   // Month-to-date is a calendar-month figure, deliberately independent of the
   // rolling analysis window — a 7-day window must not shrink the MTD number.
-  const mtdRevenue = round0(revenueOfMonth(all, opt.now.getFullYear(), opt.now.getMonth()));
-  const daysInThisMonth = new Date(opt.now.getFullYear(), opt.now.getMonth() + 1, 0).getDate();
+  const calendar = calendarParts(opt.now);
+  const mtdRevenue = round0(revenueOfMonth(all, calendar.year, calendar.month));
+  const daysInThisMonth = daysInBusinessMonth(opt.now);
   const targetInfo = resolveMonthlyTarget(snapshot, options);
 
   let revenueTotal = 0;
@@ -1959,7 +1984,9 @@ export function computeAggregates(
 
   const onShift = new Set<string>();
   for (const r of snapshot.attendance || []) {
-    if (r && r.status === 'CLOCKED_IN') onShift.add(r.staffId || r.staffName || r.id);
+    const clockIn = toDate(r?.clockInTime);
+    if (r && r.status === 'CLOCKED_IN' && clockIn && clockIn.getTime() <= opt.now.getTime()
+      && opt.now.getTime() - clockIn.getTime() <= MS_PER_DAY) onShift.add(r.staffId || r.staffName || r.id);
   }
 
   return {
@@ -1987,7 +2014,7 @@ export function computeAggregates(
     monthlyTarget: targetInfo.target,
     targetSource: targetInfo.target > 0 ? targetInfo.source : 'NONE',
     runRatePct: targetInfo.target > 0 ? round2(pctOf(mtdRevenue, targetInfo.target)) : 0,
-    expectedPct: round2(pctOf(opt.now.getDate(), daysInThisMonth)),
+    expectedPct: round2(pctOf(calendar.day, daysInThisMonth)),
   };
 }
 
@@ -2010,7 +2037,7 @@ export function computeCalendarBehaviourInsight(
 ): MerchantInsight | null {
   const opt = resolveOptions(snapshot, options);
   const catalog = buildCatalog(snapshot.products || []);
-  const orders = datedOrders(snapshot.orders || []).filter(
+  const orders = datedOrders(snapshot.orders || [], opt).filter(
     (o) => o.order.status === 'COMPLETED' && inWindow(o, opt)
   );
   if (orders.length === 0) return null;
@@ -2025,7 +2052,7 @@ export function computeCalendarBehaviourInsight(
 
   for (const o of orders) {
     const total = Number(o.order.total) || 0;
-    const day = o.date.getDate();
+    const day = calendarParts(o.date).day;
     if (isPaydayWindow(day)) {
       paydayRevenue += total;
       paydayOrders += 1;
@@ -2071,10 +2098,8 @@ export function computeCalendarBehaviourInsight(
     .map((p) => ({ name: p.name, qty: p.qty, revenue: round0(p.revenue) }));
 
   // Next 25th, relative to now.
-  const nextPayday =
-    opt.now.getDate() < 25
-      ? new Date(opt.now.getFullYear(), opt.now.getMonth(), 25)
-      : new Date(opt.now.getFullYear(), opt.now.getMonth() + 1, 25);
+  const calendar = calendarParts(opt.now);
+  const nextPayday = new Date(Date.UTC(calendar.year, calendar.month + (calendar.day < 25 ? 0 : 1), 25));
 
   const upliftPct = round1((basketUplift - 1) * 100);
   const payload: CalendarBehaviourPayload = {
@@ -2129,7 +2154,8 @@ export function computeShiftPerformanceInsight(
   const closed = (snapshot.shifts || []).filter((s) => {
     if (!s || s.status !== 'CLOSED') return false;
     const start = toDate(s.startTime);
-    if (!start) return false;
+    const end = toDate(s.endTime);
+    if (!start || start.getTime() > opt.now.getTime() || (end && end.getTime() > opt.now.getTime())) return false;
     return startOfDayTime(start) >= opt.windowStart;
   });
   if (closed.length === 0) return null;
@@ -2139,6 +2165,8 @@ export function computeShiftPerformanceInsight(
     shifts: number;
     ordersServed: number;
     totalSales: number;
+    timedSales: number;
+    timedShifts: number;
     hours: number;
     variances: number[];
     expectedCashTotal: number;
@@ -2149,17 +2177,22 @@ export function computeShiftPerformanceInsight(
     const name = (s.cashierName || 'Tanpa nama').trim() || 'Tanpa nama';
     const acc =
       byCashier.get(name) ||
-      { cashierName: name, shifts: 0, ordersServed: 0, totalSales: 0, hours: 0, variances: [], expectedCashTotal: 0 };
+      { cashierName: name, shifts: 0, ordersServed: 0, totalSales: 0, timedSales: 0, timedShifts: 0, hours: 0, variances: [], expectedCashTotal: 0 };
 
     const start = toDate(s.startTime);
     const end = toDate(s.endTime);
-    // A shift with no end time contributes sales but not hours — counting a
-    // missing clock-out as a zero-length shift would inflate sales/hour.
-    const hours = start && end ? Math.max(0, (end.getTime() - start.getTime()) / 3_600_000) : 0;
+    // Keep sales totals, but use the same valid closed shifts in BOTH terms
+    // of sales/hour. A missing/invalid clock-out must not inflate the ratio.
+    const duration = start && end ? (end.getTime() - start.getTime()) / 3_600_000 : 0;
+    const hours = duration > 0 && duration <= 24 ? duration : 0;
 
     acc.shifts += 1;
     acc.ordersServed += Number(s.totalOrders) || 0;
     acc.totalSales += Number(s.totalSales) || 0;
+    if (hours > 0) {
+      acc.timedSales += Number(s.totalSales) || 0;
+      acc.timedShifts += 1;
+    }
     acc.hours += hours;
     acc.expectedCashTotal += Number(s.expectedCash) || 0;
 
@@ -2177,7 +2210,7 @@ export function computeShiftPerformanceInsight(
   const accs = [...byCashier.values()];
   if (accs.length === 0) return null;
 
-  const perHour = accs.map((a) => safeDiv(a.totalSales, a.hours));
+  const perHour = accs.map((a) => safeDiv(a.timedSales, a.hours));
   const benchmark = meanOf(perHour.filter((v) => v > 0));
   const sd = stdDevOf(perHour.filter((v) => v > 0), benchmark);
 
@@ -2185,7 +2218,7 @@ export function computeShiftPerformanceInsight(
   let bestRate = -1;
 
   const cashiers: ShiftPerformancePayload['cashiers'] = accs.map((a) => {
-    const salesPerHour = round0(safeDiv(a.totalSales, a.hours));
+    const salesPerHour = round0(safeDiv(a.timedSales, a.hours));
     const avgTicket = round0(safeDiv(a.totalSales, a.ordersServed));
     const meanCashVariance = a.variances.length > 0 ? round0(meanOf(a.variances)) : 0;
     const worstCashVariance =
@@ -2205,12 +2238,13 @@ export function computeShiftPerformanceInsight(
         meanCashVariance < 0
           ? `Rata-rata kas kurang ${formatRupiah(Math.abs(meanCashVariance))} per shift (${num(variancePct)}% dari kas seharusnya). Perlu dicek: prosedur serah terima, struk tunai, atau kembalian.`
           : `Rata-rata kas lebih ${formatRupiah(meanCashVariance)} per shift. Perlu dicek: transaksi yang belum tercatat di kasir.`;
-    } else if (judgeable && sd > 0 && salesPerHour > 0 && salesPerHour < benchmark - sd) {
+    } else if (a.timedShifts >= opt.minShiftsForJudgement && sd > 0 && salesPerHour > 0 && salesPerHour < benchmark - sd) {
       flag = 'LOW_PRODUCTIVITY';
       note = `Omzet per jam ${formatRupiah(salesPerHour)}, di bawah rata-rata tim ${formatRupiah(round0(benchmark))}. Cocok untuk coaching upselling.`;
     }
 
-    if (salesPerHour > bestRate && flag === 'OK' && a.shifts >= opt.minShiftsForJudgement) {
+    if (a.timedShifts < a.shifts) note += ' Omzet/jam hanya memakai shift dengan waktu selesai valid (maksimal 24 jam).';
+    if (salesPerHour > 0 && salesPerHour > bestRate && flag === 'OK' && a.timedShifts >= opt.minShiftsForJudgement) {
       bestRate = salesPerHour;
       bestName = a.cashierName;
     }

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { SplitBillModal } from './SplitBillModal';
 import { DigitalScaleModal } from './DigitalScaleModal';
+import { UpsellSuggestions } from '../ai/UpsellSuggestions';
 
 interface CartPanelProps {
   onOpenCustomerSelect: () => void;
@@ -154,6 +155,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           ))}
         </div>
 
+        <UpsellSuggestions/>
         {/* Quick Recent Tx Shortcut Link */}
         <div className="flex items-center justify-between px-1">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">

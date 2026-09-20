@@ -6,9 +6,15 @@ import { toAiContext, useTenant } from '../../context/TenantContext';
 import { ensureDailyInsights } from '../../lib/assistant/scheduler';
 import { parseIntent, resolveIntent, QUICK_CHIPS } from '../../lib/assistant/intents';
 import { newId } from '../../lib/ids';
+import { parseActionJournal, type ActionRecord } from '../../lib/assistant/actionJournal';
+import { IntelligencePanel } from './IntelligencePanel';
+import { brainTopic, answerBrain } from '../../lib/assistant/brainAnswers';
+import { isFreePlan } from '../../config/freePlanPolicy';
+import { reportAggregates } from '../../lib/assistant/reportAggregates';
 import {
   AiCreditWallet,
   AssistantAnswer,
+  AssistantQueryResponse,
   INTENT_CONFIDENCE_THRESHOLD,
   InsightAction,
   InsightCategory,
@@ -659,6 +665,7 @@ const InsightDetail: React.FC<{ payload: InsightPayload }> = ({ payload }) => {
 /* ========================================================================== */
 
 interface ChatMessage {
+  businessId?: string;
   id: string;
   sender: 'user' | 'ai';
   text: string;
@@ -672,19 +679,24 @@ interface ChatMessage {
    * Merchant yang melihat angka berbeda dari yang disebut tim support harus
    * bisa langsung tahu kenapa, tanpa membuka tiket.
    */
-  dataSource?: 'DATABASE' | 'CLIENT' | 'NONE';
+  dataSource?: AssistantQueryResponse['dataSource'];
 }
 
 const DATA_BADGE: Record<string, { label: string; cls: string; hint: string }> = {
   DATABASE: {
     label: 'DATA PUSAT',
     cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    hint: 'Dihitung dari database pusat — sama persis dengan yang dilihat tim support.',
+    hint: 'Dihitung dari transaksi yang sudah tersinkron ke database pusat untuk periode laporan ini.',
   },
   CLIENT: {
     label: 'DATA PERANGKAT',
     cls: 'bg-amber-50 text-amber-800 border-amber-300',
     hint: 'Dihitung dari data di perangkat ini saja. Transaksi dari terminal lain belum ikut terhitung.',
+  },
+  MIXED: {
+    label: 'PUSAT + PERANGKAT',
+    cls: 'bg-amber-50 text-amber-800 border-amber-300',
+    hint: 'Ringkasan pusat dilengkapi temuan atau data perangkat. Bagian perangkat belum diverifikasi oleh database pusat.',
   },
 };
 
@@ -714,15 +726,29 @@ export const AIAssistant: React.FC = () => {
    * caches and sends to the model is scoped to this.
    */
   const tenant = useTenant();
+  const [clockMinute, setClockMinute] = useState(()=>Math.floor(Date.now()/60_000));
+  useEffect(()=>{const timer=setInterval(()=>setClockMinute(Math.floor(Date.now()/60_000)),60_000);return()=>clearInterval(timer);},[]);
 
   const [promptInput, setPromptInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [paidEnabled, setPaidEnabled] = useState(false);
+  const [draftMode, setDraftMode] = useState(false);
   const [dismissed, setDismissed] = useState<Record<string, true>>({});
   const [expanded, setExpanded] = useState<Record<string, true>>({});
   const [wallet, setWallet] = useState<AiCreditWallet | null>(null);
   const [paywall, setPaywall] = useState<{ title: string; message: string; ctaLabel: string; addOnPriceIdr: number; addOnCredits: number } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const scope = `${tenant.merchantId}:${tenant.businessId}:${tenant.userRole}`;
+  const activeScope = useRef(scope);
+  activeScope.current = scope;
+  const requestRef = useRef<{scope:string;controller:AbortController}|null>(null);
+  useEffect(()=>{
+    requestRef.current?.controller.abort();
+    requestRef.current=null;
+    setIsGenerating(false);
+    return ()=>{requestRef.current?.controller.abort();requestRef.current=null;};
+  },[scope]);
 
   /* --- LAYER 1: today's batch run ---------------------------------------- */
   /*
@@ -756,6 +782,7 @@ export const AIAssistant: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       tenant.businessId,
+      clockMinute,
       tenant.userRole,
       settings,
       categories,
@@ -783,10 +810,9 @@ export const AIAssistant: React.FC = () => {
   /* --- credits ------------------------------------------------------------ */
   useEffect(() => {
     let cancelled = false;
-    // businessId WAJIB ikut: kredit dimiliki UNIT USAHA, bukan akun. Pemilik
-    // dengan kafe DAN laundry tidak bisa diselesaikan dari merchantId saja —
-    // server sengaja menolak menebak, karena menebak salah berarti kredit kafe
-    // terpotong untuk pertanyaan tentang laundry.
+    setWallet(null);
+    if(isFreePlan(settings.subscription))return;
+    // Business selects data scope; the server shares one wallet per verified member.
     fetch(
       `/api/v1/assistant/credits?merchantId=${encodeURIComponent(tenant.merchantId)}` +
         `&businessId=${encodeURIComponent(tenant.businessId)}`
@@ -801,7 +827,7 @@ export const AIAssistant: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [tenant.merchantId]);
+  }, [tenant.businessId, settings.subscription]);
 
   useEffect(() => {
     // Greet with the real headline insight instead of a generic hello.
@@ -819,7 +845,9 @@ export const AIAssistant: React.FC = () => {
     ]);
     // Only on mount / merchant switch — later messages are appended by the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant.merchantId]);
+    setPaidEnabled(false);
+    setDraftMode(false);
+  }, [tenant.businessId]);
 
   useEffect(() => {
     const el = transcriptRef.current;
@@ -829,19 +857,23 @@ export const AIAssistant: React.FC = () => {
   const push = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
     setMessages((prev) => [
       ...prev,
-      { ...msg, id: newId('m'), timestamp: clockLabel() },
+      { ...msg, businessId:tenant.businessId, id: newId('m'), timestamp: clockLabel() },
     ]);
-  }, []);
+  }, [tenant.businessId]);
 
   /* --- LAYER 2 -> LAYER 3 routing ---------------------------------------- */
   const ask = useCallback(
     async (text: string, forcedIntent?: IntentName) => {
       const label = text.trim();
       if (!label && !forcedIntent) return;
+      if(isFreePlan(settings.subscription))return;
+      if(requestRef.current)return;
 
       push({ sender: 'user', text: label || String(forcedIntent) });
       setPromptInput('');
       setPaywall(null);
+      const topic=brainTopic(label);
+      if(topic&&!forcedIntent&&!draftMode){const result=answerBrain(topic,snapshot,label);push({sender:'ai',text:result.markdown,source:result.source,title:result.title,dataSource:'CLIENT'});return;}
 
       // Quick Chip bypasses the parser entirely; free text goes through it.
       const parsed = forcedIntent
@@ -883,17 +915,25 @@ export const AIAssistant: React.FC = () => {
       };
 
       setIsGenerating(true);
+      const request={scope,controller:new AbortController()};
+      requestRef.current=request;
+      const isCurrent=()=>requestRef.current===request&&activeScope.current===request.scope&&!request.controller.signal.aborted;
       try {
         const res = await fetch('/api/v1/assistant/query', {
           method: 'POST',
+          signal: request.controller.signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             merchantId: tenant.merchantId,
             query: label,
+            intent: forcedIntent,
+            allowLlm: paidEnabled,
+            paidDataConsent: paidEnabled ? 'deepseek-aggregate-member-v1' : undefined,
+            purpose: draftMode && paidEnabled ? 'ACTION_PLAN' : 'ANALYSIS',
             // Tetap dikirim: server memakainya HANYA untuk bidang yang belum
             // punya tabel (pelanggan, meja, staf bertugas). Seluruh angka uang
             // dihitung ulang server dari database dan menimpa kiriman ini.
-            aggregates: batch.aggregates,
+            aggregates: reportAggregates(snapshot, parseIntent(label).entities),
             insights: batch.insights,
             // Tells the model exactly whose data this is and who is asking, so
             // it can state its scope and be forbidden from straying outside it.
@@ -901,6 +941,8 @@ export const AIAssistant: React.FC = () => {
           }),
         });
         const data = await res.json();
+        if(!isCurrent())return;
+        if(res.status===401||res.status===403){push({sender:'ai',source:'ERROR',text:data?.error==='AI_DISABLED_ON_FREE'?'AI tidak aktif pada Free plan. Silakan upgrade paket.':'Akses AI ditolak. Periksa sesi dan izin akun Anda.'});return;}
         if (data?.credits) setWallet(data.credits);
         if (data?.paywall) setPaywall(data.paywall);
         const answer: AssistantAnswer | undefined = data?.answer;
@@ -924,6 +966,7 @@ export const AIAssistant: React.FC = () => {
           dataSource: data?.dataSource ?? 'CLIENT',
         });
       } catch {
+        if(!isCurrent())return;
         // Benar-benar offline. Jalur lokal masih lengkap.
         if (
           !answerLocally(
@@ -937,10 +980,10 @@ export const AIAssistant: React.FC = () => {
           });
         }
       } finally {
-        setIsGenerating(false);
+        if(isCurrent()){requestRef.current=null;setIsGenerating(false);}
       }
     },
-    [batch, tenant, push, snapshot]
+    [batch, tenant, push, snapshot, settings.subscription, paidEnabled, draftMode, scope]
   );
 
   const handleTopUp = async () => {
@@ -955,11 +998,12 @@ export const AIAssistant: React.FC = () => {
         }),
       });
       const data = await res.json();
+      if (!res.ok || !data?.ok || !data?.credits) throw new Error('PAYMENT_NOT_CONFIRMED');
       if (data?.credits) setWallet(data.credits);
       setPaywall(null);
       push({ sender: 'ai', source: 'RULE_ENGINE', text: data?.message || '**AI Credit berhasil ditambahkan.**' });
     } catch {
-      push({ sender: 'ai', source: 'ERROR', text: '**Gagal memproses pembelian AI Credit.**' });
+      push({ sender: 'ai', source: 'ERROR', text: '**Kredit belum ditambahkan.** Pembelian membutuhkan pembayaran yang terverifikasi; hubungi admin untuk pembelian paket.' });
     }
   };
 
@@ -1001,45 +1045,24 @@ export const AIAssistant: React.FC = () => {
   /** Now answered instantly from the local batch — no network, no cost. */
   const handleStockForecast = () => void ask('prediksi stok', 'GET_STOCK_FORECAST');
 
-  const handleGeneratePromo = async () => {
-    setIsGenerating(true);
-    try {
-      const res = await fetch('/api/ai/generate-promo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          storeType: snapshot.businessSector,
-          targetAudience: 'Pelanggan Setia',
-          lowSalesProducts: batch.aggregates.slowMovers.slice(0, 3).map((p) => p.name),
-        }),
-      });
-      const data = await res.json();
-      if (data?.promo) {
-        push({
-          sender: 'ai',
-          source: 'LLM',
-          title: 'Rekomendasi Promo',
-          text: `🎯 **Rekomendasi Promo Baru dari AI:**\n\n- **Kode:** ${data.promo.code}\n- **Deskripsi:** ${data.promo.description}\n- **Diskon:** ${data.promo.discountPercent}% (maks. ${formatRupiah(data.promo.maxDiscountAmount || 0)})\n\nKlik tombol di bawah untuk mengaktifkan kode ini di kasir.`,
-          promoSuggestion: data.promo,
-        });
-      }
-    } catch {
-      push({ sender: 'ai', source: 'ERROR', text: '**Gagal membuat ide promo.**' });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+  const handleGeneratePromo = () => void ask('rekomendasi promo dengan margin aman');
 
-  const handleActivatePromo = (promo: any) => {
-    addPromoCode({
-      code: promo.code,
-      discountPercent: promo.discountPercent,
-      maxDiscountAmount: promo.maxDiscountAmount,
-      minPurchaseAmount: promo.minPurchaseAmount || 0,
-      isActive: true,
-    });
-    push({ sender: 'ai', source: 'RULE_ENGINE', text: `**Kode promo ${promo.code} sudah aktif di kasir.**` });
-  };
+  const [journalRevision, setJournalRevision] = useState(0);
+  const [savedDraftIds, setSavedDraftIds] = useState<string[]>([]);
+  function savePaidDraft(msg: ChatMessage) {
+    if (tenant.userRole !== 'ADMIN' || isFreePlan(settings.subscription) || msg.businessId !== tenant.businessId) return;
+    try {
+      const key = 'newhope_brain_actions_v1_' + tenant.businessId;
+      const rows = parseActionJournal(localStorage.getItem(key) || '[]',tenant.businessId);
+      const record: ActionRecord = {
+        id: newId('plan'), businessId: tenant.businessId, status: 'DRAFT', createdAt: new Date().toISOString(),
+        action: {id: msg.id, kind:'REVIEW', title:'Draft DeepSeek — tinjau owner', reason:'Saran model, bukan tindakan yang sudah dilakukan.',
+          draft:msg.text.slice(0,15000), metric:'revenue'},
+      };
+      if (!rows.some(r => r.action?.id === msg.id)) localStorage.setItem(key,JSON.stringify([...rows,record].slice(-100)));
+      setSavedDraftIds(ids => [...ids,msg.id]); setJournalRevision(n => n+1);
+    } catch { push({sender:'ai',source:'ERROR',text:'Draft belum tersimpan: penyimpanan perangkat tidak tersedia.'}); }
+  }
 
   /* --- the "data terhubung" proof strip ---------------------------------- */
   const connections = [
@@ -1051,8 +1074,12 @@ export const AIAssistant: React.FC = () => {
     { icon: Database, label: 'bahan baku', value: stockItems.length },
   ];
 
+  if (isFreePlan(settings.subscription)) return <div className="p-6 text-slate-700">AI tidak aktif pada Free plan. Upgrade paket untuk menggunakan Intelligence.</div>;
+  if (batch.unavailable) return <div role="alert" className="p-6 text-rose-800">Analisis belum tersedia karena perhitungan gagal. Muat ulang halaman; bukan berarti omzet atau stok nol.</div>;
+  if (!['ADMIN','MANAGER'].includes(tenant.userRole)) return <div className="p-6 text-slate-700">Intelligence tersedia untuk owner dan manajer.</div>;
   return (
     <div className="flex-1 bg-slate-50/70 p-4 lg:p-6 overflow-y-auto space-y-5 animate-fade-in">
+      {!isFreePlan(settings.subscription)?<IntelligencePanel key={`${snapshot.businessId}:${journalRevision}`} snapshot={snapshot}/>:null}
       {/* ---------------------------------------------------------------- */}
       {/* 1. HEADER + LIVE DATA CONNECTION STRIP                           */}
       {/* ---------------------------------------------------------------- */}
@@ -1090,6 +1117,18 @@ export const AIAssistant: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {tenant.userRole === 'ADMIN' ? <section className="rounded-2xl border border-amber-200 bg-white p-4 text-sm">
+        <label className="flex items-center gap-2 font-bold text-slate-800">
+          <input type="checkbox" checked={paidEnabled} onChange={e=>{setPaidEnabled(e.target.checked);if(!e.target.checked)setDraftMode(false);}} />
+          Izinkan analisis DeepSeek · 1 AI Credit / jawaban
+        </label>
+        <p className="mt-2 text-xs text-slate-500">Kuota mengikuti akun member yang login dan dibagi di seluruh usahanya. Pertanyaan serta ringkasan angka usaha dikirim ke DeepSeek dengan ID tersamarkan; data pelanggan, staf, dan transaksi mentah tidak disertakan. Jangan ketik data pribadi dalam pertanyaan. Analisis terstruktur tetap tanpa token.</p>
+        <label className="mt-3 flex items-center gap-2 text-slate-700">
+          <input type="checkbox" disabled={!paidEnabled} checked={draftMode} onChange={e=>setDraftMode(e.target.checked)} />
+          Buat draft rencana berbayar untuk ditinjau owner (tanpa eksekusi otomatis)
+        </label>
+      </section> : null}
 
       <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-xs">
         <div className="flex items-center gap-2 mb-2">
@@ -1273,15 +1312,12 @@ export const AIAssistant: React.FC = () => {
                   )}
                   <MarkdownBlock text={msg.text} />
 
-                  {msg.promoSuggestion && (
-                    <button
-                      onClick={() => handleActivatePromo(msg.promoSuggestion)}
-                      className="w-full py-2 mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 shadow-xs transition-all"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      Aktifkan Promo Ke Kasir
+                  {msg.source === 'LLM' && msg.title?.startsWith('Draft Rencana') && tenant.userRole === 'ADMIN' ? (
+                    <button disabled={savedDraftIds.includes(msg.id)} onClick={() => savePaidDraft(msg)}
+                      className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 font-bold text-amber-900 disabled:opacity-50">
+                      {savedDraftIds.includes(msg.id) ? 'Draft tersimpan' : 'Simpan draft untuk ditinjau'}
                     </button>
-                  )}
+                  ) : null}
 
                   <span className="text-[9px] opacity-60 block text-right font-mono pt-0.5">{msg.timestamp}</span>
                 </div>

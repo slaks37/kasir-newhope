@@ -613,9 +613,11 @@ for (const chip of QUICK_CHIPS) {
 section('Sector isolation — staff roster must never mix sectors');
 
 const SECTORS = ['FNB', 'LAUNDRY', 'RETAIL', 'CARWASH', 'BARBERSHOP'] as const;
+// Production starts without demo staff. Isolation tests supply their own roster.
+const fixtureStaff = SECTORS.map(sector=>({id:'smoke-'+sector,name:'Test '+sector,role:'Operator',sector,isAvailable:true}));
 
 for (const sector of SECTORS) {
-  const roster = INITIAL_STAFF_MEMBERS.filter((s) => (s.sector || 'FNB') === sector);
+  const roster = fixtureStaff.filter((s) => s.sector === sector);
   const foreign = roster.filter((s) => s.sector !== sector);
 
   if (foreign.length > 0) {
@@ -645,9 +647,9 @@ for (const sector of SECTORS) {
   console.log(`  ${sector.padEnd(11)} ${String(roster.length).padStart(2)} staf — ${roster.map((s) => s.name).join(', ')}`);
 }
 
-const totalSeed = INITIAL_STAFF_MEMBERS.length;
+const totalSeed = fixtureStaff.length;
 const summed = SECTORS.reduce(
-  (acc, sec) => acc + INITIAL_STAFF_MEMBERS.filter((s) => (s.sector || 'FNB') === sec).length,
+  (acc, sec) => acc + fixtureStaff.filter((s) => s.sector === sec).length,
   0
 );
 if (summed !== totalSeed) {

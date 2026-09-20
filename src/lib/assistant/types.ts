@@ -420,6 +420,8 @@ export interface BatchRunOptions {
 }
 
 export interface BatchRunResult {
+  /** Failure marker: consumers must not present the placeholder aggregates as facts. */
+  unavailable?: boolean;
   merchantId: string;
   insightDate: string;
   generatedAt: string;
@@ -435,6 +437,10 @@ export interface BatchRunResult {
  * never raw transaction rows.
  */
 export interface MerchantAggregates {
+  reportPeriod?: { startDate: string; endDate: string; label: string };
+  netSales?: number;
+  cogs?: number;
+  costCoveragePct?: number;
   windowDays: number;
   ordersAnalysed: number;
   revenueTotal: number;
@@ -499,10 +505,13 @@ export type IntentName =
   | 'EXPLAIN_BUSINESS_SCOPE'
   | 'UNKNOWN';
 
-export type IntentPeriod = 'TODAY' | 'YESTERDAY' | 'WEEK' | 'MONTH' | 'ALL';
+export type IntentPeriod = 'TODAY' | 'YESTERDAY' | 'WEEK' | 'MONTH' | 'LAST_WEEK' | 'LAST_MONTH' | 'LAST_7' | 'LAST_30' | 'CUSTOM' | 'ALL';
 
 export interface IntentEntities {
   period?: IntentPeriod;
+  startDate?: string;
+  endDate?: string;
+  clarification?: string;
   productName?: string;
   customerName?: string;
   staffName?: string;
@@ -558,6 +567,8 @@ export interface AssistantQueryRequest {
   insights?: MerchantInsight[];
   /** Set false to hard-disable the paid path for this call. */
   allowLlm?: boolean;
+  paidDataConsent?: 'deepseek-aggregate-member-v1';
+  purpose?: 'ANALYSIS' | 'ACTION_PLAN';
   /**
    * Identifies WHICH business unit and WHO is asking. Injected into the model's
    * system prompt so it can state the scope it is reasoning about — and be told
@@ -583,7 +594,7 @@ export interface AiCreditWallet {
 export interface AssistantQueryResponse {
   ok: boolean;
   answer: AssistantAnswer;
-  credits: AiCreditWallet;
+  credits?: AiCreditWallet;
   /** Present when source === 'PAYWALL'. */
   paywall?: {
     title: string;
@@ -606,7 +617,7 @@ export interface AssistantQueryResponse {
    * Ditampilkan ke pengguna. Angka tanpa asal-usul yang jelas adalah persoalan
    * yang mahal untuk ditelusuri belakangan.
    */
-  dataSource?: 'DATABASE' | 'CLIENT' | 'NONE';
+  dataSource?: 'DATABASE' | 'CLIENT' | 'MIXED' | 'NONE';
   /** Bidang mana bersumber dari mana. Lihat FieldSource di server/merchantData. */
   provenance?: Record<string, string>;
 }
