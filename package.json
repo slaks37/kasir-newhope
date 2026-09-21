@@ -11,6 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "npm run hygiene && tsc --noEmit",
     "hygiene": "node scripts/dev/check-source-hygiene.mjs",
+    "env:import": "node scripts/dev/import-env.mjs",
+    "env:set": "node scripts/dev/import-env.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
     "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
     "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts",
