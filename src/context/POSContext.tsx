@@ -275,6 +275,7 @@ interface POSContextType {
   saveProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
   saveCategory: (category: Category) => void;
+  deleteCategory: (categoryId: string) => void;
   adjustStock: (productId: string, quantityChange: number, type: 'IN' | 'OUT' | 'ADJUSTMENT', reason: string) => void;
   
   // Customer & Table CRUD
@@ -2082,6 +2083,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
+  const deleteCategory = (categoryId: string) => {
+    setCategories((prev) => prev.filter((c) => c.id !== categoryId));
+    setProducts((prev) =>
+      prev.map((p) => (p.categoryId === categoryId ? { ...p, categoryId: '' } : p))
+    );
+  };
+
   const adjustStock = (
     productId: string,
     quantityChange: number,
@@ -2669,6 +2677,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveProduct: requireWritable(saveProduct),
         deleteProduct: requireWritable(deleteProduct),
         saveCategory: requireWritable(saveCategory),
+        deleteCategory: requireWritable(deleteCategory),
         adjustStock: requireWritable(adjustStock),
         saveCustomer: requireWritable(saveCustomer),
         saveTable: requireWritable(saveTable),

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem } from '../../types';
+import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem, Category } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
 import {
@@ -28,9 +28,22 @@ import {
   DollarSign,
   TrendingUp,
   Info,
+  FolderPlus,
+  Folder,
 } from 'lucide-react';
 
 const DESCRIPTION_MAX = 300;
+
+const CATEGORY_COLORS = [
+  { label: 'Amber', value: 'bg-amber-500' },
+  { label: 'Emerald', value: 'bg-emerald-500' },
+  { label: 'Sky', value: 'bg-sky-500' },
+  { label: 'Indigo', value: 'bg-indigo-500' },
+  { label: 'Rose', value: 'bg-rose-500' },
+  { label: 'Violet', value: 'bg-violet-500' },
+  { label: 'Orange', value: 'bg-orange-500' },
+  { label: 'Slate', value: 'bg-slate-500' },
+];
 
 export const InventoryManager: React.FC = () => {
   const {
@@ -38,6 +51,8 @@ export const InventoryManager: React.FC = () => {
     categories,
     saveProduct,
     deleteProduct,
+    saveCategory,
+    deleteCategory,
     adjustStock,
     inventoryLogs,
     stockItems,
@@ -54,6 +69,12 @@ export const InventoryManager: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low'>('all');
   const [stockTypeFilter, setStockTypeFilter] = useState<'ALL' | StockType>('ALL');
+
+  // Modal for Category Management (Tambah / Edit / Hapus Kategori)
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryNameInput, setCategoryNameInput] = useState('');
+  const [categoryColorInput, setCategoryColorInput] = useState('bg-amber-500');
 
   // Modal for Add/Edit Stock Item (Bahan Baku / Setengah Jadi / Jadi)
   const [showStockModal, setShowStockModal] = useState(false);
@@ -161,6 +182,73 @@ export const InventoryManager: React.FC = () => {
       b.sku.toLowerCase().includes(searchQuery.toLowerCase())
     );
   });
+
+  /* -------------------------------------------------------------------------- */
+  /* CATEGORY ACTIONS (TAMBAH / EDIT / HAPUS)                                   */
+  /* -------------------------------------------------------------------------- */
+
+  const handleOpenAddCategory = () => {
+    setEditingCategory(null);
+    setCategoryNameInput('');
+    setCategoryColorInput('bg-amber-500');
+    setShowCategoryModal(true);
+  };
+
+  const handleOpenEditCategory = (cat: Category) => {
+    setEditingCategory(cat);
+    setCategoryNameInput(cat.name);
+    setCategoryColorInput(cat.color || 'bg-amber-500');
+  };
+
+  const handleSaveCategorySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = categoryNameInput.trim();
+    if (!name) return;
+
+    if (editingCategory) {
+      saveCategory({
+        ...editingCategory,
+        name,
+        color: categoryColorInput,
+      });
+      setEditingCategory(null);
+    } else {
+      const newCat: Category = {
+        id: newId('cat'),
+        name,
+        color: categoryColorInput,
+        icon: 'Tag',
+      };
+      saveCategory(newCat);
+      if (showAddModal) {
+        setFormCategoryId(newCat.id);
+      }
+    }
+    setCategoryNameInput('');
+  };
+
+  const handleDeleteCategorySubmit = (cat: Category) => {
+    const linkedCount = products.filter((p) => p.categoryId === cat.id).length;
+    const msg =
+      linkedCount > 0
+        ? `Apakah Anda yakin ingin menghapus kategori "${cat.name}"?\n\nPerhatian: Sebanyak ${linkedCount} produk dalam kategori ini akan diubah menjadi tanpa kategori.`
+        : `Apakah Anda yakin ingin menghapus kategori "${cat.name}"?`;
+
+    if (window.confirm(msg)) {
+      deleteCategory(cat.id);
+      if (formCategoryId === cat.id) {
+        const remaining = categories.filter((c) => c.id !== cat.id);
+        setFormCategoryId(remaining[0]?.id || '');
+      }
+      if (selectedCategory === cat.id) {
+        setSelectedCategory('all');
+      }
+      if (editingCategory?.id === cat.id) {
+        setEditingCategory(null);
+        setCategoryNameInput('');
+      }
+    }
+  };
 
   /* -------------------------------------------------------------------------- */
   /* PRODUCT ACTIONS                                                            */
@@ -677,6 +765,15 @@ export const InventoryManager: React.FC = () => {
                 {c.name}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={handleOpenAddCategory}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 hover:border-amber-300"
+              title="Kelola & Tambah Kategori"
+            >
+              <FolderPlus className="w-3.5 h-3.5 text-amber-600" />
+              <span>Kelola Kategori</span>
+            </button>
           </div>
         )}
       </div>
@@ -1185,10 +1282,26 @@ export const InventoryManager: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-black text-slate-700 block mb-1">Kategori</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-black text-slate-700">Kategori</label>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddCategory}
+                      className="text-[10px] font-bold text-amber-600 hover:text-amber-700 flex items-center space-x-1 cursor-pointer"
+                    >
+                      <FolderPlus className="w-3 h-3" />
+                      <span>+ Kelola Kategori</span>
+                    </button>
+                  </div>
                   <select
                     value={formCategoryId}
-                    onChange={(e) => setFormCategoryId(e.target.value)}
+                    onChange={(e) => {
+                      if (e.target.value === '__add_new__') {
+                        handleOpenAddCategory();
+                      } else {
+                        setFormCategoryId(e.target.value);
+                      }
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
                   >
                     {categories.map((c) => (
@@ -1196,6 +1309,9 @@ export const InventoryManager: React.FC = () => {
                         {c.name}
                       </option>
                     ))}
+                    <option value="__add_new__" className="text-amber-600 font-bold">
+                      + Tambah / Kelola Kategori...
+                    </option>
                   </select>
                 </div>
 
@@ -1967,6 +2083,172 @@ export const InventoryManager: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================== */}
+      {/* MODAL: KELOLA KATEGORI PRODUK (TAMBAH / EDIT / HAPUS)                  */}
+      {/* ====================================================================== */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6 space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-black text-base text-slate-950 flex items-center space-x-2">
+                  <Folder className="w-5 h-5 text-amber-600" />
+                  <span>Kelola Kategori Produk</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Tambah kategori baru, ubah nama atau warna, dan hapus kategori.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCategory(null);
+                  setCategoryNameInput('');
+                }}
+                className="p-1 rounded-xl hover:bg-slate-100 text-slate-500 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form Tambah / Edit Kategori */}
+            <form onSubmit={handleSaveCategorySubmit} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800">
+                  {editingCategory ? 'Edit Kategori' : 'Tambah Kategori Baru'}
+                </span>
+                {editingCategory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setCategoryNameInput('');
+                      setCategoryColorInput('bg-amber-500');
+                    }}
+                    className="text-[10px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                  >
+                    Batal Edit
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-black text-slate-700 mb-1">Nama Kategori *</label>
+                <input
+                  type="text"
+                  required
+                  value={categoryNameInput}
+                  onChange={(e) => setCategoryNameInput(e.target.value)}
+                  placeholder="Contoh: Aneka Jus & Minuman"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-950 focus:border-amber-500 focus:outline-none bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-black text-slate-700 mb-1.5">Warna Aksen</label>
+                <div className="flex items-center space-x-2">
+                  {CATEGORY_COLORS.map((col) => (
+                    <button
+                      key={col.value}
+                      type="button"
+                      onClick={() => setCategoryColorInput(col.value)}
+                      className={`w-6 h-6 rounded-full ${col.value} transition-all cursor-pointer flex items-center justify-center ${
+                        categoryColorInput === col.value
+                          ? 'ring-2 ring-offset-2 ring-slate-900 scale-110'
+                          : 'opacity-70 hover:opacity-100'
+                      }`}
+                      title={col.label}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-1 flex justify-end">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black shadow-xs cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{editingCategory ? 'Perbarui Kategori' : 'Simpan Kategori'}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Daftar Kategori */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-black text-slate-800">Daftar Kategori ({categories.length})</span>
+                <span className="text-[10px] text-slate-500">Klik ikon pensil untuk edit, tempat sampah untuk hapus</span>
+              </div>
+              <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                {categories.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 text-xs font-medium">
+                    Belum ada kategori. Buat kategori pertama di atas.
+                  </div>
+                ) : (
+                  categories.map((c) => {
+                    const productCount = products.filter((p) => p.categoryId === c.id).length;
+                    return (
+                      <div
+                        key={c.id}
+                        className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
+                          editingCategory?.id === c.id
+                            ? 'border-amber-400 bg-amber-50/50'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5 min-w-0">
+                          <div className={`w-3 h-3 rounded-full shrink-0 ${c.color || 'bg-amber-500'}`} />
+                          <span className="text-xs font-bold text-slate-900 truncate">{c.name}</span>
+                          <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
+                            {productCount} produk
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-1 shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditCategory(c)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-slate-100 cursor-pointer"
+                            title="Edit Kategori"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategorySubmit(c)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                            title="Hapus Kategori"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCategory(null);
+                  setCategoryNameInput('');
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-300 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}
