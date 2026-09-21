@@ -550,7 +550,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         sub.freeSelection.sector !== (settings.businessSector || 'FNB') || sub.freeSelection.branchId !== settings.activeBranchId)) {
         throw new Error('FREE_SELECTION_OR_OWNER_REQUIRED');
       }
-      if (!sub || sub.id === 'sub-trial-active' || subscriptionAccess(sub).accessMode !== 'FULL' || sub.accessMode === 'RESTRICTED') {
+      if (!sub || subscriptionAccess(sub).accessMode !== 'FULL' || sub.accessMode === 'RESTRICTED') {
         window.alert('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
       }
@@ -2673,8 +2673,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveCustomer: requireWritable(saveCustomer),
         saveTable: requireWritable(saveTable),
         deleteTable: requireWritable(deleteTable),
-        updateSettings: requireWritable(updateSettings),
-        activateBusinessSector: requireWritable(activateBusinessSector),
+        updateSettings,
+        activateBusinessSector,
         startShift: requireWritable(startShift),
         endShift: requireWritable(endShift),
         cashMovements,
