@@ -1,5 +1,6 @@
 // No environment files, databases or provider calls are used by this test.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 import { isCronJobEnabled } from '../../services/shared/cron';
 import { createDailyInsightsHandler } from '../../src/server/dailyInsightsHandler';
@@ -39,7 +40,25 @@ try {
     }
   }
   assert.equal(connections, 0);
+  // Plain Node (without tsx) catches extensionless ESM imports that work in
+  // source tests but crash when Vercel loads the deployed entrypoint.
+  execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    process.env.CRON_SECRET = 'test-only';
+    process.env.CRON_ENABLED_JOBS = '';
+    for (const path of ['_merchant_health_bundle.js', '_billing_reminders_bundle.js', '_daily_insights_bundle.js']) {
+      const {default: handler} = await import('./api/' + path);
+      let code, body;
+      const res = {status(value) {code=value; return this;}, json(value) {body=value; return this;}};
+      await handler({method:'GET',headers:{}},res);
+      assert.equal(code,401);
+      await handler({method:'GET',headers:{authorization:'Bearer test-only'}},res);
+      assert.equal(code,200);
+      assert.equal(body.reason,'JOB_DISABLED');
+    }
+  `], { stdio: 'pipe', env: { ...process.env, NODE_OPTIONS: '' } });
   console.log('PASS: exact cron allowlist, backward compatibility, auth/method guards, disabled jobs never connect to database');
+  console.log('PASS: all three deployed bundles load in plain Node and enforce auth/allowlist');
 } finally {
   pg.Pool.prototype.connect = originalConnect;
   keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; });
