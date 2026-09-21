@@ -104,61 +104,61 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {data && (
         <>
           {/* 1. Header Profile Merchant */}
-          <div className="rounded-2xl bg-slate-900 text-white p-6 border border-slate-800 shadow-sm relative overflow-hidden space-y-4">
+          <div className="rounded-2xl bg-white text-slate-900 p-6 border border-slate-200 shadow-sm relative overflow-hidden space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black uppercase">
                     {data.profile.business_sector}
                   </span>
-                  <span className="text-xs text-slate-400 font-medium">
+                  <span className="text-xs text-slate-500 font-medium">
                     Terdaftar sejak {tanggal(data.profile.joined_at)}
                   </span>
                 </div>
-                <h1 className="text-2xl font-black text-white flex items-center gap-2">
-                  <Building2 className="w-6 h-6 text-amber-400" />
+                <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
+                  <Building2 className="w-6 h-6 text-amber-500" />
                   <span>{data.profile.merchant_name}</span>
                 </h1>
-                <p className="text-xs text-slate-300 font-medium">
-                  Pemilik: <strong>{data.profile.owner_name || 'Pemilik Toko'}</strong> • Kontak: {data.profile.email || '-'} ({data.profile.phone || '-'})
+                <p className="text-xs text-slate-600 font-medium">
+                  Pemilik: <strong className="text-slate-900">{data.profile.owner_name || 'Pemilik Toko'}</strong> • Kontak: {data.profile.email || '-'} ({data.profile.phone || '-'})
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
-                <span className="px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-700 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>Status: {data.profile.subscription_status || 'Belum diverifikasi'}</span>
                 </span>
-                <span className="px-3.5 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-xs font-black text-amber-300 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
+                <span className="px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs font-black text-amber-800 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
                   <span>Paket: {data.profile.plan_name || 'Trial'}</span>
                 </span>
               </div>
             </div>
 
             {/* Financial Overview Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-4 border-t border-slate-800">
-              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <p className="text-[11px] text-slate-400 font-bold uppercase">Total Omzet (GMV)</p>
-                <p className="font-mono font-black text-lg text-amber-400 mt-0.5">{rupiah(data.profile.gross_revenue)}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-4 border-t border-slate-200">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <p className="text-[11px] text-slate-500 font-bold uppercase">Total Omzet (GMV)</p>
+                <p className="font-mono font-black text-lg text-amber-600 mt-0.5">{rupiah(data.profile.gross_revenue)}</p>
               </div>
-              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <p className="text-[11px] text-slate-400 font-bold uppercase">Total Transaksi</p>
-                <p className="font-mono font-black text-lg text-white mt-0.5">{angka(data.profile.transaction_count)} Struk</p>
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <p className="text-[11px] text-slate-500 font-bold uppercase">Total Transaksi</p>
+                <p className="font-mono font-black text-lg text-slate-900 mt-0.5">{angka(data.profile.transaction_count)} Struk</p>
               </div>
-              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <p className="text-[11px] text-slate-400 font-bold uppercase">Basis Pelanggan</p>
-                <p className="font-mono font-black text-lg text-sky-400 mt-0.5">{angka(data.profile.customer_count ?? 0)} Kontak</p>
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <p className="text-[11px] text-slate-500 font-bold uppercase">Basis Pelanggan</p>
+                <p className="font-mono font-black text-lg text-sky-600 mt-0.5">{angka(data.profile.customer_count ?? 0)} Kontak</p>
               </div>
-              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <p className="text-[11px] text-slate-400 font-bold uppercase">Laba kotor tercatat</p>
-                <p className="font-mono font-black text-lg text-emerald-400 mt-0.5">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <p className="text-[11px] text-slate-500 font-bold uppercase">Laba kotor tercatat</p>
+                <p className="font-mono font-black text-lg text-emerald-600 mt-0.5">
                   {rupiah(data.profile.gross_profit)}
                 </p>
               </div>
-              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <p className="text-[11px] text-slate-400 font-bold uppercase">Aktivitas Terakhir</p>
-                <p className="text-xs text-slate-300 font-bold mt-1">{sejak(data.profile.last_transaction_at)}</p>
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <p className="text-[11px] text-slate-500 font-bold uppercase">Aktivitas Terakhir</p>
+                <p className="text-xs text-slate-700 font-bold mt-1">{sejak(data.profile.last_transaction_at)}</p>
               </div>
             </div>
           </div>

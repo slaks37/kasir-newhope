@@ -83,19 +83,19 @@ export const LaundryPipelineView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="nh-light-panel bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
+      <div className="bg-white text-slate-900 p-5 rounded-3xl shadow-xs flex flex-wrap items-center justify-between gap-4 border border-slate-200">
         <div className="flex items-center space-x-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-600">
             <Waves className="w-7 h-7" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-black text-white">Pipeline Pengerjaan Laundry</h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500 text-slate-950 uppercase">
+              <h2 className="text-lg font-black text-slate-900">Pipeline Pengerjaan Laundry</h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-100 text-cyan-900 border border-cyan-200 uppercase">
                 Weight &amp; Stage Engine
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               Alur status pengerjaan (Cuci, Kering, Setrika, Packing) dan manajemen nomor rak simpan.
             </p>
           </div>
@@ -332,10 +332,10 @@ export const LaundryPipelineView: React.FC = () => {
                         {col.key === 'SIAP_AMBIL' && (
                           <button
                             onClick={() => handleUpdateStage(order.id, 'SELESAI')}
-                            className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-black text-[10px] flex items-center space-x-1 cursor-pointer"
+                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg font-black text-[10px] flex items-center space-x-1 cursor-pointer"
                           >
                             <span>Diambil</span>
-                            <CheckCircle2 className="w-3 h-3" />
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           </button>
                         )}
                       </div>
@@ -468,7 +468,7 @@ export const LaundryPipelineView: React.FC = () => {
                 onClick={() => {
                   window.print();
                 }}
-                className="px-4 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black shadow-xs cursor-pointer flex items-center space-x-1"
+                className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-xs cursor-pointer flex items-center space-x-1"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Cetak Tiket</span>

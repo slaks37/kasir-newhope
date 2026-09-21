@@ -121,28 +121,28 @@ export const DigitalScaleModal: React.FC<DigitalScaleModalProps> = ({ isOpen, on
         </div>
 
         {/* Digital Scale LED/LCD Display Screen */}
-        <div className="nh-light-panel bg-slate-950 rounded-3xl p-6 text-white border-4 border-slate-800 shadow-inner relative overflow-hidden">
+        <div className="bg-emerald-50/70 rounded-3xl p-6 text-slate-900 border-2 border-emerald-200/80 shadow-inner relative overflow-hidden">
           {/* Subtle reflection overlay */}
-          <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+          <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
 
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2 font-mono">
-            <span className="flex items-center space-x-1.5 text-cyan-400">
+          <div className="flex items-center justify-between text-xs text-slate-500 mb-2 font-mono">
+            <span className="flex items-center space-x-1.5 text-emerald-700 font-bold">
               <Activity className="w-3.5 h-3.5 animate-pulse" />
               <span>{isStable ? 'STABLE [ST]' : 'UNSTABLE'}</span>
             </span>
-            <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-amber-300">
+            <span className="text-[11px] bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded text-emerald-800 font-bold">
               {isConnectedSerial ? 'USB SERIAL CONNECTED' : 'SIMULATOR MODE'}
             </span>
           </div>
 
           <div className="flex items-baseline justify-center space-x-2 my-2">
-            <span className="font-mono font-black text-6xl tracking-tight text-emerald-400 select-none drop-shadow-[0_0_12px_rgba(52,211,153,0.3)]">
+            <span className="font-mono font-black text-6xl tracking-tight text-emerald-800 select-none">
               {netWeight.toFixed(3)}
             </span>
-            <span className="font-mono font-bold text-2xl text-emerald-300">kg</span>
+            <span className="font-mono font-bold text-2xl text-emerald-700">kg</span>
           </div>
 
-          <div className="flex items-center justify-between pt-3 border-t border-slate-800/80 text-[11px] font-mono text-slate-400">
+          <div className="flex items-center justify-between pt-3 border-t border-emerald-200/70 text-[11px] font-mono text-slate-600 font-medium">
             <span>GROSS: {weightKg.toFixed(3)} kg</span>
             <span>TARE: {tareKg.toFixed(3)} kg</span>
             <span>NET: {netWeight.toFixed(3)} kg</span>

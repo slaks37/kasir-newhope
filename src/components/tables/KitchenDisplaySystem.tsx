@@ -78,19 +78,19 @@ export const KitchenDisplaySystem: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner & Metric Badges */}
-      <div className="nh-light-panel bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
+      <div className="bg-white text-slate-900 p-5 rounded-3xl shadow-xs flex flex-wrap items-center justify-between gap-4 border border-slate-200">
         <div className="flex items-center space-x-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
             <ChefHat className="w-7 h-7" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-black text-white">Kitchen Display System (KDS)</h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 uppercase">
+              <h2 className="text-lg font-black text-slate-900">Kitchen Display System (KDS)</h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 uppercase">
                 Real-Time Kitchen
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               Monitor pesanan dapur, tiket varian/add-on, timer pengerjaan, dan status hidangan meja.
             </p>
           </div>
@@ -104,8 +104,8 @@ export const KitchenDisplaySystem: React.FC = () => {
             }}
             className={`p-2.5 rounded-2xl border transition-colors cursor-pointer flex items-center space-x-1.5 text-xs font-bold ${
               soundEnabled
-                ? 'bg-slate-800 border-slate-700 text-amber-400 hover:bg-slate-700'
-                : 'bg-slate-800/50 border-slate-800 text-slate-500 hover:bg-slate-800'
+                ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
+                : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'
             }`}
             title="Toggle Audio Notifikasi Pesanan Baru"
           >
@@ -136,7 +136,7 @@ export const KitchenDisplaySystem: React.FC = () => {
             onClick={() => setFilterStatus('ALL')}
             className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
               filterStatus === 'ALL'
-                ? 'bg-slate-950 text-white shadow-xs'
+                ? 'bg-amber-500 text-slate-950 shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -282,7 +282,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                         <span className="font-black text-xs text-slate-950 leading-tight">
                           {item.name || item.productName}
                         </span>
-                        <span className="ml-2 font-mono font-black text-xs bg-slate-900 text-white px-2 py-0.5 rounded-lg shrink-0">
+                        <span className="ml-2 font-mono font-black text-xs bg-slate-100 text-slate-800 border border-slate-200 px-2 py-0.5 rounded-lg shrink-0">
                           x{item.quantity}
                         </span>
                       </div>
@@ -377,7 +377,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                           playBeep();
                           updateKDSTicketStatus(ticket.id, 'SERVED');
                         }}
-                        className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1"
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <Utensils className="w-3.5 h-3.5" />
                         <span>Sajikan ke Meja</span>

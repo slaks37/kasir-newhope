@@ -1472,10 +1472,10 @@ export const InventoryManager: React.FC = () => {
                 </div>
 
                 {/* Live Margin & Markup Calculator Box */}
-                <div className="nh-light-panel col-span-2 p-3.5 bg-slate-900 text-white rounded-2xl space-y-2 border border-slate-800">
+                <div className="col-span-2 p-3.5 bg-slate-50 text-slate-900 rounded-2xl space-y-2 border border-slate-200">
                   <div className="flex items-center justify-between">
-                    <span className="font-black text-amber-400 flex items-center space-x-1.5 text-xs">
-                      <Percent className="w-3.5 h-3.5" />
+                    <span className="font-black text-amber-800 flex items-center space-x-1.5 text-xs">
+                      <Percent className="w-3.5 h-3.5 text-amber-600" />
                       <span>Kalkulator Margin &amp; Laba Satuan (Retail Engine)</span>
                     </span>
                     <span
@@ -1494,22 +1494,22 @@ export const InventoryManager: React.FC = () => {
                         : 'Margin Sehat'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-800">
-                    <div className="bg-slate-800/80 p-2 rounded-xl">
-                      <div className="text-[10px] text-slate-400 font-bold">Laba Satuan</div>
-                      <div className="font-mono font-black text-sm text-emerald-400">
+                  <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-200">
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-bold">Laba Satuan</div>
+                      <div className="font-mono font-black text-sm text-emerald-700">
                         {formatRupiah(formPrice - formCostPrice)}
                       </div>
                     </div>
-                    <div className="bg-slate-800/80 p-2 rounded-xl">
-                      <div className="text-[10px] text-slate-400 font-bold">Gross Margin</div>
-                      <div className="font-mono font-black text-sm text-amber-400">
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-bold">Gross Margin</div>
+                      <div className="font-mono font-black text-sm text-amber-700">
                         {formPrice > 0 ? Math.round(((formPrice - formCostPrice) / formPrice) * 100) : 0}%
                       </div>
                     </div>
-                    <div className="bg-slate-800/80 p-2 rounded-xl">
-                      <div className="text-[10px] text-slate-400 font-bold">Markup</div>
-                      <div className="font-mono font-black text-sm text-cyan-400">
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] text-slate-500 font-bold">Markup</div>
+                      <div className="font-mono font-black text-sm text-sky-700">
                         {formCostPrice > 0 ? Math.round(((formPrice - formCostPrice) / formCostPrice) * 100) : 0}%
                       </div>
                     </div>

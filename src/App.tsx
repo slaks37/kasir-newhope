@@ -275,15 +275,15 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                       <div className="lg:hidden fixed bottom-16 left-3 right-3 z-30 animate-slide-up">
                         <button
                           onClick={() => setShowMobileCartSheet(true)}
-                          className="w-full bg-slate-900 text-white p-3 rounded-2xl shadow-xl flex items-center justify-between border border-slate-700/80 active:scale-[0.98] transition-all"
+                          className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 p-3 rounded-2xl shadow-xl flex items-center justify-between border border-amber-400 active:scale-[0.98] transition-all cursor-pointer"
                         >
                           <div className="flex items-center space-x-2.5">
-                            <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 text-xs font-black flex items-center justify-center">
+                            <span className="w-6 h-6 rounded-full bg-slate-950 text-amber-400 text-xs font-black flex items-center justify-center">
                               {totalCartCount}
                             </span>
-                            <span className="text-xs font-bold text-slate-200">Lihat Keranjang</span>
+                            <span className="text-xs font-black text-slate-950">Lihat Keranjang</span>
                           </div>
-                          <span className="font-mono font-black text-sm text-amber-400">
+                          <span className="font-mono font-black text-sm text-slate-950">
                             {formatRupiah(totalCartAmount)}
                           </span>
                         </button>

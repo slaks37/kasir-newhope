@@ -166,16 +166,16 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 selection:bg-amber-500 selection:text-slate-950">
       {/* Dynamic SEO Injector */}
       <BlogSEOHead post={selectedPost || undefined} isListPortal={!selectedPost} />
 
       {/* 🌟 1. PORTAL HEADER */}
-      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-xl border-b border-slate-800 px-4 lg:px-8 py-3.5 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-xl border-b border-slate-200 px-4 lg:px-8 py-3.5 flex items-center justify-between shadow-xs">
         <div className="flex items-center space-x-3">
           <button
             onClick={onBackToHome}
-            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200 transition-all cursor-pointer"
             title="Kembali ke Beranda"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -187,12 +187,12 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-black text-base lg:text-lg text-white">Blog Harapan Baru</span>
-                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-black uppercase tracking-wider hidden sm:inline-block">
+                <span className="font-black text-base lg:text-lg text-slate-900">Blog Harapan Baru</span>
+                <span className="px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-300 rounded-full text-[10px] font-black uppercase tracking-wider hidden sm:inline-block">
                   Pusat Edukasi UMKM
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block">
+              <span className="text-[11px] text-slate-500 font-medium block">
                 Tips Bisnis, Panduan Kasir & Strategi FinTech New Hope POS
               </span>
             </div>
@@ -203,9 +203,9 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           {onOpenLogin && (
             <button
               onClick={onOpenLogin}
-              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold text-xs transition-all cursor-pointer hidden sm:flex items-center space-x-1.5"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-bold text-xs transition-all cursor-pointer hidden sm:flex items-center space-x-1.5"
             >
-              <Store className="w-4 h-4 text-amber-400" />
+              <Store className="w-4 h-4 text-amber-600" />
               <span>Masuk Kasir</span>
             </button>
           )}
@@ -224,10 +224,10 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
       {selectedPost ? (
         <main className="max-w-4xl mx-auto px-4 lg:px-8 py-8 lg:py-12 space-y-8 animate-fade-in">
           {/* Back to Blog Button & Breadcrumbs */}
-          <nav aria-label="Breadcrumb" className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-4">
+          <nav aria-label="Breadcrumb" className="flex items-center justify-between text-xs text-slate-500 border-b border-slate-200 pb-4">
             <button
               onClick={handleBackToList}
-              className="inline-flex items-center space-x-1.5 text-amber-400 hover:text-amber-300 font-bold transition-colors cursor-pointer"
+              className="inline-flex items-center space-x-1.5 text-amber-600 hover:text-amber-700 font-bold transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Kembali ke Semua Artikel</span>
@@ -235,46 +235,46 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
             <div className="hidden sm:flex items-center space-x-1 font-medium">
               <span>Blog Harapan Baru</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-              <span className="text-slate-300">{selectedPost.category}</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-slate-700 font-bold">{selectedPost.category}</span>
             </div>
           </nav>
 
           {/* Article Header */}
           <header className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-black uppercase tracking-wide">
+              <span className="px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full text-xs font-black uppercase tracking-wide">
                 {selectedPost.category}
               </span>
-              <span className="text-xs text-slate-400 flex items-center space-x-1">
-                <Clock className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs text-slate-500 flex items-center space-x-1">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
                 <span>{selectedPost.readingTimeMinutes} Menit Baca</span>
               </span>
-              <span className="text-xs text-slate-400 flex items-center space-x-1">
-                <Eye className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs text-slate-500 flex items-center space-x-1">
+                <Eye className="w-3.5 h-3.5 text-slate-400" />
                 <span>{selectedPost.viewCount} Dilihat</span>
               </span>
             </div>
 
-            <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight">
+            <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black text-slate-900 tracking-tight leading-tight">
               {selectedPost.title}
             </h1>
 
-            <p className="text-slate-300 text-sm sm:text-base leading-relaxed font-medium">
+            <p className="text-slate-600 text-sm sm:text-base leading-relaxed font-medium">
               {selectedPost.excerpt}
             </p>
 
             {/* Author Info & Publish Date */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-800/80">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
               <div className="flex items-center space-x-3">
                 <img
                   src={selectedPost.author.avatar}
                   alt={selectedPost.author.name}
-                  className="w-11 h-11 rounded-full object-cover border border-amber-500/40"
+                  className="w-11 h-11 rounded-full object-cover border border-amber-400/60"
                 />
                 <div>
-                  <h4 className="font-extrabold text-sm text-white">{selectedPost.author.name}</h4>
-                  <p className="text-[11px] text-slate-400">{selectedPost.author.role}</p>
+                  <h4 className="font-extrabold text-sm text-slate-900">{selectedPost.author.name}</h4>
+                  <p className="text-[11px] text-slate-500">{selectedPost.author.role}</p>
                 </div>
               </div>
 
@@ -284,17 +284,17 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                   onClick={(e) => handleLikePost(selectedPost, e)}
                   className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer ${
                     likedPosts[selectedPost.id]
-                      ? 'bg-rose-500/20 border-rose-500 text-rose-400'
-                      : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                      ? 'bg-rose-500/20 border-rose-500 text-rose-500'
+                      : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
-                  <Heart className={`w-4 h-4 ${likedPosts[selectedPost.id] ? 'fill-rose-500 text-rose-400' : ''}`} />
+                  <Heart className={`w-4 h-4 ${likedPosts[selectedPost.id] ? 'fill-rose-500 text-rose-500' : ''}`} />
                   <span>{selectedPost.likesCount}</span>
                 </button>
 
                 <button
                   onClick={() => handleShareWhatsApp(selectedPost)}
-                  className="p-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 transition-colors cursor-pointer"
+                  className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors cursor-pointer"
                   title="Bagikan ke WhatsApp"
                 >
                   <MessageCircle className="w-4 h-4" />
@@ -302,10 +302,10 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
                 <button
                   onClick={handleCopyLink}
-                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1"
+                  className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1 shadow-2xs"
                   title="Salin Tautan Artikel"
                 >
-                  {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copiedLink ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedLink ? 'Tersalin!' : 'Salin'}</span>
                 </button>
               </div>
@@ -313,7 +313,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           </header>
 
           {/* Featured Cover Image */}
-          <div className="rounded-3xl overflow-hidden border border-slate-800 shadow-2xl">
+          <div className="rounded-3xl overflow-hidden border border-slate-200 shadow-lg">
             <img
               src={selectedPost.coverImage}
               alt={selectedPost.title}
@@ -324,8 +324,8 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           {/* Embedded Media Showcase (YouTube / TikTok / IG) */}
           {selectedPost.mediaEmbeds && selectedPost.mediaEmbeds.length > 0 && (
             <section className="space-y-4">
-              <h3 className="text-sm font-extrabold text-amber-400 uppercase tracking-wider flex items-center space-x-2">
-                <Flame className="w-4 h-4 text-amber-400" />
+              <h3 className="text-sm font-extrabold text-amber-800 uppercase tracking-wider flex items-center space-x-2">
+                <Flame className="w-4 h-4 text-amber-600" />
                 <span>Media Tersemat & Video Tutorial:</span>
               </h3>
               <div className="grid grid-cols-1 gap-6">
@@ -337,32 +337,32 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           )}
 
           {/* Article Main Body Content */}
-          <article className="prose prose-invert max-w-none space-y-6 text-slate-200 text-sm sm:text-base leading-relaxed">
+          <article className="prose prose-slate max-w-none space-y-6 text-slate-700 text-sm sm:text-base leading-relaxed">
             {selectedPost.content.split('\n\n').map((paragraph, idx) => {
               if (paragraph.startsWith('# ')) {
                 return (
-                  <h1 key={idx} className="text-2xl sm:text-3xl font-black text-white pt-4">
+                  <h1 key={idx} className="text-2xl sm:text-3xl font-black text-slate-900 pt-4">
                     {paragraph.replace('# ', '')}
                   </h1>
                 );
               }
               if (paragraph.startsWith('## ')) {
                 return (
-                  <h2 key={idx} className="text-xl sm:text-2xl font-black text-amber-400 pt-4 border-b border-slate-800 pb-2">
+                  <h2 key={idx} className="text-xl sm:text-2xl font-black text-amber-700 pt-4 border-b border-slate-200 pb-2">
                     {paragraph.replace('## ', '')}
                   </h2>
                 );
               }
               if (paragraph.startsWith('### ')) {
                 return (
-                  <h3 key={idx} className="text-lg font-extrabold text-white pt-2">
+                  <h3 key={idx} className="text-lg font-extrabold text-slate-900 pt-2">
                     {paragraph.replace('### ', '')}
                   </h3>
                 );
               }
               if (paragraph.startsWith('- ')) {
                 return (
-                  <ul key={idx} className="list-disc list-inside space-y-1.5 pl-2 text-slate-300">
+                  <ul key={idx} className="list-disc list-inside space-y-1.5 pl-2 text-slate-700">
                     {paragraph.split('\n').map((item, iIdx) => (
                       <li key={iIdx}>{item.replace('- ', '')}</li>
                     ))}
@@ -370,7 +370,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                 );
               }
               return (
-                <p key={idx} className="text-slate-300 leading-relaxed font-normal">
+                <p key={idx} className="text-slate-700 leading-relaxed font-normal">
                   {paragraph}
                 </p>
               );
@@ -378,7 +378,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           </article>
 
           {/* Tags & Keywords Cloud */}
-          <div className="pt-6 border-t border-slate-800 flex flex-wrap items-center gap-2">
+          <div className="pt-6 border-t border-slate-200 flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-slate-500 uppercase mr-2 flex items-center space-x-1">
               <Tag className="w-3.5 h-3.5" />
               <span>Tagar:</span>
@@ -386,7 +386,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
             {selectedPost.tags.map((t, idx) => (
               <span
                 key={idx}
-                className="px-3 py-1 bg-slate-900 border border-slate-800 text-slate-300 text-xs font-bold rounded-lg"
+                className="px-3 py-1 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg shadow-2xs"
               >
                 #{t}
               </span>
@@ -394,27 +394,27 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           </div>
 
           {/* Bottom In-Article CTA Banner */}
-          <div className="bg-gradient-to-r from-amber-500/20 via-slate-900 to-indigo-950/40 border border-amber-500/40 rounded-3xl p-6 lg:p-8 space-y-4 shadow-xl">
-            <div className="flex items-center space-x-2 text-amber-400 font-extrabold text-xs uppercase">
-              <Sparkles className="w-4 h-4" />
+          <div className="bg-gradient-to-r from-amber-50 via-amber-100/50 to-orange-50 border border-amber-200 rounded-3xl p-6 lg:p-8 space-y-4 shadow-sm">
+            <div className="flex items-center space-x-2 text-amber-800 font-extrabold text-xs uppercase">
+              <Sparkles className="w-4 h-4 text-amber-600" />
               <span>Solusi Terintegrasi New Hope POS</span>
             </div>
-            <h3 className="text-xl sm:text-2xl font-black text-white">
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900">
               Siap Menerapkan Sistem Ini di Usaha Anda?
             </h3>
-            <p className="text-xs sm:text-sm text-slate-300 font-medium max-w-xl">
+            <p className="text-xs sm:text-sm text-slate-700 font-medium max-w-xl">
               Gunakan New Hope POS untuk mengontrol resep bahan baku, terima QRIS Dinamis otomatis cair H+1, dan akses AI Copilot pintar gratis.
             </p>
             <div className="pt-2 flex flex-wrap gap-3">
               <button
                 onClick={onOpenRegister || onBackToHome}
-                className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer"
+                className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all cursor-pointer"
               >
                 Mulai Uji Coba Gratis 45 Hari
               </button>
               <button
                 onClick={handleBackToList}
-                className="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 transition-all cursor-pointer"
+                className="px-5 py-3 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 shadow-2xs transition-all cursor-pointer"
               >
                 Baca Artikel Lainnya
               </button>
@@ -425,29 +425,29 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
         /* 📚 ALL ARTICLES LIST VIEW */
         <main className="max-w-7xl mx-auto px-4 lg:px-8 py-8 lg:py-12 space-y-10 animate-fade-in">
           {/* Top Headline & Search Section */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-800">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-200">
             <div className="space-y-2 max-w-2xl">
-              <div className="inline-flex items-center space-x-2 px-3.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-black uppercase">
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
+              <div className="inline-flex items-center space-x-2 px-3.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black uppercase">
+                <Flame className="w-3.5 h-3.5 text-amber-600" />
                 <span>Harapan Baru &bull; Media Edukasi UMKM</span>
               </div>
-              <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
+              <h1 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight">
                 Inspirasi & Strategi Bisnis Cerdas
               </h1>
-              <p className="text-xs sm:text-sm text-slate-400 font-medium">
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">
                 Temukan tips operasional kafe, laundry, ritel, perbengkelan, dan pengelolaan keuangan kasir modern.
               </p>
             </div>
 
             {/* Search Input */}
             <div className="relative w-full md:w-80">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Cari artikel, topik, atau kata kunci..."
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all shadow-2xs"
               />
             </div>
           </div>
@@ -462,8 +462,8 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                   onClick={() => setSelectedCategory(cat)}
                   className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
                     isSelected
-                      ? 'bg-amber-500 text-slate-950 shadow-md font-black'
-                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:text-slate-900'
                   }`}
                 >
                   {cat}
@@ -476,9 +476,9 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
           {featuredPost && selectedCategory === 'Semua Kategori' && searchQuery === '' && (
             <div
               onClick={() => handleSelectPost(featuredPost)}
-              className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/40 rounded-3xl border border-slate-800 p-6 lg:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center hover:border-amber-500/50 transition-all cursor-pointer shadow-2xl group"
+              className="bg-white rounded-3xl border border-slate-200 p-6 lg:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center hover:border-amber-500 hover:shadow-md transition-all cursor-pointer shadow-xs group"
             >
-              <div className="lg:col-span-6 rounded-2xl overflow-hidden border border-slate-800 aspect-video lg:aspect-[4/3]">
+              <div className="lg:col-span-6 rounded-2xl overflow-hidden border border-slate-200 aspect-video lg:aspect-[4/3]">
                 <img
                   src={featuredPost.coverImage}
                   alt={featuredPost.title}
@@ -491,28 +491,28 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                   <span className="px-3 py-1 bg-amber-500 text-slate-950 text-[10px] font-black rounded-full uppercase tracking-wider">
                     ARTIKEL UTAMA
                   </span>
-                  <span className="text-xs text-amber-400 font-bold">{featuredPost.category}</span>
+                  <span className="text-xs text-amber-700 font-bold">{featuredPost.category}</span>
                 </div>
 
-                <h2 className="text-2xl sm:text-3xl font-black text-white group-hover:text-amber-400 transition-colors leading-tight">
+                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 group-hover:text-amber-600 transition-colors leading-tight">
                   {featuredPost.title}
                 </h2>
 
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed line-clamp-3 font-medium">
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed line-clamp-3 font-medium">
                   {featuredPost.excerpt}
                 </p>
 
-                <div className="flex items-center justify-between pt-4 border-t border-slate-800 text-xs text-slate-400">
+                <div className="flex items-center justify-between pt-4 border-t border-slate-200 text-xs text-slate-500">
                   <div className="flex items-center space-x-2">
                     <img
                       src={featuredPost.author.avatar}
                       alt={featuredPost.author.name}
                       className="w-7 h-7 rounded-full object-cover"
                     />
-                    <span className="font-bold text-white">{featuredPost.author.name}</span>
+                    <span className="font-bold text-slate-900">{featuredPost.author.name}</span>
                   </div>
 
-                  <span className="flex items-center space-x-1 font-bold text-amber-400">
+                  <span className="flex items-center space-x-1 font-bold text-amber-600">
                     <span>Baca Selengkapnya</span>
                     <ChevronRight className="w-4 h-4" />
                   </span>
@@ -523,10 +523,10 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
           {/* Grid of Blog Post Cards */}
           {filteredPosts.length === 0 ? (
-            <div className="text-center py-16 bg-slate-900/50 rounded-3xl border border-slate-800 space-y-3">
-              <BookOpen className="w-10 h-10 text-slate-600 mx-auto" />
-              <h3 className="font-extrabold text-base text-white">Tidak Ada Artikel Ditemukan</h3>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+            <div className="text-center py-16 bg-white rounded-3xl border border-slate-200 space-y-3 shadow-xs">
+              <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
+              <h3 className="font-extrabold text-base text-slate-900">Tidak Ada Artikel Ditemukan</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
                 Coba gunakan kata kunci lain atau pilih kategori yang berbeda.
               </p>
             </div>
@@ -536,61 +536,61 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
                 <article
                   key={p.id}
                   onClick={() => handleSelectPost(p)}
-                  className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden flex flex-col justify-between hover:border-amber-500/50 hover:shadow-xl transition-all cursor-pointer group"
+                  className="bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col justify-between hover:border-amber-500 hover:shadow-md transition-all cursor-pointer group shadow-xs"
                 >
                   <div className="space-y-4 p-5 sm:p-6">
                     {/* Thumbnail */}
-                    <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-950">
+                    <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-100">
                       <img
                         src={p.coverImage}
                         alt={p.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       />
-                      <span className="absolute top-3 left-3 px-2.5 py-1 bg-slate-950/80 backdrop-blur-md text-amber-400 border border-slate-700/80 rounded-lg text-[10px] font-black uppercase">
+                      <span className="absolute top-3 left-3 px-2.5 py-1 bg-white/90 backdrop-blur-md text-amber-900 border border-amber-200 rounded-lg text-[10px] font-black uppercase shadow-xs">
                         {p.category}
                       </span>
                     </div>
 
                     {/* Meta info */}
-                    <div className="flex items-center space-x-3 text-[11px] text-slate-400 font-medium">
+                    <div className="flex items-center space-x-3 text-[11px] text-slate-500 font-medium">
                       <span className="flex items-center space-x-1">
-                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
                         <span>{p.readingTimeMinutes} mnt baca</span>
                       </span>
                       <span>&bull;</span>
                       <span className="flex items-center space-x-1">
-                        <Eye className="w-3.5 h-3.5 text-slate-500" />
+                        <Eye className="w-3.5 h-3.5 text-slate-400" />
                         <span>{p.viewCount} views</span>
                       </span>
                     </div>
 
                     {/* Title & Excerpt */}
-                    <h3 className="font-extrabold text-base sm:text-lg text-white group-hover:text-amber-400 transition-colors leading-snug line-clamp-2">
+                    <h3 className="font-extrabold text-base sm:text-lg text-slate-900 group-hover:text-amber-600 transition-colors leading-snug line-clamp-2">
                       {p.title}
                     </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed line-clamp-3 font-medium">
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-3 font-medium">
                       {p.excerpt}
                     </p>
                   </div>
 
                   {/* Card Footer */}
-                  <div className="p-5 sm:p-6 pt-0 border-t border-slate-800/80 mt-2 flex items-center justify-between text-xs">
+                  <div className="p-5 sm:p-6 pt-0 border-t border-slate-200 mt-2 flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2">
                       <img
                         src={p.author.avatar}
                         alt={p.author.name}
                         className="w-6 h-6 rounded-full object-cover"
                       />
-                      <span className="font-bold text-slate-300 truncate max-w-[120px]">{p.author.name}</span>
+                      <span className="font-bold text-slate-700 truncate max-w-[120px]">{p.author.name}</span>
                     </div>
 
                     <button
                       onClick={(e) => handleLikePost(p, e)}
                       className={`p-1.5 rounded-lg border text-[11px] font-bold flex items-center space-x-1 transition-colors cursor-pointer ${
-                        likedPosts[p.id] ? 'bg-rose-500/20 border-rose-500 text-rose-400' : 'border-slate-800 text-slate-400 hover:text-white'
+                        likedPosts[p.id] ? 'bg-rose-500/20 border-rose-500 text-rose-500' : 'border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50'
                       }`}
                     >
-                      <Heart className={`w-3.5 h-3.5 ${likedPosts[p.id] ? 'fill-rose-500 text-rose-400' : ''}`} />
+                      <Heart className={`w-3.5 h-3.5 ${likedPosts[p.id] ? 'fill-rose-500 text-rose-500' : ''}`} />
                       <span>{p.likesCount}</span>
                     </button>
                   </div>
@@ -602,8 +602,8 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
       )}
 
       {/* 🏛️ FOOTER */}
-      <footer className="border-t border-slate-800 mt-16 py-8 px-4 text-center text-xs text-slate-500 space-y-2">
-        <p className="font-medium text-slate-400">
+      <footer className="border-t border-slate-200 mt-16 py-8 px-4 text-center text-xs text-slate-500 space-y-2 bg-white">
+        <p className="font-medium text-slate-600">
           <b>Blog Harapan Baru</b> &bull; Media Resmi Edukasi UMKM oleh <b>New Hope POS</b>.
         </p>
         <p>Hak Cipta &copy; 2026 New Hope POS. Seluruh Hak Cipta Dilindungi Undang-Undang.</p>

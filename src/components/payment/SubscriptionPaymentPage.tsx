@@ -482,11 +482,11 @@ export const SubscriptionPaymentPage: React.FC = () => {
   // SUCCESS CELEBRATION VIEW
   if (paymentSuccess) {
     return (
-      <div className="nh-light-panel flex-1 overflow-y-auto bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 p-6 flex items-center justify-center min-h-full">
-        <div className="max-w-md w-full bg-slate-900/90 border border-slate-700/80 rounded-3xl p-8 text-center shadow-2xl backdrop-blur-xl animate-scale-up space-y-6">
+      <div className="nh-light-panel flex-1 overflow-y-auto bg-slate-50 p-6 flex items-center justify-center min-h-full">
+        <div className="max-w-md w-full bg-white border border-slate-200 rounded-3xl p-8 text-center shadow-lg animate-scale-up space-y-6">
           <div className="relative mx-auto w-20 h-20 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-xl shadow-emerald-500/20">
-            <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
-              <CheckCircle2 className="w-10 h-10 text-emerald-400 animate-bounce" />
+            <div className="w-full h-full bg-white rounded-[22px] flex items-center justify-center">
+              <CheckCircle2 className="w-10 h-10 text-emerald-600 animate-bounce" />
             </div>
             <div className="absolute -top-2 -right-2 p-1 bg-amber-400 rounded-full text-slate-950 shadow-md">
               <Sparkles className="w-4 h-4" />
@@ -494,31 +494,31 @@ export const SubscriptionPaymentPage: React.FC = () => {
           </div>
 
           <div className="space-y-2">
-            <span className="text-xs uppercase tracking-widest font-black text-emerald-400">Pembayaran Berhasil Dikonfirmasi</span>
-            <h2 className="text-2xl font-black text-white">Selamat Datang di Kasir!</h2>
-            <p className="text-slate-400 text-xs leading-relaxed">
+            <span className="text-xs uppercase tracking-widest font-black text-emerald-600">Pembayaran Berhasil Dikonfirmasi</span>
+            <h2 className="text-2xl font-black text-slate-900">Selamat Datang di Kasir!</h2>
+            <p className="text-slate-600 text-xs leading-relaxed">
               Paket langganan toko Anda telah aktif. Seluruh fitur kasir, sinkronisasi katalog, dan laporan bisnis sudah siap digunakan.
             </p>
           </div>
 
-          <div className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 text-left space-y-2.5 text-xs">
-            <div className="flex justify-between text-slate-400">
+          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-left space-y-2.5 text-xs">
+            <div className="flex justify-between text-slate-500">
               <span>Toko:</span>
-              <span className="font-bold text-slate-200">{settings.storeName || 'Toko Utama'}</span>
+              <span className="font-bold text-slate-900">{settings.storeName || 'Toko Utama'}</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex justify-between text-slate-500">
               <span>Paket:</span>
-              <span className="font-bold text-amber-400">{paymentSuccess.planName}</span>
+              <span className="font-bold text-amber-600">{paymentSuccess.planName}</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex justify-between text-slate-500">
               <span>Periode:</span>
-              <span className="font-bold text-slate-200">{paymentSuccess.billingCycle}</span>
+              <span className="font-bold text-slate-900">{paymentSuccess.billingCycle}</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex justify-between text-slate-500">
               <span>Berlaku Hingga:</span>
-              <span className="font-bold text-slate-200">{paymentSuccess.validUntil}</span>
+              <span className="font-bold text-slate-900">{paymentSuccess.validUntil}</span>
             </div>
-            <div className="border-t border-slate-800 pt-2 flex justify-between text-slate-500 font-mono text-[11px]">
+            <div className="border-t border-slate-200 pt-2 flex justify-between text-slate-400 font-mono text-[11px]">
               <span>No. Invoice:</span>
               <span>{paymentSuccess.invoiceNumber}</span>
             </div>
@@ -527,7 +527,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
           <div className="space-y-2">
             <button
               onClick={() => setActiveTab('pos')}
-              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer group"
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer group"
             >
               <span>Mulai Buka Kasir Sekarang</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -539,26 +539,26 @@ export const SubscriptionPaymentPage: React.FC = () => {
   }
 
   return (
-    <div className="nh-light-panel flex-1 overflow-y-auto bg-slate-950 text-slate-100 p-4 sm:p-8 relative selection:bg-amber-500 selection:text-slate-950">
+    <div className="nh-light-panel flex-1 overflow-y-auto bg-[#f8fafc] text-slate-900 p-4 sm:p-8 relative selection:bg-amber-500 selection:text-slate-950">
       {/* Background Decorative Glow */}
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/3 right-10 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/3 right-10 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-5xl mx-auto space-y-8 relative z-10">
         {/* Onboarding Step Banner */}
         {isOnboarding && (
-          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/30 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg shadow-amber-500/5">
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-50 via-white to-white border border-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs">
             <div className="flex items-center gap-3.5">
               <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-md shadow-amber-500/20">
                 <Zap className="w-5 h-5 fill-slate-950" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">Langkah 2 dari 2</span>
-                  <span className="text-xs text-slate-500">•</span>
-                  <span className="text-xs text-slate-300 font-semibold">Konfirmasi & Pembayaran</span>
+                  <span className="text-[11px] font-black uppercase tracking-wider text-amber-700">Langkah 2 dari 2</span>
+                  <span className="text-xs text-slate-400">•</span>
+                  <span className="text-xs text-slate-600 font-semibold">Konfirmasi & Pembayaran</span>
                 </div>
-                <p className="text-sm font-bold text-white mt-0.5">
+                <p className="text-sm font-bold text-slate-900 mt-0.5">
                   Toko Anda sudah terdaftar! Pilih cara pembayaran untuk mengaktifkan paket kasir.
                 </p>
               </div>
@@ -570,7 +570,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 setIsOnboarding(false);
                 setActiveTab('pos');
               }}
-              className="text-xs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors shrink-0 cursor-pointer"
+              className="text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors shrink-0 cursor-pointer bg-white"
             >
               Lewati ke Kasir (Trial)
             </button>
@@ -578,35 +578,35 @@ export const SubscriptionPaymentPage: React.FC = () => {
         )}
 
         {/* Store Business Profile Header */}
-        <div className="bg-slate-900/80 border border-slate-800/80 rounded-3xl p-6 backdrop-blur-md flex flex-col md:flex-row items-start md:items-center justify-between gap-5 shadow-xl">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 shadow-xs">
           <div className="flex items-center gap-4">
             <div className={`w-14 h-14 rounded-2xl border flex items-center justify-center shadow-inner ${sectorMeta.color}`}>
               <SectorIcon className="w-7 h-7" />
             </div>
             <div>
               <div className="flex items-center gap-2.5">
-                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                   {settings.storeName || 'Toko Baru Anda'}
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold border border-slate-700 bg-slate-800/80 text-slate-300">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold border border-slate-200 bg-slate-100 text-slate-700">
                   {sectorMeta.label}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
+              <p className="text-xs text-slate-500 mt-1 flex items-center gap-2">
                 <span>Pemilik: <b>{user?.email || 'Admin'}</b></span>
-                <span className="text-slate-600">•</span>
-                <span>Status Toko: <span className="text-amber-400 font-semibold">{isFreePlan(settings.subscription) ? 'Free selamanya' : settings.subscription?.status === 'ACTIVE' ? 'Paket aktif' : settings.subscription?.status === 'TRIAL' ? 'Trial aktif' : 'Menunggu Aktivasi'}</span></span>
+                <span className="text-slate-300">•</span>
+                <span>Status Toko: <span className="text-amber-600 font-semibold">{isFreePlan(settings.subscription) ? 'Free selamanya' : settings.subscription?.status === 'ACTIVE' ? 'Paket aktif' : settings.subscription?.status === 'TRIAL' ? 'Trial aktif' : 'Menunggu Aktivasi'}</span></span>
               </p>
             </div>
           </div>
 
           {/* Billing Cycle Switcher */}
-          <div className="flex items-center p-1 bg-slate-950 border border-slate-800 rounded-2xl self-stretch md:self-auto justify-center">
+          <div className="flex items-center p-1 bg-slate-100 border border-slate-200 rounded-2xl self-stretch md:self-auto justify-center">
             <button
               type="button"
               onClick={() => setYearly(false)}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                !yearly ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                !yearly ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               Bulanan
@@ -616,12 +616,12 @@ export const SubscriptionPaymentPage: React.FC = () => {
               onClick={() => setYearly(true)}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 yearly
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/20'
-                  : 'text-amber-400 hover:text-amber-300'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black shadow-xs'
+                  : 'text-amber-700 hover:text-amber-800'
               }`}
             >
               <span>Tahunan</span>
-              <span className="px-1.5 py-0.5 rounded-md bg-slate-950/80 text-[10px] font-black text-amber-300">
+              <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-[10px] font-black text-amber-800">
                 Hemat 20%
               </span>
             </button>
@@ -631,8 +631,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
         {/* Plan Cards Grid */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-black uppercase tracking-wider text-slate-400">Pilih Paket Layanan</h2>
-            <span className="text-xs text-slate-500">Dapat diganti atau dibatalkan kapan saja</span>
+            <h2 className="text-sm font-black uppercase tracking-wider text-slate-500">Pilih Paket Layanan</h2>
+            <span className="text-xs text-slate-400">Dapat diganti atau dibatalkan kapan saja</span>
           </div>
 
           <div className="grid lg:grid-cols-3 gap-5">
@@ -646,10 +646,10 @@ export const SubscriptionPaymentPage: React.FC = () => {
                   onClick={() => !hasUsedTrial && setSelectedPlanId(TRIAL_PLAN_ID)}
                   className={`relative rounded-3xl p-6 transition-all border flex flex-col justify-between ${
                     hasUsedTrial
-                      ? 'bg-slate-900/30 border-slate-800/60 opacity-60 cursor-not-allowed'
+                      ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
                       : isSelected
-                      ? 'bg-slate-900/95 border-amber-500 shadow-2xl shadow-amber-500/10 ring-2 ring-amber-500/30 cursor-pointer'
-                      : 'bg-slate-900/50 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/80 cursor-pointer'
+                      ? 'bg-white border-amber-500 shadow-md ring-2 ring-amber-400/30 cursor-pointer'
+                      : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-xs cursor-pointer'
                   }`}
                 >
                   <div className="absolute -top-3 left-6 px-3 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-black text-[10px] tracking-wider uppercase shadow-md flex items-center gap-1">
@@ -660,31 +660,31 @@ export const SubscriptionPaymentPage: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-xl font-black text-white">{trialPlan?.name || 'Free Trial 45 Hari'}</h3>
-                        <p className="text-xs text-slate-400 mt-0.5">Termasuk hingga 2 outlet aktif</p>
+                        <h3 className="text-xl font-black text-slate-900">{trialPlan?.name || 'Free Trial 45 Hari'}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">Termasuk hingga 2 outlet aktif</p>
                       </div>
                       <div
                         className={`w-6 h-6 rounded-full border flex items-center justify-center ${
                           isSelected && !hasUsedTrial
-                            ? 'border-amber-400 bg-amber-400 text-slate-950'
-                            : 'border-slate-700 bg-slate-800 text-transparent'
+                            ? 'border-amber-500 bg-amber-500 text-slate-950'
+                            : 'border-slate-300 bg-slate-100 text-transparent'
                         }`}
                       >
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-800/80">
+                    <div className="pt-2 border-t border-slate-200">
                       <div className="flex items-baseline gap-1.5">
-                        <span className="text-3xl font-black text-white font-mono">Rp 0</span>
-                        <span className="text-xs font-semibold text-slate-400">/ 45 hari</span>
+                        <span className="text-3xl font-black text-slate-900 font-mono">Rp 0</span>
+                        <span className="text-xs font-semibold text-slate-500">/ 45 hari</span>
                       </div>
-                      <p className="text-[11px] text-emerald-400 font-semibold mt-1">
+                      <p className="text-[11px] text-emerald-600 font-semibold mt-1">
                         {hasUsedTrial ? 'Masa uji coba telah selesai digunakan' : 'Coba gratis 45 hari tanpa kartu kredit'}
                       </p>
                     </div>
 
-                    <ul className="space-y-2.5 pt-2 text-xs text-slate-300">
+                    <ul className="space-y-2.5 pt-2 text-xs text-slate-600">
                       {(trialPlan?.features || [
                         'Seluruh fitur Tier Pro selama 45 hari',
                         'Hingga 2 outlet aktif',
@@ -693,7 +693,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                         'Tanpa kartu kredit (berlaku 1x)',
                       ]).slice(0, 5).map((feature, idx) => (
                         <li key={idx} className="flex items-start gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                           <span>{feature}</span>
                         </li>
                       ))}
@@ -707,10 +707,10 @@ export const SubscriptionPaymentPage: React.FC = () => {
                       onClick={() => !hasUsedTrial && setSelectedPlanId(TRIAL_PLAN_ID)}
                       className={`w-full py-3 rounded-xl font-bold text-xs transition-all ${
                         hasUsedTrial
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                           : isSelected
                           ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 cursor-pointer'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer'
                       }`}
                     >
                       {hasUsedTrial ? 'Sudah Digunakan (1x)' : isSelected ? 'Paket Terpilih' : 'Pilih Coba Gratis'}
@@ -732,8 +732,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
                   onClick={() => setSelectedPlanId(plan.id)}
                   className={`relative rounded-3xl p-6 transition-all cursor-pointer border flex flex-col justify-between ${
                     isSelected
-                      ? 'bg-slate-900/95 border-amber-500 shadow-2xl shadow-amber-500/10 ring-2 ring-amber-500/30'
-                      : 'bg-slate-900/50 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/80'
+                      ? 'bg-white border-amber-500 shadow-md ring-2 ring-amber-400/30'
+                      : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-xs'
                   }`}
                 >
                   {isPro && (
@@ -746,37 +746,37 @@ export const SubscriptionPaymentPage: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-xl font-black text-white">{plan.name}</h3>
-                        <p className="text-xs text-slate-400 mt-0.5">Termasuk hingga {plan.maxOutlets} outlet aktif</p>
+                        <h3 className="text-xl font-black text-slate-900">{plan.name}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">Termasuk hingga {plan.maxOutlets} outlet aktif</p>
                       </div>
                       <div
                         className={`w-6 h-6 rounded-full border flex items-center justify-center ${
                           isSelected
-                            ? 'border-amber-400 bg-amber-400 text-slate-950'
-                            : 'border-slate-700 bg-slate-800 text-transparent'
+                            ? 'border-amber-500 bg-amber-500 text-slate-950'
+                            : 'border-slate-300 bg-slate-100 text-transparent'
                         }`}
                       >
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-800/80">
+                    <div className="pt-2 border-t border-slate-200">
                       <div className="flex items-baseline gap-1.5">
-                        <span className="text-3xl font-black text-white font-mono">{formatRupiah(price)}</span>
-                        <span className="text-xs font-semibold text-slate-400">/{yearly ? 'tahun' : 'bulan'}</span>
+                        <span className="text-3xl font-black text-slate-900 font-mono">{formatRupiah(price)}</span>
+                        <span className="text-xs font-semibold text-slate-500">/{yearly ? 'tahun' : 'bulan'}</span>
                       </div>
                       {yearly && (
-                        <p className="text-[11px] text-emerald-400 font-semibold mt-1">
+                        <p className="text-[11px] text-emerald-600 font-semibold mt-1">
                           Setara {formatRupiah(Math.round(price / 12))}/bulan (Hemat{' '}
                           {plan.annualDiscountPercent || 20}%)
                         </p>
                       )}
                     </div>
 
-                    <ul className="space-y-2.5 pt-2 text-xs text-slate-300">
+                    <ul className="space-y-2.5 pt-2 text-xs text-slate-600">
                       {plan.features.slice(0, 5).map((feature, idx) => (
                         <li key={idx} className="flex items-start gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <CheckCircle2 className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                           <span>{feature}</span>
                         </li>
                       ))}
@@ -790,7 +790,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                       className={`w-full py-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                         isSelected
                           ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                       }`}
                     >
                       {isSelected ? 'Paket Terpilih' : 'Pilih Paket Ini'}
@@ -804,16 +804,16 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
         {/* Add-on Outlet Stepper */}
         {isTrial ? (
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-5 text-xs text-slate-300 flex items-center gap-3 backdrop-blur-sm">
-            <Info className="w-4 h-4 text-amber-400 shrink-0" />
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 text-xs text-slate-600 flex items-center gap-3 shadow-xs">
+            <Info className="w-4 h-4 text-amber-500 shrink-0" />
             <span>Paket <b>Free Trial 45 Hari</b> mencakup hingga <b>2 outlet aktif</b> secara gratis. Tambahan cabang dapat diaktifkan setelah memilih paket Tier Plus atau Pro.</span>
           </div>
         ) : (
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-3xl p-6 backdrop-blur-sm space-y-4">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="font-bold text-white text-sm">Tambahan Outlet (Add-on Cabang)</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <h3 className="font-bold text-slate-900 text-sm">Tambahan Outlet (Add-on Cabang)</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
                   Paket {selectedPlan.name} sudah mencakup <b>{selectedPlan.maxOutlets} outlet</b>. Tambahkan jika Anda memiliki cabang lain.
                 </p>
               </div>
@@ -823,43 +823,43 @@ export const SubscriptionPaymentPage: React.FC = () => {
                   type="button"
                   onClick={() => setExtraOutlets((prev) => Math.max(0, prev - 1))}
                   disabled={extraOutlets === 0}
-                  className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+                  className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 font-bold flex items-center justify-center hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
                 >
                   -
                 </button>
-                <div className="px-4 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-center min-w-[70px]">
-                  <span className="font-mono font-bold text-sm text-amber-400">+{extraOutlets}</span>
-                  <span className="block text-[10px] text-slate-400">outlet</span>
+                <div className="px-4 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-center min-w-[70px]">
+                  <span className="font-mono font-bold text-sm text-amber-600">+{extraOutlets}</span>
+                  <span className="block text-[10px] text-slate-500">outlet</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setExtraOutlets((prev) => prev + 1)}
-                  className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold flex items-center justify-center hover:bg-slate-700 transition-all cursor-pointer"
+                  className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 font-bold flex items-center justify-center hover:bg-slate-200 transition-all cursor-pointer"
                 >
                   +
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
-              <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-2 border-t border-slate-200">
+              <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               <span>
                 Add-on dihitung {yearly ? 'Rp760.320/outlet/tahun' : 'Rp79.200/outlet/bulan'}. Total kapasitas:{' '}
-                <b className="text-white">{selectedPlan.maxOutlets + extraOutlets} outlet aktif</b>.
+                <b className="text-slate-900">{selectedPlan.maxOutlets + extraOutlets} outlet aktif</b>.
               </span>
             </div>
           </div>
         )}
 
         {/* Invoice Summary & Checkout Action */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-4">
             <div className="flex items-center gap-2.5">
-              <CreditCard className="w-5 h-5 text-amber-400" />
-              <h3 className="font-black text-white text-base">Rincian Pembayaran</h3>
+              <CreditCard className="w-5 h-5 text-amber-500" />
+              <h3 className="font-black text-slate-900 text-base">Rincian Pembayaran</h3>
             </div>
             {quoteLoading && (
-              <div className="flex items-center gap-2 text-xs text-amber-400">
+              <div className="flex items-center gap-2 text-xs text-amber-600">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>Menghitung…</span>
               </div>
@@ -867,8 +867,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
           </div>
 
           {error && (
-            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-3">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
               <div className="space-y-1">
                 <p className="font-bold">Perhatian</p>
                 <p>{error}</p>
@@ -877,21 +877,21 @@ export const SubscriptionPaymentPage: React.FC = () => {
           )}
 
           <div className="space-y-3 text-xs">
-            <div className="flex justify-between text-slate-300">
+            <div className="flex justify-between text-slate-600">
               <span>
                 Paket {selectedPlan.name} ({yearly ? '12 Bulan' : '1 Bulan'})
               </span>
-              <span className="font-mono font-bold text-white">
+              <span className="font-mono font-bold text-slate-900">
                 {formatRupiah(yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr)}
               </span>
             </div>
 
             {extraOutlets > 0 && (
-              <div className="flex justify-between text-slate-300">
+              <div className="flex justify-between text-slate-600">
                 <span>
                   Tambahan {extraOutlets} Outlet ({yearly ? 'Tahunan' : 'Bulanan'})
                 </span>
-                <span className="font-mono font-bold text-white">
+                <span className="font-mono font-bold text-slate-900">
                   {formatRupiah(
                     (yearly
                       ? selectedPlan.extraOutletYearlyIdr || 760320
@@ -902,20 +902,20 @@ export const SubscriptionPaymentPage: React.FC = () => {
             )}
 
             {quote?.unusedCredit && quote.unusedCredit > 0 ? (
-              <div className="flex justify-between text-emerald-400">
+              <div className="flex justify-between text-emerald-600">
                 <span>Kredit Periode Berjalan</span>
                 <span className="font-mono font-bold">- {formatRupiah(quote.unusedCredit)}</span>
               </div>
             ) : null}
 
-            <div className="border-t border-slate-800 pt-4 flex items-baseline justify-between">
+            <div className="border-t border-slate-200 pt-4 flex items-baseline justify-between">
               <div>
-                <span className="text-sm font-black text-white block">Total Pembayaran</span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-sm font-black text-slate-900 block">Total Pembayaran</span>
+                <span className="text-[11px] text-slate-500">
                   {isTrial ? 'Masa Uji Coba 45 Hari Tanpa Biaya' : 'Termasuk seluruh modul & sinkronisasi'}
                 </span>
               </div>
-              <span className="text-2xl sm:text-3xl font-black text-amber-400 font-mono">
+              <span className="text-2xl sm:text-3xl font-black text-amber-600 font-mono">
                 {isTrial
                   ? 'Gratis (Rp 0)'
                   : formatRupiah(quote ? quote.amount : yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr)}
@@ -925,34 +925,34 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
           {/* Payment Method Badges */}
           {isTrial ? (
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span className="font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-600">
+                <span className="font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                   Aktivasi Instan Tanpa Kartu Kredit
                 </span>
-                <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                <span className="flex items-center gap-1 text-emerald-700 font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5" />
                   Masa Coba 45 Hari Resmi (1x Pakai)
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
+              <p className="text-[11px] text-slate-500 leading-relaxed">
                 Buka kasir dan nikmati seluruh fitur Tier Pro, transaksi, resep bahan baku, QRIS dinamis, dan AI Copilot selama 45 hari tanpa biaya.
               </p>
             </div>
           ) : (
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span className="font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                  <QrCode className="w-3.5 h-3.5 text-amber-400" />
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-600">
+                <span className="font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                  <QrCode className="w-3.5 h-3.5 text-amber-600" />
                   Metode Pembayaran DOKU Gateway
                 </span>
-                <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                <span className="flex items-center gap-1 text-emerald-700 font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5" />
                   Aman & Terverifikasi
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
+              <p className="text-[11px] text-slate-500 leading-relaxed">
                 Mendukung <b>QRIS</b> (Gopay, OVO, Dana, ShopeePay, BCA Mobile), <b>Virtual Account</b> (BCA, Mandiri, BRI, BNI), dan <b>Kartu Kredit/Debit</b>.
               </p>
             </div>
@@ -961,8 +961,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
           {/* Action Buttons */}
           <div className="space-y-3 pt-2">
             {verifyNotice && (
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5 animate-slide-up">
-                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2.5 animate-slide-up">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <p className="font-semibold">{verifyNotice}</p>
                 </div>
@@ -974,7 +974,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 type="button"
                 disabled={checkoutLoading || verifying || hasUsedTrial}
                 onClick={handleProceedToPayment}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {checkoutLoading ? (
                   <>
@@ -996,7 +996,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 type="button"
                 disabled={checkoutLoading || quoteLoading || verifying}
                 onClick={handleProceedToPayment}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {checkoutLoading ? (
                   <>
@@ -1014,8 +1014,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
             {/* Anti-Bypass Secure Controls */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 <span>Pembayaran aman terenkripsi & verifikasi server otomatis</span>
               </div>
 
@@ -1023,7 +1023,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 type="button"
                 onClick={() => void checkPaymentVerification()}
                 disabled={verifying}
-                className="text-xs font-bold text-amber-400 hover:text-amber-300 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-sm ml-auto"
+                className="text-xs font-bold text-amber-700 hover:text-amber-800 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-2xs ml-auto"
                 title="Cek verifikasi status pembayaran real-time ke server"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />

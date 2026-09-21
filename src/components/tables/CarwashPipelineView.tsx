@@ -109,19 +109,19 @@ export const CarwashPipelineView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="nh-light-panel bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
+      <div className="bg-white text-slate-900 p-5 rounded-3xl shadow-xs flex flex-wrap items-center justify-between gap-4 border border-slate-200">
         <div className="flex items-center space-x-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
             <Car className="w-7 h-7" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-black text-white">Manajemen Bay &amp; Antrean Car Wash</h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-500 text-slate-950 uppercase">
+              <h2 className="text-lg font-black text-slate-900">Manajemen Bay &amp; Antrean Car Wash</h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-900 border border-blue-200 uppercase">
                 Bay Capacity Pipeline
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               Pelacakan nomor plat kendaraan, alokasi bay cuci, penugasan kru cuci, dan progres pengerjaan.
             </p>
           </div>
@@ -197,7 +197,7 @@ export const CarwashPipelineView: React.FC = () => {
                       <div className="flex items-start justify-between">
                         <div>
                           {/* Plate Badge */}
-                          <div className="inline-block px-2.5 py-1 bg-slate-950 text-white rounded-lg font-mono font-black text-sm tracking-wider shadow-xs border border-slate-800">
+                          <div className="inline-block px-2.5 py-1 bg-slate-100 text-slate-900 rounded-lg font-mono font-black text-sm tracking-wider shadow-2xs border border-slate-300">
                             {item.vehiclePlate}
                           </div>
                           <div className="font-bold text-xs text-slate-800 mt-1">
@@ -309,10 +309,10 @@ export const CarwashPipelineView: React.FC = () => {
                         {col.key === 'SIAP_KELUAR' && (
                           <button
                             onClick={() => removeCarwashQueue(item.id)}
-                            className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-black text-[10px] flex items-center space-x-1 cursor-pointer"
+                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-lg font-black text-[10px] flex items-center space-x-1 cursor-pointer"
                           >
                             <span>Selesai &amp; Keluar</span>
-                            <CheckCircle2 className="w-3 h-3" />
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           </button>
                         )}
                       </div>

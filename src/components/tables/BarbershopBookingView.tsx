@@ -127,19 +127,19 @@ export const BarbershopBookingView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="nh-light-panel bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-4 border border-slate-800">
+      <div className="bg-white text-slate-900 p-5 rounded-3xl shadow-xs flex flex-wrap items-center justify-between gap-4 border border-slate-200">
         <div className="flex items-center space-x-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
             <Scissors className="w-7 h-7" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-black text-white">Kalender Booking &amp; Kapster</h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 uppercase">
+              <h2 className="text-lg font-black text-slate-900">Kalender Booking &amp; Kapster</h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 uppercase">
                 Time-Slot Engine
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-xs text-slate-500 font-medium">
               Alokasi jam booking per stylist/kapster, kirim reminder WhatsApp otomatis, dan rekap komisi staf.
             </p>
           </div>
@@ -156,9 +156,9 @@ export const BarbershopBookingView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('labor')}
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 font-black text-xs rounded-2xl border border-slate-700 shadow-xs transition-all cursor-pointer flex items-center space-x-1.5"
+            className="px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 font-black text-xs rounded-2xl border border-amber-200 shadow-xs transition-all cursor-pointer flex items-center space-x-1.5"
           >
-            <Coins className="w-4 h-4 text-amber-400" />
+            <Coins className="w-4 h-4 text-amber-600" />
             <span>Gaji &amp; Komisi Kapster</span>
           </button>
           <button
@@ -190,7 +190,7 @@ export const BarbershopBookingView: React.FC = () => {
             onClick={() => setSelectedStylistId('ALL')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               selectedStylistId === 'ALL'
-                ? 'bg-slate-950 text-white font-black shadow-xs'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >

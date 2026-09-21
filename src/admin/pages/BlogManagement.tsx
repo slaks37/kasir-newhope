@@ -251,14 +251,14 @@ export const BlogManagement: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-6 rounded-3xl text-white shadow-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-slate-200 p-6 rounded-3xl text-slate-900 shadow-xs">
         <div className="flex items-center space-x-3.5">
-          <div className="p-3 bg-amber-500 text-slate-950 rounded-2xl font-black shadow-lg shadow-amber-500/20">
+          <div className="p-3 bg-amber-500 text-slate-950 rounded-2xl font-black shadow-md shadow-amber-500/20">
             <BookOpen className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-white">CMS Blog Harapan Baru</h1>
-            <p className="text-xs text-slate-400">
+            <h1 className="text-xl font-black text-slate-900">CMS Blog Harapan Baru</h1>
+            <p className="text-xs text-slate-500">
               Kelola artikel edukasi, panduan kasir, optimasi SEO Google, dan sematan media.
             </p>
           </div>
@@ -269,16 +269,16 @@ export const BlogManagement: React.FC = () => {
             href="/#blog"
             target="_blank"
             rel="noreferrer"
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center space-x-2"
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer"
           >
-            <Eye className="w-4 h-4 text-amber-400" />
+            <Eye className="w-4 h-4 text-amber-600" />
             <span>Lihat Blog Publik</span>
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
 
           <button
             onClick={handleOpenCreateModal}
-            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center space-x-2 cursor-pointer"
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all flex items-center space-x-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Tulis Artikel Baru</span>
@@ -426,24 +426,24 @@ export const BlogManagement: React.FC = () => {
 
       {/* 📝 CREATE / EDIT BLOG POST MODAL */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 text-white rounded-3xl max-w-4xl w-full p-6 lg:p-8 space-y-6 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 text-slate-900 rounded-3xl max-w-4xl w-full p-6 lg:p-8 space-y-6 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
               <div className="flex items-center space-x-3">
                 <div className="p-2.5 bg-amber-500 text-slate-950 rounded-xl font-bold">
                   <BookOpen className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-white">
+                  <h3 className="text-lg font-black text-slate-900">
                     {editingPostId ? 'Edit Artikel Blog' : 'Tulis Artikel Blog Baru'}
                   </h3>
-                  <p className="text-xs text-slate-400">Harapan Baru Media Edukasi UMKM</p>
+                  <p className="text-xs text-slate-500">Harapan Baru Media Edukasi UMKM</p>
                 </div>
               </div>
 
               <button
                 onClick={() => setShowModal(false)}
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -453,26 +453,26 @@ export const BlogManagement: React.FC = () => {
               {/* Row 1: Title & Slug */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">Judul Artikel (H1) *</label>
+                  <label className="text-xs font-bold text-slate-700">Judul Artikel (H1) *</label>
                   <input
                     type="text"
                     value={title}
                     onChange={(e) => handleTitleChange(e.target.value)}
                     placeholder="Contoh: Cara Membuka Kafe Modal 10 Juta..."
                     required
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">SEO URL Slug *</label>
+                  <label className="text-xs font-bold text-slate-700">SEO URL Slug *</label>
                   <input
                     type="text"
                     value={slug}
                     onChange={(e) => setSlug(e.target.value)}
                     placeholder="cara-membuka-kafe-modal-10-juta"
                     required
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-amber-400 font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-amber-700 font-mono placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>
@@ -480,11 +480,11 @@ export const BlogManagement: React.FC = () => {
               {/* Row 2: Category & Cover Image */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">Kategori Artikel *</label>
+                  <label className="text-xs font-bold text-slate-700">Kategori Artikel *</label>
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value as BlogCategory)}
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none"
                   >
                     {CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -495,36 +495,36 @@ export const BlogManagement: React.FC = () => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">Cover Image URL *</label>
+                  <label className="text-xs font-bold text-slate-700">Cover Image URL *</label>
                   <input
                     type="url"
                     value={coverImage}
                     onChange={(e) => setCoverImage(e.target.value)}
                     placeholder="https://images.unsplash.com/..."
                     required
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>
 
               {/* Row 3: Excerpt */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300">Ringkasan Artikel (Excerpt / Meta Description) *</label>
+                <label className="text-xs font-bold text-slate-700">Ringkasan Artikel (Excerpt / Meta Description) *</label>
                 <textarea
                   rows={2}
                   value={excerpt}
                   onChange={(e) => setExcerpt(e.target.value)}
                   placeholder="Deskripsi singkat yang memikat pembaca dan ditampilkan di Google Search snippet..."
                   required
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               {/* Row 4: Main Content (Markdown) */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
                   <span>Isi Artikel Konten (Markdown Format) *</span>
-                  <span className="text-[11px] text-slate-400 font-normal">Gunakan # H1, ## H2, - List</span>
+                  <span className="text-[11px] text-slate-500 font-normal">Gunakan # H1, ## H2, - List</span>
                 </label>
                 <textarea
                   rows={8}
@@ -532,18 +532,18 @@ export const BlogManagement: React.FC = () => {
                   onChange={(e) => setContent(e.target.value)}
                   placeholder="# Judul Pembahasan&#10;&#10;Paragraf penjelasan artikel...&#10;&#10;## Sub Judul&#10;- Poin 1&#10;- Poin 2"
                   required
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 leading-relaxed"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-mono placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 leading-relaxed"
                 />
               </div>
 
               {/* 🎥 MEDIA EMBEDS ASSISTANT */}
-              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-amber-400 uppercase tracking-wider flex items-center space-x-1.5">
-                    <Video className="w-4 h-4" />
+                  <span className="text-xs font-extrabold text-amber-800 uppercase tracking-wider flex items-center space-x-1.5">
+                    <Video className="w-4 h-4 text-amber-600" />
                     <span>Sematan Media (YouTube, TikTok, Instagram)</span>
                   </span>
-                  <span className="text-[11px] text-slate-400">Total {mediaEmbeds.length} Media</span>
+                  <span className="text-[11px] text-slate-500">Total {mediaEmbeds.length} Media</span>
                 </div>
 
                 {/* Add new embed row */}
@@ -552,7 +552,7 @@ export const BlogManagement: React.FC = () => {
                     <select
                       value={newEmbedType}
                       onChange={(e) => setNewEmbedType(e.target.value as MediaEmbedType)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none"
                     >
                       <option value="youtube">YouTube (Video / Shorts)</option>
                       <option value="tiktok">TikTok Video</option>
@@ -567,7 +567,7 @@ export const BlogManagement: React.FC = () => {
                       value={newEmbedUrl}
                       onChange={(e) => setNewEmbedUrl(e.target.value)}
                       placeholder="https://www.youtube.com/watch?v=..."
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none"
                     />
                   </div>
 
@@ -577,7 +577,7 @@ export const BlogManagement: React.FC = () => {
                       value={newEmbedCaption}
                       onChange={(e) => setNewEmbedCaption(e.target.value)}
                       placeholder="Keterangan video..."
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none"
                     />
                   </div>
 
@@ -585,7 +585,7 @@ export const BlogManagement: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleAddMediaEmbed}
-                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center cursor-pointer"
+                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center cursor-pointer shadow-xs"
                     >
                       <Plus className="w-4 h-4" />
                     </button>
@@ -596,19 +596,19 @@ export const BlogManagement: React.FC = () => {
                 {mediaEmbeds.length > 0 && (
                   <div className="space-y-2 pt-2">
                     {mediaEmbeds.map((emb) => (
-                      <div key={emb.id} className="p-2.5 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                      <div key={emb.id} className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center justify-between text-xs shadow-2xs">
                         <div className="flex items-center space-x-2 truncate">
-                          <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] uppercase font-bold">
+                          <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded text-[10px] uppercase font-bold">
                             {emb.type}
                           </span>
-                          <span className="text-slate-300 font-mono truncate max-w-xs">{emb.url}</span>
+                          <span className="text-slate-800 font-mono truncate max-w-xs">{emb.url}</span>
                           {emb.caption && <span className="text-slate-500 italic">({emb.caption})</span>}
                         </div>
 
                         <button
                           type="button"
                           onClick={() => handleRemoveMediaEmbed(emb.id)}
-                          className="p-1 text-rose-400 hover:text-rose-300 rounded cursor-pointer"
+                          className="p-1 text-rose-500 hover:text-rose-700 rounded cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -619,32 +619,32 @@ export const BlogManagement: React.FC = () => {
               </div>
 
               {/* 🔍 SEO GOOGLE OPTIMIZATION FIELDS */}
-              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
-                <span className="text-xs font-extrabold text-blue-400 uppercase tracking-wider flex items-center space-x-1.5">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <span className="text-xs font-extrabold text-blue-700 uppercase tracking-wider flex items-center space-x-1.5">
                   <Globe className="w-4 h-4" />
                   <span>Optimasi SEO Google & Rich Snippets</span>
                 </span>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-slate-400">Meta Title Tag (Google Header)</label>
+                    <label className="text-[11px] font-bold text-slate-600">Meta Title Tag (Google Header)</label>
                     <input
                       type="text"
                       value={metaTitle}
                       onChange={(e) => setMetaTitle(e.target.value)}
                       placeholder="Judul menarik di Google (Maks 60 karakter)..."
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-slate-400">Meta Keywords (Pisahkan dengan koma)</label>
+                    <label className="text-[11px] font-bold text-slate-600">Meta Keywords (Pisahkan dengan koma)</label>
                     <input
                       type="text"
                       value={metaKeywordsInput}
                       onChange={(e) => setMetaKeywordsInput(e.target.value)}
                       placeholder="cara buka kafe, pos umkm, kasir gratis, hpp"
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -653,27 +653,27 @@ export const BlogManagement: React.FC = () => {
               {/* Author & Settings Row */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-slate-400">Nama Penulis</label>
+                  <label className="text-[11px] font-bold text-slate-600">Nama Penulis</label>
                   <input
                     type="text"
                     value={authorName}
                     onChange={(e) => setAuthorName(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-slate-400">Tagar / Tags (Pisahkan koma)</label>
+                  <label className="text-[11px] font-bold text-slate-600">Tagar / Tags (Pisahkan koma)</label>
                   <input
                     type="text"
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
                   />
                 </div>
 
                 <div className="flex items-center space-x-6 pt-5">
-                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-300 cursor-pointer">
+                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={isPublished}
@@ -683,7 +683,7 @@ export const BlogManagement: React.FC = () => {
                     <span>Publikasikan Artikel</span>
                   </label>
 
-                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-300 cursor-pointer">
+                  <label className="flex items-center space-x-2 text-xs font-bold text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={isFeatured}
@@ -696,18 +696,18 @@ export const BlogManagement: React.FC = () => {
               </div>
 
               {/* Save & Cancel Buttons */}
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-end space-x-3">
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-end space-x-3">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
                 >
                   Batal
                 </button>
 
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center space-x-2 cursor-pointer"
+                  className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center space-x-2 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
                   <span>{editingPostId ? 'Simpan Perubahan' : 'Terbitkan Artikel Sekarang'}</span>

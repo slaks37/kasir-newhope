@@ -494,21 +494,21 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             </div>
 
             {/* Simulated Camera Viewport with Red Laser Line */}
-            <div className="relative w-full h-48 bg-slate-950 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-amber-500/50 shadow-inner">
+            <div className="relative w-full h-48 bg-slate-100 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-amber-500/60 shadow-inner">
               {/* Corner reticles */}
-              <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-amber-400"></div>
-              <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-amber-400"></div>
-              <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-amber-400"></div>
-              <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-amber-400"></div>
+              <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-amber-500"></div>
+              <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-amber-500"></div>
+              <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-amber-500"></div>
+              <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-amber-500"></div>
 
               {/* Scanning Laser animation */}
-              <div className="absolute left-6 right-6 h-0.5 bg-red-500 shadow-[0_0_12px_#ef4444] animate-pulse"></div>
+              <div className="absolute left-6 right-6 h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse"></div>
 
-              <ScanBarcode className="w-16 h-16 text-slate-600 opacity-40 mb-2" />
-              <p className="text-[11px] text-amber-300 font-bold z-10 text-center px-4">
+              <ScanBarcode className="w-16 h-16 text-slate-400 mb-2" />
+              <p className="text-[11px] text-amber-900 font-bold z-10 text-center px-4">
                 Arahkan Barcode atau QR Code produk ke dalam kotak bidik
               </p>
-              <span className="text-[10px] text-slate-400 mt-1">Auto-focus aktif • Sensor 60 FPS</span>
+              <span className="text-[10px] text-slate-500 mt-1 font-medium">Auto-focus aktif • Sensor 60 FPS</span>
             </div>
 
             {/* Quick 1-Click Scan Triggers from Catalog */}

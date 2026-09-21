@@ -537,14 +537,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
 
           {/* Progress Margin Bar */}
-          <div className="nh-light-panel p-4 rounded-2xl bg-slate-900 text-white space-y-2">
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-amber-400">Komposisi Omzet Terhadap Modal &amp; Laba:</span>
-              <span className="text-slate-300 font-mono">
+              <span className="font-bold text-amber-800">Komposisi Omzet Terhadap Modal &amp; Laba:</span>
+              <span className="text-slate-600 font-mono">
                 Modal: {financialMetrics.netRevenue > 0 ? Math.round((financialMetrics.totalCOGS / financialMetrics.netRevenue) * 100) : 0}% | Laba: {financialMetrics.netProfitMargin}%
               </span>
             </div>
-            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden flex">
+            <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden flex">
               <div
                 style={{
                   width: `${financialMetrics.netRevenue > 0 ? (financialMetrics.totalCOGS / financialMetrics.netRevenue) * 100 : 40}%`,
@@ -666,17 +666,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
           </div>
 
           {/* Active Preset Feature Highlights */}
-          <div className="nh-light-panel p-4 rounded-2xl bg-slate-900 text-white space-y-2.5">
+          <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 text-slate-900 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">
                 Fitur Unggulan Format {activePreset.name}:
               </span>
-              <span className="text-[11px] text-slate-400 font-medium">{activePreset.products.length} produk katalog bawaan</span>
+              <span className="text-[11px] text-slate-500 font-medium">{activePreset.products.length} produk katalog bawaan</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-700">
               {activePreset.features.map((feat, idx) => (
                 <div key={idx} className="flex items-center gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                   <span>{feat.title}</span>
                 </div>
               ))}

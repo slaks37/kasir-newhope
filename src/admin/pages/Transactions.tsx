@@ -108,26 +108,26 @@ function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
             </div>
 
             {/* Payment Summary */}
-            <div className="space-y-2 rounded-xl bg-slate-900 text-white p-4 text-xs">
-              <div className="flex justify-between text-slate-300 font-medium">
+            <div className="space-y-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 p-4 text-xs">
+              <div className="flex justify-between text-slate-600 font-medium">
                 <span>Subtotal Pesanan:</span>
-                <span className="font-mono">{rupiah(data.transaction.subtotal)}</span>
+                <span className="font-mono text-slate-900">{rupiah(data.transaction.subtotal)}</span>
               </div>
               {Number(data.transaction.discount_amount) > 0 && (
-                <div className="flex justify-between text-rose-300 font-medium">
+                <div className="flex justify-between text-rose-600 font-medium">
                   <span>Potongan Diskon:</span>
-                  <span className="font-mono">-{rupiah(data.transaction.discount_amount)}</span>
+                  <span className="font-mono font-bold">-{rupiah(data.transaction.discount_amount)}</span>
                 </div>
               )}
               {Number(data.transaction.tax_amount) > 0 && (
-                <div className="flex justify-between text-amber-300 font-medium">
+                <div className="flex justify-between text-amber-700 font-medium">
                   <span>Pajak Daerah (PB1):</span>
-                  <span className="font-mono">+{rupiah(data.transaction.tax_amount)}</span>
+                  <span className="font-mono font-bold">+{rupiah(data.transaction.tax_amount)}</span>
                 </div>
               )}
-              <div className="flex justify-between border-t border-slate-700 pt-2 font-black text-sm text-white">
+              <div className="flex justify-between border-t border-slate-200 pt-2 font-black text-sm text-slate-900">
                 <span>Total Transaksi:</span>
-                <span className="font-mono text-amber-400 text-base">{rupiah(data.transaction.total_amount)}</span>
+                <span className="font-mono text-amber-600 text-base">{rupiah(data.transaction.total_amount)}</span>
               </div>
             </div>
           </div>
