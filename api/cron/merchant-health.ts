@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { isCronJobEnabled } from '../../services/shared/cron';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -20,6 +21,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ ok: false, error: 'UNAUTHORIZED_CRON' });
   }
+
+  if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
+  if (!isCronJobEnabled('merchant-health')) return res.status(200).json({ ok: true, skipped: true, reason: 'JOB_DISABLED' });
 
   const startedAt = Date.now();
   const runId = `cron-health-${Date.now()}`;

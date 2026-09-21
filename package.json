@@ -16,6 +16,7 @@
     "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts",
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
+    "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",
     "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts",
     "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",

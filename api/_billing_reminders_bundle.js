@@ -203,6 +203,13 @@ function createReminderProvider() {
   };
 }
 
+// services/shared/cron.ts
+function isCronJobEnabled(job) {
+  const configured = process.env.CRON_ENABLED_JOBS;
+  if (configured === void 0) return true;
+  return configured.split(",").map((value) => value.trim()).filter(Boolean).includes(job);
+}
+
 // src/server/billingRemindersHandler.ts
 var database;
 var dryProvider = {
@@ -218,6 +225,7 @@ async function handler(req, res) {
     return res.status(401).json({ ok: false, error: "UNAUTHORIZED_CRON" });
   }
   if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  if (!isCronJobEnabled("billing-reminders")) return res.status(200).json({ ok: true, skipped: true, reason: "JOB_DISABLED" });
   if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, error: "DATABASE_NOT_CONFIGURED" });
   try {
     const dryRun = process.env.BILLING_REMINDERS_ENABLED !== "1";

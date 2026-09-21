@@ -1,6 +1,13 @@
 // src/server/dailyInsightsHandler.ts
 import { timingSafeEqual } from "node:crypto";
 
+// services/shared/cron.ts
+function isCronJobEnabled(job) {
+  const configured = process.env.CRON_ENABLED_JOBS;
+  if (configured === void 0) return true;
+  return configured.split(",").map((value) => value.trim()).filter(Boolean).includes(job);
+}
+
 // services/shared/db.ts
 import fs from "node:fs";
 import pg from "pg";
@@ -2533,6 +2540,7 @@ function createDailyInsightsHandler(connect = () => connectDb({ schema: "ai", ma
     const actual = String(req.headers.authorization || "");
     if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
     if (!expected || Buffer.byteLength(actual) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) return res.status(401).json({ ok: false, error: "UNAUTHORIZED_CRON" });
+    if (!isCronJobEnabled("daily-insights")) return res.status(200).json({ ok: true, skipped: true, reason: "JOB_DISABLED" });
     try {
       database ??= connect().catch((e) => {
         database = void 0;

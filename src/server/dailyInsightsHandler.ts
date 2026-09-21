@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { isCronJobEnabled } from '../../services/shared/cron';
 import { connectDb } from '../../services/shared/db';
 import { computeDailyBrief,cacheDailyBrief } from '../../services/ai/dailyBrief';
 
@@ -9,6 +10,7 @@ export function createDailyInsightsHandler(connect=()=>connectDb({schema:'ai',ma
     const actual=String(req.headers.authorization||'');
     if(req.method!=='GET')return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
     if(!expected||Buffer.byteLength(actual)!==Buffer.byteLength(expected)||!timingSafeEqual(Buffer.from(actual),Buffer.from(expected)))return res.status(401).json({ok:false,error:'UNAUTHORIZED_CRON'});
+    if(!isCronJobEnabled('daily-insights'))return res.status(200).json({ok:true,skipped:true,reason:'JOB_DISABLED'});
     try {
       database??=connect().catch(e=>{database=undefined;throw e;});const db=await database;
       // Oldest cache first: subsequent runs make progress instead of repeatedly

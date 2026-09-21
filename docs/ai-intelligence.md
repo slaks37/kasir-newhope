@@ -1,6 +1,6 @@
 # New Hope Intelligence — implementation and rollout notes
 
-Updated: 2026-09-20. This is a local implementation, not evidence of a production deployment.
+Updated: 2026-09-21. The AI implementation and private database migration are deployed; daily cron activation and signed-in live-provider verification remain pending as detailed below.
 
 ## User story and boundaries
 
@@ -55,7 +55,17 @@ node scripts/batch/daily-insights.mjs --dry-run --business <business-ref> --limi
 
 Dry-run uses read-only transactions and writes no cache, wallet, business or provider data. Normal CLI runs write only derived cache/status documents. The old `--input`, `--window`, and `--lead-time` overrides are rejected so the CLI cannot silently diverge from the app.
 
-## Production rollout — not executed
+## Production rollout status
+
+- GitHub `main` at `e7efea6` deployed successfully on Vercel (`dpl_CwohtDXyj1RexhviNkM6661EucAX`, Production, READY) at `https://kasir.newhope.space`.
+- Supabase project `fqxrhumsgigcgjtlbfuo` received migration `20260920140212` (`business_intelligence_private_cache_and_member_wallet`). Preflight found no orphan identities or duplicate member wallets. Eight wallet rows, total balance 508, and four audit rows were preserved; audit foreign-key deletion remains `SET NULL`.
+- Postflight confirmed cache RLS, private catalog grants, and no access for `anon` / `authenticated`. Security Advisor had no errors or new warnings; the pre-existing leaked-password-protection warning remains.
+- Public production checks returned HTTP 200 for the site, and 401 for unauthenticated assistant credits, group, daily brief, query and daily cron requests.
+- `CRON_ENABLED_JOBS=daily-insights` was saved for Vercel Production. The allowlist is checked after authentication and before any database connection in all three cron handlers. An unset allowlist preserves legacy behavior; a defined empty list disables all jobs. This limits activation to the approved AI summary, not merchant-health or billing-reminders.
+- Creating `CRON_SECRET` requires the user to finish credential entry in Vercel. Its form is prepared but the secret has **not** been saved by the agent. After the user saves it, deploy the allowlist change and verify a daily-insights run. The configured schedule is 01:00 UTC (08:00 WIB); execution precision depends on the Vercel plan.
+- Signed-in production owner / multi-business checks and a live DeepSeek call are still pending. Provider variables exist, but their presence does not establish working credentials or billing. `PGSSLROOTCERT` is still absent, so verified database TLS remains a follow-up; no existing encryption settings were weakened.
+
+### Deployment checklist for subsequent environments
 
 Do not run the full demo bootstrap against a live database; it includes synthetic seed data. Before rollout, take the normal database backup and inspect the intended project/branch, current schema and advisor findings. Follow the existing reviewed maintenance-SQL workflow:
 
@@ -64,7 +74,7 @@ Do not run the full demo bootstrap against a live database; it includes syntheti
 3. Wallet SQL preserves rows and balances, adds audit `business_id`, and replaces only legacy identity FKs with canonical `internal.tenants` FKs. It aborts transactionally if a legacy identity is unresolved. Reconcile exceptions deliberately; do not erase wallets to make it pass.
 4. Configure server-only `DATABASE_URL`, `DEEPSEEK_API_KEY`, and `CRON_SECRET`, plus existing Supabase session verification (`SUPABASE_URL`, `SUPABASE_ANON_KEY`). Optional `DEEPSEEK_MODEL` / `DEEPSEEK_BASE_URL` retain the existing provider contract; base URL must be DeepSeek. Never put the model secret in a `VITE_` variable. Use `PGSSLROOTCERT` with the existing database client for verified database TLS in production.
 5. Build both new serverless bundles and deploy API + UI together after SQL compatibility checks. The new API excludes direct browser top-up and rejects forged trusted-principal headers. Keep the previous app revision available for rollback; additive SQL can remain, and balances/logs must not be discarded.
-6. Test two owners, multiple businesses for one owner, an expired trial / Free account, exhausted credits, provider failure/refund, and a real owner-scoped outlet dataset. Make a deliberately approved small live model call to verify provider credentials/billing, then inspect audit/ledger and runtime logs. These live checks have **not** happened in this worktree.
+6. Test two owners, multiple businesses for one owner, an expired trial / Free account, exhausted credits, provider failure/refund, and a real owner-scoped outlet dataset. Make a deliberately approved small live model call to verify provider credentials/billing, then inspect audit/ledger and runtime logs. These signed-in live checks have **not** happened in this rollout.
 
 Read-only wallet preflight (run only on the intended database; results contain private IDs):
 
@@ -106,7 +116,8 @@ Run `npm run lint`, `npm run test:intelligence`, and `npm run build` from this c
 | Session / plan boundary | Forged trusted-header denial; expired 45-day trial blocks AI; Free hides the panel |
 | Intent regression | 47/47 recognised intents, 6/6 intended fall-throughs, no reported problems |
 | Browser | Actual IntelligencePanel in a synthetic dev-only harness: price scenario rendered, draft save/approval/completion, mandatory completion note, early seven-day measurement denied, Free panel hidden; no captured console warnings/errors |
-| Deployment / live provider | Not verified; SQL not applied to production and no live DeepSeek call made |
+| Deployment / database | Production deployment READY, private SQL migration applied with balances/logs preserved, unauthenticated production API guards verified |
+| Cron activation / live provider | Allowlist regression tests pass (disabled jobs never connect to a database); production secret entry and signed-in live DeepSeek test remain pending |
 
 The browser harness is `scripts/dev/intelligence-preview.html`; it is not a production entry point. It uses synthetic data and does not contact a database or model. Full signed-in production UI → API → live provider verification remains the rollout step, not something the isolated tests can establish.
 

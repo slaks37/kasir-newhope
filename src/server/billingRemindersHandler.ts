@@ -1,6 +1,7 @@
 import { connectDb, type Db } from '../../services/shared/db';
 import { runBillingReminders, type ReminderDependencies } from '../../services/billing/reminders';
 import { createReminderProvider } from '../../services/billing/reminderProvider';
+import { isCronJobEnabled } from '../../services/shared/cron';
 
 let database: Promise<Db> | undefined;
 const dryProvider: ReminderDependencies = {
@@ -13,6 +14,7 @@ export default async function handler(req: any, res: any) {
     return res.status(401).json({ ok: false, error: 'UNAUTHORIZED_CRON' });
   }
   if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
+  if (!isCronJobEnabled('billing-reminders')) return res.status(200).json({ ok: true, skipped: true, reason: 'JOB_DISABLED' });
   if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, error: 'DATABASE_NOT_CONFIGURED' });
   try {
     const dryRun = process.env.BILLING_REMINDERS_ENABLED !== '1';
