@@ -10,6 +10,9 @@ const envs = [
   { key: 'DOKU_SECRET_KEY', val: process.env.DOKU_SECRET_KEY },
   { key: 'DOKU_API_URL', val: process.env.DOKU_API_URL },
   { key: 'DOKU_ALLOWED_CHANNELS', val: process.env.DOKU_ALLOWED_CHANNELS },
+  { key: 'AGNES_API_KEY', val: process.env.AGNES_API_KEY },
+  { key: 'AGNES_BASE_URL', val: process.env.AGNES_BASE_URL },
+  { key: 'AGNES_MODEL', val: process.env.AGNES_MODEL },
   { key: 'DEEPSEEK_API_KEY', val: process.env.DEEPSEEK_API_KEY },
   { key: 'DEEPSEEK_BASE_URL', val: process.env.DEEPSEEK_BASE_URL },
   { key: 'DEEPSEEK_MODEL', val: process.env.DEEPSEEK_MODEL }

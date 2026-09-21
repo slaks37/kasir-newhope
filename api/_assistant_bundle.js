@@ -141,13 +141,21 @@ async function withRetry(fn, attempts = 15) {
 
 // services/ai/llm.ts
 function getLlmConfig() {
+  const agnesKey = (process.env.AGNES_API_KEY || "").trim();
+  if (agnesKey) {
+    const rawBase2 = (process.env.AGNES_BASE_URL || "https://apihub.agnes-ai.com/v1").trim();
+    const baseUrl2 = rawBase2.replace(/\/+$/, "");
+    if (!["https://apihub.agnes-ai.com", "https://apihub.agnes-ai.com/v1"].includes(baseUrl2)) return null;
+    const model2 = (process.env.AGNES_MODEL || "agnes-latest").trim() || "agnes-latest";
+    return { apiKey: agnesKey, baseUrl: baseUrl2, model: model2, provider: "Agnes AI" };
+  }
   const apiKey = (process.env.DEEPSEEK_API_KEY || "").trim();
   if (!apiKey) return null;
   const rawBase = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").trim();
   const baseUrl = rawBase.replace(/\/+$/, "");
   if (!["https://api.deepseek.com", "https://api.deepseek.com/v1"].includes(baseUrl)) return null;
   const model = (process.env.DEEPSEEK_MODEL || "deepseek-chat").trim() || "deepseek-chat";
-  return { apiKey, baseUrl, model };
+  return { apiKey, baseUrl, model, provider: "DeepSeek" };
 }
 var LLM_PROVIDER_LABEL = "DeepSeek";
 var LLM_TIMEOUT_MS = 3e4;
@@ -218,14 +226,14 @@ Balas hanya dengan satu objek json valid.`;
       }
       throw new Error(
         scrubSecret(
-          `${LLM_PROVIDER_LABEL} menolak permintaan (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+          `${cfg.provider || LLM_PROVIDER_LABEL} menolak permintaan (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
           cfg.apiKey
         )
       );
     }
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content ?? "";
-    if (typeof text !== "string" || !text.trim()) throw new Error("DeepSeek mengembalikan jawaban kosong.");
+    if (typeof text !== "string" || !text.trim()) throw new Error(`${cfg.provider || LLM_PROVIDER_LABEL} mengembalikan jawaban kosong.`);
     return {
       text: typeof text === "string" ? text : "",
       promptTokens: Number(data.usage?.prompt_tokens ?? 0) || 0,
@@ -234,7 +242,7 @@ Balas hanya dengan satu objek json valid.`;
   } catch (err) {
     const aborted = timedOut || err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
     if (aborted && !(external && external.aborted)) {
-      throw new Error(`Permintaan ke ${LLM_PROVIDER_LABEL} melewati batas waktu ${LLM_TIMEOUT_MS / 1e3} detik.`);
+      throw new Error(`Permintaan ke ${cfg?.provider || LLM_PROVIDER_LABEL} melewati batas waktu ${LLM_TIMEOUT_MS / 1e3} detik.`);
     }
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(scrubSecret(message, cfg.apiKey));
@@ -2282,8 +2290,142 @@ function mergeWithClient(fromDb, fromClient, provenance) {
   return { aggregates, provenance: p };
 }
 
+// src/config/freePlanPolicy.ts
+var FREE_PLAN_ID = "plan-free-lifetime";
+var FREE_PRODUCT_LIMIT = 10;
+function isFreePlan(sub, now = Date.now()) {
+  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
+  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
+  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
+  const end = Date.parse(sub.currentPeriodEnd);
+  return trial && Number.isFinite(end) && now >= end;
+}
+function validateFreeSelection(value) {
+  const v = value;
+  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
+  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
+  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
+}
+
+// src/config/saasPlans.ts
+var TRIAL_PLAN_ID = "plan-free";
+var TRIAL_DAYS = 45;
+var TRIAL_READ_ONLY_DAYS = 14;
+var DAY_MS = 864e5;
+var SAAS_PLANS = [
+  {
+    id: FREE_PLAN_ID,
+    name: "Free Selamanya",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 1,
+    isActive: true,
+    productLimit: 10,
+    aiQuotaMonthly: 0,
+    dashboardAccessLevel: "BASIC",
+    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
+  },
+  {
+    id: TRIAL_PLAN_ID,
+    name: "Free Trial 45 Hari",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 2,
+    isActive: true,
+    isTrial: true,
+    trialDays: TRIAL_DAYS,
+    gracePeriodDays: TRIAL_READ_ONLY_DAYS,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "ADVANCED",
+    features: [
+      "Seluruh fitur Tier Pro selama 45 hari",
+      "Hingga 2 outlet",
+      "Produk dan pengguna tidak terbatas",
+      "Kuota AI trial terbatas",
+      "WhatsApp assisted melalui wa.me",
+      "Tanpa kartu kredit (berlaku 1x per akun toko)",
+      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
+    ]
+  },
+  {
+    id: "plan-plus-monthly",
+    name: "Tier Plus",
+    tierLevel: 2,
+    billingCycle: "MONTHLY",
+    priceIdr: 99e3,
+    priceYearlyIdr: 79200,
+    annualDiscountPercent: 20,
+    currency: "IDR",
+    maxOutlets: 2,
+    isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "FULL",
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+    features: [
+      "POS, transaksi, QRIS, dan struk",
+      "2 outlet termasuk dalam paket",
+      "Produk dan kategori tidak terbatas",
+      "Inventori dan workflow sektor dasar",
+      "Pelanggan, shift, kas, dan laporan omzet",
+      "AI Analyst kuota dasar",
+      "Support standar"
+    ]
+  },
+  {
+    id: "plan-pro-monthly",
+    name: "Tier Pro",
+    tierLevel: 3,
+    billingCycle: "MONTHLY",
+    priceIdr: 299e3,
+    priceYearlyIdr: 248170,
+    annualDiscountPercent: 17,
+    currency: "IDR",
+    maxOutlets: 4,
+    isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 90,
+    dashboardAccessLevel: "ADVANCED",
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+    features: [
+      "Semua fitur Tier Plus",
+      "4 outlet termasuk dalam paket",
+      "Inventori multi-location, transfer stok, dan recursive BOM",
+      "Smart Labor, absensi, komisi, bonus, dan payroll",
+      "Workflow vertikal lengkap untuk tiap sektor",
+      "WhatsApp Lifecycle Center",
+      "Advanced AI Business Analyst dan laporan lintas outlet",
+      "Priority support"
+    ]
+  }
+];
+var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
+function findSaaSPlan(planId) {
+  return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;
+}
+
 // services/ai/wallet.ts
 var MONTHLY_GRANT = 30;
+async function getTenantGrant(db, tenantId) {
+  try {
+    const { rows } = await db.query(
+      "SELECT plan_id FROM contract.subscription_operations WHERE tenant_id=$1",
+      [tenantId]
+    );
+    const planId = rows[0]?.plan_id || TRIAL_PLAN_ID;
+    const plan = findSaaSPlan(planId);
+    return plan?.aiQuotaMonthly ?? MONTHLY_GRANT;
+  } catch {
+    return MONTHLY_GRANT;
+  }
+}
 async function keUuid(db, merchantId, businessId) {
   if (!merchantId || merchantId === "local-development" || !businessId) throw new Error("AUTHENTICATION_REQUIRED");
   const owned = await db.query(
@@ -2334,26 +2476,31 @@ async function ambilDompet(db, merchantIdMentah, businessId) {
   }
 }
 async function ambilAtauBuat(db, merchantId) {
+  const grant = await getTenantGrant(db, merchantId);
   const dibuat = await db.query(
     `INSERT INTO ai.merchant_ai_credits
        (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
      VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
      ON CONFLICT (merchant_id) DO NOTHING
      RETURNING *`,
-    [merchantId, MONTHLY_GRANT, periodeBerikutnya()]
+    [merchantId, grant, periodeBerikutnya()]
   );
   if (dibuat.rows.length) return keWallet(dibuat.rows[0]);
   const { rows } = await db.query(
     `UPDATE ai.merchant_ai_credits
-        SET balance         = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN monthly_grant ELSE balance END,
+        SET monthly_grant   = $2,
+            balance         = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
+                                   THEN $2
+                                   WHEN monthly_grant < $2
+                                   THEN balance + ($2 - monthly_grant)
+                                   ELSE balance END,
             used_this_month = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
                                    THEN 0 ELSE used_this_month END,
             period_reset_at = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN $2::timestamptz ELSE period_reset_at END
+                                   THEN $3::timestamptz ELSE period_reset_at END
       WHERE merchant_id = $1
       RETURNING *`,
-    [merchantId, periodeBerikutnya()]
+    [merchantId, grant, periodeBerikutnya()]
   );
   return keWallet(rows[0]);
 }
@@ -4161,124 +4308,6 @@ function resolveIntentFromAggregates(p, a, insights, ctx) {
   }
 }
 
-// src/config/freePlanPolicy.ts
-var FREE_PLAN_ID = "plan-free-lifetime";
-var FREE_PRODUCT_LIMIT = 10;
-function isFreePlan(sub, now = Date.now()) {
-  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
-  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
-  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
-  const end = Date.parse(sub.currentPeriodEnd);
-  return trial && Number.isFinite(end) && now >= end;
-}
-function validateFreeSelection(value) {
-  const v = value;
-  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
-  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
-  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
-}
-
-// src/config/saasPlans.ts
-var TRIAL_PLAN_ID = "plan-free";
-var TRIAL_DAYS = 45;
-var TRIAL_READ_ONLY_DAYS = 14;
-var DAY_MS = 864e5;
-var SAAS_PLANS = [
-  {
-    id: FREE_PLAN_ID,
-    name: "Free Selamanya",
-    tierLevel: 1,
-    billingCycle: "MONTHLY",
-    priceIdr: 0,
-    currency: "IDR",
-    maxOutlets: 1,
-    isActive: true,
-    productLimit: 10,
-    aiQuotaMonthly: 0,
-    dashboardAccessLevel: "BASIC",
-    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
-  },
-  {
-    id: TRIAL_PLAN_ID,
-    name: "Free Trial 45 Hari",
-    tierLevel: 1,
-    billingCycle: "MONTHLY",
-    priceIdr: 0,
-    currency: "IDR",
-    maxOutlets: 2,
-    isActive: true,
-    isTrial: true,
-    trialDays: TRIAL_DAYS,
-    gracePeriodDays: TRIAL_READ_ONLY_DAYS,
-    productLimit: -1,
-    aiQuotaMonthly: 30,
-    dashboardAccessLevel: "ADVANCED",
-    features: [
-      "Seluruh fitur Tier Pro selama 45 hari",
-      "Hingga 2 outlet",
-      "Produk dan pengguna tidak terbatas",
-      "Kuota AI trial terbatas",
-      "WhatsApp assisted melalui wa.me",
-      "Tanpa kartu kredit (berlaku 1x per akun toko)",
-      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
-    ]
-  },
-  {
-    id: "plan-plus-monthly",
-    name: "Tier Plus",
-    tierLevel: 2,
-    billingCycle: "MONTHLY",
-    priceIdr: 99e3,
-    priceYearlyIdr: 79200,
-    annualDiscountPercent: 20,
-    currency: "IDR",
-    maxOutlets: 2,
-    isActive: true,
-    productLimit: -1,
-    aiQuotaMonthly: 30,
-    dashboardAccessLevel: "FULL",
-    extraOutletPriceIdr: 79200,
-    extraOutletYearlyIdr: 63360,
-    features: [
-      "POS, transaksi, QRIS, dan struk",
-      "2 outlet termasuk dalam paket",
-      "Produk dan kategori tidak terbatas",
-      "Inventori dan workflow sektor dasar",
-      "Pelanggan, shift, kas, dan laporan omzet",
-      "AI Analyst kuota dasar",
-      "Support standar"
-    ]
-  },
-  {
-    id: "plan-pro-monthly",
-    name: "Tier Pro",
-    tierLevel: 3,
-    billingCycle: "MONTHLY",
-    priceIdr: 299e3,
-    priceYearlyIdr: 248170,
-    annualDiscountPercent: 17,
-    currency: "IDR",
-    maxOutlets: 4,
-    isActive: true,
-    productLimit: -1,
-    aiQuotaMonthly: 90,
-    dashboardAccessLevel: "ADVANCED",
-    extraOutletPriceIdr: 79200,
-    extraOutletYearlyIdr: 63360,
-    features: [
-      "Semua fitur Tier Plus",
-      "4 outlet termasuk dalam paket",
-      "Inventori multi-location, transfer stok, dan recursive BOM",
-      "Smart Labor, absensi, komisi, bonus, dan payroll",
-      "Workflow vertikal lengkap untuk tiap sektor",
-      "WhatsApp Lifecycle Center",
-      "Advanced AI Business Analyst dan laporan lintas outlet",
-      "Priority support"
-    ]
-  }
-];
-var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
-
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
   if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
@@ -5079,7 +5108,7 @@ function registerAssistantRoutes(app, database) {
   });
   const llm = getLlmConfig();
   console.log(
-    llm ? `[ai] Layer 3 aktif \u2014 ${LLM_PROVIDER_LABEL}, model "${llm.model}", timeout ${LLM_TIMEOUT_MS / 1e3}s.` : "[ai] Layer 3 NONAKTIF \u2014 DEEPSEEK_API_KEY kosong. Semua jawaban deterministik, tidak ada credit terpotong."
+    llm ? `[ai] Layer 3 aktif \u2014 ${llm.provider || LLM_PROVIDER_LABEL}, model "${llm.model}", timeout ${LLM_TIMEOUT_MS / 1e3}s.` : "[ai] Layer 3 NONAKTIF \u2014 Kunci API LLM (AGNES_API_KEY / DEEPSEEK_API_KEY) kosong. Semua jawaban deterministik, tidak ada credit terpotong."
   );
 }
 

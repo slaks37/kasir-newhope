@@ -14,6 +14,7 @@ export interface LlmConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  provider: string;
 }
 
 /**
@@ -21,8 +22,19 @@ export interface LlmConfig {
  * hardcoded, never logged, and never echoed into a response body.
  * Returns null when the key is absent, which is the signal every route uses to
  * fall back to its offline canned answer instead of failing.
+ *
+ * Mendukung Agnes AI (rekomendasi biaya hemat) dan DeepSeek (fallback).
  */
 export function getLlmConfig(): LlmConfig | null {
+  const agnesKey = (process.env.AGNES_API_KEY || '').trim();
+  if (agnesKey) {
+    const rawBase = (process.env.AGNES_BASE_URL || 'https://apihub.agnes-ai.com/v1').trim();
+    const baseUrl = rawBase.replace(/\/+$/, '');
+    if (!['https://apihub.agnes-ai.com', 'https://apihub.agnes-ai.com/v1'].includes(baseUrl)) return null;
+    const model = (process.env.AGNES_MODEL || 'agnes-latest').trim() || 'agnes-latest';
+    return { apiKey: agnesKey, baseUrl, model, provider: 'Agnes AI' };
+  }
+
   const apiKey = (process.env.DEEPSEEK_API_KEY || '').trim();
   if (!apiKey) return null;
 
@@ -32,7 +44,7 @@ export function getLlmConfig(): LlmConfig | null {
   if (!['https://api.deepseek.com', 'https://api.deepseek.com/v1'].includes(baseUrl)) return null;
   const model = (process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim() || 'deepseek-chat';
 
-  return { apiKey, baseUrl, model };
+  return { apiKey, baseUrl, model, provider: 'DeepSeek' };
 }
 
 /** Provider name shown in logs and status text. Never includes the key. */
@@ -143,7 +155,7 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
       }
       throw new Error(
         scrubSecret(
-          `${LLM_PROVIDER_LABEL} menolak permintaan (HTTP ${response.status})${detail ? `: ${detail}` : ''}`,
+          `${cfg.provider || LLM_PROVIDER_LABEL} menolak permintaan (HTTP ${response.status})${detail ? `: ${detail}` : ''}`,
           cfg.apiKey
         )
       );
@@ -151,7 +163,7 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
 
     const data = (await response.json()) as ChatCompletionResponse;
     const text = data.choices?.[0]?.message?.content ?? '';
-    if (typeof text !== 'string' || !text.trim()) throw new Error('DeepSeek mengembalikan jawaban kosong.');
+    if (typeof text !== 'string' || !text.trim()) throw new Error(`${cfg.provider || LLM_PROVIDER_LABEL} mengembalikan jawaban kosong.`);
 
     return {
       text: typeof text === 'string' ? text : '',
@@ -163,7 +175,7 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
       timedOut ||
       (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted')));
     if (aborted && !(external && external.aborted)) {
-      throw new Error(`Permintaan ke ${LLM_PROVIDER_LABEL} melewati batas waktu ${LLM_TIMEOUT_MS / 1000} detik.`);
+      throw new Error(`Permintaan ke ${cfg?.provider || LLM_PROVIDER_LABEL} melewati batas waktu ${LLM_TIMEOUT_MS / 1000} detik.`);
     }
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(scrubSecret(message, cfg.apiKey));

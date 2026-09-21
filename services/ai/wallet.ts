@@ -20,8 +20,23 @@
 
 import type { Db } from '../shared/db';
 import type { AiCreditWallet } from '../../src/lib/assistant/types';
+import { findSaaSPlan, TRIAL_PLAN_ID } from '../../src/config/saasPlans';
 
 const MONTHLY_GRANT = 30;
+
+async function getTenantGrant(db: Db, tenantId: string): Promise<number> {
+  try {
+    const { rows } = await db.query(
+      'SELECT plan_id FROM contract.subscription_operations WHERE tenant_id=$1',
+      [tenantId]
+    );
+    const planId = rows[0]?.plan_id || TRIAL_PLAN_ID;
+    const plan = findSaaSPlan(planId);
+    return plan?.aiQuotaMonthly ?? MONTHLY_GRANT;
+  } catch {
+    return MONTHLY_GRANT;
+  }
+}
 
 /**
  * Identitas merchant -> UUID tenant, lewat penerjemah bersama.
@@ -106,13 +121,14 @@ export async function ambilDompet(db: Db, merchantIdMentah: string, businessId?:
 }
 
 async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet> {
+  const grant = await getTenantGrant(db, merchantId);
   const dibuat = await db.query(
     `INSERT INTO ai.merchant_ai_credits
        (merchant_id, tenant_id, balance, monthly_grant, used_this_month, period_reset_at)
      VALUES ($1, $1, $2, $2, 0, $3::timestamptz)
      ON CONFLICT (merchant_id) DO NOTHING
      RETURNING *`,
-    [merchantId, MONTHLY_GRANT, periodeBerikutnya()]
+    [merchantId, grant, periodeBerikutnya()]
   );
   if (dibuat.rows.length) return keWallet(dibuat.rows[0]);
 
@@ -121,15 +137,19 @@ async function ambilAtauBuat(db: Db, merchantId: string): Promise<AiCreditWallet
   // menghapus pemakaian yang baru saja dicatat yang menang.
   const { rows } = await db.query(
     `UPDATE ai.merchant_ai_credits
-        SET balance         = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN monthly_grant ELSE balance END,
+        SET monthly_grant   = $2,
+            balance         = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
+                                   THEN $2
+                                   WHEN monthly_grant < $2
+                                   THEN balance + ($2 - monthly_grant)
+                                   ELSE balance END,
             used_this_month = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
                                    THEN 0 ELSE used_this_month END,
             period_reset_at = CASE WHEN period_reset_at <= CURRENT_TIMESTAMP
-                                   THEN $2::timestamptz ELSE period_reset_at END
+                                   THEN $3::timestamptz ELSE period_reset_at END
       WHERE merchant_id = $1
       RETURNING *`,
-    [merchantId, periodeBerikutnya()]
+    [merchantId, grant, periodeBerikutnya()]
   );
   return keWallet(rows[0]);
 }

@@ -421,7 +421,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
     const llm = getLlmConfig();
     console.log(
       llm
-        ? `[ai] Layer 3 aktif — ${LLM_PROVIDER_LABEL}, model "${llm.model}", timeout ${LLM_TIMEOUT_MS / 1000}s.`
-        : '[ai] Layer 3 NONAKTIF — DEEPSEEK_API_KEY kosong. Semua jawaban deterministik, tidak ada credit terpotong.'
+        ? `[ai] Layer 3 aktif — ${llm.provider || LLM_PROVIDER_LABEL}, model "${llm.model}", timeout ${LLM_TIMEOUT_MS / 1000}s.`
+        : '[ai] Layer 3 NONAKTIF — Kunci API LLM (AGNES_API_KEY / DEEPSEEK_API_KEY) kosong. Semua jawaban deterministik, tidak ada credit terpotong.'
     );
 }

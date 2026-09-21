@@ -77,6 +77,9 @@ services:
       # Kunci LLM HANYA diberikan ke service yang memakainya. Service lain tidak
       # perlu tahu kunci ini ada — kebocoran dari proses yang tidak memakainya
       # adalah risiko yang tidak perlu diambil.
+      AGNES_API_KEY: ${AGNES_API_KEY:-}
+      AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
+      AGNES_MODEL: ${AGNES_MODEL:-agnes-latest}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
     depends_on:
