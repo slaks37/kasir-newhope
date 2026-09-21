@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
-import { Table } from '../../types';
+import { Table, Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
 import { newId } from '../../lib/ids';
@@ -25,14 +25,29 @@ import {
   Store,
   ChefHat,
   Waves,
+  CreditCard,
+  ShoppingCart,
 } from 'lucide-react';
 import { KitchenDisplaySystem } from './KitchenDisplaySystem';
 import { LaundryPipelineView } from './LaundryPipelineView';
 import { CarwashPipelineView } from './CarwashPipelineView';
 import { BarbershopBookingView } from './BarbershopBookingView';
+import { CheckoutModal } from '../pos/CheckoutModal';
 
 export const TableManager: React.FC = () => {
-  const { tables, saveTable, deleteTable, settings, activateBusinessSector, kdsTickets, carwashQueue, bookings } = usePOS();
+  const {
+    tables,
+    saveTable,
+    deleteTable,
+    settings,
+    activateBusinessSector,
+    kdsTickets,
+    carwashQueue,
+    bookings,
+    orders,
+    heldOrders,
+    recallHoldOrder,
+  } = usePOS();
 
   const activeSectorKey: BusinessSector = settings.businessSector || 'FNB';
   const activePreset = BUSINESS_PRESETS[activeSectorKey] || BUSINESS_PRESETS.FNB;
@@ -40,6 +55,7 @@ export const TableManager: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'LAYOUT' | 'SPECIALIZED'>('LAYOUT');
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
+  const [tableOrderToPay, setTableOrderToPay] = useState<Order | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('ALL');
 
@@ -385,15 +401,83 @@ export const TableManager: React.FC = () => {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    saveTable({ ...selectedTable, status: 'AVAILABLE', activeOrder: undefined, customerName: undefined });
-                    setSelectedTable(null);
-                  }}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-2xl shadow-sm transition-all active:scale-95 cursor-pointer"
-                >
-                  Kosongkan {layoutTerm.itemNoun} (Selesai Transaksi)
-                </button>
+                {/* Actions for Occupied Table */}
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const orderId = selectedTable.currentOrderId || selectedTable.activeOrder?.id;
+                      const foundOrder =
+                        orders.find((o) => o.id === orderId) ||
+                        heldOrders.find((o) => o.id === orderId);
+                      if (foundOrder) {
+                        setTableOrderToPay(foundOrder);
+                      } else {
+                        setTableOrderToPay({
+                          id: selectedTable.activeOrder!.id,
+                          orderNumber: 1,
+                          date: new Date().toISOString(),
+                          items: [],
+                          orderType: 'DINE_IN',
+                          tableId: selectedTable.id,
+                          tableName: selectedTable.name,
+                          customer: selectedTable.customerName
+                            ? {
+                                id: 'c-walkin',
+                                name: selectedTable.customerName,
+                                phone: '',
+                                points: 0,
+                                tier: 'BRONZE',
+                                totalSpent: selectedTable.activeOrder!.totalAmount,
+                                visitCount: 1,
+                                lastVisit: new Date().toISOString(),
+                              }
+                            : undefined,
+                          subtotal: selectedTable.activeOrder!.totalAmount,
+                          discountTotal: 0,
+                          taxTotal: 0,
+                          serviceChargeTotal: 0,
+                          total: selectedTable.activeOrder!.totalAmount,
+                          paymentMethod: 'CASH',
+                          paymentStatus: 'PENDING',
+                          cashierName: 'Kasir',
+                          shiftId: 'shift-1',
+                          status: 'HOLD',
+                        });
+                      }
+                    }}
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-2xl shadow-md flex items-center justify-center space-x-2 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>Bayar Tagihan Meja Ini ({formatRupiah(selectedTable.activeOrder.totalAmount)})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const orderId = selectedTable.currentOrderId || selectedTable.activeOrder?.id;
+                      if (orderId) {
+                        recallHoldOrder(orderId);
+                        setSelectedTable(null);
+                      }
+                    }}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-2xl flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Buka di Kasir / Tambah Menu</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveTable({ ...selectedTable, status: 'AVAILABLE', activeOrder: undefined, customerName: undefined, currentOrderId: undefined });
+                      setSelectedTable(null);
+                    }}
+                    className="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 font-semibold text-[11px] rounded-xl transition-all cursor-pointer border border-slate-200"
+                  >
+                    Kosongkan {layoutTerm.itemNoun} Tanpa Bayar
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-3">
@@ -501,6 +585,18 @@ export const TableManager: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Checkout Modal for Table Payment */}
+      {tableOrderToPay && (
+        <CheckoutModal
+          pendingOrderToPay={tableOrderToPay}
+          onClose={() => setTableOrderToPay(null)}
+          onPaymentSuccess={() => {
+            setTableOrderToPay(null);
+            setSelectedTable(null);
+          }}
+        />
       )}
     </div>
   );

@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
-import { PauseCircle, Play, Trash2, X } from 'lucide-react';
+import { PauseCircle, Play, Trash2, X, CreditCard, Clock } from 'lucide-react';
+import { CheckoutModal } from './CheckoutModal';
 
 interface HoldOrdersModalProps {
   onClose: () => void;
@@ -9,6 +11,7 @@ interface HoldOrdersModalProps {
 
 export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => {
   const { heldOrders, recallHoldOrder, cancelHoldOrder } = usePOS();
+  const [orderToPay, setOrderToPay] = useState<Order | null>(null);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
@@ -17,11 +20,13 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <PauseCircle className="w-5 h-5 text-amber-600" />
-            <h3 className="font-bold text-base text-slate-900">Daftar Pesanan Tertahan (Hold)</h3>
+            <h3 className="font-extrabold text-base text-slate-900">
+              Daftar Transaksi Tersimpan &amp; Belum Lunas (Open Bill)
+            </h3>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
+            className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -33,7 +38,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
             <div className="text-center py-12 text-slate-400 space-y-2">
               <PauseCircle className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
               <p className="font-semibold text-slate-500 text-xs">
-                Tidak ada pesanan yang ditahan.
+                Tidak ada pesanan yang tersimpan atau belum lunas.
               </p>
             </div>
           ) : (
@@ -44,7 +49,12 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
               >
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                   <div>
-                    <span className="font-bold text-sm text-amber-800">{order.id}</span>
+                    <div className="flex items-center space-x-1.5 mb-0.5">
+                      <span className="font-bold text-sm text-amber-800 font-mono">{order.id}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-300">
+                        BELUM LUNAS
+                      </span>
+                    </div>
                     <span className="text-[10px] text-slate-500 block font-mono">
                       {formatDateTime(order.date)}
                     </span>
@@ -71,11 +81,31 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                   ))}
                 </div>
 
+                {/* Laundry Schedule Info if exists */}
+                {(order.dropOffDate || order.completionDate || order.completionEstimate) && (
+                  <div className="p-2 bg-indigo-50/70 rounded-xl border border-indigo-100/80 text-[10px] space-y-0.5">
+                    {order.dropOffDate && (
+                      <div className="text-slate-600 flex justify-between">
+                        <span>📅 Tgl Masuk:</span>
+                        <span className="font-bold text-slate-800">{order.dropOffDate}</span>
+                      </div>
+                    )}
+                    {(order.completionDate || order.completionEstimate) && (
+                      <div className="text-indigo-900 flex justify-between font-bold">
+                        <span>⏰ Estimasi Ambil:</span>
+                        <span className="font-black text-indigo-700">
+                          {order.completionDate || order.completionEstimate}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Footer Buttons */}
-                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-200">
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-200">
                   <button
                     onClick={() => cancelHoldOrder(order.id)}
-                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold flex items-center space-x-1"
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold flex items-center space-x-1 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Hapus</span>
@@ -86,10 +116,18 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                       recallHoldOrder(order.id);
                       onClose();
                     }}
-                    className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold flex items-center space-x-1 shadow-md"
+                    className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center space-x-1 cursor-pointer"
                   >
-                    <Play className="w-3.5 h-3.5 fill-slate-950" />
+                    <Play className="w-3.5 h-3.5 fill-slate-800" />
                     <span>Panggil Ke Cart</span>
+                  </button>
+
+                  <button
+                    onClick={() => setOrderToPay(order)}
+                    className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center space-x-1 shadow-md cursor-pointer"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>Bayar Sekarang</span>
                   </button>
                 </div>
               </div>
@@ -97,6 +135,18 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
           )}
         </div>
       </div>
+
+      {/* Checkout Modal for Pending Order Payment */}
+      {orderToPay && (
+        <CheckoutModal
+          pendingOrderToPay={orderToPay}
+          onClose={() => setOrderToPay(null)}
+          onPaymentSuccess={() => {
+            setOrderToPay(null);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 };

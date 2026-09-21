@@ -233,9 +233,26 @@ interface POSContextType {
   syncStatus: SyncStatus;
   /** Memaksa pengiriman sekarang. Dipakai tombol "coba lagi". */
   forceSync: () => void;
-  holdOrder: (notes?: string) => void;
+  holdOrder: (
+    notes?: string,
+    extraOptions?: {
+      dropOffDate?: string;
+      completionDate?: string;
+      storageRack?: string;
+      vehiclePlate?: string;
+      vehicleModel?: string;
+      assignedCrew?: string[];
+      isSplitBill?: boolean;
+    }
+  ) => Order | null;
   recallHoldOrder: (orderId: string) => void;
   cancelHoldOrder: (orderId: string) => void;
+  payPendingOrder: (
+    orderId: string,
+    paymentMethod: PaymentMethod,
+    cashReceived?: number,
+    qrisRef?: string
+  ) => Order | null;
   updateOrderLaundryStatus: (orderId: string, status: 'PROSES_CUCI' | 'SELESAI_SIAP_AMBIL' | 'SUDAH_DIAMBIL') => void;
   updateLaundryStage: (orderId: string, stage: 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI', storageRack?: string) => void;
   sendLaundryWaNotification: (order: Order) => string;
@@ -1994,11 +2011,39 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (soundEnabled) playPOSSound('delete');
   };
 
-  // Hold Order
-  const holdOrder = (notes?: string) => {
-    if (cart.length === 0) return;
+  // Hold Order / Save Pending Transaction (Bayar Nanti)
+  const holdOrder = (
+    notes?: string,
+    extraOptions?: {
+      dropOffDate?: string;
+      completionDate?: string;
+      storageRack?: string;
+      vehiclePlate?: string;
+      vehicleModel?: string;
+      assignedCrew?: string[];
+      isSplitBill?: boolean;
+    }
+  ): Order | null => {
+    if (cart.length === 0) return null;
     const subtotal = cart.reduce((sum, i) => sum + i.totalPrice, 0);
     const invoiceNum = generateInvoiceNumber(orders.length + heldOrders.length);
+    const discountTotal = cart.reduce((s, i) => s + i.discountAmount, 0);
+    const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
+    const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
+    const grandTotal = Math.max(0, subtotal + taxTotal + serviceChargeTotal - discountTotal);
+
+    const isLaundry = settings.businessSector === 'LAUNDRY';
+    const isCarwash = settings.businessSector === 'CARWASH';
+    const isFnb = settings.businessSector === 'FNB';
+
+    const nowFormatted = new Date().toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const laundryDefaultCompletion = isLaundry ? 'Besok, 16:00 WIB' : undefined;
 
     const held: Order = {
       id: invoiceNum,
@@ -2009,31 +2054,109 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       tableId: selectedTable?.id,
       tableName: selectedTable?.name,
       customer: selectedCustomer || undefined,
+      servedByStaffId: selectedStaff?.id,
+      servedByStaffName: selectedStaff?.name || shift.cashierName,
       subtotal,
-      discountTotal: cart.reduce((s, i) => s + i.discountAmount, 0),
-      taxTotal: settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0,
-      serviceChargeTotal: settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0,
-      total: subtotal,
+      discountTotal,
+      taxTotal,
+      serviceChargeTotal,
+      total: grandTotal,
       paymentMethod: 'CASH',
       paymentStatus: 'PENDING',
       cashierName: shift.cashierName,
       shiftId: shift.id,
       status: 'HOLD',
       notes,
+      dropOffDate: extraOptions?.dropOffDate || (isLaundry ? nowFormatted : undefined),
+      completionDate: extraOptions?.completionDate || laundryDefaultCompletion,
+      completionEstimate: extraOptions?.completionDate || laundryDefaultCompletion,
+      laundryStatus: isLaundry ? 'PROSES_CUCI' : undefined,
+      laundryStage: isLaundry ? 'ANTRIAN' : undefined,
+      storageRack: extraOptions?.storageRack,
+      vehiclePlate: extraOptions?.vehiclePlate,
+      vehicleModel: extraOptions?.vehicleModel,
+      assignedCrew: extraOptions?.assignedCrew,
+      carwashStage: isCarwash ? 'ANTRIAN_BAY' : undefined,
+      isSplitBill: extraOptions?.isSplitBill,
+      businessSector: settings.businessSector,
+      userId: currentUser.id,
     };
+
+    // Auto-create KDS Ticket if F&B sector so kitchen can start preparing
+    if (isFnb) {
+      const kdsTicket: KDSTicket = {
+        id: newId('kds'),
+        orderId: held.id,
+        orderNumber: held.orderNumber,
+        tableName: held.tableName || (held.orderType === 'DINE_IN' ? 'Meja 01' : 'Takeaway / Kasir'),
+        orderType: held.orderType,
+        items: held.items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          quantity: i.quantity,
+          variantName: i.variantName,
+          selectedModifiers: i.selectedModifiers,
+          notes: i.itemNotes,
+          isCompleted: false,
+        })),
+        notes: held.notes,
+        createdAt: held.date,
+        status: 'PENDING',
+      };
+      setKdsTickets((prev) => [kdsTicket, ...prev]);
+    }
+
+    // Auto-create Carwash Queue item if Carwash sector
+    if (isCarwash && (extraOptions?.vehiclePlate || held.tableName)) {
+      const queueItem: CarwashQueueItem = {
+        id: newId('cwq'),
+        orderId: held.id,
+        vehiclePlate: extraOptions?.vehiclePlate || 'B 1000 POS',
+        vehicleModel: extraOptions?.vehicleModel || 'Kendaraan Tamu',
+        customerName: held.customer?.name || 'Pelanggan Walk-In',
+        customerPhone: held.customer?.phone || '',
+        serviceName: held.items[0]?.name || 'Cuci Kendaraan',
+        assignedBayId: selectedTable?.id,
+        assignedBayName: selectedTable?.name || 'Bay Cuci',
+        assignedCrew: extraOptions?.assignedCrew || (selectedStaff ? [selectedStaff.name] : ['Operator']),
+        stage: 'ANTRIAN_BAY',
+        enteredAt: held.date,
+        notes: held.notes,
+      };
+      setCarwashQueue((prev) => [queueItem, ...prev]);
+    }
 
     if (selectedTable) {
       setTables((prev) =>
-        prev.map((t) => (t.id === selectedTable.id ? { ...t, status: 'OCCUPIED', currentOrderId: held.id } : t))
+        prev.map((t) =>
+          t.id === selectedTable.id
+            ? {
+                ...t,
+                status: 'OCCUPIED',
+                currentOrderId: held.id,
+                activeOrder: {
+                  id: held.id,
+                  itemsCount: held.items.length,
+                  totalAmount: held.total,
+                  startTime: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+                },
+                customerName: held.customer?.name,
+              }
+            : t
+        )
       );
     }
 
     setHeldOrders((prev) => [held, ...prev]);
+    setOrders((prev) => [held, ...prev]);
     clearCart();
+    setSelectedTable(null);
+
+    return held;
   };
 
   const recallHoldOrder = (orderId: string) => {
-    const target = heldOrders.find((o) => o.id === orderId);
+    const target = heldOrders.find((o) => o.id === orderId) || orders.find((o) => o.id === orderId && o.status === 'HOLD');
     if (!target) return;
 
     setCart(target.items);
@@ -2045,11 +2168,102 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setHeldOrders((prev) => prev.filter((o) => o.id !== orderId));
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
     setActiveTab('pos');
   };
 
   const cancelHoldOrder = (orderId: string) => {
     setHeldOrders((prev) => prev.filter((o) => o.id !== orderId));
+    setOrders((prev) => prev.filter((o) => o.id !== orderId || o.paymentStatus === 'PAID'));
+    setTables((prev) =>
+      prev.map((t) =>
+        t.currentOrderId === orderId
+          ? { ...t, status: 'AVAILABLE', currentOrderId: undefined, activeOrder: undefined, customerName: undefined }
+          : t
+      )
+    );
+  };
+
+  // Selesaikan pembayaran transaksi yang sebelumnya disimpan (Bayar Nanti / Belum Lunas)
+  const payPendingOrder = (
+    orderId: string,
+    paymentMethod: PaymentMethod,
+    cashReceived?: number,
+    qrisRef?: string
+  ): Order | null => {
+    const targetOrder = orders.find((o) => o.id === orderId) || heldOrders.find((o) => o.id === orderId);
+    if (!targetOrder) return null;
+
+    const changeAmount = Math.max(0, (cashReceived || 0) - targetOrder.total);
+
+    const updatedOrder: Order = {
+      ...targetOrder,
+      paymentMethod,
+      paymentStatus: 'PAID',
+      status: 'COMPLETED',
+      cashReceived,
+      changeAmount,
+      qrisRef: paymentMethod === 'QRIS' ? (qrisRef || `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}`) : undefined,
+    };
+
+    // Update in orders
+    setOrders((prev) => {
+      const exists = prev.some((o) => o.id === orderId);
+      if (exists) {
+        return prev.map((o) => (o.id === orderId ? updatedOrder : o));
+      }
+      return [updatedOrder, ...prev];
+    });
+
+    // Remove from heldOrders
+    setHeldOrders((prev) => prev.filter((o) => o.id !== orderId));
+
+    // Update table if attached
+    if (updatedOrder.tableId) {
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === updatedOrder.tableId || t.currentOrderId === orderId
+            ? { ...t, status: 'AVAILABLE', currentOrderId: undefined, activeOrder: undefined, customerName: undefined }
+            : t
+        )
+      );
+    }
+
+    // Update Shift Sales
+    setShift((prev) => {
+      const isCash = paymentMethod === 'CASH';
+      const isQris = paymentMethod === 'QRIS';
+      const isCard = paymentMethod === 'DEBIT';
+      const isEWallet = paymentMethod === 'SHOPEEPAY';
+
+      const cashSales = isCash ? prev.cashSales + updatedOrder.total : prev.cashSales;
+      const qrisSales = isQris ? prev.qrisSales + updatedOrder.total : prev.qrisSales;
+      const cardSales = isCard ? prev.cardSales + updatedOrder.total : prev.cardSales;
+      const eWalletSales = isEWallet ? prev.eWalletSales + updatedOrder.total : prev.eWalletSales;
+
+      return {
+        ...prev,
+        cashSales,
+        qrisSales,
+        cardSales,
+        eWalletSales,
+        totalSales: prev.totalSales + updatedOrder.total,
+        expectedCash: prev.expectedCash + (isCash ? updatedOrder.total : 0),
+      };
+    });
+
+    // Telemetry
+    posthogTelemetry.trackTransactionCompleted({
+      transactionId: updatedOrder.id,
+      totalAmount: updatedOrder.total,
+      paymentMethod: updatedOrder.paymentMethod,
+      itemCount: updatedOrder.items.length,
+      orderType: updatedOrder.orderType,
+    });
+
+    if (soundEnabled) playPOSSound('payment_success');
+
+    return updatedOrder;
   };
 
   // Save / Edit Product
@@ -2650,6 +2864,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         holdOrder: requireWritable(holdOrder),
         recallHoldOrder: requireWritable(recallHoldOrder),
         cancelHoldOrder: requireWritable(cancelHoldOrder),
+        payPendingOrder: requireWritable(payPendingOrder),
         updateOrderLaundryStatus: requireWritable(updateOrderLaundryStatus),
         updateLaundryStage: requireWritable(updateLaundryStage),
         sendLaundryWaNotification: requireWritable(sendLaundryWaNotification),

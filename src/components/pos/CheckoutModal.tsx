@@ -11,25 +11,75 @@ import {
   CheckCircle2,
   X,
   RefreshCw,
+  Bookmark,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+
+export const detectServiceDurationHours = (items: { name: string; itemNotes?: string }[]): number => {
+  if (!items || items.length === 0) return 24;
+
+  let minHours: number | null = null;
+
+  for (const item of items) {
+    const text = `${item.name} ${item.itemNotes || ''}`.toLowerCase();
+
+    // Look for hour patterns: "3 jam", "3jam", "24 jam", "6 hours", "3 hr", "express 3 jam"
+    const hourMatch = text.match(/(\d+)\s*(?:jam|hours?|hrs?)/i);
+    if (hourMatch) {
+      const h = parseInt(hourMatch[1], 10);
+      if (!isNaN(h) && h > 0) {
+        if (minHours === null || h < minHours) {
+          minHours = h;
+        }
+      }
+    }
+
+    // Look for day patterns: "1 hari", "2 hari", "3 hari", "2 days"
+    const dayMatch = text.match(/(\d+)\s*(?:hari|days?)/i);
+    if (dayMatch) {
+      const d = parseInt(dayMatch[1], 10);
+      if (!isNaN(d) && d > 0) {
+        const h = d * 24;
+        if (minHours === null || h < minHours) {
+          minHours = h;
+        }
+      }
+    }
+  }
+
+  return minHours !== null ? minHours : 24;
+};
 
 interface CheckoutModalProps {
   onClose: () => void;
   onPaymentSuccess: (order: Order) => void;
+  pendingOrderToPay?: Order | null;
 }
 
-export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPaymentSuccess }) => {
+export const CheckoutModal: React.FC<CheckoutModalProps> = ({
+  onClose,
+  onPaymentSuccess,
+  pendingOrderToPay,
+}) => {
   const {
-    cart,
-    selectedCustomer,
-    selectedTable,
+    cart: posCart,
+    selectedCustomer: posCustomer,
+    selectedTable: posTable,
     settings,
     processPayment,
-    orderType,
+    holdOrder,
+    payPendingOrder,
+    orderType: posOrderType,
     staffMembers,
     selectedStaff,
   } = usePOS();
+
+  const cart = pendingOrderToPay ? pendingOrderToPay.items : posCart;
+  const selectedCustomer = pendingOrderToPay?.customer || posCustomer;
+  const selectedTable = pendingOrderToPay?.tableId
+    ? { id: pendingOrderToPay.tableId, name: pendingOrderToPay.tableName || '' }
+    : posTable;
+  const orderType = pendingOrderToPay ? pendingOrderToPay.orderType : posOrderType;
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
@@ -59,12 +109,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     });
   };
 
+  // Deteksi durasi layanan otomatis dari menu pesanan
+  const detectedDurationHours = detectServiceDurationHours(cart);
+
   const now = new Date();
-  const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
-  tomorrow.setHours(16, 0, 0, 0);
+  const initialCompletion = new Date(now.getTime() + detectedDurationHours * 3600 * 1000);
 
   const [dropOffDateIso, setDropOffDateIso] = useState<string>(toDatetimeLocalStr(now));
-  const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(tomorrow));
+  const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(initialCompletion));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(dialogRef, () => { if (!isProcessing) onClose(); });
@@ -75,13 +127,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
   const [assignedCrewInput, setAssignedCrewInput] = useState<string[]>(
     selectedStaff ? [selectedStaff.name] : []
   );
-  const [storageRackInput, setStorageRackInput] = useState<string>('');
+  const [storageRackInput, setStorageRackInput] = useState<string>(pendingOrderToPay?.storageRack || '');
 
   // Totals Calculation
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
   const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
   const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-  const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+  const grandTotal = pendingOrderToPay ? pendingOrderToPay.total : (subtotal + taxTotal + serviceChargeTotal);
 
   const cashReceivedNumber = Number(cashReceivedInput) || 0;
   const changeAmount = Math.max(0, cashReceivedNumber - grandTotal);
@@ -94,6 +146,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     }
   }, [paymentMethod, grandTotal]);
 
+  // Handle drop-off change: otomatis kalkulasi ulang estimasi ambil sesuai durasi layanan
+  const handleDropOffDateChange = (newVal: string) => {
+    setDropOffDateIso(newVal);
+    const d = new Date(newVal);
+    if (!isNaN(d.getTime())) {
+      setCompletionDateIso(toDatetimeLocalStr(new Date(d.getTime() + detectedDurationHours * 3600 * 1000)));
+    }
+  };
+
   // Quick cash nomination buttons
   const quickCashNominals = [
     grandTotal,
@@ -104,6 +165,36 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     100000,
     200000,
   ].filter((v, i, a) => a.indexOf(v) === i && v >= grandTotal);
+
+  const handleSavePending = () => {
+    if (settings.businessSector === 'LAUNDRY' && !completionDateIso) {
+      alert('Mohon tentukan Tanggal & Jam Selesai / Jadi cucian dari kalender!');
+      return;
+    }
+
+    setIsProcessing(true);
+    const isLaundry = settings.businessSector === 'LAUNDRY';
+    const isCarwash = settings.businessSector === 'CARWASH';
+    const dropOffIndo = isLaundry ? formatIsoToIndoStr(dropOffDateIso) : undefined;
+    const completionIndo = isLaundry ? formatIsoToIndoStr(completionDateIso) : undefined;
+
+    setTimeout(() => {
+      const order = holdOrder(undefined, {
+        dropOffDate: dropOffIndo,
+        completionDate: completionIndo,
+        storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
+        vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
+        vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
+        assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
+      });
+
+      setIsProcessing(false);
+      onClose();
+      if (order) {
+        alert(`Pesanan #${order.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti).`);
+      }
+    }, 400);
+  };
 
   const handlePay = () => {
     if (paymentMethod === 'CASH' && !isCashSufficient) {
@@ -117,6 +208,32 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
     }
 
     setIsProcessing(true);
+
+    if (pendingOrderToPay) {
+      setTimeout(() => {
+        const order = payPendingOrder(
+          pendingOrderToPay.id,
+          paymentMethod,
+          paymentMethod === 'CASH' ? cashReceivedNumber : undefined,
+          qrisRefInput ? `RRN: ${qrisRefInput}` : undefined
+        );
+
+        setIsProcessing(false);
+
+        if (order) {
+          try {
+            confetti({
+              particleCount: 80,
+              spread: 70,
+              origin: { y: 0.6 },
+            });
+          } catch (e) {}
+
+          onPaymentSuccess(order);
+        }
+      }, 600);
+      return;
+    }
 
     // Drop-off / completion scheduling only applies to laundry-style orders,
     // otherwise the receipt would show "Tgl Masuk / Cuci" on a coffee order.
@@ -262,7 +379,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                   <input
                     type="datetime-local"
                     value={dropOffDateIso}
-                    onChange={(e) => setDropOffDateIso(e.target.value)}
+                    onChange={(e) => handleDropOffDateChange(e.target.value)}
                     className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs cursor-pointer"
                   />
                 </div>
@@ -280,20 +397,36 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
                   <div className="grid grid-cols-2 gap-1.5">
                     {[
                       {
+                        label: `Sesuai Menu (${detectedDurationHours < 24 ? `${detectedDurationHours} Jam` : `${Math.round(detectedDurationHours / 24)} Hari`})`,
+                        calc: () => {
+                          const base = new Date(dropOffDateIso);
+                          const t = isNaN(base.getTime()) ? Date.now() : base.getTime();
+                          return toDatetimeLocalStr(new Date(t + detectedDurationHours * 3600 * 1000));
+                        },
+                      },
+                      {
                         label: 'Express 3 Jam',
-                        calc: () => toDatetimeLocalStr(new Date(Date.now() + 3 * 3600 * 1000)),
+                        calc: () => {
+                          const base = new Date(dropOffDateIso);
+                          const t = isNaN(base.getTime()) ? Date.now() : base.getTime();
+                          return toDatetimeLocalStr(new Date(t + 3 * 3600 * 1000));
+                        },
                       },
                       {
-                        label: 'Hari Ini 20:00',
-                        calc: () => toDatetimeLocalStr(new Date(new Date().setHours(20, 0, 0, 0))),
+                        label: 'Kilat 24 Jam (Besok)',
+                        calc: () => {
+                          const base = new Date(dropOffDateIso);
+                          const t = isNaN(base.getTime()) ? Date.now() : base.getTime();
+                          return toDatetimeLocalStr(new Date(t + 24 * 3600 * 1000));
+                        },
                       },
                       {
-                        label: 'Besok 16:00',
-                        calc: () => toDatetimeLocalStr(new Date(new Date(Date.now() + 24 * 3600 * 1000).setHours(16, 0, 0, 0))),
-                      },
-                      {
-                        label: '2 Hari Lagi (16:00)',
-                        calc: () => toDatetimeLocalStr(new Date(new Date(Date.now() + 48 * 3600 * 1000).setHours(16, 0, 0, 0))),
+                        label: 'Reguler 2 Hari (48 Jam)',
+                        calc: () => {
+                          const base = new Date(dropOffDateIso);
+                          const t = isNaN(base.getTime()) ? Date.now() : base.getTime();
+                          return toDatetimeLocalStr(new Date(t + 48 * 3600 * 1000));
+                        },
                       },
                     ].map((preset) => {
                       const presetVal = preset.calc();
@@ -546,31 +679,51 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ onClose, onPayment
         </div>
 
         {/* Footer Confirm Payment */}
-        <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex items-center justify-between">
+        <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex flex-wrap items-center justify-between gap-2">
           <button
             onClick={onClose}
-            className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-2xl"
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
           >
             Batal
           </button>
 
-          <button
-            disabled={isProcessing || (paymentMethod === 'CASH' && !isCashSufficient)}
-            onClick={handlePay}
-            className="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-2xl shadow-md flex items-center space-x-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {isProcessing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Memproses Transaksi...</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="w-5 h-5" />
-                <span>Konfirmasi Lunas ({formatRupiah(grandTotal)})</span>
-              </>
+          <div className="flex items-center gap-2">
+            {!pendingOrderToPay && (
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={handleSavePending}
+                className="px-4 py-2.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-40"
+              >
+                <Bookmark className="w-3.5 h-3.5 text-amber-700" />
+                <span>
+                  {settings.businessSector === 'LAUNDRY'
+                    ? 'Simpan Cucian (Bayar Nanti)'
+                    : settings.businessSector === 'FNB'
+                    ? 'Simpan Pesanan Meja (Bayar Nanti)'
+                    : 'Simpan Transaksi (Bayar Nanti)'}
+                </span>
+              </button>
             )}
-          </button>
+
+            <button
+              disabled={isProcessing || (paymentMethod === 'CASH' && !isCashSufficient)}
+              onClick={handlePay}
+              className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md flex items-center space-x-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {isProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Memproses...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Konfirmasi Lunas ({formatRupiah(grandTotal)})</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

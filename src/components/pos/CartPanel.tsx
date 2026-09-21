@@ -417,35 +417,55 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         )}
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          {/* Hold Order */}
-          <button
-            disabled={cart.length === 0}
-            onClick={() => holdOrder()}
-            className="flex items-center justify-center space-x-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
-          >
-            <PauseCircle className="w-4 h-4 text-amber-600" />
-            <span>Tahan</span>
-          </button>
+        <div className="space-y-2 pt-1">
+          {/* Top Row: Simpan (Bayar Nanti) vs Batal */}
+          <div className="grid grid-cols-12 gap-2">
+            <button
+              disabled={cart.length === 0}
+              onClick={() => {
+                if (sector === 'LAUNDRY') {
+                  onOpenCheckout();
+                } else {
+                  const held = holdOrder();
+                  if (held) {
+                    alert(
+                      selectedTable
+                        ? `Pesanan ${selectedTable.name} berhasil disimpan sebagai transaksi BELUM LUNAS & tiket dikirim ke dapur!`
+                        : `Pesanan #${held.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti)!`
+                    );
+                  }
+                }
+              }}
+              className="col-span-8 flex items-center justify-center space-x-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 py-2.5 rounded-xl text-xs font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+            >
+              <PauseCircle className="w-4 h-4 text-amber-700" />
+              <span className="truncate">
+                {sector === 'LAUNDRY'
+                  ? 'Simpan Cucian (Bayar Nanti)'
+                  : sector === 'FNB' && selectedTable
+                  ? `Simpan ${selectedTable.name} (Bayar Nanti)`
+                  : 'Simpan Transaksi (Bayar Nanti)'}
+              </span>
+            </button>
 
-          {/* Clear Cart */}
-          <button
-            disabled={cart.length === 0}
-            onClick={clearCart}
-            className="flex items-center justify-center space-x-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
-          >
-            <Trash2 className="w-4 h-4 text-rose-600" />
-            <span>Batal</span>
-          </button>
+            <button
+              disabled={cart.length === 0}
+              onClick={clearCart}
+              className="col-span-4 flex items-center justify-center space-x-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Batal</span>
+            </button>
+          </div>
 
-          {/* Checkout Button */}
+          {/* Bottom Full Row: Bayar Langsung */}
           <button
             disabled={cart.length === 0}
             onClick={onOpenCheckout}
-            className="nh-cart-pay col-span-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="nh-cart-pay w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center space-x-2 shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <CreditCard className="w-4 h-4" />
-            <span>Bayar</span>
+            <span>Bayar Langsung ({formatRupiah(grandTotal)})</span>
           </button>
         </div>
       </div>

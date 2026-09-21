@@ -20,8 +20,10 @@ import {
   Box,
   Layers,
   MessageSquare,
+  CreditCard,
 } from 'lucide-react';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
+import { CheckoutModal } from '../pos/CheckoutModal';
 
 const LAUNDRY_STAGES: { key: LaundryStage; label: string; icon: any; color: string }[] = [
   { key: 'ANTRIAN', label: 'Antrean Masuk', icon: Clock, color: 'border-slate-300 bg-slate-50' },
@@ -40,6 +42,7 @@ export const LaundryPipelineView: React.FC = () => {
   const [rackInput, setRackInput] = useState('');
   const [printTicketOrder, setPrintTicketOrder] = useState<Order | null>(null);
   const [showLifecycleModal, setShowLifecycleModal] = useState(false);
+  const [payOrder, setPayOrder] = useState<Order | null>(null);
 
   // Filter orders related to laundry
   const laundryOrders = orders.filter((o) => {
@@ -162,9 +165,20 @@ export const LaundryPipelineView: React.FC = () => {
                       {/* Card Header */}
                       <div className="flex items-start justify-between">
                         <div>
-                          <span className="font-mono font-black text-xs text-slate-900 block">
-                            #{order.orderNumber}
-                          </span>
+                          <div className="flex items-center space-x-1.5 mb-0.5">
+                            <span className="font-mono font-black text-xs text-slate-900 block">
+                              #{order.orderNumber}
+                            </span>
+                            {order.paymentStatus === 'PAID' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                LUNAS
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-300">
+                                BELUM LUNAS
+                              </span>
+                            )}
+                          </div>
                           <span className="font-bold text-xs text-slate-800">
                             {order.customer?.name || 'Pelanggan Walk-In'}
                           </span>
@@ -204,6 +218,26 @@ export const LaundryPipelineView: React.FC = () => {
                         )}
                       </div>
 
+                      {/* Schedule info */}
+                      {(order.dropOffDate || order.completionDate || order.completionEstimate) && (
+                        <div className="p-2 bg-indigo-50/70 rounded-xl border border-indigo-100/80 text-[10px] space-y-0.5">
+                          {order.dropOffDate && (
+                            <div className="text-slate-600 flex justify-between">
+                              <span>📅 Masuk:</span>
+                              <span className="font-semibold text-slate-800">{order.dropOffDate}</span>
+                            </div>
+                          )}
+                          {(order.completionDate || order.completionEstimate) && (
+                            <div className="text-indigo-900 flex justify-between font-bold">
+                              <span>⏰ Estimasi Ambil:</span>
+                              <span className="font-black text-indigo-700">
+                                {order.completionDate || order.completionEstimate}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Total & Date */}
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="font-mono font-black text-slate-950">
@@ -217,6 +251,17 @@ export const LaundryPipelineView: React.FC = () => {
                       {/* Actions */}
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
                         <div className="flex items-center space-x-1">
+                          {order.paymentStatus === 'PENDING' && (
+                            <button
+                              type="button"
+                              onClick={() => setPayOrder(order)}
+                              className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg font-black text-[10px] flex items-center space-x-1 cursor-pointer shadow-xs"
+                              title="Bayar Transaksi Cucian Ini"
+                            >
+                              <CreditCard className="w-3 h-3" />
+                              <span>Bayar</span>
+                            </button>
+                          )}
                           {order.customer?.phone && (
                             <button
                               onClick={() => handleOpenWaNotification(order)}
@@ -438,6 +483,17 @@ export const LaundryPipelineView: React.FC = () => {
         onClose={() => setShowLifecycleModal(false)}
         initialFilter="LAUNDRY_READY"
       />
+
+      {/* Checkout Modal for Pending Laundry Payment */}
+      {payOrder && (
+        <CheckoutModal
+          pendingOrderToPay={payOrder}
+          onClose={() => setPayOrder(null)}
+          onPaymentSuccess={() => {
+            setPayOrder(null);
+          }}
+        />
+      )}
     </div>
   );
 };
