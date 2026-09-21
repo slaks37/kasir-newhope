@@ -47,9 +47,18 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
   const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [scanToast, setScanToast] = useState<{ name: string; barcode: string } | null>(null);
   const free = isFreePlan(settings.subscription);
-  const posProducts = useMemo(() => free
-    ? products.filter(product => freeProductAllowed(settings.subscription?.freeSelection, product.id, settings.businessSector || 'FNB'))
-    : products, [free, products, settings.subscription?.freeSelection, settings.businessSector]);
+  const posProducts = useMemo(() => {
+    const activeProducts = products.filter((p) => p.isAvailable !== false);
+    return free
+      ? activeProducts.filter((product) =>
+          freeProductAllowed(
+            settings.subscription?.freeSelection,
+            product.id,
+            settings.businessSector || 'FNB'
+          )
+        )
+      : activeProducts;
+  }, [free, products, settings.subscription?.freeSelection, settings.businessSector]);
   const activeCategory = free && selectedCategory === 'bundles' ? 'all' : selectedCategory;
 
   // Global Hardware USB / Bluetooth Barcode Scanner Listener
@@ -292,7 +301,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
       {/* Product Display Area */}
       <div className="flex-1 overflow-y-auto pr-1 pb-32 lg:pb-4">
         {activeCategory === 'bundles' ? (
-          (bundles || []).length === 0 ? (
+          (bundles || []).filter((b) => b.isAvailable !== false).length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
               <Sparkles className="w-10 h-10 stroke-1 text-slate-300" />
               <p className="font-semibold text-slate-600">Belum ada paket bundling aktif</p>
@@ -300,7 +309,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {(bundles || []).map((bundle) => (
+              {(bundles || []).filter((b) => b.isAvailable !== false).map((bundle) => (
                 <div
                   key={bundle.id}
                   onClick={() => {

@@ -26,7 +26,14 @@ import {
   ArrowRight,
   ShieldCheck,
   Building2,
+  Clock,
+  Edit,
+  UserCheck,
+  LogIn,
+  LogOut,
+  X,
 } from 'lucide-react';
+import { ClockInModal } from '../pos/ClockInModal';
 import { formatRupiah, formatDateOnly, formatDateTime } from '../../utils/formatters';
 import {
   calculateSmartLaborMetrics,
@@ -34,7 +41,7 @@ import {
   formatWhatsAppPayrollText,
   StaffPerformanceMetric,
 } from '../../utils/commissionEngine';
-import { PayrollSlip, StaffCommissionRule, BusinessSector } from '../../types';
+import { PayrollSlip, StaffCommissionRule, BusinessSector, StaffMember } from '../../types';
 
 export const SmartLaborManager: React.FC = () => {
   const {
@@ -49,6 +56,12 @@ export const SmartLaborManager: React.FC = () => {
     deletePayrollSlip,
     disbursePayrollCashMovement,
     settings,
+    addStaffMember,
+    updateStaffMember,
+    deleteStaffMember,
+    clockInStaff,
+    clockOutStaff,
+    getActiveAttendance,
   } = usePOS();
 
   const sector: BusinessSector = settings.businessSector || 'FNB';
@@ -241,12 +254,102 @@ export const SmartLaborManager: React.FC = () => {
     }
   };
 
+  // Staff & Salary Management Modal State
+  const [showStaffModal, setShowStaffModal] = useState<boolean>(false);
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+  const [staffNameInput, setStaffNameInput] = useState<string>('');
+  const [staffRoleInput, setStaffRoleInput] = useState<string>('');
+  const [staffPhoneInput, setStaffPhoneInput] = useState<string>('');
+  const [staffBaseSalaryInput, setStaffBaseSalaryInput] = useState<number>(2500000);
+  const [staffSalaryTypeInput, setStaffSalaryTypeInput] = useState<'MONTHLY' | 'DAILY'>('MONTHLY');
+  const [staffDailyAllowanceInput, setStaffDailyAllowanceInput] = useState<number>(25000);
+  const [staffIsAvailableInput, setStaffIsAvailableInput] = useState<boolean>(true);
+
+  // Clock-in Modal State
+  const [showClockInModal, setShowClockInModal] = useState<boolean>(false);
+
+  const roleSuggestions = useMemo(() => {
+    switch (sector) {
+      case 'CARWASH':
+        return ['Kru Cuci Mobil', 'Kru Cuci Motor', 'Teknisi Detailing', 'Kasir Carwash', 'Supervisor Cuci'];
+      case 'BARBERSHOP':
+        return ['Senior Kapster', 'Junior Kapster', 'Hair Stylist', 'Kasir Barbershop', 'Asisten'];
+      case 'LAUNDRY':
+        return ['Operator Cuci', 'Operator Setrika', 'Quality Control & Packing', 'Kurir Jemput-Antar', 'Kasir Laundry'];
+      case 'RETAIL':
+        return ['Pramuniaga', 'Kasir Minimarket', 'Staff Gudang / Restok', 'Supervisor Toko'];
+      case 'FNB':
+      default:
+        return ['Koki / Chef', 'Barista', 'Waiter / Server', 'Kasir Resto', 'Kitchen Helper'];
+    }
+  }, [sector]);
+
+  const handleOpenAddStaffModal = () => {
+    setEditingStaff(null);
+    setStaffNameInput('');
+    setStaffRoleInput(roleSuggestions[0] || 'Kru Cuci');
+    setStaffPhoneInput('');
+    setStaffBaseSalaryInput(sector === 'CARWASH' ? 100000 : 2500000);
+    setStaffSalaryTypeInput(sector === 'CARWASH' ? 'DAILY' : 'MONTHLY');
+    setStaffDailyAllowanceInput(25000);
+    setStaffIsAvailableInput(true);
+    setShowStaffModal(true);
+  };
+
+  const handleOpenEditStaffModal = (staff: StaffMember) => {
+    setEditingStaff(staff);
+    setStaffNameInput(staff.name);
+    setStaffRoleInput(staff.role);
+    setStaffPhoneInput(staff.phone || '');
+    setStaffBaseSalaryInput(staff.baseSalary || 0);
+    setStaffSalaryTypeInput(staff.salaryType || 'MONTHLY');
+    setStaffDailyAllowanceInput(staff.dailyAllowance || 0);
+    setStaffIsAvailableInput(staff.isAvailable !== false);
+    setShowStaffModal(true);
+  };
+
+  const handleSaveStaffSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!staffNameInput.trim()) return;
+
+    if (editingStaff) {
+      updateStaffMember({
+        ...editingStaff,
+        name: staffNameInput.trim(),
+        role: staffRoleInput.trim() || 'Staf',
+        phone: staffPhoneInput.trim() || undefined,
+        baseSalary: staffBaseSalaryInput,
+        salaryType: staffSalaryTypeInput,
+        dailyAllowance: staffDailyAllowanceInput,
+        isAvailable: staffIsAvailableInput,
+      });
+    } else {
+      addStaffMember({
+        name: staffNameInput.trim(),
+        role: staffRoleInput.trim() || 'Staf',
+        sector,
+        phone: staffPhoneInput.trim() || undefined,
+        baseSalary: staffBaseSalaryInput,
+        salaryType: staffSalaryTypeInput,
+        dailyAllowance: staffDailyAllowanceInput,
+        isAvailable: staffIsAvailableInput,
+      });
+    }
+    setShowStaffModal(false);
+  };
+
+  const handleDeleteStaff = (staffId: string, staffName: string) => {
+    if (window.confirm(`Hapus staf "${staffName}" dari data sektor ${sector}?`)) {
+      deleteStaffMember(staffId);
+    }
+  };
+
   const SectorIcon = sectorMeta.icon;
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Sector Banner & Title */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border flex items-center gap-1.5 ${sectorMeta.color}`}>
@@ -263,65 +366,87 @@ export const SmartLaborManager: React.FC = () => {
           <p className="text-sm text-slate-600 max-w-2xl">{sectorMeta.desc}</p>
         </div>
 
-        {/* Date Filter Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200">
-          <div className="flex items-center gap-1 text-xs font-bold text-slate-700">
-            <Calendar className="w-4 h-4 text-slate-500" />
-            <span>Periode:</span>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Actions Toolbar: Add Staff & Clock-In */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleOpenAddStaffModal}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Tambah Staf &amp; Atur Gaji</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowClockInModal(true)}
+              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Clock className="w-4 h-4 text-emerald-400" />
+              <span>Presensi / Clock-In</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => handleDateFilterChange('THIS_MONTH')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              dateFilterMode === 'THIS_MONTH'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            Bulan Ini
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDateFilterChange('LAST_7_DAYS')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              dateFilterMode === 'LAST_7_DAYS'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            7 Hari
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDateFilterChange('TODAY')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              dateFilterMode === 'TODAY'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            Hari Ini
-          </button>
-          <div className="flex items-center gap-1">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setDateFilterMode('CUSTOM');
-                setStartDate(e.target.value);
-              }}
-              className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800"
-            />
-            <span className="text-xs text-slate-400">-</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setDateFilterMode('CUSTOM');
-                setEndDate(e.target.value);
-              }}
-              className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800"
-            />
+
+          {/* Date Filter Toolbar */}
+          <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200">
+            <div className="flex items-center gap-1 text-xs font-bold text-slate-700">
+              <Calendar className="w-4 h-4 text-slate-500" />
+              <span>Periode:</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleDateFilterChange('THIS_MONTH')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                dateFilterMode === 'THIS_MONTH'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              Bulan Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDateFilterChange('LAST_7_DAYS')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                dateFilterMode === 'LAST_7_DAYS'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              7 Hari
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDateFilterChange('TODAY')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                dateFilterMode === 'TODAY'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              Hari Ini
+            </button>
+            <div className="flex items-center gap-1">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setDateFilterMode('CUSTOM');
+                  setStartDate(e.target.value);
+                }}
+                className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800"
+              />
+              <span className="text-xs text-slate-400">-</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setDateFilterMode('CUSTOM');
+                  setEndDate(e.target.value);
+                }}
+                className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -458,100 +583,200 @@ export const SmartLaborManager: React.FC = () => {
             </div>
 
             {laborSummary.staffMetrics.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 space-y-3">
+              <div className="p-12 text-center text-slate-500 space-y-4">
                 <Users className="w-12 h-12 mx-auto text-slate-300" />
-                <p className="font-bold text-slate-700">Belum Ada Staf di Sektor Ini</p>
-                <p className="text-xs text-slate-500">
-                  Tambahkan staf baru di menu Pengaturan Pengguna / Staff Roster untuk sektor {sector}.
+                <p className="font-bold text-slate-700 text-base">Belum Ada Staf di Sektor Ini</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Tambahkan staf baru untuk mengatur gaji pokok, tunjangan kehadiran, dan presensi clock-in sektor {sector}.
                 </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenAddStaffModal}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-2 shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Tambah Staf Baru & Atur Gaji</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowClockInModal(true)}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-2 shadow-xs"
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>Presensi / Clock-In</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-600 text-xs uppercase font-extrabold">
-                      <th className="py-3 px-4">Nama Staf & Role</th>
+                      <th className="py-3 px-4">Nama Staf & Status</th>
+                      <th className="py-3 px-4 text-center">Presensi Real-Time</th>
                       <th className="py-3 px-4 text-center">Kehadiran</th>
                       <th className="py-3 px-4 text-center">
                         {sector === 'BARBERSHOP' ? 'Kepala Cukur' : sector === 'CARWASH' ? 'Mobil / Cuci' : 'Pesanan'}
                       </th>
-                      <th className="py-3 px-4 text-right">Gaji & Tunjangan</th>
+                      <th className="py-3 px-4 text-right">Gaji Pokok & Tunjangan</th>
                       <th className="py-3 px-4 text-right">Komisi Layanan</th>
                       <th className="py-3 px-4 text-right">Bagi Hasil Tim</th>
                       <th className="py-3 px-4 text-right">Bonus Target</th>
                       <th className="py-3 px-4 text-right font-black text-slate-900">Total Kotor</th>
-                      <th className="py-3 px-4 text-center">Aksi Slip Gaji</th>
+                      <th className="py-3 px-4 text-center">Aksi & Slip</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {laborSummary.staffMetrics.map((m) => (
-                      <tr key={m.staffId} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center shrink-0">
-                              {m.staffName.slice(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="font-bold text-slate-900">{m.staffName}</div>
-                              <div className="text-xs text-slate-500">{m.staffRole}</div>
-                            </div>
-                          </div>
-                        </td>
+                    {laborSummary.staffMetrics.map((m) => {
+                      const staffObj = staffMembers.find((s) => s.id === m.staffId);
+                      const activeAtt = getActiveAttendance(m.staffId);
+                      const isClockedIn = Boolean(activeAtt && activeAtt.status === 'CLOCKED_IN');
+                      const isStaffActive = staffObj?.isAvailable !== false;
 
-                        <td className="py-3.5 px-4 text-center">
-                          <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg text-xs font-bold">
-                            {m.daysAttended} Hari
-                          </span>
-                        </td>
+                      return (
+                        <tr key={m.staffId} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center shrink-0">
+                                {m.staffName.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-900">{m.staffName}</span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
+                                      isStaffActive
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-rose-100 text-rose-700'
+                                    }`}
+                                  >
+                                    {isStaffActive ? 'Aktif' : 'Non-Aktif'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-slate-500">{m.staffRole}</div>
+                              </div>
+                            </div>
+                          </td>
 
-                        <td className="py-3.5 px-4 text-center">
-                          <span className="font-bold text-slate-800">{m.totalServiceCount}</span>
-                          {m.totalServiceSales > 0 && (
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex flex-col items-center gap-1">
+                              {isClockedIn ? (
+                                <>
+                                  <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold inline-flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    Clocked In
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => clockOutStaff(m.staffId)}
+                                    className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline inline-flex items-center gap-0.5"
+                                    title="Clock Out sekarang"
+                                  >
+                                    <LogOut className="w-3 h-3" />
+                                    <span>Clock Out</span>
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold inline-flex items-center gap-1">
+                                    Offline
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => clockInStaff(m.staffId)}
+                                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                                    title="Clock In sekarang"
+                                  >
+                                    <LogIn className="w-3 h-3" />
+                                    <span>Clock In</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg text-xs font-bold">
+                              {m.daysAttended} Hari
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <span className="font-bold text-slate-800">{m.totalServiceCount}</span>
+                            {m.totalServiceSales > 0 && (
+                              <div className="text-[10px] text-slate-400">
+                                {formatRupiah(m.totalServiceSales)}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="font-semibold text-slate-800">
+                              {formatRupiah(m.baseSalaryPayable + m.allowancePayable)}
+                            </div>
                             <div className="text-[10px] text-slate-400">
-                              {formatRupiah(m.totalServiceSales)}
+                              {staffObj?.salaryType === 'DAILY' ? 'Harian' : 'Bulanan'}: {formatRupiah(staffObj?.baseSalary || 0)}
                             </div>
-                          )}
-                        </td>
+                            {m.allowancePayable > 0 && (
+                              <div className="text-[10px] text-emerald-600">
+                                U.Makan: {formatRupiah(m.allowancePayable)}
+                              </div>
+                            )}
+                          </td>
 
-                        <td className="py-3.5 px-4 text-right">
-                          <div className="font-semibold text-slate-800">
-                            {formatRupiah(m.baseSalaryPayable + m.allowancePayable)}
-                          </div>
-                          {m.allowancePayable > 0 && (
-                            <div className="text-[10px] text-slate-400">
-                              U.Makan: {formatRupiah(m.allowancePayable)}
+                          <td className="py-3.5 px-4 text-right font-semibold text-emerald-600">
+                            {m.individualCommission > 0 ? formatRupiah(m.individualCommission) : '-'}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-semibold text-sky-600">
+                            {m.teamPoolCommission > 0 ? formatRupiah(m.teamPoolCommission) : '-'}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-semibold text-amber-600">
+                            {m.dailyTargetBonus > 0 ? formatRupiah(m.dailyTargetBonus) : '-'}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-black text-slate-900">
+                            {formatRupiah(m.grossPayable)}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {staffObj && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditStaffModal(staffObj)}
+                                  className="p-1.5 bg-amber-50 text-amber-700 hover:bg-amber-600 hover:text-white rounded-xl text-xs font-bold transition-all shadow-2xs"
+                                  title="Atur Gaji & Role Pegawai"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSlipModal(m)}
+                                className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1 shadow-2xs"
+                                title="Buat Slip Gaji"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Slip</span>
+                              </button>
+                              {staffObj && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStaff(staffObj.id, staffObj.name)}
+                                  className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-bold transition-all shadow-2xs"
+                                  title="Hapus Pegawai"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
-                          )}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-right font-semibold text-emerald-600">
-                          {m.individualCommission > 0 ? formatRupiah(m.individualCommission) : '-'}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-right font-semibold text-sky-600">
-                          {m.teamPoolCommission > 0 ? formatRupiah(m.teamPoolCommission) : '-'}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-right font-semibold text-amber-600">
-                          {m.dailyTargetBonus > 0 ? formatRupiah(m.dailyTargetBonus) : '-'}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-right font-black text-slate-900">
-                          {formatRupiah(m.grossPayable)}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenSlipModal(m)}
-                            className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-2xs"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Buat Slip</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1286,6 +1511,200 @@ export const SmartLaborManager: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ADD / EDIT STAFF & SALARY MODAL */}
+      {showStaffModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    {editingStaff ? 'Atur Gaji & Role Pegawai' : 'Tambah Pegawai Baru'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sektor: <span className="font-semibold text-slate-700">{sector}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStaffModal(false)}
+                className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveStaffSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Nama Lengkap Pegawai *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Budi Santoso"
+                  value={staffNameInput}
+                  onChange={(e) => setStaffNameInput(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Role / Jabatan *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    list="staff-role-suggestions"
+                    placeholder="Contoh: Senior Kapster / Kasir"
+                    value={staffRoleInput}
+                    onChange={(e) => setStaffRoleInput(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+                  />
+                  <datalist id="staff-role-suggestions">
+                    {roleSuggestions.map((r) => (
+                      <option key={r} value={r} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Nomor WhatsApp / HP
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="08123456789"
+                    value={staffPhoneInput}
+                    onChange={(e) => setStaffPhoneInput(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Sistem Penggajian Pokok
+                  </span>
+                  <div className="flex bg-white p-0.5 border border-slate-200 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setStaffSalaryTypeInput('MONTHLY')}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                        staffSalaryTypeInput === 'MONTHLY'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Bulanan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStaffSalaryTypeInput('DAILY')}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                        staffSalaryTypeInput === 'DAILY'
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Harian
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      {staffSalaryTypeInput === 'MONTHLY' ? 'Gaji Pokok / Bulan (Rp)' : 'Gaji Pokok / Hari (Rp)'}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={5000}
+                      value={staffBaseSalaryInput || ''}
+                      onChange={(e) => setStaffBaseSalaryInput(Number(e.target.value) || 0)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-bold text-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      Uang Makan / Kehadiran (Rp/Hari)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={staffDailyAllowanceInput || ''}
+                      onChange={(e) => setStaffDailyAllowanceInput(Number(e.target.value) || 0)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-bold text-slate-900"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  * Komisi layanan, bagi hasil tim, dan bonus target omzet akan dihitung otomatis di atas gaji pokok ini.
+                </p>
+              </div>
+
+              {/* Status Aktif / Non-Aktif Switch */}
+              <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                <div>
+                  <div className="font-bold text-xs text-slate-800 uppercase tracking-wider">
+                    Status Kepegawaian
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    {staffIsAvailableInput
+                      ? 'Pegawai aktif dapat melakukan clock-in dan menerima komisi.'
+                      : 'Pegawai dinonaktifkan sementara (cuti/keluar).'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStaffIsAvailableInput(!staffIsAvailableInput)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                    staffIsAvailableInput ? 'bg-emerald-500' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      staffIsAvailableInput ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowStaffModal(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                >
+                  {editingStaff ? 'Simpan Perubahan Gaji' : 'Tambah Pegawai'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CLOCK-IN / ATTENDANCE MODAL */}
+      {showClockInModal && <ClockInModal onClose={() => setShowClockInModal(false)} />}
     </div>
   );
 };

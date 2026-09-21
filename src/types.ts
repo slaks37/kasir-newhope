@@ -187,6 +187,7 @@ export interface StockItem {
   notes?: string;
   lastUpdated?: string;
   businessSector?: BusinessSector;
+  isAvailable?: boolean;
 }
 
 export interface SelectedModifier {
@@ -552,6 +553,7 @@ export interface StoreSettings {
   geofenceEnforcement?: 'STRICT' | 'FLEXIBLE';
   subscription?: SaaSSubscription;
   whatsappLifecycleEnabled?: boolean;
+  enabledModules?: Partial<Record<PermissionFeature, boolean>>;
 }
 
 export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER';

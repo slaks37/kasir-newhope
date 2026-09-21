@@ -62,6 +62,8 @@ export const InventoryManager: React.FC = () => {
     bundles,
     saveBundle,
     deleteBundle,
+    toggleProductAvailability,
+    toggleBundleAvailability,
   } = usePOS();
 
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'bundles' | 'stock' | 'recipes' | 'logs'>('catalog');
@@ -69,6 +71,7 @@ export const InventoryManager: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low'>('all');
   const [stockTypeFilter, setStockTypeFilter] = useState<'ALL' | StockType>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
   // Modal for Category Management (Tambah / Edit / Hapus Kategori)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -89,6 +92,7 @@ export const InventoryManager: React.FC = () => {
   const [stockItemLocation, setStockItemLocation] = useState('Gudang Bahan Kering');
   const [stockItemRecipeYield, setStockItemRecipeYield] = useState('');
   const [stockItemNotes, setStockItemNotes] = useState('');
+  const [stockItemIsAvailable, setStockItemIsAvailable] = useState(true);
 
   // Modal for Add/Edit Product
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -112,6 +116,7 @@ export const InventoryManager: React.FC = () => {
   const [formDescription, setFormDescription] = useState('');
   const [formReorderPointWholesale, setFormReorderPointWholesale] = useState<number | ''>('');
   const [formWholesaleMinQty, setFormWholesaleMinQty] = useState<number | ''>('');
+  const [formIsAvailable, setFormIsAvailable] = useState(true);
 
   // Modal & Form for Batch SKU Generator (Retail Engine)
   const [showBatchSkuModal, setShowBatchSkuModal] = useState(false);
@@ -141,6 +146,7 @@ export const InventoryManager: React.FC = () => {
   const [bundleImage, setBundleImage] = useState('');
   const [bundlePrice, setBundlePrice] = useState(35000);
   const [bundleItemsList, setBundleItemsList] = useState<BundleItem[]>([]);
+  const [bundleIsAvailable, setBundleIsAvailable] = useState(true);
 
   const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -165,7 +171,11 @@ export const InventoryManager: React.FC = () => {
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStock = stockFilter === 'all' || p.stock <= p.minStockAlert;
-    return matchesCat && matchesSearch && matchesStock;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && p.isAvailable !== false) ||
+      (statusFilter === 'inactive' && p.isAvailable === false);
+    return matchesCat && matchesSearch && matchesStock && matchesStatus;
   });
 
   const filteredStockItems = stockItems.filter((s) => {
@@ -173,14 +183,22 @@ export const InventoryManager: React.FC = () => {
     const matchesSearch =
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.sku.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesType && matchesSearch;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && s.isAvailable !== false) ||
+      (statusFilter === 'inactive' && s.isAvailable === false);
+    return matchesType && matchesSearch && matchesStatus;
   });
 
   const filteredBundles = (bundles || []).filter((b) => {
-    return (
+    const matchesSearch =
       b.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.sku.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+      b.sku.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && b.isAvailable !== false) ||
+      (statusFilter === 'inactive' && b.isAvailable === false);
+    return matchesSearch && matchesStatus;
   });
 
   /* -------------------------------------------------------------------------- */
@@ -268,6 +286,7 @@ export const InventoryManager: React.FC = () => {
     setFormDescription('');
     setFormReorderPointWholesale(15);
     setFormWholesaleMinQty(30);
+    setFormIsAvailable(true);
     setEditingProduct(null);
     setShowAddModal(true);
   };
@@ -287,6 +306,7 @@ export const InventoryManager: React.FC = () => {
     setFormDescription(p.description || '');
     setFormReorderPointWholesale(p.reorderPointWholesale !== undefined ? p.reorderPointWholesale : '');
     setFormWholesaleMinQty(p.wholesaleMinQty !== undefined ? p.wholesaleMinQty : '');
+    setFormIsAvailable(p.isAvailable !== false);
     setShowAddModal(true);
   };
 
@@ -309,7 +329,7 @@ export const InventoryManager: React.FC = () => {
       description: formDescription.trim() || undefined,
       reorderPointWholesale: formReorderPointWholesale !== '' ? Number(formReorderPointWholesale) : undefined,
       wholesaleMinQty: formWholesaleMinQty !== '' ? Number(formWholesaleMinQty) : undefined,
-      isAvailable: true,
+      isAvailable: formIsAvailable,
       variants: editingProduct?.variants || [
         { id: 'v-1', name: 'Regular', priceExtra: 0 },
         { id: 'v-2', name: 'Large', priceExtra: 5000 },
@@ -502,6 +522,7 @@ export const InventoryManager: React.FC = () => {
     setBundleDescription('');
     setBundleImage('https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400');
     setBundlePrice(35000);
+    setBundleIsAvailable(true);
 
     // Initial item row
     const firstProd = products[0];
@@ -529,6 +550,7 @@ export const InventoryManager: React.FC = () => {
     setBundleImage(b.image || '');
     setBundlePrice(b.bundlePrice);
     setBundleItemsList(b.items || []);
+    setBundleIsAvailable(b.isAvailable !== false);
     setShowBundleModal(true);
   };
 
@@ -594,7 +616,7 @@ export const InventoryManager: React.FC = () => {
       regularPrice: totalBundleRegularPrice,
       bundlePrice: bundlePrice,
       discountPercent: bundleDiscountPercent,
-      isAvailable: true,
+      isAvailable: bundleIsAvailable,
       createdAt: editingBundle?.createdAt || new Date().toISOString(),
     };
 
@@ -774,6 +796,45 @@ export const InventoryManager: React.FC = () => {
               <FolderPlus className="w-3.5 h-3.5 text-amber-600" />
               <span>Kelola Kategori</span>
             </button>
+
+            {/* Status Filter */}
+            <div className="flex items-center space-x-1 border-l border-slate-200 pl-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  statusFilter === 'all'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Semua Status
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('active')}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  statusFilter === 'active'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Aktif</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('inactive')}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  statusFilter === 'inactive'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                <span>Non-Aktif</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -789,6 +850,7 @@ export const InventoryManager: React.FC = () => {
                 <tr>
                   <th className="p-4">Foto &amp; Produk</th>
                   <th className="p-4">Kategori</th>
+                  <th className="p-4 text-center">Status</th>
                   <th className="p-4 text-right">Harga Jual</th>
                   <th className="p-4 text-right">HPP (Modal)</th>
                   <th className="p-4 text-right">Estimasi Margin</th>
@@ -804,7 +866,7 @@ export const InventoryManager: React.FC = () => {
                   const hasIngredients = (p.recipeIngredients || []).length > 0;
 
                   return (
-                    <tr key={p.id} className="hover:bg-amber-50/30 transition-colors">
+                    <tr key={p.id} className={`hover:bg-amber-50/30 transition-colors ${p.isAvailable === false ? 'opacity-65 bg-slate-50/50' : ''}`}>
                       <td className="p-4">
                         <div className="flex items-center space-x-3">
                           <img
@@ -820,6 +882,25 @@ export const InventoryManager: React.FC = () => {
                       </td>
                       <td className="p-4 font-bold text-slate-700">
                         {categories.find((c) => c.id === p.categoryId)?.name || 'Umum'}
+                      </td>
+                      <td className="p-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => toggleProductAvailability(p.id)}
+                          className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                            p.isAvailable !== false
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                              : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                          }`}
+                          title="Klik untuk ubah status aktif/non-aktif produk ini"
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              p.isAvailable !== false ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                            }`}
+                          />
+                          <span>{p.isAvailable !== false ? 'Aktif' : 'Non-Aktif'}</span>
+                        </button>
                       </td>
                       <td className="p-4 text-right font-mono font-black text-slate-950 text-sm">
                         {formatRupiah(p.price)}
@@ -952,9 +1033,28 @@ export const InventoryManager: React.FC = () => {
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shrink-0 shadow-xs">
-                      Hemat {b.discountPercent}%
-                    </span>
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleBundleAvailability(b.id)}
+                        className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                          b.isAvailable !== false
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                            : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                        }`}
+                        title="Klik untuk ubah status aktif/non-aktif paket ini"
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            b.isAvailable !== false ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                          }`}
+                        />
+                        <span>{b.isAvailable !== false ? 'Aktif' : 'Non-Aktif'}</span>
+                      </button>
+                      <span className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs shrink-0 shadow-xs">
+                        Hemat {b.discountPercent}%
+                      </span>
+                    </div>
                   </div>
 
                   {/* Included Items */}
@@ -1248,6 +1348,30 @@ export const InventoryManager: React.FC = () => {
                     placeholder="Contoh: Es Kopi Susu Gula Aren"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
                   />
+                </div>
+
+                {/* Status Switch (Aktif / Non-Aktif) */}
+                <div className="col-span-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <label className="font-black text-slate-800 block text-xs">Status Ketersediaan Produk</label>
+                    <p className="text-[11px] text-slate-500">
+                      {formIsAvailable
+                        ? 'Produk Aktif: Muncul di kasir dan dapat dipesan oleh pelanggan.'
+                        : 'Produk Non-Aktif: Disembunyikan dari katalog kasir POS.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormIsAvailable(!formIsAvailable)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 border ${
+                      formIsAvailable
+                        ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs'
+                        : 'bg-slate-200 text-slate-600 border-slate-300'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${formIsAvailable ? 'bg-white' : 'bg-slate-400'}`} />
+                    <span>{formIsAvailable ? 'Aktif (Tersedia)' : 'Non-Aktif'}</span>
+                  </button>
                 </div>
 
                 <div>
@@ -1820,6 +1944,30 @@ export const InventoryManager: React.FC = () => {
                     placeholder="Contoh: Paket Kenyang Hemat (Nasi Goreng + Es Kopi)"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
                   />
+                </div>
+
+                {/* Status Switch Bundle */}
+                <div className="col-span-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <label className="font-black text-slate-800 block text-xs">Status Paket Bundling</label>
+                    <p className="text-[11px] text-slate-500">
+                      {bundleIsAvailable
+                        ? 'Paket Aktif: Muncul di tab promo kasir dan dapat dipesan.'
+                        : 'Paket Non-Aktif: Disembunyikan dari katalog kasir POS.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setBundleIsAvailable(!bundleIsAvailable)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 border ${
+                      bundleIsAvailable
+                        ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs'
+                        : 'bg-slate-200 text-slate-600 border-slate-300'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${bundleIsAvailable ? 'bg-white' : 'bg-slate-400'}`} />
+                    <span>{bundleIsAvailable ? 'Aktif (Tersedia)' : 'Non-Aktif'}</span>
+                  </button>
                 </div>
 
                 <div>

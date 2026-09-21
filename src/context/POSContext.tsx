@@ -134,6 +134,9 @@ interface POSContextType {
   selectedStaff: StaffMember | null;
   setSelectedStaff: (staff: StaffMember | null) => void;
   addStaffMember: (staff: Omit<StaffMember, 'id'>) => void;
+  updateStaffMember: (staff: StaffMember) => void;
+  deleteStaffMember: (staffId: string) => void;
+  toggleStaffAvailability: (staffId: string) => void;
   attendanceLogs: AttendanceRecord[];
   clockInStaff: (
     staffId: string,
@@ -159,6 +162,7 @@ interface POSContextType {
   bundles: ProductBundle[];
   saveBundle: (bundle: ProductBundle) => void;
   deleteBundle: (id: string) => void;
+  toggleBundleAvailability: (id: string) => void;
 
   // RBAC & User Management
   users: User[];
@@ -291,6 +295,7 @@ interface POSContextType {
   // Inventory & Catalog CRUD
   saveProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
+  toggleProductAvailability: (productId: string) => void;
   saveCategory: (category: Category) => void;
   deleteCategory: (categoryId: string) => void;
   adjustStock: (productId: string, quantityChange: number, type: 'IN' | 'OUT' | 'ADJUSTMENT', reason: string) => void;
@@ -1096,6 +1101,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (soundEnabled) playPOSSound('click');
   };
 
+  const updateStaffMember = (staffToUpdate: StaffMember) => {
+    setStaffMembers((prev) =>
+      prev.map((s) => (s.id === staffToUpdate.id ? { ...s, ...staffToUpdate } : s))
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
+  const deleteStaffMember = (staffId: string) => {
+    setStaffMembers((prev) => prev.filter((s) => s.id !== staffId));
+    if (soundEnabled) playPOSSound('delete');
+  };
+
+  const toggleStaffAvailability = (staffId: string) => {
+    setStaffMembers((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, isAvailable: !s.isAvailable } : s))
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
   const branches = settings.branches || INITIAL_BRANCHES;
   const activeBranch = branches.find((b) => b.id === settings.activeBranchId) || branches[0];
 
@@ -1242,6 +1266,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteBundle = (id: string) => {
     setBundles((prev) => prev.filter((b) => b.id !== id));
     if (soundEnabled) playPOSSound('delete');
+  };
+
+  const toggleBundleAvailability = (id: string) => {
+    setBundles((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, isAvailable: !b.isAvailable } : b))
+    );
+    if (soundEnabled) playPOSSound('click');
   };
 
   const adjustStockItemQuantity = (id: string, qtyChange: number, reason: string) => {
@@ -2285,6 +2316,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts((prev) => prev.filter((p) => p.id !== productId));
   };
 
+  const toggleProductAvailability = (productId: string) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === productId ? { ...p, isAvailable: !p.isAvailable } : p))
+    );
+    if (soundEnabled) playPOSSound('click');
+  };
+
   const saveCategory = (category: Category) => {
     setCategories((prev) => {
       const idx = prev.findIndex((c) => c.id === category.id);
@@ -2820,6 +2858,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         selectedStaff: scopedSelectedStaff,
         setSelectedStaff,
         addStaffMember: requireWritable(addStaffMember),
+        updateStaffMember: requireWritable(updateStaffMember),
+        deleteStaffMember: requireWritable(deleteStaffMember),
+        toggleStaffAvailability: requireWritable(toggleStaffAvailability),
         attendanceLogs,
         clockInStaff: requireWritable(clockInStaff),
         clockOutStaff: requireWritable(clockOutStaff),
@@ -2831,6 +2872,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         bundles,
         saveBundle: requireWritable(saveBundle),
         deleteBundle: requireWritable(deleteBundle),
+        toggleBundleAvailability: requireWritable(toggleBundleAvailability),
         users,
         currentUser,
         switchUser,
@@ -2891,6 +2933,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         dismissLifecycleHook: requireWritable(dismissLifecycleHook),
         saveProduct: requireWritable(saveProduct),
         deleteProduct: requireWritable(deleteProduct),
+        toggleProductAvailability: requireWritable(toggleProductAvailability),
         saveCategory: requireWritable(saveCategory),
         deleteCategory: requireWritable(deleteCategory),
         adjustStock: requireWritable(adjustStock),

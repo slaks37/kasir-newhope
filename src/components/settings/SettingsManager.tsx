@@ -25,6 +25,7 @@ import {
   Compass,
   CreditCard,
   Printer,
+  Grid2X2,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { newUuid } from '../../lib/ids';
@@ -595,6 +596,115 @@ export const SettingsManager: React.FC = () => {
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Module Activation (Active / Non-Active Modules) */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div>
+                <h3 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2">
+                  <Grid2X2 className="w-5 h-5 text-amber-600" />
+                  <span>Aktivasi Modul Fitur (Active / Non-Active)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Sesuaikan modul yang aktif pada aplikasi kasir sesuai alur operasional bisnis Anda. Modul non-aktif akan disembunyikan dari navigasi.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                {[
+                  {
+                    id: 'pos' as const,
+                    title: 'Modul Kasir & Transaksi',
+                    desc: 'Transaksi kasir, simpan order, bayar nanti, & multi-pembayaran.',
+                  },
+                  {
+                    id: 'tables' as const,
+                    title: 'Modul Denah & Meja / Antrean',
+                    desc: 'Denah meja resto, slot antrean car wash, kursi barbershop, rak laundry.',
+                  },
+                  {
+                    id: 'inventory' as const,
+                    title: 'Modul Produk & Stok Bahan',
+                    desc: 'Katalog produk, manajemen stok, resep bahan baku, & multi-satuan.',
+                  },
+                  {
+                    id: 'customers' as const,
+                    title: 'Modul Pelanggan & CRM',
+                    desc: 'Database pelanggan, riwayat belanja, poin loyalitas, & deposit.',
+                  },
+                  {
+                    id: 'reports' as const,
+                    title: 'Modul Laporan & Analisis',
+                    desc: 'Laporan laba rugi, penjualan harian/bulanan, & ekspor data.',
+                  },
+                  {
+                    id: 'labor' as const,
+                    title: 'Modul Gaji & Komisi Staf',
+                    desc: 'Smart Labor, absensi clock-in, perhitungan komisi tim, & slip gaji.',
+                  },
+                  {
+                    id: 'ai' as const,
+                    title: 'Modul AI Copilot',
+                    desc: 'Asisten cerdas analisis performa bisnis & optimasi penjualan.',
+                  },
+                ].map((mod) => {
+                  const isModActive = formSettings.enabledModules?.[mod.id] !== false;
+
+                  return (
+                    <div
+                      key={mod.id}
+                      className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
+                        isModActive
+                          ? 'bg-white border-amber-200 shadow-2xs'
+                          : 'bg-slate-50 border-slate-200 opacity-75'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-slate-900">{mod.title}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                              isModActive
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {isModActive ? 'Aktif' : 'Non-Aktif'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">{mod.desc}</p>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-700">
+                          {isModActive ? 'Status: Diaktifkan' : 'Status: Dinonaktifkan'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormSettings((prev) => ({
+                              ...prev,
+                              enabledModules: {
+                                ...(prev.enabledModules || {}),
+                                [mod.id]: !isModActive,
+                              },
+                            }));
+                          }}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                            isModActive ? 'bg-amber-500' : 'bg-slate-300'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                              isModActive ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

@@ -119,12 +119,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.id === "overview" || item.id === "settings" || item.id === "payment") return true;
+    return settings?.enabledModules?.[item.id as PermissionFeature] !== false;
+  });
+
   return (
     <aside className="nh-sidebar">
       <div>
         <p className="nh-sidebar-caption">RUANG KERJA</p>
         <nav className="nh-sidebar-nav" aria-label="Navigasi toko">
-          {navItems.map((item) => {
+          {filteredNavItems.map((item) => {
             const Icon = item.icon;
             const isAllowed = hasPermission(item.id as PermissionFeature);
             const isBlockedByPayment = isPaymentRequired && item.id !== "payment";
