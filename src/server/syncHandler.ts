@@ -3,7 +3,7 @@ import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
 
-const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity']);
+const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers']);
 
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */
 export function createSyncHandler(

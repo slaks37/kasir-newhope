@@ -137,7 +137,7 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
             </div>
 
             {/* Financial Overview Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-slate-800">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-4 border-t border-slate-800">
               <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
                 <p className="text-[11px] text-slate-400 font-bold uppercase">Total Omzet (GMV)</p>
                 <p className="font-mono font-black text-lg text-amber-400 mt-0.5">{rupiah(data.profile.gross_revenue)}</p>
@@ -145,6 +145,10 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
               <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
                 <p className="text-[11px] text-slate-400 font-bold uppercase">Total Transaksi</p>
                 <p className="font-mono font-black text-lg text-white mt-0.5">{angka(data.profile.transaction_count)} Struk</p>
+              </div>
+              <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+                <p className="text-[11px] text-slate-400 font-bold uppercase">Basis Pelanggan</p>
+                <p className="font-mono font-black text-lg text-sky-400 mt-0.5">{angka(data.profile.customer_count ?? 0)} Kontak</p>
               </div>
               <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
                 <p className="text-[11px] text-slate-400 font-bold uppercase">Laba kotor tercatat</p>

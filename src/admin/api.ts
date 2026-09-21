@@ -168,14 +168,14 @@ export const sejak = (iso: unknown): string => {
 /* -------------------------------------------------------------------------- */
 
 
-async function request(path:string,params?:Record<string,unknown>,body?:any):Promise<any>{
+async function request(path:string,params?:Record<string,unknown>,body?:any,method?:string):Promise<any>{
   if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi Supabase belum dikonfigurasi.');
   const {data}=await supabase.auth.getSession();
   if(!data.session?.access_token) throw new ApiError(401,'UNAUTHORIZED','Silakan masuk kembali.');
   const query=new URLSearchParams();
   for(const [key,value] of Object.entries(params || {})) if(value!==undefined && value!==null && value!=='') query.set(key,String(value));
   const response=await fetch('/api/admin/'+path+(query.size?'?'+query:''),
-    {method:body?'POST':'GET',headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    {method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   const result=await response.json();
   if(response.status===403 && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {
     window.dispatchEvent(new Event('admin-mfa-required'));
@@ -221,4 +221,10 @@ export const api={
   support:(tenantId:string,body:any)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',undefined,body),
   supportHistory:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',{justification}),
   subscriptionDetail:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/subscription-detail',{justification}),
+  blog:{
+    list:(p?:Record<string,unknown>)=>request('blog',p),
+    create:(body:any)=>request('blog',undefined,body,'POST'),
+    update:(id:string,body:any)=>request('blog/'+encodeURIComponent(id),undefined,body,'PUT'),
+    delete:(id:string)=>request('blog/'+encodeURIComponent(id),undefined,undefined,'DELETE'),
+  },
 };

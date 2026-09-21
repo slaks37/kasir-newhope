@@ -215,7 +215,7 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}, financialDet
 export async function merchantDetail(db: Db, merchantId: string) {
   if (!UUID_RE.test(merchantId)) return null;
 
-  const [profile, bySector, health, topProducts] = await Promise.all([
+  const [profile, bySector, health, topProducts, customerStats] = await Promise.all([
     db.query(`SELECT d.*,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
       (SELECT COALESCE(sum(cogs),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS cogs,
       (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit,
@@ -245,11 +245,22 @@ export async function merchantDetail(db: Db, merchantId: string) {
         LIMIT 15`,
       [merchantId]
     ),
+    db.query(
+      `SELECT COUNT(*)::int AS customer_count, COALESCE(SUM(total_spent), 0) AS total_customer_spent
+         FROM pos.customers
+        WHERE merchant_id = $1`,
+      [merchantId]
+    ).catch(() => ({ rows: [{ customer_count: 0, total_customer_spent: 0 }] })),
   ]);
 
   if (!profile.rows.length) return null;
   return {
-    profile: {...withSubscription(profile.rows[0]),gross_revenue:bySector.rows.reduce((sum,r)=>sum+Number(r.gross_revenue),0),transaction_count:bySector.rows.reduce((sum,r)=>sum+Number(r.transaction_count),0)},
+    profile: {
+      ...withSubscription(profile.rows[0]),
+      gross_revenue: bySector.rows.reduce((sum, r) => sum + Number(r.gross_revenue), 0),
+      transaction_count: bySector.rows.reduce((sum, r) => sum + Number(r.transaction_count), 0),
+      customer_count: Number(customerStats.rows[0]?.customer_count || 0),
+    },
     sectors: bySector.rows,
     health: health.rows[0] ?? null,
     topProducts: topProducts.rows,

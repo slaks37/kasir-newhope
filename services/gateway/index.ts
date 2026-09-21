@@ -54,6 +54,7 @@ const ROUTES: Array<{ prefix: string; target: string; name: keyof typeof SERVICE
   { prefix: '/api/v1/orders', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/transactions', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/analytics', target: SERVICE_URL.pos, name: 'pos' },
+  { prefix: '/api/v1/blog', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/admin', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/internal', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/v1/auth', target: SERVICE_URL.billing, name: 'billing' },
@@ -78,7 +79,10 @@ const PUBLIC_API_PATHS = new Set([
 ]);
 
 function isPublicApi(url: string): boolean {
-  return PUBLIC_API_PATHS.has(url.split('?')[0]);
+  const p = url.split('?')[0];
+  if (PUBLIC_API_PATHS.has(p)) return true;
+  if (p === '/api/v1/blog' || p.startsWith('/api/v1/blog/')) return true;
+  return false;
 }
 
 // PENTING: body TIDAK diurai di sini. Gateway meneruskan aliran mentah apa

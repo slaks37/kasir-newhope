@@ -317,4 +317,229 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       res.json({ ok: true, rows });
     })
   );
+
+  /* ---------------------------------------------------------------------- */
+  /* BLOG PUBLIK & CMS                                                       */
+  /* ---------------------------------------------------------------------- */
+
+  function rowToBlogPost(r: any) {
+    return {
+      id: r.id,
+      slug: r.slug,
+      title: r.title,
+      excerpt: r.excerpt || '',
+      content: r.content,
+      category: r.category,
+      coverImage: r.cover_image || '',
+      author: {
+        name: r.author_name || 'Tim Editorial New Hope POS',
+        role: r.author_role || 'Business Consultant',
+        avatar: r.author_avatar || '',
+      },
+      readingTimeMinutes: Number(r.reading_time_minutes || 5),
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      mediaEmbeds: Array.isArray(r.media_embeds) ? r.media_embeds : (typeof r.media_embeds === 'string' ? JSON.parse(r.media_embeds) : []),
+      seo: r.seo && typeof r.seo === 'object' ? r.seo : (typeof r.seo === 'string' ? JSON.parse(r.seo) : {}),
+      isPublished: Boolean(r.is_published),
+      isFeatured: Boolean(r.is_featured),
+      viewCount: Number(r.view_count || 0),
+      likesCount: Number(r.likes_count || 0),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  app.get(
+    '/api/v1/blog',
+    wrap(async (req, res, db) => {
+      const category = req.query.category ? String(req.query.category).trim() : null;
+      let query = `SELECT id, slug, title, excerpt, content, category, cover_image,
+                          author_name, author_role, author_avatar, reading_time_minutes,
+                          tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                          created_at, updated_at
+                     FROM public.blog_posts
+                    WHERE is_published = true`;
+      const params: any[] = [];
+      if (category && category !== 'Semua Kategori' && category !== 'ALL') {
+        params.push(category);
+        query += ` AND category = $${params.length}`;
+      }
+      query += ` ORDER BY is_featured DESC, created_at DESC`;
+      const { rows } = await db.query(query, params);
+      res.json({ ok: true, posts: rows.map(rowToBlogPost) });
+    })
+  );
+
+  app.get(
+    '/api/v1/blog/:slug',
+    wrap(async (req, res, db) => {
+      const slug = String(req.params.slug).trim();
+      const { rows } = await db.query(
+        `SELECT id, slug, title, excerpt, content, category, cover_image,
+                author_name, author_role, author_avatar, reading_time_minutes,
+                tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                created_at, updated_at
+           FROM public.blog_posts
+          WHERE slug = $1 AND is_published = true`,
+        [slug]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {});
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+
+  app.post(
+    '/api/v1/blog/:id/like',
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id).trim();
+      const { rows } = await db.query(
+        `UPDATE public.blog_posts SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      res.json({ ok: true, likesCount: Number(rows[0].likes_count) });
+    })
+  );
+
+  app.get(
+    '/api/admin/blog',
+    guard('VIEW_SECTOR_ANALYTICS'),
+    wrap(async (_req, res, db) => {
+      const { rows } = await db.query(
+        `SELECT id, slug, title, excerpt, content, category, cover_image,
+                author_name, author_role, author_avatar, reading_time_minutes,
+                tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                created_at, updated_at
+           FROM public.blog_posts
+          ORDER BY created_at DESC`
+      );
+      res.json({ ok: true, posts: rows.map(rowToBlogPost) });
+    })
+  );
+
+  app.post(
+    '/api/admin/blog',
+    guard('VIEW_SECTOR_ANALYTICS'),
+    wrap(async (req, res, db) => {
+      const b = req.body || {};
+      const id = b.id ? String(b.id) : ('blog-' + randomUUID());
+      const slug = String(b.slug || '').trim();
+      const title = String(b.title || '').trim();
+      if (!slug || !title) return res.status(400).json({ ok: false, error: 'TITLE_AND_SLUG_REQUIRED' });
+
+      const author = b.author || {};
+      const { rows } = await db.query(
+        `INSERT INTO public.blog_posts (
+           id, slug, title, excerpt, content, category, cover_image,
+           author_name, author_role, author_avatar, reading_time_minutes,
+           tags, media_embeds, seo, is_published, is_featured,
+           created_at, updated_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7,
+           $8, $9, $10, $11,
+           $12, $13::jsonb, $14::jsonb, $15, $16,
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+         )
+         ON CONFLICT (slug) DO UPDATE SET
+           title = EXCLUDED.title,
+           excerpt = EXCLUDED.excerpt,
+           content = EXCLUDED.content,
+           category = EXCLUDED.category,
+           cover_image = EXCLUDED.cover_image,
+           author_name = EXCLUDED.author_name,
+           author_role = EXCLUDED.author_role,
+           author_avatar = EXCLUDED.author_avatar,
+           reading_time_minutes = EXCLUDED.reading_time_minutes,
+           tags = EXCLUDED.tags,
+           media_embeds = EXCLUDED.media_embeds,
+           seo = EXCLUDED.seo,
+           is_published = EXCLUDED.is_published,
+           is_featured = EXCLUDED.is_featured,
+           updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [
+          id,
+          slug,
+          title,
+          String(b.excerpt || '').trim(),
+          String(b.content || '').trim(),
+          String(b.category || 'Tips Bisnis & Strategi'),
+          String(b.coverImage || ''),
+          String(author.name || 'Tim Editorial New Hope POS'),
+          String(author.role || 'Business Consultant'),
+          String(author.avatar || ''),
+          Number(b.readingTimeMinutes) || 5,
+          Array.isArray(b.tags) ? b.tags : [],
+          JSON.stringify(Array.isArray(b.mediaEmbeds) ? b.mediaEmbeds : []),
+          JSON.stringify(b.seo && typeof b.seo === 'object' ? b.seo : {}),
+          b.isPublished !== false,
+          Boolean(b.isFeatured),
+        ]
+      );
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+
+  app.put(
+    '/api/admin/blog/:id',
+    guard('VIEW_SECTOR_ANALYTICS'),
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id);
+      const b = req.body || {};
+      const author = b.author || {};
+      const { rows } = await db.query(
+        `UPDATE public.blog_posts
+            SET slug = COALESCE($2, slug),
+                title = COALESCE($3, title),
+                excerpt = COALESCE($4, excerpt),
+                content = COALESCE($5, content),
+                category = COALESCE($6, category),
+                cover_image = COALESCE($7, cover_image),
+                author_name = COALESCE($8, author_name),
+                author_role = COALESCE($9, author_role),
+                author_avatar = COALESCE($10, author_avatar),
+                reading_time_minutes = COALESCE($11, reading_time_minutes),
+                tags = COALESCE($12, tags),
+                media_embeds = COALESCE($13::jsonb, media_embeds),
+                seo = COALESCE($14::jsonb, seo),
+                is_published = COALESCE($15, is_published),
+                is_featured = COALESCE($16, is_featured),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING *`,
+        [
+          id,
+          b.slug ? String(b.slug).trim() : null,
+          b.title ? String(b.title).trim() : null,
+          b.excerpt !== undefined ? String(b.excerpt).trim() : null,
+          b.content !== undefined ? String(b.content).trim() : null,
+          b.category ? String(b.category) : null,
+          b.coverImage !== undefined ? String(b.coverImage) : null,
+          author.name !== undefined ? String(author.name) : null,
+          author.role !== undefined ? String(author.role) : null,
+          author.avatar !== undefined ? String(author.avatar) : null,
+          b.readingTimeMinutes !== undefined ? Number(b.readingTimeMinutes) : null,
+          Array.isArray(b.tags) ? b.tags : null,
+          b.mediaEmbeds !== undefined ? JSON.stringify(b.mediaEmbeds) : null,
+          b.seo !== undefined ? JSON.stringify(b.seo) : null,
+          b.isPublished !== undefined ? Boolean(b.isPublished) : null,
+          b.isFeatured !== undefined ? Boolean(b.isFeatured) : null,
+        ]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+
+  app.delete(
+    '/api/admin/blog/:id',
+    guard('VIEW_SECTOR_ANALYTICS'),
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id);
+      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id`, [id]);
+      if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      res.json({ ok: true, id: rows[0].id });
+    })
+  );
 }

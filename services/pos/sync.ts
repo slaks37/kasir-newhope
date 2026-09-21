@@ -843,4 +843,109 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
   });
+
+  /**
+   * POST /api/v1/sync/customers
+   *
+   * {
+   *   businessId, sector, storeName,
+   *   customers: [ { id, name, phone, email, address, notes, totalSpent, ordersCount, lastVisitAt } ]
+   * }
+   */
+  app.post('/api/v1/sync/customers', async (req, res) => {
+    const body = req.body ?? {};
+    const businessId = str(body.businessId, 96);
+    const sector = str(body.sector, 16);
+    const storeName = str(body.storeName, 100) ?? 'Tanpa Nama';
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    const ownerRef = principal.subject;
+    const customers: any[] = Array.isArray(body.customers) ? body.customers : [];
+
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'BAD_REQUEST',
+        detail: 'businessId dan sector wajib',
+      });
+    }
+
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId: string;
+        let merchantId: string;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+             VALUES (uuidv7(), $1, $2, $3)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+             VALUES (uuidv7(), $1, $2, $3, $4)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, storeName, sector, businessId]
+          );
+          merchantId = m.rows[0].id;
+        }
+
+        let upserted = 0;
+        for (const cust of customers) {
+          const extRef = str(cust.id || cust.external_ref, 96);
+          const name = str(cust.name, 120);
+          if (!extRef || !name) continue;
+          await c.query(
+            `INSERT INTO pos.customers (
+               tenant_id, merchant_id, external_ref, name, phone, email, address, notes,
+               total_spent, orders_count, last_visit_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+             ON CONFLICT (tenant_id, external_ref)
+               DO UPDATE SET
+                 name = EXCLUDED.name,
+                 phone = COALESCE(EXCLUDED.phone, pos.customers.phone),
+                 email = COALESCE(EXCLUDED.email, pos.customers.email),
+                 address = COALESCE(EXCLUDED.address, pos.customers.address),
+                 notes = COALESCE(EXCLUDED.notes, pos.customers.notes),
+                 total_spent = EXCLUDED.total_spent,
+                 orders_count = EXCLUDED.orders_count,
+                 last_visit_at = COALESCE(EXCLUDED.last_visit_at, pos.customers.last_visit_at),
+                 updated_at = NOW()`,
+            [
+              tenantId,
+              merchantId,
+              extRef,
+              name,
+              str(cust.phone, 32),
+              str(cust.email, 120),
+              str(cust.address, 255),
+              str(cust.notes, 500),
+              num(cust.totalSpent || cust.total_spent),
+              num(cust.ordersCount || cust.orders_count),
+              cust.lastVisitAt ? new Date(cust.lastVisitAt) : null,
+            ]
+          );
+          upserted++;
+        }
+        return { ok: true, upserted };
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message || 'CUSTOMER_SYNC_FAILED' });
+    }
+  });
 }

@@ -1474,7 +1474,7 @@ async function merchantDirectory(db, f = {}, financialDetail = true) {
 }
 async function merchantDetail(db, merchantId) {
   if (!UUID_RE.test(merchantId)) return null;
-  const [profile, bySector, health, topProducts] = await Promise.all([
+  const [profile, bySector, health, topProducts, customerStats] = await Promise.all([
     db.query(`SELECT d.*,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
       (SELECT COALESCE(sum(cogs),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS cogs,
       (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit,
@@ -1503,11 +1503,22 @@ async function merchantDetail(db, merchantId) {
         ORDER BY revenue DESC
         LIMIT 15`,
       [merchantId]
-    )
+    ),
+    db.query(
+      `SELECT COUNT(*)::int AS customer_count, COALESCE(SUM(total_spent), 0) AS total_customer_spent
+         FROM pos.customers
+        WHERE merchant_id = $1`,
+      [merchantId]
+    ).catch(() => ({ rows: [{ customer_count: 0, total_customer_spent: 0 }] }))
   ]);
   if (!profile.rows.length) return null;
   return {
-    profile: { ...withSubscription(profile.rows[0]), gross_revenue: bySector.rows.reduce((sum, r) => sum + Number(r.gross_revenue), 0), transaction_count: bySector.rows.reduce((sum, r) => sum + Number(r.transaction_count), 0) },
+    profile: {
+      ...withSubscription(profile.rows[0]),
+      gross_revenue: bySector.rows.reduce((sum, r) => sum + Number(r.gross_revenue), 0),
+      transaction_count: bySector.rows.reduce((sum, r) => sum + Number(r.transaction_count), 0),
+      customer_count: Number(customerStats.rows[0]?.customer_count || 0)
+    },
     sectors: bySector.rows,
     health: health.rows[0] ?? null,
     topProducts: topProducts.rows
@@ -1868,6 +1879,219 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
           LIMIT 200`
       );
       res.json({ ok: true, rows });
+    })
+  );
+  function rowToBlogPost(r) {
+    return {
+      id: r.id,
+      slug: r.slug,
+      title: r.title,
+      excerpt: r.excerpt || "",
+      content: r.content,
+      category: r.category,
+      coverImage: r.cover_image || "",
+      author: {
+        name: r.author_name || "Tim Editorial New Hope POS",
+        role: r.author_role || "Business Consultant",
+        avatar: r.author_avatar || ""
+      },
+      readingTimeMinutes: Number(r.reading_time_minutes || 5),
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      mediaEmbeds: Array.isArray(r.media_embeds) ? r.media_embeds : typeof r.media_embeds === "string" ? JSON.parse(r.media_embeds) : [],
+      seo: r.seo && typeof r.seo === "object" ? r.seo : typeof r.seo === "string" ? JSON.parse(r.seo) : {},
+      isPublished: Boolean(r.is_published),
+      isFeatured: Boolean(r.is_featured),
+      viewCount: Number(r.view_count || 0),
+      likesCount: Number(r.likes_count || 0),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  app.get(
+    "/api/v1/blog",
+    wrap(async (req, res, db) => {
+      const category = req.query.category ? String(req.query.category).trim() : null;
+      let query = `SELECT id, slug, title, excerpt, content, category, cover_image,
+                          author_name, author_role, author_avatar, reading_time_minutes,
+                          tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                          created_at, updated_at
+                     FROM public.blog_posts
+                    WHERE is_published = true`;
+      const params = [];
+      if (category && category !== "Semua Kategori" && category !== "ALL") {
+        params.push(category);
+        query += ` AND category = $${params.length}`;
+      }
+      query += ` ORDER BY is_featured DESC, created_at DESC`;
+      const { rows } = await db.query(query, params);
+      res.json({ ok: true, posts: rows.map(rowToBlogPost) });
+    })
+  );
+  app.get(
+    "/api/v1/blog/:slug",
+    wrap(async (req, res, db) => {
+      const slug = String(req.params.slug).trim();
+      const { rows } = await db.query(
+        `SELECT id, slug, title, excerpt, content, category, cover_image,
+                author_name, author_role, author_avatar, reading_time_minutes,
+                tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                created_at, updated_at
+           FROM public.blog_posts
+          WHERE slug = $1 AND is_published = true`,
+        [slug]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {
+      });
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+  app.post(
+    "/api/v1/blog/:id/like",
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id).trim();
+      const { rows } = await db.query(
+        `UPDATE public.blog_posts SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      res.json({ ok: true, likesCount: Number(rows[0].likes_count) });
+    })
+  );
+  app.get(
+    "/api/admin/blog",
+    guard("VIEW_SECTOR_ANALYTICS"),
+    wrap(async (_req, res, db) => {
+      const { rows } = await db.query(
+        `SELECT id, slug, title, excerpt, content, category, cover_image,
+                author_name, author_role, author_avatar, reading_time_minutes,
+                tags, media_embeds, seo, is_published, is_featured, view_count, likes_count,
+                created_at, updated_at
+           FROM public.blog_posts
+          ORDER BY created_at DESC`
+      );
+      res.json({ ok: true, posts: rows.map(rowToBlogPost) });
+    })
+  );
+  app.post(
+    "/api/admin/blog",
+    guard("VIEW_SECTOR_ANALYTICS"),
+    wrap(async (req, res, db) => {
+      const b = req.body || {};
+      const id = b.id ? String(b.id) : "blog-" + randomUUID3();
+      const slug = String(b.slug || "").trim();
+      const title = String(b.title || "").trim();
+      if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
+      const author = b.author || {};
+      const { rows } = await db.query(
+        `INSERT INTO public.blog_posts (
+           id, slug, title, excerpt, content, category, cover_image,
+           author_name, author_role, author_avatar, reading_time_minutes,
+           tags, media_embeds, seo, is_published, is_featured,
+           created_at, updated_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7,
+           $8, $9, $10, $11,
+           $12, $13::jsonb, $14::jsonb, $15, $16,
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+         )
+         ON CONFLICT (slug) DO UPDATE SET
+           title = EXCLUDED.title,
+           excerpt = EXCLUDED.excerpt,
+           content = EXCLUDED.content,
+           category = EXCLUDED.category,
+           cover_image = EXCLUDED.cover_image,
+           author_name = EXCLUDED.author_name,
+           author_role = EXCLUDED.author_role,
+           author_avatar = EXCLUDED.author_avatar,
+           reading_time_minutes = EXCLUDED.reading_time_minutes,
+           tags = EXCLUDED.tags,
+           media_embeds = EXCLUDED.media_embeds,
+           seo = EXCLUDED.seo,
+           is_published = EXCLUDED.is_published,
+           is_featured = EXCLUDED.is_featured,
+           updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [
+          id,
+          slug,
+          title,
+          String(b.excerpt || "").trim(),
+          String(b.content || "").trim(),
+          String(b.category || "Tips Bisnis & Strategi"),
+          String(b.coverImage || ""),
+          String(author.name || "Tim Editorial New Hope POS"),
+          String(author.role || "Business Consultant"),
+          String(author.avatar || ""),
+          Number(b.readingTimeMinutes) || 5,
+          Array.isArray(b.tags) ? b.tags : [],
+          JSON.stringify(Array.isArray(b.mediaEmbeds) ? b.mediaEmbeds : []),
+          JSON.stringify(b.seo && typeof b.seo === "object" ? b.seo : {}),
+          b.isPublished !== false,
+          Boolean(b.isFeatured)
+        ]
+      );
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+  app.put(
+    "/api/admin/blog/:id",
+    guard("VIEW_SECTOR_ANALYTICS"),
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id);
+      const b = req.body || {};
+      const author = b.author || {};
+      const { rows } = await db.query(
+        `UPDATE public.blog_posts
+            SET slug = COALESCE($2, slug),
+                title = COALESCE($3, title),
+                excerpt = COALESCE($4, excerpt),
+                content = COALESCE($5, content),
+                category = COALESCE($6, category),
+                cover_image = COALESCE($7, cover_image),
+                author_name = COALESCE($8, author_name),
+                author_role = COALESCE($9, author_role),
+                author_avatar = COALESCE($10, author_avatar),
+                reading_time_minutes = COALESCE($11, reading_time_minutes),
+                tags = COALESCE($12, tags),
+                media_embeds = COALESCE($13::jsonb, media_embeds),
+                seo = COALESCE($14::jsonb, seo),
+                is_published = COALESCE($15, is_published),
+                is_featured = COALESCE($16, is_featured),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING *`,
+        [
+          id,
+          b.slug ? String(b.slug).trim() : null,
+          b.title ? String(b.title).trim() : null,
+          b.excerpt !== void 0 ? String(b.excerpt).trim() : null,
+          b.content !== void 0 ? String(b.content).trim() : null,
+          b.category ? String(b.category) : null,
+          b.coverImage !== void 0 ? String(b.coverImage) : null,
+          author.name !== void 0 ? String(author.name) : null,
+          author.role !== void 0 ? String(author.role) : null,
+          author.avatar !== void 0 ? String(author.avatar) : null,
+          b.readingTimeMinutes !== void 0 ? Number(b.readingTimeMinutes) : null,
+          Array.isArray(b.tags) ? b.tags : null,
+          b.mediaEmbeds !== void 0 ? JSON.stringify(b.mediaEmbeds) : null,
+          b.seo !== void 0 ? JSON.stringify(b.seo) : null,
+          b.isPublished !== void 0 ? Boolean(b.isPublished) : null,
+          b.isFeatured !== void 0 ? Boolean(b.isFeatured) : null
+        ]
+      );
+      if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      res.json({ ok: true, post: rowToBlogPost(rows[0]) });
+    })
+  );
+  app.delete(
+    "/api/admin/blog/:id",
+    guard("VIEW_SECTOR_ANALYTICS"),
+    wrap(async (req, res, db) => {
+      const id = String(req.params.id);
+      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id`, [id]);
+      if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      res.json({ ok: true, id: rows[0].id });
     })
   );
 }
@@ -2560,6 +2784,98 @@ function registerSyncRoutes(app, db) {
     );
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
+  });
+  app.post("/api/v1/sync/customers", async (req, res) => {
+    const body = req.body ?? {};
+    const businessId = str(body.businessId, 96);
+    const sector = str(body.sector, 16);
+    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const ownerRef = principal.subject;
+    const customers = Array.isArray(body.customers) ? body.customers : [];
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({
+        ok: false,
+        error: "BAD_REQUEST",
+        detail: "businessId dan sector wajib"
+      });
+    }
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId;
+        let merchantId;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+             VALUES (uuidv7(), $1, $2, $3)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+             VALUES (uuidv7(), $1, $2, $3, $4)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, storeName, sector, businessId]
+          );
+          merchantId = m.rows[0].id;
+        }
+        let upserted = 0;
+        for (const cust of customers) {
+          const extRef = str(cust.id || cust.external_ref, 96);
+          const name = str(cust.name, 120);
+          if (!extRef || !name) continue;
+          await c.query(
+            `INSERT INTO pos.customers (
+               tenant_id, merchant_id, external_ref, name, phone, email, address, notes,
+               total_spent, orders_count, last_visit_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+             ON CONFLICT (tenant_id, external_ref)
+               DO UPDATE SET
+                 name = EXCLUDED.name,
+                 phone = COALESCE(EXCLUDED.phone, pos.customers.phone),
+                 email = COALESCE(EXCLUDED.email, pos.customers.email),
+                 address = COALESCE(EXCLUDED.address, pos.customers.address),
+                 notes = COALESCE(EXCLUDED.notes, pos.customers.notes),
+                 total_spent = EXCLUDED.total_spent,
+                 orders_count = EXCLUDED.orders_count,
+                 last_visit_at = COALESCE(EXCLUDED.last_visit_at, pos.customers.last_visit_at),
+                 updated_at = NOW()`,
+            [
+              tenantId,
+              merchantId,
+              extRef,
+              name,
+              str(cust.phone, 32),
+              str(cust.email, 120),
+              str(cust.address, 255),
+              str(cust.notes, 500),
+              num(cust.totalSpent || cust.total_spent),
+              num(cust.ordersCount || cust.orders_count),
+              cust.lastVisitAt ? new Date(cust.lastVisitAt) : null
+            ]
+          );
+          upserted++;
+        }
+        return { ok: true, upserted };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message || "CUSTOMER_SYNC_FAILED" });
+    }
   });
 }
 

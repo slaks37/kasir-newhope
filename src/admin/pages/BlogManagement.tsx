@@ -6,6 +6,7 @@ import {
   updateBlogPost,
   deleteBlogPost,
 } from '../../lib/blogStorage';
+import { api } from '../api';
 import { newId } from '../../lib/ids';
 import {
   BookOpen,
@@ -75,13 +76,22 @@ export const BlogManagement: React.FC = () => {
   const [metaDescription, setMetaDescription] = useState('');
   const [metaKeywordsInput, setMetaKeywordsInput] = useState('');
 
-  const reloadPosts = () => {
+  const reloadPosts = async () => {
+    try {
+      const res = await api.blog.list();
+      if (res?.ok && Array.isArray(res.posts)) {
+        setPosts(res.posts);
+        return;
+      }
+    } catch (err) {
+      console.warn('[BlogManagement] Using local blog storage fallback:', err);
+    }
     const list = getAllBlogPosts();
     setPosts(list);
   };
 
   useEffect(() => {
-    reloadPosts();
+    void reloadPosts();
   }, []);
 
   // Helper auto slug generator
@@ -202,19 +212,30 @@ export const BlogManagement: React.FC = () => {
     };
 
     if (editingPostId) {
+      api.blog.update(editingPostId, postPayload).catch((err) => {
+        console.warn('[BlogManagement] API update failed, saved locally:', err);
+      });
       updateBlogPost(editingPostId, postPayload);
     } else {
-      createBlogPost(postPayload);
+      api.blog.create(postPayload).then((res) => {
+        if (res?.post) createBlogPost(res.post);
+      }).catch((err) => {
+        console.warn('[BlogManagement] API create failed, saved locally:', err);
+        createBlogPost(postPayload);
+      });
     }
 
     setShowModal(false);
-    reloadPosts();
+    void reloadPosts();
   };
 
   const handleDeletePost = (p: BlogPost) => {
     if (window.confirm(`Apakah Anda yakin ingin menghapus artikel "${p.title}"?`)) {
+      api.blog.delete(p.id).catch((err) => {
+        console.warn('[BlogManagement] API delete failed, deleted locally:', err);
+      });
       deleteBlogPost(p.id);
-      reloadPosts();
+      void reloadPosts();
     }
   };
 

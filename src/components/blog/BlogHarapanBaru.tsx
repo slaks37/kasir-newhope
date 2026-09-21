@@ -53,13 +53,25 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
 
-  const reloadPosts = () => {
+  const reloadPosts = async () => {
+    try {
+      const res = await fetch('/api/v1/blog');
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.posts) && data.posts.length > 0) {
+          setPosts(data.posts);
+          return;
+        }
+      }
+    } catch {
+      // Fallback to local storage if offline or server down
+    }
     const pub = getPublishedBlogPosts();
     setPosts(pub);
   };
 
   useEffect(() => {
-    reloadPosts();
+    void reloadPosts();
 
     // Listen for cross-tab or CMS storage updates
     window.addEventListener('newhope_blog_updated', reloadPosts);
@@ -68,15 +80,27 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
 
   // Handle initial slug navigation if provided via URL (#blog/slug)
   useEffect(() => {
+    let active = true;
     if (initialSlug) {
-      const p = getBlogPostBySlug(initialSlug);
-      if (p) {
-        setSelectedPost(p);
-        incrementBlogView(p.id);
-      }
+      const local = getBlogPostBySlug(initialSlug);
+      if (local && active) setSelectedPost(local);
+
+      fetch(`/api/v1/blog/${encodeURIComponent(initialSlug)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (active && data?.ok && data.post) {
+            setSelectedPost(data.post);
+          }
+        })
+        .catch(() => {});
+
+      if (local) incrementBlogView(local.id);
     } else {
       setSelectedPost(null);
     }
+    return () => {
+      active = false;
+    };
   }, [initialSlug]);
 
   const categories: BlogCategory[] = [
@@ -119,9 +143,10 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
   const handleLikePost = (p: BlogPost, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!likedPosts[p.id]) {
+      fetch(`/api/v1/blog/${encodeURIComponent(p.id)}/like`, { method: 'POST' }).catch(() => {});
       incrementBlogLikes(p.id);
       setLikedPosts((prev) => ({ ...prev, [p.id]: true }));
-      reloadPosts();
+      void reloadPosts();
       if (selectedPost && selectedPost.id === p.id) {
         setSelectedPost({ ...selectedPost, likesCount: selectedPost.likesCount + 1 });
       }

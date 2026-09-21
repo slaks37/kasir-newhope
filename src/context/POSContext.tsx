@@ -53,6 +53,7 @@ import {
   getStatus as getSyncStatus,
   orderToPayload,
   pushCatalog,
+  pushCustomers,
   type SyncStatus,
   type SyncTarget,
 } from '../lib/sync/queue';
@@ -1013,6 +1014,38 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => window.clearTimeout(timer);
   }, [products, categories, currentUser.id, activeSector, settings.storeName, settings.subscription]);
+
+  /*
+   * SINKRONISASI DATA PELANGGAN (CRM) KE POSTGRESQL.
+   *
+   * Seperti katalog, data pelanggan dikirim berkala saat ada perubahan agar
+   * CRM terintegrasi ke database pusat dan profil merchant di admin backoffice.
+   */
+  useEffect(() => {
+    if (customers.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      void pushCustomers(
+        {
+          businessId: makeBusinessId(currentUser.id, activeSector),
+          sector: activeSector,
+          storeName: settings.storeName,
+          ownerRef: currentUser.id,
+        },
+        customers.map((c) => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          email: c.email,
+          totalSpent: c.totalSpent,
+          ordersCount: c.visitCount,
+          lastVisitAt: c.lastVisit,
+        }))
+      );
+    }, 10_000);
+
+    return () => window.clearTimeout(timer);
+  }, [customers, currentUser.id, activeSector, settings.storeName]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.

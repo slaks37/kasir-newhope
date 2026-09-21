@@ -243,6 +243,44 @@ export async function pushCatalog(
 }
 
 /**
+ * Mengirim daftar pelanggan / CRM satu unit usaha ke database.
+ *
+ * Seperti pushCatalog, pelanggan bersifat "keadaan terkini", sehingga
+ * dikirim langsung di luar antrian transaksi kasir tanpa memblokir kasir.
+ */
+export async function pushCustomers(
+  target: SyncTarget,
+  customers: Array<{
+    id: string;
+    name: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    notes?: string;
+    totalSpent?: number;
+    ordersCount?: number;
+    lastVisitAt?: string;
+  }>
+): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/sync/customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: target.businessId,
+        sector: target.sector,
+        storeName: target.storeName,
+        ownerRef: target.ownerRef,
+        customers,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Memasukkan satu transaksi ke antrian.
  *
  * Menulis ke disk SEBELUM apa pun dikirim. Kalau proses mati tepat setelah
