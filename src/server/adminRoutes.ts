@@ -284,6 +284,89 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     })
   );
 
+  // Bahan baku & stok mentah
+  app.get(
+    '/api/admin/raw-materials',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (req, res, db) => {
+      try {
+        const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
+        let q = `SELECT id, name, sku, category, unit, cost_per_unit, current_stock, minimum_stock_alert, is_active, updated_at
+                   FROM pos.inventory_items`;
+        const params: any[] = [];
+        if (search) {
+          params.push(search);
+          q += ` WHERE name ILIKE $1 OR sku ILIKE $1 OR category ILIKE $1`;
+        }
+        q += ` ORDER BY name ASC LIMIT 200`;
+        const { rows } = await db.query(q, params);
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+
+  // Produk paket / bundle
+  app.get(
+    '/api/admin/bundles',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (req, res, db) => {
+      try {
+        const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
+        let q = `SELECT p.id, p.name, p.sku, p.price, p.cost_price, p.is_available, p.offering_type,
+                        c.name AS category_name
+                   FROM pos.products p
+                   LEFT JOIN pos.categories c ON c.id = p.category_id
+                  WHERE p.offering_type = 'BUNDLE'`;
+        const params: any[] = [];
+        if (search) {
+          params.push(search);
+          q += ` AND (p.name ILIKE $1 OR p.sku ILIKE $1)`;
+        }
+        q += ` ORDER BY p.name ASC LIMIT 200`;
+        const { rows } = await db.query(q, params);
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+
+  // Resep BOM (Bill of Materials)
+  app.get(
+    '/api/admin/recipes',
+    guard('VIEW_PRODUCT_SALES'),
+    wrap(async (_req, res, db) => {
+      try {
+        const { rows } = await db.query(
+          `SELECT r.id, r.merchant_id, r.output_product_id, p.name AS output_product_name,
+                  r.output_quantity, r.notes,
+                  COALESCE(
+                    json_agg(
+                      json_build_object(
+                        'item_id', ri.inventory_item_id,
+                        'item_name', ii.name,
+                        'quantity', ri.quantity_required,
+                        'unit', ii.unit
+                      )
+                    ) FILTER (WHERE ri.id IS NOT NULL), '[]'::json
+                  ) AS ingredients
+             FROM pos.recipes r
+             LEFT JOIN pos.products p ON p.id = r.output_product_id
+             LEFT JOIN pos.recipe_items ri ON ri.recipe_id = r.id
+             LEFT JOIN pos.inventory_items ii ON ii.id = ri.inventory_item_id
+            GROUP BY r.id, r.merchant_id, r.output_product_id, p.name, r.output_quantity, r.notes
+            ORDER BY p.name ASC
+            LIMIT 200`
+        );
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+
   /* ---------------------------------------------------------------------- */
   /* JEJAK AKTIVITAS                                                         */
   /* ---------------------------------------------------------------------- */

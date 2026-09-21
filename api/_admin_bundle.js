@@ -1861,6 +1861,83 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
     })
   );
   app.get(
+    "/api/admin/raw-materials",
+    guard("VIEW_PRODUCT_SALES"),
+    wrap(async (req, res, db) => {
+      try {
+        const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
+        let q = `SELECT id, name, sku, category, unit, cost_per_unit, current_stock, minimum_stock_alert, is_active, updated_at
+                   FROM pos.inventory_items`;
+        const params = [];
+        if (search) {
+          params.push(search);
+          q += ` WHERE name ILIKE $1 OR sku ILIKE $1 OR category ILIKE $1`;
+        }
+        q += ` ORDER BY name ASC LIMIT 200`;
+        const { rows } = await db.query(q, params);
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+  app.get(
+    "/api/admin/bundles",
+    guard("VIEW_PRODUCT_SALES"),
+    wrap(async (req, res, db) => {
+      try {
+        const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
+        let q = `SELECT p.id, p.name, p.sku, p.price, p.cost_price, p.is_available, p.offering_type,
+                        c.name AS category_name
+                   FROM pos.products p
+                   LEFT JOIN pos.categories c ON c.id = p.category_id
+                  WHERE p.offering_type = 'BUNDLE'`;
+        const params = [];
+        if (search) {
+          params.push(search);
+          q += ` AND (p.name ILIKE $1 OR p.sku ILIKE $1)`;
+        }
+        q += ` ORDER BY p.name ASC LIMIT 200`;
+        const { rows } = await db.query(q, params);
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+  app.get(
+    "/api/admin/recipes",
+    guard("VIEW_PRODUCT_SALES"),
+    wrap(async (_req, res, db) => {
+      try {
+        const { rows } = await db.query(
+          `SELECT r.id, r.merchant_id, r.output_product_id, p.name AS output_product_name,
+                  r.output_quantity, r.notes,
+                  COALESCE(
+                    json_agg(
+                      json_build_object(
+                        'item_id', ri.inventory_item_id,
+                        'item_name', ii.name,
+                        'quantity', ri.quantity_required,
+                        'unit', ii.unit
+                      )
+                    ) FILTER (WHERE ri.id IS NOT NULL), '[]'::json
+                  ) AS ingredients
+             FROM pos.recipes r
+             LEFT JOIN pos.products p ON p.id = r.output_product_id
+             LEFT JOIN pos.recipe_items ri ON ri.recipe_id = r.id
+             LEFT JOIN pos.inventory_items ii ON ii.id = ri.inventory_item_id
+            GROUP BY r.id, r.merchant_id, r.output_product_id, p.name, r.output_quantity, r.notes
+            ORDER BY p.name ASC
+            LIMIT 200`
+        );
+        res.json({ ok: true, rows, total: rows.length });
+      } catch {
+        res.json({ ok: true, rows: [], total: 0 });
+      }
+    })
+  );
+  app.get(
     "/api/admin/activity",
     guard("VIEW_ACTIVITY_LOG"),
     wrap(async (req, res, db) => {
@@ -2888,6 +2965,272 @@ function registerSyncRoutes(app, db) {
       res.json(result);
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message || "CUSTOMER_SYNC_FAILED" });
+    }
+  });
+  app.get("/api/v1/sync/catalog", async (req, res) => {
+    const businessId = str(req.query.businessId, 96);
+    const sector = str(req.query.sector, 16);
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const ownerRef = principal.subject;
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
+    }
+    try {
+      const tenantRes = await db.query(
+        `SELECT t.id AS tenant_id, m.id AS merchant_id
+           FROM internal.tenants t
+           JOIN internal.merchants m ON m.tenant_id = t.id
+          WHERE m.external_ref = $1 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
+        [businessId, ownerRef, `tenant_${businessId}`]
+      );
+      if (!tenantRes.rows.length) {
+        return res.json({ ok: true, products: [], categories: [] });
+      }
+      const tenantId = tenantRes.rows[0].tenant_id;
+      const [prodRes, catRes] = await Promise.all([
+        db.query(
+          `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
+                  p.is_available, c.name AS category_name, c.id AS category_id
+             FROM pos.products p
+             LEFT JOIN pos.categories c ON c.id = p.category_id
+            WHERE p.tenant_id = $1 AND p.is_available
+            ORDER BY p.name ASC`,
+          [tenantId]
+        ),
+        db.query(
+          `SELECT id, name, external_ref FROM pos.categories WHERE tenant_id = $1 ORDER BY name ASC`,
+          [tenantId]
+        )
+      ]);
+      res.json({
+        ok: true,
+        products: prodRes.rows.map((r) => ({
+          id: r.external_ref || r.id,
+          name: r.name,
+          sku: r.sku,
+          price: Number(r.price || 0),
+          costPrice: Number(r.cost_price || 0),
+          unit: r.unit,
+          description: r.description,
+          categoryName: r.category_name,
+          categoryId: r.category_id,
+          isAvailable: Boolean(r.is_available)
+        })),
+        categories: catRes.rows.map((r) => ({
+          id: r.external_ref || r.id,
+          name: r.name
+        }))
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message || "CATALOG_FETCH_FAILED" });
+    }
+  });
+  app.post("/api/v1/sync/attendance", async (req, res) => {
+    const body = req.body ?? {};
+    const businessId = str(body.businessId, 96);
+    const sector = str(body.sector, 16);
+    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const ownerRef = principal.subject;
+    const attendances = Array.isArray(body.attendances) ? body.attendances : [];
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
+    }
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId;
+        let merchantId;
+        let outletId = null;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          outletId = freeScope.outlet_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+             VALUES (uuidv7(), $1, $2, $3)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+             VALUES (uuidv7(), $1, $2, $3, $4)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, storeName, sector, businessId]
+          );
+          merchantId = m.rows[0].id;
+        }
+        let upserted = 0;
+        for (const att of attendances) {
+          const clientAttendanceId = str(att.id, 96);
+          const staffId = str(att.staffId, 96);
+          const staffName = str(att.staffName, 120);
+          const staffRole = str(att.staffRole, 64) || "STAFF";
+          const clockInAt = att.clockInTime ? new Date(att.clockInTime) : /* @__PURE__ */ new Date();
+          const clockOutAt = att.clockOutTime ? new Date(att.clockOutTime) : null;
+          const status = str(att.status, 32) || "CLOCKED_IN";
+          if (!clientAttendanceId || !staffId || !staffName) continue;
+          await c.query(
+            `INSERT INTO pos.staff_attendances (
+               tenant_id, merchant_id, outlet_id, client_attendance_id,
+               staff_id, staff_name, staff_role, clock_in_at, clock_out_at,
+               shift_notes, status, branch_id, branch_name, clock_in_geo, clock_out_geo,
+               business_sector, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, NOW())
+             ON CONFLICT (tenant_id, client_attendance_id)
+               DO UPDATE SET
+                 clock_out_at = COALESCE(EXCLUDED.clock_out_at, pos.staff_attendances.clock_out_at),
+                 shift_notes = COALESCE(EXCLUDED.shift_notes, pos.staff_attendances.shift_notes),
+                 status = EXCLUDED.status,
+                 clock_out_geo = COALESCE(EXCLUDED.clock_out_geo, pos.staff_attendances.clock_out_geo),
+                 updated_at = NOW()`,
+            [
+              tenantId,
+              merchantId,
+              outletId,
+              clientAttendanceId,
+              staffId,
+              staffName,
+              staffRole,
+              clockInAt,
+              clockOutAt,
+              str(att.shiftNotes, 500),
+              status,
+              str(att.branchId, 64),
+              str(att.branchName, 100),
+              JSON.stringify(att.clockInGeo || null),
+              JSON.stringify(att.clockOutGeo || null),
+              sector
+            ]
+          );
+          upserted++;
+        }
+        return { ok: true, upserted };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message || "ATTENDANCE_SYNC_FAILED" });
+    }
+  });
+  app.post("/api/v1/sync/payroll", async (req, res) => {
+    const body = req.body ?? {};
+    const businessId = str(body.businessId, 96);
+    const sector = str(body.sector, 16);
+    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const ownerRef = principal.subject;
+    const slips = Array.isArray(body.payrollSlips) ? body.payrollSlips : [];
+    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
+      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
+    }
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        let tenantId;
+        let merchantId;
+        if (freeScope) {
+          tenantId = freeScope.tenant_id;
+          merchantId = freeScope.merchant_id;
+          await assertTenantWritable(c, tenantId);
+        } else {
+          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
+          const t = await c.query(
+            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
+             VALUES (uuidv7(), $1, $2, $3)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [storeName, tenantExternalRef, ownerRef]
+          );
+          tenantId = t.rows[0].id;
+          await assertTenantWritable(c, tenantId);
+          const m = await c.query(
+            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
+             VALUES (uuidv7(), $1, $2, $3, $4)
+             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+               DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [tenantId, storeName, sector, businessId]
+          );
+          merchantId = m.rows[0].id;
+        }
+        let upserted = 0;
+        for (const slip of slips) {
+          const clientSlipId = str(slip.id, 96);
+          const staffId = str(slip.staffId, 96);
+          const staffName = str(slip.staffName, 120);
+          const staffRole = str(slip.staffRole, 64) || "STAFF";
+          const periodMonth = str(slip.periodMonth, 16) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
+          const periodStart = slip.periodStart ? new Date(slip.periodStart) : /* @__PURE__ */ new Date();
+          const periodEnd = slip.periodEnd ? new Date(slip.periodEnd) : /* @__PURE__ */ new Date();
+          if (!clientSlipId || !staffId || !staffName) continue;
+          await c.query(
+            `INSERT INTO pos.staff_payrolls (
+               tenant_id, merchant_id, client_slip_id, staff_id, staff_name, staff_role,
+               period_month, period_start, period_end, days_attended,
+               base_salary, allowance, individual_commission, team_pool_commission,
+               daily_target_bonus, gross_earnings, deductions, net_salary,
+               status, paid_at, payment_method, notes, business_sector, updated_at
+             ) VALUES (
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+               $11, $12, $13, $14, $15, $16, $17, $18,
+               $19, $20, $21, $22, $23, NOW()
+             )
+             ON CONFLICT (tenant_id, client_slip_id)
+               DO UPDATE SET
+                 status = EXCLUDED.status,
+                 paid_at = COALESCE(EXCLUDED.paid_at, pos.staff_payrolls.paid_at),
+                 payment_method = COALESCE(EXCLUDED.payment_method, pos.staff_payrolls.payment_method),
+                 notes = COALESCE(EXCLUDED.notes, pos.staff_payrolls.notes),
+                 net_salary = EXCLUDED.net_salary,
+                 updated_at = NOW()`,
+            [
+              tenantId,
+              merchantId,
+              clientSlipId,
+              staffId,
+              staffName,
+              staffRole,
+              periodMonth,
+              periodStart,
+              periodEnd,
+              Number(slip.daysAttended) || 0,
+              num(slip.baseSalary),
+              num(slip.allowance),
+              num(slip.individualCommission),
+              num(slip.teamPoolCommission),
+              num(slip.dailyTargetBonus),
+              num(slip.grossEarnings),
+              num(slip.deductions),
+              num(slip.netSalary),
+              str(slip.status, 32) || "DRAFT",
+              slip.paidAt ? new Date(slip.paidAt) : null,
+              str(slip.paymentMethod, 64),
+              str(slip.notes, 500),
+              sector
+            ]
+          );
+          upserted++;
+        }
+        return { ok: true, upserted };
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message || "PAYROLL_SYNC_FAILED" });
     }
   });
 }

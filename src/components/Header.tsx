@@ -138,16 +138,18 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="nh-header-actions">
         {(syncStatus.pending > 0 || syncStatus.failures > 0) && (
           <button
-            className={`nh-header-sync ${syncStatus.failures > 0 ? "has-error" : ""}`}
+            className={`nh-header-sync ${syncStatus.failures > 0 ? "has-error" : ""} ${syncStatus.failures >= 3 ? "is-critical text-red-600 font-bold animate-pulse" : ""}`}
             onClick={forceSync}
             title={
-              syncStatus.failures > 0
+              syncStatus.failures >= 3
+                ? `PERINGATAN: ${syncStatus.failures}x gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Cek koneksi & klik untuk coba lagi.`
+                : syncStatus.failures > 0
                 ? `Gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Klik untuk mencoba lagi.`
                 : `${syncStatus.pending} transaksi sedang dikirim ke pusat.`
             }
           >
             {syncStatus.failures > 0 ? (
-              <CloudAlert size={17} />
+              <CloudAlert size={17} className={syncStatus.failures >= 3 ? "text-red-500" : ""} />
             ) : (
               <CloudUpload size={17} />
             )}

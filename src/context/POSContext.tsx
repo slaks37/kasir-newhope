@@ -54,6 +54,9 @@ import {
   orderToPayload,
   pushCatalog,
   pushCustomers,
+  pushAttendance,
+  pushPayroll,
+  pullCatalog,
   type SyncStatus,
   type SyncTarget,
 } from '../lib/sync/queue';
@@ -1078,6 +1081,138 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => window.clearTimeout(timer);
   }, [customers, currentUser.id, activeSector, settings.storeName]);
+
+  /*
+   * SINKRONISASI PRESENSI / CLOCK-IN STAF KE POSTGRESQL.
+   */
+  useEffect(() => {
+    if (attendanceLogs.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      void pushAttendance(
+        {
+          businessId: makeBusinessId(currentUser.id, activeSector),
+          sector: activeSector,
+          storeName: settings.storeName,
+          ownerRef: currentUser.id,
+        },
+        attendanceLogs.slice(0, 100).map((a) => ({
+          id: a.id,
+          staffId: a.staffId,
+          staffName: a.staffName,
+          staffRole: a.staffRole,
+          clockInTime: a.clockInTime,
+          clockOutTime: a.clockOutTime,
+          shiftNotes: a.shiftNotes,
+          status: a.status,
+          branchId: a.branchId,
+          branchName: a.branchName,
+          clockInGeo: a.clockInGeo,
+          clockOutGeo: a.clockOutGeo,
+        }))
+      );
+    }, 5_000);
+
+    return () => window.clearTimeout(timer);
+  }, [attendanceLogs, currentUser.id, activeSector, settings.storeName]);
+
+  /*
+   * SINKRONISASI PENGGAJIAN / SLIP GAJI STAF KE POSTGRESQL.
+   */
+  useEffect(() => {
+    if (payrollSlips.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      void pushPayroll(
+        {
+          businessId: makeBusinessId(currentUser.id, activeSector),
+          sector: activeSector,
+          storeName: settings.storeName,
+          ownerRef: currentUser.id,
+        },
+        payrollSlips.slice(0, 50)
+      );
+    }, 5_000);
+
+    return () => window.clearTimeout(timer);
+  }, [payrollSlips, currentUser.id, activeSector, settings.storeName]);
+
+  /*
+   * HIDRASI KATALOG DARI SERVER (PULL-SYNC).
+   * Menarik produk & kategori terbaru saat online jika membuka di perangkat baru.
+   */
+  useEffect(() => {
+    let active = true;
+    async function hydrateCatalog() {
+      const target: SyncTarget = {
+        businessId: makeBusinessId(currentUser.id, activeSector),
+        sector: activeSector,
+        storeName: settings.storeName,
+        ownerRef: currentUser.id,
+      };
+      const remote = await pullCatalog(target);
+      if (!active || !remote) return;
+
+      if (remote.products.length > 0) {
+        setProducts((localProds) => {
+          const map = new Map(localProds.map((p) => [p.id, p]));
+          for (const rp of remote.products) {
+            const existing = map.get(rp.id);
+            if (existing) {
+              map.set(rp.id, {
+                ...existing,
+                name: rp.name,
+                price: rp.price,
+                costPrice: rp.costPrice,
+                sku: rp.sku || existing.sku,
+                unit: rp.unit || existing.unit,
+                description: rp.description ?? existing.description,
+                isAvailable: rp.isAvailable,
+              });
+            } else {
+              map.set(rp.id, {
+                id: rp.id,
+                name: rp.name,
+                price: rp.price,
+                costPrice: rp.costPrice,
+                sku: rp.sku || '',
+                unit: rp.unit || 'pcs',
+                description: rp.description || '',
+                categoryId: rp.categoryId || 'cat-1',
+                image: '',
+                stock: 100,
+                minStockAlert: 5,
+                isAvailable: rp.isAvailable,
+              });
+            }
+          }
+          return Array.from(map.values());
+        });
+      }
+
+      if (remote.categories.length > 0) {
+        setCategories((localCats) => {
+          const map = new Map(localCats.map((c) => [c.id, c]));
+          for (const rc of remote.categories) {
+            if (!map.has(rc.id)) {
+              map.set(rc.id, {
+                id: rc.id,
+                name: rc.name,
+                icon: 'Package',
+                color: '#3B82F6',
+              });
+            }
+          }
+          return Array.from(map.values());
+        });
+      }
+    }
+
+    void hydrateCatalog();
+    return () => {
+      active = false;
+    };
+  }, [currentUser.id, activeSector, settings.storeName]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.

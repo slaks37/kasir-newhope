@@ -281,6 +281,96 @@ export async function pushCustomers(
 }
 
 /**
+ * Mengirim riwayat presensi/absensi staf ke database.
+ */
+export async function pushAttendance(
+  target: SyncTarget,
+  attendances: Array<{
+    id: string;
+    staffId: string;
+    staffName: string;
+    staffRole: string;
+    clockInTime: string;
+    clockOutTime?: string;
+    shiftNotes?: string;
+    status: string;
+    branchId?: string;
+    branchName?: string;
+    clockInGeo?: any;
+    clockOutGeo?: any;
+  }>
+): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/sync/attendance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: target.businessId,
+        sector: target.sector,
+        storeName: target.storeName,
+        ownerRef: target.ownerRef,
+        attendances,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mengirim slip gaji staf dari modul Smart Labor ke database.
+ */
+export async function pushPayroll(
+  target: SyncTarget,
+  payrollSlips: Array<any>
+): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/sync/payroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: target.businessId,
+        sector: target.sector,
+        storeName: target.storeName,
+        ownerRef: target.ownerRef,
+        payrollSlips,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mengambil katalog produk & kategori dari database server (Pull Sync).
+ * Digunakan saat kasir pertama kali membuka aplikasi atau ganti perangkat.
+ */
+export async function pullCatalog(
+  target: SyncTarget
+): Promise<{ products: any[]; categories: any[] } | null> {
+  try {
+    const qs = new URLSearchParams({
+      businessId: target.businessId,
+      sector: target.sector,
+    });
+    const res = await fetch(`/api/v1/sync/catalog?${qs.toString()}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.ok && Array.isArray(data.products)) {
+      return { products: data.products, categories: data.categories || [] };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Memasukkan satu transaksi ke antrian.
  *
  * Menulis ke disk SEBELUM apa pun dikirim. Kalau proses mati tepat setelah
