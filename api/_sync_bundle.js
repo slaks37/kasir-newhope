@@ -18,7 +18,9 @@ async function authenticateBearer(req) {
     return LOCAL_BYPASS() ? { subject: "local-development" } : null;
   }
   const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) return null;
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  }
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },

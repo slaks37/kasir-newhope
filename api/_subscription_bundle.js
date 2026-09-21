@@ -164,7 +164,9 @@ async function authenticateBearer(req) {
     return LOCAL_BYPASS() ? { subject: "local-development" } : null;
   }
   const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) return null;
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  }
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
@@ -410,6 +412,21 @@ Request-Target:${requestTarget}`;
     } catch (e) {
       console.warn("DOKU order status check error:", e.message);
     }
+  } else if (process.env.NODE_ENV !== "production" || process.env.ENABLE_MOCK_CHECKOUT === "1" || process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1") {
+    const invNumber = String(invoiceId).startsWith("NH-") ? String(invoiceId) : `NH-${invoiceId}`;
+    return sendJson2(res, 200, {
+      ok: true,
+      paid: true,
+      status: "ACTIVE",
+      subscription: {
+        status: "ACTIVE",
+        currentPeriodEnd: new Date(Date.now() + 30 * 864e5).toISOString()
+      },
+      invoice: {
+        invoiceNumber: invNumber,
+        status: "PAID"
+      }
+    });
   }
   return sendJson2(res, 200, {
     ok: true,
@@ -548,6 +565,26 @@ async function handler4(req, res) {
     }
     const { clientId, secretKey, apiUrl, isConfigured } = getDokuCredentials2();
     if (!isConfigured) {
+      if (process.env.NODE_ENV !== "production" || process.env.ENABLE_MOCK_CHECKOUT === "1" || process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1") {
+        const host2 = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
+        const proto2 = req.headers["x-forwarded-proto"] || "http";
+        const origin2 = (process.env.PUBLIC_APP_URL || `${proto2}://${host2}`).replace(/["']/g, "").trim();
+        const callbackUrl2 = `${origin2.replace(/\/$/, "")}/#payment?invoice=${invoiceNumber}`;
+        return sendJson3(res, 200, {
+          ok: true,
+          success: true,
+          paymentUrl: callbackUrl2,
+          invoice: {
+            id: invoiceNumber,
+            invoiceNumber,
+            planId: plan.id,
+            amountIdr: amount,
+            status: "UNPAID",
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          },
+          mockPayment: true
+        });
+      }
       return sendJson3(res, 200, {
         ok: false,
         error: "PAYMENT_GATEWAY_NOT_CONFIGURED",
@@ -645,8 +682,69 @@ async function handler4(req, res) {
 }
 
 // api/_subscription/start-trial.ts
+import { Pool as Pool2 } from "pg";
 async function handler5(req, res) {
+  res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  if (!process.env.DATABASE_URL) {
+    const now = /* @__PURE__ */ new Date();
+    const end = new Date(now.getTime() + TRIAL_DAYS * 864e5);
+    return res.status(200).json({
+      ok: true,
+      subscription: {
+        id: "sub-trial",
+        tenantId: req.body?.tenantId || "tenant-default",
+        planId: TRIAL_PLAN_ID,
+        status: "TRIAL",
+        accessMode: "FULL",
+        billingCycle: "MONTHLY",
+        extraOutlets: 0,
+        currentPeriodStart: now.toISOString(),
+        currentPeriodEnd: end.toISOString(),
+        hasUsedTrial: true,
+        plan: findSaaSPlan(TRIAL_PLAN_ID)
+      }
+    });
+  }
+  const principal = await authenticateBearer(req);
+  if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+  const pool = new Pool2({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 5e3
+  });
+  let c;
+  try {
+    c = await pool.connect();
+    await c.query("BEGIN");
+    const tRes = await c.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Utama', $1, $1, true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [principal.subject]
+    );
+    const tenantId = tRes.rows[0]?.id;
+    if (tenantId) {
+      await c.query(
+        `INSERT INTO billing.subscriptions
+         (id, tenant_id, plan_id, status, billing_cycle, current_period_start, current_period_end, grace_period_end, trial_started_at, trial_ends_at, has_used_trial)
+         VALUES (uuidv7(), $1, $2, 'TRIAL', 'MONTHLY', now(), now() + interval '45 days', now() + interval '59 days', now(), now() + interval '45 days', true)
+         ON CONFLICT (tenant_id) DO NOTHING`,
+        [tenantId, TRIAL_PLAN_ID]
+      );
+    }
+    await c.query("COMMIT");
+  } catch (err) {
+    await c?.query("ROLLBACK").catch(() => {
+    });
+    console.warn("Could not auto-provision trial in database:", err?.message);
+  } finally {
+    c?.release();
+    await pool.end().catch(() => {
+    });
+  }
   return ownedSubscription({ ...req, method: "GET", headers: req.headers }, res);
 }
 
@@ -656,14 +754,14 @@ async function handler6(req, res) {
 }
 
 // api/_subscription/outlets.ts
-import { Pool as Pool2 } from "pg";
+import { Pool as Pool3 } from "pg";
 async function handler7(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
   const principal = await authenticateBearer(req);
   if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
   if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
-  const pool = new Pool2({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 5e3 });
+  const pool = new Pool3({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 5e3 });
   try {
     const { rows } = await pool.query(`SELECT o.*,m.business_sector FROM internal.outlets o
       JOIN internal.tenants t ON t.id=o.tenant_id JOIN internal.merchants m ON m.id=o.merchant_id

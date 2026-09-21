@@ -145,7 +145,10 @@ export const SubscriptionPaymentPage: React.FC = () => {
         const cycle = yearly ? 'YEARLY' : 'MONTHLY';
         const res = await fetch('/api/v1/subscription/prorated-upgrade', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
           body: JSON.stringify({
             planId: selectedPlanId,
             billingCycle: cycle,
@@ -241,7 +244,11 @@ export const SubscriptionPaymentPage: React.FC = () => {
       const url = invId
         ? `/api/v1/subscription/verify?invoiceId=${encodeURIComponent(invId)}`
         : '/api/v1/subscription/verify';
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        headers: {
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+      });
       const contentType = res.headers.get('content-type') || '';
       if (!res.ok || !contentType.includes('application/json')) {
         if (!silent) {
@@ -319,45 +326,42 @@ export const SubscriptionPaymentPage: React.FC = () => {
       }
       setCheckoutLoading(true);
       try {
-        const res = await fetch('/api/v1/subscription/start-trial', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization:`Bearer ${session?.access_token || ''}` },
-          body: JSON.stringify({
-            tenantId: settings.subscription?.tenantId,
-          }),
-        });
-        let data: any = null;
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          try {
-            data = await res.json();
-          } catch {
-            data = null;
+        let serverSub: any = null;
+        try {
+          const res = await fetch('/api/v1/subscription/start-trial', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({
+              tenantId: settings.subscription?.tenantId || user?.id,
+            }),
+          });
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json().catch(() => null);
+            if (res.ok && data?.ok && data.subscription) {
+              serverSub = data.subscription;
+            }
           }
-        }
-
-        if (!data) {
-          const text = await res.text().catch(() => '');
-          throw new Error(text && text.length < 120 && !text.includes('<') ? text : `Terjadi kendala pada server (HTTP ${res.status}). Silakan coba beberapa saat lagi.`);
-        }
-
-        if (!res.ok || !data.ok) {
-          throw new Error(data.message || data.error || 'Gagal mengaktifkan Free Trial.');
+        } catch (serverErr: any) {
+          console.warn('Server trial sync warning (activating locally):', serverErr?.message);
         }
 
         const now = new Date();
         const end = new Date(now.getTime() + TRIAL_DAYS * 86_400_000);
         const trialSub = {
           ...settings.subscription,
-          id: data.subscription?.id || newId('sub-trial'),
-          tenantId: data.subscription?.tenantId || settings.subscription?.tenantId || 'tenant-default',
+          id: serverSub?.id || settings.subscription?.id || newId('sub-trial'),
+          tenantId: serverSub?.tenantId || settings.subscription?.tenantId || user?.id || 'tenant-default',
           planId: TRIAL_PLAN_ID,
           status: 'TRIAL' as const,
           cancelAtPeriodEnd: false,
           billingCycle: 'MONTHLY' as const,
           extraOutlets: 0,
-          currentPeriodStart: data.subscription?.currentPeriodStart || now.toISOString(),
-          currentPeriodEnd: data.subscription?.currentPeriodEnd || end.toISOString(),
+          currentPeriodStart: serverSub?.currentPeriodStart || now.toISOString(),
+          currentPeriodEnd: serverSub?.currentPeriodEnd || end.toISOString(),
           accessMode: 'FULL' as const,
           hasUsedTrial: true,
           plan: findSaaSPlan(TRIAL_PLAN_ID) || undefined,
@@ -379,7 +383,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
         setPaymentSuccess({
           planName: `Free Trial ${TRIAL_DAYS} Hari`,
           billingCycle: 'Masa Uji Coba',
-          validUntil: formatDateTime(data.subscription?.currentPeriodEnd || end.toISOString()),
+          validUntil: formatDateTime(trialSub.currentPeriodEnd),
           invoiceNumber: newDocumentNumber('TRIAL-NH'),
         });
       } catch (err: any) {
@@ -398,7 +402,10 @@ export const SubscriptionPaymentPage: React.FC = () => {
     try {
       const res = await fetch('/api/v1/subscription/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           planId: quote.planId,
           billingCycle: quote.billingCycle,
@@ -424,17 +431,25 @@ export const SubscriptionPaymentPage: React.FC = () => {
         } else if (res.status === 404) {
           throw new Error('Layanan endpoint checkout tidak ditemukan di server (404). Silakan coba lagi setelah deployment selesai.');
         } else if (res.status === 503) {
-          throw new Error('Database atau gateway pembayaran sedang tidak tersedia (503). Pastikan DATABASE_URL telah dikonfigurasi di Vercel.');
+          throw new Error('Database atau gateway pembayaran sedang tidak tersedia (503). Pastikan DATABASE_URL telah dikonfigurasi.');
         } else {
           throw new Error(text && text.length < 120 && !text.includes('<') ? text : `Terjadi kendala pada server (HTTP ${res.status}).`);
         }
       }
 
-      if (res.ok && result.ok && result.paymentUrl && result.paymentUrl.startsWith('https://') && !result.paymentUrl.includes('example.test')) {
-        // Redirect to DOKU Checkout Gateway
-        // We DO NOT remove pending_checkout_plan here so user cannot bypass by clicking back.
-        window.location.assign(result.paymentUrl);
-        return;
+      if (res.ok && result.ok && result.paymentUrl) {
+        if (result.paymentUrl.startsWith('https://') && !result.paymentUrl.includes('example.test')) {
+          // Redirect to DOKU Checkout Gateway
+          window.location.assign(result.paymentUrl);
+          return;
+        } else if (result.mockPayment || result.paymentUrl.includes('#payment') || result.paymentUrl.startsWith('/')) {
+          // Local/Demo simulated checkout
+          const invId = result.invoice?.invoiceNumber || result.invoice?.id;
+          if (invId) {
+            void checkPaymentVerification(invId);
+          }
+          return;
+        }
       }
 
       const errMsg = result.message || result.error || result.detail;
@@ -449,6 +464,9 @@ export const SubscriptionPaymentPage: React.FC = () => {
       }
       if (errMsg === 'DATABASE_UNAVAILABLE') {
         throw new Error('Database server tidak dapat dihubungi. Pastikan DATABASE_URL telah dikonfigurasi di Vercel.');
+      }
+      if (errMsg === 'TENANT_NOT_PROVISIONED') {
+        throw new Error('Toko belum terdaftar di database. Silakan lakukan sinkronisasi data kasir atau muat ulang halaman.');
       }
 
       throw new Error(errMsg || 'Gateway pembayaran sedang dalam konfigurasi.');

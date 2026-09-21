@@ -37,7 +37,9 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
   }
 
   const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) return null;
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: 'local-development' } : null;
+  }
 
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
@@ -102,12 +104,21 @@ export async function canAccessBusiness(db: Db, principal: AuthPrincipal, busine
   return rows.length === 1;
 }
 
-/** Tenant level check untuk billing dan endpoint yang tidak membawa businessId. */
 export async function tenantForPrincipal(db: Db, principal: AuthPrincipal): Promise<string | null> {
-  if (principal.subject === 'local-development') return null;
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 ORDER BY created_at ASC LIMIT 1`,
+    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1 ORDER BY created_at ASC LIMIT 1`,
     [principal.subject]
   );
-  return rows[0]?.id ?? null;
+  if (rows[0]?.id) return rows[0].id;
+  if (principal.subject === 'local-development' && LOCAL_BYPASS()) {
+    const res = await db.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    return res.rows[0]?.id ?? null;
+  }
+  return null;
 }

@@ -2,20 +2,25 @@ import React,{useEffect,useState} from 'react';
 import {PAID_SAAS_PLANS,annualTotal} from '../../config/saasPlans';
 import {formatRupiah,formatDateTime} from '../../utils/formatters';
 import {usePOS} from '../../context/POSContext';
+import {useAuth} from '../../context/AuthContext';
 
-async function billingRequest(path:string,body?:any){
- const r=await fetch('/api/v1/subscription/'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+async function billingRequest(path:string,body?:any,token?:string){
+ const headers: Record<string, string> = {'Content-Type':'application/json'};
+ if (token) headers['Authorization'] = `Bearer ${token}`;
+ const r=await fetch('/api/v1/subscription/'+path,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});
  const data=await r.json();if(!r.ok || !data.ok)throw new Error(data.error || 'Permintaan billing gagal');return data;
 }
 export const SubscriptionBillingTab:React.FC=()=>{
  const {currentUser,setActiveTab}=usePOS();
+ const {session}=useAuth();
+ const token = session?.access_token;
  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [yearly,setYearly]=useState(true),[extras,setExtras]=useState(0),[quote,setQuote]=useState<any>(null);
- const load=async()=>{setLoading(true);setError('');try{const s=await billingRequest('status');setData(s);setExtras(s.outlets.extra);window.dispatchEvent(new Event('subscription-updated'));}catch(e:any){setError(e.message);}finally{setLoading(false);}};
- useEffect(()=>{let active=true;setLoading(true);billingRequest('status').then(s=>{if(active){setData(s);setExtras(s.outlets.extra);}}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[currentUser.id]);
- const preview=async(planId:string)=>{setBusy(true);setError('');try{setQuote({...await billingRequest('prorated-upgrade',{planId,billingCycle:yearly?'YEARLY':'MONTHLY',extraOutlets:extras}),requestKey:crypto.randomUUID()});}catch(e:any){setError(e.message);}finally{setBusy(false);}};
+ const load=async()=>{setLoading(true);setError('');try{const s=await billingRequest('status',undefined,token);setData(s);setExtras(s.outlets.extra);window.dispatchEvent(new Event('subscription-updated'));}catch(e:any){setError(e.message);}finally{setLoading(false);}};
+ useEffect(()=>{let active=true;setLoading(true);billingRequest('status',undefined,token).then(s=>{if(active){setData(s);setExtras(s.outlets.extra);}}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[currentUser.id,token]);
+ const preview=async(planId:string)=>{setBusy(true);setError('');try{setQuote({...await billingRequest('prorated-upgrade',{planId,billingCycle:yearly?'YEARLY':'MONTHLY',extraOutlets:extras},token),requestKey:crypto.randomUUID()});}catch(e:any){setError(e.message);}finally{setBusy(false);}};
  const pay=async()=>{setBusy(true);setError('');try{
-   const result=await billingRequest('checkout',{planId:quote.planId,billingCycle:quote.billingCycle,extraOutlets:quote.extraOutlets,requestKey:quote.requestKey});
+   const result=await billingRequest('checkout',{planId:quote.planId,billingCycle:quote.billingCycle,extraOutlets:quote.extraOutlets,requestKey:quote.requestKey},token);
    if(!result.paymentUrl || !result.paymentUrl.startsWith('https://'))throw new Error('URL pembayaran tidak valid');
    window.location.assign(result.paymentUrl);
   }catch(e:any){setError(e.message);setBusy(false);}

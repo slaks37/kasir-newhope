@@ -90,6 +90,21 @@ export default async function handler(req: any, res: any) {
     } catch (e: any) {
       console.warn('DOKU order status check error:', e.message);
     }
+  } else if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_MOCK_CHECKOUT === '1' || process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1') {
+    const invNumber = String(invoiceId).startsWith('NH-') ? String(invoiceId) : `NH-${invoiceId}`;
+    return sendJson(res, 200, {
+      ok: true,
+      paid: true,
+      status: 'ACTIVE',
+      subscription: {
+        status: 'ACTIVE',
+        currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      },
+      invoice: {
+        invoiceNumber: invNumber,
+        status: 'PAID',
+      },
+    });
   }
 
   return sendJson(res, 200, {

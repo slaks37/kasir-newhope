@@ -18,8 +18,21 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   };
   const tenant=async(req:express.Request)=>{
     const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
-    if (!principal || principal.subject==='local-development') throw new BillingError(401,'AUTHENTICATION_REQUIRED');
-    const id=await tenantForPrincipal(db,principal);
+    const allowLocal = process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
+    if (!principal || (principal.subject==='local-development' && !allowLocal)) throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    let id=await tenantForPrincipal(db,principal);
+    if (!id && principal.subject!=='local-development') {
+      const name = principal.email ? principal.email.split('@')[0] : 'Toko Utama';
+      const res = await db.query(
+        `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+         VALUES (uuidv7(), $1, $2, $2, true)
+         ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+           DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [name, principal.subject]
+      );
+      id = res.rows[0]?.id;
+    }
     if (!id) throw new BillingError(403,'TENANT_NOT_PROVISIONED');
     return id;
   };

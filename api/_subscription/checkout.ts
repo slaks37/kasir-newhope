@@ -137,6 +137,27 @@ export default async function handler(req: any, res: any) {
     const { clientId, secretKey, apiUrl, isConfigured } = getDokuCredentials();
 
     if (!isConfigured) {
+      if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_MOCK_CHECKOUT === '1' || process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1') {
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
+        const proto = req.headers['x-forwarded-proto'] || 'http';
+        const origin = (process.env.PUBLIC_APP_URL || `${proto}://${host}`).replace(/["']/g, '').trim();
+        const callbackUrl = `${origin.replace(/\/$/, '')}/#payment?invoice=${invoiceNumber}`;
+        return sendJson(res, 200, {
+          ok: true,
+          success: true,
+          paymentUrl: callbackUrl,
+          invoice: {
+            id: invoiceNumber,
+            invoiceNumber,
+            planId: plan.id,
+            amountIdr: amount,
+            status: 'UNPAID',
+            createdAt: new Date().toISOString(),
+          },
+          mockPayment: true,
+        });
+      }
+
       return sendJson(res, 200, {
         ok: false,
         error: 'PAYMENT_GATEWAY_NOT_CONFIGURED',

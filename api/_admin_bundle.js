@@ -100,7 +100,9 @@ async function authenticateBearer(req) {
     return LOCAL_BYPASS() ? { subject: "local-development" } : null;
   }
   const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) return null;
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  }
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
@@ -140,12 +142,22 @@ async function canAccessBusiness(db, principal, businessId) {
   return rows.length === 1;
 }
 async function tenantForPrincipal(db, principal) {
-  if (principal.subject === "local-development") return null;
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 ORDER BY created_at ASC LIMIT 1`,
+    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1 ORDER BY created_at ASC LIMIT 1`,
     [principal.subject]
   );
-  return rows[0]?.id ?? null;
+  if (rows[0]?.id) return rows[0].id;
+  if (principal.subject === "local-development" && LOCAL_BYPASS()) {
+    const res = await db.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    return res.rows[0]?.id ?? null;
+  }
+  return null;
 }
 
 // src/config/freePlanPolicy.ts
@@ -815,8 +827,21 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   };
   const tenant = async (req) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
-    if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
-    const id = await tenantForPrincipal(db, principal);
+    const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    let id = await tenantForPrincipal(db, principal);
+    if (!id && principal.subject !== "local-development") {
+      const name = principal.email ? principal.email.split("@")[0] : "Toko Utama";
+      const res = await db.query(
+        `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+         VALUES (uuidv7(), $1, $2, $2, true)
+         ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+           DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [name, principal.subject]
+      );
+      id = res.rows[0]?.id;
+    }
     if (!id) throw new BillingError(403, "TENANT_NOT_PROVISIONED");
     return id;
   };
