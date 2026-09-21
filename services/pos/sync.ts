@@ -337,11 +337,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             str(x.cashierRole, 24)
           );
 
-          const subtotal = num(x.subtotal);
-          const discount = num(x.discountAmount);
-          const tax = num(x.taxAmount);
-          const serviceCharge = num(x.serviceChargeAmount);
-          const total = num(x.totalAmount, subtotal - discount + tax + serviceCharge);
+          const subtotal = Math.max(0, num(x.subtotal));
+          const discount = Math.max(0, num(x.discountAmount));
+          const tax = Math.max(0, num(x.taxAmount));
+          const serviceCharge = Math.max(0, num(x.serviceChargeAmount));
+          const total = Math.max(0, num(x.totalAmount, subtotal - discount + tax + serviceCharge));
           const appModule = ['POS', 'TABLES', 'CUSTOMERS'].includes(String(x.appModule))
             ? String(x.appModule)
             : 'POS';
@@ -497,6 +497,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             const productId = await resolveProduct(i);
             if (!productId) continue;
             const qty = Math.max(1, Math.trunc(num(i.quantity, 1)));
+            const unitPrice = Math.max(0, num(i.unitPrice));
+            const unitCost = Math.max(0, num(i.unitCost));
+            const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
             await c.query(
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
@@ -508,12 +511,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 tenantId,
                 productId,
                 i.productName.slice(0, 100),
-                num(i.unitPrice),
+                unitPrice,
                 qty,
-                num(i.totalPrice, num(i.unitPrice) * qty),
+                totalPrice,
                 sector,
                 str(i.categoryName, 100),
-                num(i.unitCost),
+                unitCost,
                 str(i.productDescription, 300),
               ]
             );

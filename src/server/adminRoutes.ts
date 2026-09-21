@@ -91,6 +91,14 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         const db=await getDb();
         let {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
         if(!rows[0] && principal.email) {
+          // Hanya izinkan linking akun admin jika email terverifikasi (mencegah unverified email takeover)
+          if (!principal.isEmailVerified && process.env.NODE_ENV === 'production') {
+            return res.status(403).json({
+              ok: false,
+              error: 'EMAIL_VERIFICATION_REQUIRED',
+              detail: 'Email akun SSO harus diverifikasi terlebih dahulu sebelum dapat ditautkan ke akun administrator.',
+            });
+          }
           const byEmail = await db.query(
             'SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active',
             [principal.email]

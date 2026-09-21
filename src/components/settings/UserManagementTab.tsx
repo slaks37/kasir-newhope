@@ -33,6 +33,7 @@ export const UserManagementTab: React.FC = () => {
   });
 
   const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'PERMISSIONS'>('USERS');
+  const [pinInput, setPinInput] = useState('');
 
   const handleOpenAdd = () => {
     setEditingUser({
@@ -44,27 +45,36 @@ export const UserManagementTab: React.FC = () => {
       status: 'ACTIVE',
       createdAt: new Date().toISOString().split('T')[0],
     });
+    setPinInput('1234');
     setIsEditing(true);
   };
 
   const handleOpenEdit = (user: User) => {
     setEditingUser({ ...user });
+    setPinInput('');
     setIsEditing(true);
   };
 
   const handleSaveUserForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUser.name || !editingUser.username || !editingUser.pin) {
-      alert('Mohon lengkapi Nama, Username, dan PIN 4 digit.');
+    if (!editingUser.name || !editingUser.username) {
+      alert('Mohon lengkapi Nama dan Username.');
       return;
     }
 
-    if (editingUser.pin.length !== 4 || !/^\d+$/.test(editingUser.pin)) {
-      alert('PIN harus terdiri dari 4 digit angka (contoh: 1234).');
+    let finalPin = editingUser.pin;
+    if (pinInput) {
+      if (pinInput.length !== 4 || !/^\d+$/.test(pinInput)) {
+        alert('PIN harus terdiri dari 4 digit angka (contoh: 1234).');
+        return;
+      }
+      finalPin = pinInput;
+    } else if (!finalPin) {
+      alert('Mohon masukkan PIN 4 digit untuk pengguna baru.');
       return;
     }
 
-    saveUser(editingUser as User);
+    saveUser({ ...editingUser, pin: finalPin } as User);
     setIsEditing(false);
   };
 
@@ -238,8 +248,8 @@ export const UserManagementTab: React.FC = () => {
                       <td className="px-4 py-3">{getRoleBadge(user.role)}</td>
 
                       <td className="px-4 py-3">
-                        <span className="bg-slate-100 border border-slate-200 font-mono font-bold px-2.5 py-1 rounded-lg text-slate-800">
-                          •••• ({user.pin})
+                        <span className="bg-slate-100 border border-slate-200 font-mono font-bold px-2.5 py-1 rounded-lg text-slate-800 text-xs">
+                          {user.pin?.startsWith('sha256$') ? '•••• (Tersimpan aman)' : `•••• (${user.pin})`}
                         </span>
                       </td>
 
@@ -391,12 +401,11 @@ export const UserManagementTab: React.FC = () => {
                     PIN 4 Digit Otorisasi
                   </label>
                   <input
-                    type="text"
-                    required
+                    type="password"
                     maxLength={4}
-                    placeholder="1234"
-                    value={editingUser.pin || ''}
-                    onChange={(e) => setEditingUser({ ...editingUser, pin: e.target.value })}
+                    placeholder={editingUser.pin?.startsWith('sha256$') ? '•••• (Kosongkan jika tidak diubah)' : '1234'}
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-amber-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>

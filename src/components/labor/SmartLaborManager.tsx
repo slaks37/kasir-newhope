@@ -684,7 +684,13 @@ export const SmartLaborManager: React.FC = () => {
                                   </span>
                                   <button
                                     type="button"
-                                    onClick={() => clockInStaff(m.staffId)}
+                                    onClick={() => {
+                                      if (settings.geofenceEnforcement === 'STRICT') {
+                                        setShowClockInModal(true);
+                                      } else {
+                                        clockInStaff(m.staffId);
+                                      }
+                                    }}
                                     className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
                                     title="Clock In sekarang"
                                   >

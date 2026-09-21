@@ -58,6 +58,7 @@ import {
   type SyncTarget,
 } from '../lib/sync/queue';
 import {
+  hashPin,
   verifyPinHash,
   getPinLockoutStatus,
   recordFailedPinAttempt,
@@ -333,6 +334,14 @@ const getScopedKey = (entity: string, userId: string, sector: BusinessSector): s
   partitionKey(makeBusinessId(userId, sector), entity);
 
 const getGlobalUserKey = (entity: string, userId: string): string => accountKey(userId, entity);
+
+export const safeSetLocalStorage = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.warn(`[storage] LocalStorage write failed for key "${key}" (quota exceeded or blocked):`, e);
+  }
+};
 
 const loadScopedData = <T,>(entity: string, userId: string, sector: BusinessSector, fallback: T): T => {
   try {
@@ -1318,8 +1327,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setPromoCodes((prev) => [newPromo, ...prev]);
     if (soundEnabled) playPOSSound('click');
   };
-  useEffect(() => { localStorage.setItem('newhope_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
+  useEffect(() => { safeSetLocalStorage('newhope_users', JSON.stringify(users)); }, [users]);
+  useEffect(() => { safeSetLocalStorage('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
   useEffect(() => {
     localStorage.setItem(
       getScopedKey('cash_movements', authUser?.id || currentUser.id, activeSector),
@@ -1395,17 +1404,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (soundEnabled) playPOSSound('click');
   };
 
-  const saveUser = (userToSave: User) => {
+  const saveUser = async (userToSave: User) => {
     if (isFreePlan(settings.subscription) && userToSave.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
+    const safePin = userToSave.pin.startsWith('sha256$')
+      ? userToSave.pin
+      : await hashPin(userToSave.pin);
+    const securedUser: User = { ...userToSave, pin: safePin };
     setUsers((prev) => {
-      const exists = prev.some((u) => u.id === userToSave.id);
+      const exists = prev.some((u) => u.id === securedUser.id);
       if (exists) {
-        return prev.map((u) => (u.id === userToSave.id ? userToSave : u));
+        return prev.map((u) => (u.id === securedUser.id ? securedUser : u));
       }
-      return [...prev, userToSave];
+      return [...prev, securedUser];
     });
-    if (userToSave.id === currentUser.id) {
-      setCurrentUser(userToSave);
+    if (securedUser.id === currentUser.id) {
+      setCurrentUser(securedUser);
     }
   };
 

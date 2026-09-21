@@ -11,6 +11,7 @@ import type { Db } from './db';
 export interface AuthPrincipal {
   subject: string;
   email?: string;
+  isEmailVerified?: boolean;
   aal?: 'aal1' | 'aal2';
   mfaVerifiedAt?: number;
 }
@@ -33,12 +34,12 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
 
   if (!match) {
-    return LOCAL_BYPASS() ? { subject: 'local-development' } : null;
+    return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
   }
 
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: 'local-development' } : null;
+    return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
   }
 
   try {
@@ -47,16 +48,27 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
       signal: AbortSignal.timeout(5_000),
     });
     if (!upstream.ok) return null;
-    const user = (await upstream.json()) as { id?: unknown; email?: unknown };
+    const user = (await upstream.json()) as {
+      id?: unknown;
+      email?: unknown;
+      email_confirmed_at?: unknown;
+      confirmed_at?: unknown;
+    };
     if (typeof user.id !== 'string' || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
     // Decode ONLY after Auth has verified this exact bearer token. Never trust
     // browser headers, user_metadata, or token_refresh as proof of recent MFA.
     const claims = JSON.parse(Buffer.from(match[1].split('.')[1], 'base64url').toString('utf8'));
     if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now()/1000) return null;
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a:any)=>a.method==='totp' &&
       Number.isFinite(a.timestamp) && a.timestamp<=Date.now()/1000+30).map((a:any)=>a.timestamp) : [];
-    return { subject: user.id, email: typeof user.email === 'string' ? user.email : undefined,
-      aal: claims.aal === 'aal2' ? 'aal2' : 'aal1', mfaVerifiedAt: times.length ? Math.max(...times) : undefined };
+    return {
+      subject: user.id,
+      email: typeof user.email === 'string' ? user.email : undefined,
+      isEmailVerified,
+      aal: claims.aal === 'aal2' ? 'aal2' : 'aal1',
+      mfaVerifiedAt: times.length ? Math.max(...times) : undefined,
+    };
   } catch {
     return null;
   }
@@ -86,8 +98,9 @@ export function requireTrustedGateway(req: Request, res: Response, next: NextFun
 
 export function trustedPrincipal(req: Request): AuthPrincipal | null {
   const subject = firstHeader(req.headers['x-auth-sub']);
-  if (subject) return { subject, email: firstHeader(req.headers['x-auth-email']) || undefined };
-  return LOCAL_BYPASS() ? { subject: 'local-development' } : null;
+  const isEmailVerified = firstHeader(req.headers['x-auth-email-verified']) === 'true';
+  if (subject) return { subject, email: firstHeader(req.headers['x-auth-email']) || undefined, isEmailVerified };
+  return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
 }
 
 /** Memastikan unit usaha milik principal, bukan hanya ID yang ditebak klien. */

@@ -146,11 +146,19 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
       };
     }
 
-    if (!activeRecord && settings.geofenceEnforcement === 'STRICT' && userCoords && !isWithinRadius) {
-      alert(
-        `Akses Presensi Ditolak! Anda berada ${distanceFromBranchMeters} meter dari cabang "${selectedBranch.name}" (Maksimal Radius Toleransi: ${selectedBranch.allowedRadiusMeters} meter).`
-      );
-      return;
+    if (!activeRecord && settings.geofenceEnforcement === 'STRICT') {
+      if (!userCoords) {
+        alert(
+          'Akses Presensi Ditolak! Izin lokasi (GPS) wajib diaktifkan pada browser/perangkat Anda untuk melakukan presensi.'
+        );
+        return;
+      }
+      if (!isWithinRadius) {
+        alert(
+          `Akses Presensi Ditolak! Anda berada ${distanceFromBranchMeters} meter dari cabang "${selectedBranch.name}" (Maksimal Radius Toleransi: ${selectedBranch.allowedRadiusMeters} meter).`
+        );
+        return;
+      }
     }
 
     const branchInfo = selectedBranch ? { id: selectedBranch.id, name: selectedBranch.name } : undefined;

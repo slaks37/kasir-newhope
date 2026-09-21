@@ -97,11 +97,11 @@ async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
-    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
@@ -111,12 +111,14 @@ async function authenticateBearer(req) {
     if (!upstream.ok) return null;
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
     const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
     if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
       email: typeof user.email === "string" ? user.email : void 0,
+      isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
       mfaVerifiedAt: times.length ? Math.max(...times) : void 0
     };
@@ -126,8 +128,9 @@ async function authenticateBearer(req) {
 }
 function trustedPrincipal(req) {
   const subject = firstHeader(req.headers["x-auth-sub"]);
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0 };
-  return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
+  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
@@ -1701,6 +1704,13 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
         const db = await getDb();
         let { rows } = await db.query("SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active", [principal.subject]);
         if (!rows[0] && principal.email) {
+          if (!principal.isEmailVerified && process.env.NODE_ENV === "production") {
+            return res.status(403).json({
+              ok: false,
+              error: "EMAIL_VERIFICATION_REQUIRED",
+              detail: "Email akun SSO harus diverifikasi terlebih dahulu sebelum dapat ditautkan ke akun administrator."
+            });
+          }
           const byEmail = await db.query(
             "SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active",
             [principal.email]
@@ -2379,11 +2389,11 @@ function registerSyncRoutes(app, db) {
             str(x.cashierName, 100),
             str(x.cashierRole, 24)
           );
-          const subtotal = num(x.subtotal);
-          const discount = num(x.discountAmount);
-          const tax = num(x.taxAmount);
-          const serviceCharge = num(x.serviceChargeAmount);
-          const total = num(x.totalAmount, subtotal - discount + tax + serviceCharge);
+          const subtotal = Math.max(0, num(x.subtotal));
+          const discount = Math.max(0, num(x.discountAmount));
+          const tax = Math.max(0, num(x.taxAmount));
+          const serviceCharge = Math.max(0, num(x.serviceChargeAmount));
+          const total = Math.max(0, num(x.totalAmount, subtotal - discount + tax + serviceCharge));
           const appModule = ["POS", "TABLES", "CUSTOMERS"].includes(String(x.appModule)) ? String(x.appModule) : "POS";
           const paymentMethod = str(x.paymentMethod, 20) ?? "CASH";
           const paymentStatus = str(x.paymentStatus, 20) ?? "PAID";
@@ -2502,6 +2512,9 @@ function registerSyncRoutes(app, db) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
             const qty = Math.max(1, Math.trunc(num(i.quantity, 1)));
+            const unitPrice = Math.max(0, num(i.unitPrice));
+            const unitCost = Math.max(0, num(i.unitCost));
+            const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
             await c.query(
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
@@ -2513,12 +2526,12 @@ function registerSyncRoutes(app, db) {
                 tenantId,
                 productId,
                 i.productName.slice(0, 100),
-                num(i.unitPrice),
+                unitPrice,
                 qty,
-                num(i.totalPrice, num(i.unitPrice) * qty),
+                totalPrice,
                 sector,
                 str(i.categoryName, 100),
-                num(i.unitCost),
+                unitCost,
                 str(i.productDescription, 300)
               ]
             );

@@ -15,11 +15,11 @@ async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
-    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
   try {
     const upstream = await fetch(`${url}/auth/v1/user`, {
@@ -29,12 +29,14 @@ async function authenticateBearer(req) {
     if (!upstream.ok) return null;
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
     const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
     if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
       email: typeof user.email === "string" ? user.email : void 0,
+      isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
       mfaVerifiedAt: times.length ? Math.max(...times) : void 0
     };
@@ -44,8 +46,9 @@ async function authenticateBearer(req) {
 }
 function trustedPrincipal(req) {
   const subject = firstHeader(req.headers["x-auth-sub"]);
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0 };
-  return LOCAL_BYPASS() ? { subject: "local-development" } : null;
+  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
+  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;

@@ -85,6 +85,27 @@ function isPublicApi(url: string): boolean {
   return false;
 }
 
+// In-memory sliding-window IP rate limiter for public endpoints
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const rateLimitMap = new Map<string, RateLimitRecord>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_PUBLIC_MAX = 120; // max 120 requests/minute per IP
+
+function isRateLimited(ip: string, limit = RATE_LIMIT_PUBLIC_MAX): boolean {
+  const now = Date.now();
+  const rec = rateLimitMap.get(ip);
+  if (!rec || rec.resetAt <= now) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  if (rec.count >= limit) return true;
+  rec.count++;
+  return false;
+}
+
 // PENTING: body TIDAK diurai di sini. Gateway meneruskan aliran mentah apa
 // adanya. Mengurai lalu menyusunnya kembali mengubah byte-nya — dan pada jalur
 // webhook pembayaran itu merusak verifikasi tanda tangan.
@@ -123,6 +144,15 @@ app.use('/api', async (req, res, next) => {
   const route = pickRoute(req.originalUrl);
   if (!route) return next();
 
+  const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown');
+  if (isPublicApi(req.originalUrl) && isRateLimited(clientIp)) {
+    return res.status(429).json({
+      ok: false,
+      error: 'TOO_MANY_REQUESTS',
+      detail: 'Terlalu banyak permintaan ke rute publik. Coba lagi dalam 1 menit.',
+    });
+  }
+
   if (!isPublicApi(req.originalUrl)) {
     let authenticated = false;
     await requireGatewayAuthentication(req, res, () => {
@@ -160,7 +190,7 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
-        'x-auth-sub', 'x-auth-email', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
       ]);
 
       const headers: Record<string, string> = {};
@@ -182,6 +212,7 @@ app.use('/api', async (req, res, next) => {
       if (principal) {
         headers['x-auth-sub'] = principal.subject;
         if (principal.email) headers['x-auth-email'] = principal.email;
+        if (principal.isEmailVerified) headers['x-auth-email-verified'] = 'true';
       }
       // Service menolak request tanpa token ini, termasuk yang masuk langsung
       // ke port internal dengan x-auth-sub palsu.
