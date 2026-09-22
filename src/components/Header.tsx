@@ -27,6 +27,8 @@ import {
 import { formatRupiah } from "../utils/formatters";
 import { WhatsAppLifecycleCenter } from "./whatsapp/WhatsAppLifecycleCenter";
 import { generateLifecycleHooks } from "../utils/whatsappLifecycle";
+import { useTranslation } from "../i18n/LanguageContext";
+import { LanguageSwitcher } from "./common/LanguageSwitcher";
 
 interface HeaderProps {
   onOpenAiCopilot?: () => void;
@@ -64,6 +66,7 @@ export const Header: React.FC<HeaderProps> = ({
     carwashQueue,
     sentLifecycleHookIds,
   } = usePOS();
+  const { t } = useTranslation();
 
   const [showLifecycleCenter, setShowLifecycleCenter] = React.useState(false);
 
@@ -121,21 +124,31 @@ export const Header: React.FC<HeaderProps> = ({
         <Search size={17} />
         <input
           type="search"
-          aria-label="Cari produk, SKU, atau barcode"
+          aria-label={t('header.searchPlaceholder')}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Cari produk, SKU, atau barcode…"
+          placeholder={t('header.searchPlaceholder')}
         />
         {searchQuery && (
           <button
-            aria-label="Hapus pencarian"
+            aria-label={t('header.clearSearch')}
             onClick={() => setSearchQuery("")}
           >
             ×
           </button>
         )}
       </div>
-      <div className="nh-header-actions">
+      <div className="nh-header-actions flex items-center gap-2">
+        {heldOrders.length > 0 && (
+          <button
+            onClick={() => onOpenHoldOrders ? onOpenHoldOrders() : onOpenRecentTransactions?.()}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black shadow-xs transition-all animate-pulse cursor-pointer shrink-0"
+            title={t('header.heldOrdersTitle', { count: heldOrders.length })}
+          >
+            <Clock size={14} />
+            <span>{t('header.heldOrdersCount', { count: heldOrders.length })}</span>
+          </button>
+        )}
         {(syncStatus.pending > 0 || syncStatus.failures > 0) && (
           <button
             className={`nh-header-sync ${syncStatus.failures > 0 ? "has-error" : ""} ${syncStatus.failures >= 3 ? "is-critical text-red-600 font-bold animate-pulse" : ""}`}
@@ -165,7 +178,7 @@ export const Header: React.FC<HeaderProps> = ({
             }
           }}
         >
-          <summary aria-label="Alat operasional" title="Alat operasional">
+          <summary aria-label={t('header.toolsMenu')} title={t('header.toolsMenu')}>
             <MoreHorizontal size={20} />
           </summary>
           <div
@@ -175,46 +188,50 @@ export const Header: React.FC<HeaderProps> = ({
                 e.currentTarget.closest("details")?.removeAttribute("open");
             }}
           >
-            <span className="nh-sidebar-caption">ALAT OPERASIONAL</span>
+            <span className="nh-sidebar-caption">{t('header.toolsMenu')}</span>
             <button onClick={() => onOpenRecentTransactions?.()}>
-              <History size={17} /> Riwayat transaksi
+              <History size={17} /> {t('header.recentTransactions')}
             </button>
             <button onClick={() => onOpenHoldOrders?.()}>
-              <PauseCircle size={17} /> Pesanan ditahan{" "}
+              <PauseCircle size={17} /> {t('header.heldOrders')}{" "}
               <small>{heldOrders.length}</small>
             </button>
             <button onClick={() => onOpenClockIn?.()}>
-              <UserCheck size={17} /> Absensi staf
+              <UserCheck size={17} /> {t('header.staffAttendance')}
             </button>
             <button
               onClick={() =>
                 onOpenAiCopilot ? onOpenAiCopilot() : setActiveTab("ai")
               }
             >
-              <Sparkles size={17} /> AI Copilot
+              <Sparkles size={17} /> {t('header.aiCopilot')}
             </button>
             <button onClick={() => setShowLifecycleCenter(true)}>
-              <MessageSquare size={17} /> WhatsApp pelanggan{" "}
+              <MessageSquare size={17} /> {t('header.whatsappCustomer')}{" "}
               {pendingHooksCount > 0 && <small>{pendingHooksCount}</small>}
             </button>
             <button onClick={toggleSound}>
               {soundEnabled ? <Volume2 size={17} /> : <VolumeX size={17} />}
-              {soundEnabled ? "Matikan suara kasir" : "Aktifkan suara kasir"}
+              {soundEnabled ? t('header.soundMute') : t('header.soundUnmute')}
             </button>
             <div className="nh-toolbar-shift">
               <Clock size={15} />
               <span>
-                {shift.status === "OPEN" ? "Shift aktif" : "Shift belum dibuka"}
+                {shift.status === "OPEN" ? t('header.shiftActive') : t('header.shiftClosed')}
                 <strong>{formatRupiah(shift.totalSales)}</strong>
               </span>
             </div>
           </div>
         </details>
+
+        {/* Multi-Language Switcher */}
+        <LanguageSwitcher mode="compact" />
+
         <button
           className="nh-user-button"
           onClick={onOpenSwitchUser}
-          title="Ganti pengguna / profil"
-          aria-label={`Profil ${currentUser.name}, ${currentUser.role}. Ganti pengguna`}
+          title={t('header.switchUser')}
+          aria-label={`Profil ${currentUser.name}, ${currentUser.role}. ${t('header.switchUser')}`}
         >
           <span className="nh-user-avatar">
             {currentUser.avatar ? (
@@ -237,8 +254,8 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onLogout}
             className="nh-header-logout"
-            aria-label="Keluar dari akun"
-            title="Keluar dari akun"
+            aria-label={t('header.logout')}
+            title={t('header.logout')}
           >
             <LogOut size={17} />
           </button>

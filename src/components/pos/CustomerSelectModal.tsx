@@ -1,9 +1,10 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { Customer } from '../../types';
 import { UserPlus, Search, Award, Check, X } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
+import { useTranslation } from '../../i18n';
 
 interface CustomerSelectModalProps {
   onClose: () => void;
@@ -11,6 +12,7 @@ interface CustomerSelectModalProps {
 
 export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClose }) => {
   const { customers, selectedCustomer, setSelectedCustomer, saveCustomer } = usePOS();
+  const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -60,7 +62,7 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
           <div className="flex items-center space-x-2">
             <Award className="w-5 h-5 text-amber-600" />
             <h3 className="font-bold text-base text-slate-900">
-              {showAddForm ? 'Pendaftaran Member Baru' : 'Pilih Pelanggan / Member'}
+              {showAddForm ? t('customers.registerMember') : t('customers.selectCustomer')}
             </h3>
           </div>
           <button
@@ -75,19 +77,19 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
         {showAddForm ? (
           <form onSubmit={handleCreateCustomer} className="p-5 space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Nama Lengkap *</label>
+              <label className="text-xs font-semibold text-slate-700">{t('customers.fullName')} *</label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Cth: Rina Wijaya"
+                placeholder={t('customers.fullName')}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Nomor Telepon / WA *</label>
+              <label className="text-xs font-semibold text-slate-700">{t('customers.phoneWA')} *</label>
               <input
                 type="tel"
                 required
@@ -99,12 +101,12 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Email (Opsional)</label>
+              <label className="text-xs font-semibold text-slate-700">{t('customers.emailOptional')}</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="rina@gmail.com"
+                placeholder="name@email.com"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
               />
             </div>
@@ -115,13 +117,13 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
                 onClick={() => setShowAddForm(false)}
                 className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl"
               >
-                Kembali
+                {t('common.back')}
               </button>
               <button
                 type="submit"
                 className="px-4 py-2 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-md hover:bg-amber-600"
               >
-                Daftar & Pilih
+                {t('customers.registerAndSelect')}
               </button>
             </div>
           </form>
@@ -135,7 +137,7 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Cari nama / nomor HP..."
+                  placeholder={t('customers.searchPlaceholder')}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -144,7 +146,7 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
                 className="p-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl font-bold text-xs flex items-center space-x-1 shadow-xs"
               >
                 <UserPlus className="w-4 h-4" />
-                <span className="hidden sm:inline">Tambah</span>
+                <span className="hidden sm:inline">{t('common.add')}</span>
               </button>
             </div>
 
@@ -152,7 +154,7 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {filteredCustomers.length === 0 ? (
                 <div className="text-center py-8 text-slate-400 text-xs">
-                  Tidak ada member ditemukan.
+                  {t('customers.noCustomersFound')}
                 </div>
               ) : (
                 filteredCustomers.map((cust) => {
@@ -185,17 +187,17 @@ export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClos
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 font-mono mt-0.5">{cust.phone}</p>
-                        <p className="text-[10px] text-slate-400">Total belanja: {formatRupiah(cust.totalSpent)}</p>
+                        <p className="text-[10px] text-slate-400">{t('customers.totalSpent')}: {formatRupiah(cust.totalSpent)}</p>
                       </div>
 
                       <div className="text-right">
                         <span className="font-extrabold text-sm text-amber-700 font-mono block">
-                          {cust.points} Poin
+                          {cust.points} {t('customers.pointsLabel')}
                         </span>
                         {isSelected && (
                           <span className="inline-flex items-center space-x-1 text-[10px] text-emerald-700 font-bold mt-1">
                             <Check className="w-3 h-3" />
-                            <span>Terpilih</span>
+                            <span>{t('customers.selected')}</span>
                           </span>
                         )}
                       </div>

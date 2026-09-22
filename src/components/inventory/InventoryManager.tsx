@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem, Category } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
@@ -30,7 +31,9 @@ import {
   Info,
   FolderPlus,
   Folder,
+  Camera,
 } from 'lucide-react';
+import { RawMaterialReceiptScannerModal } from './RawMaterialReceiptScannerModal';
 
 const DESCRIPTION_MAX = 300;
 
@@ -65,6 +68,7 @@ export const InventoryManager: React.FC = () => {
     toggleProductAvailability,
     toggleBundleAvailability,
   } = usePOS();
+  const { t } = useTranslation();
 
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'bundles' | 'stock' | 'recipes' | 'logs'>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
@@ -136,6 +140,9 @@ export const InventoryManager: React.FC = () => {
   const [showRecipeModal, setShowRecipeModal] = useState(false);
   const [recipeProduct, setRecipeProduct] = useState<Product | null>(null);
   const [recipeIngredientsList, setRecipeIngredientsList] = useState<RecipeIngredient[]>([]);
+
+  // Modal for Camera Receipt Scanner (Raw Materials)
+  const [showReceiptScannerModal, setShowReceiptScannerModal] = useState(false);
 
   // Modal & Form for Product Bundling (Paket Combo)
   const [showBundleModal, setShowBundleModal] = useState(false);
@@ -631,7 +638,7 @@ export const InventoryManager: React.FC = () => {
         <div>
           <h2 className="font-black text-2xl text-slate-950 flex items-center space-x-2.5">
             <Package className="w-7 h-7 text-amber-600" />
-            <span>Produk & stok</span>
+            <span>{t('inventory.title')}</span>
           </h2>
           <p className="text-xs text-slate-600 font-medium mt-1">
             Katalog yang tertata, stok yang terpantau. Kelola produk, resep, dan paket usaha Anda.
@@ -653,7 +660,7 @@ export const InventoryManager: React.FC = () => {
                 className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>Tambah Produk Baru</span>
+                <span>{t('inventory.addProduct')}</span>
               </button>
             </>
           )}
@@ -664,18 +671,31 @@ export const InventoryManager: React.FC = () => {
               className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              <span>Buat Paket Bundling Baru</span>
+              <span>{t('pos.bundlePackages')}</span>
             </button>
           )}
 
           {activeSubTab === 'stock' && (
-            <button
-              onClick={handleOpenAddStockModal}
-              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Bahan Baku</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowReceiptScannerModal(true)}
+                className="bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+                title="Ambil foto nota supplier dengan kamera untuk input otomatis stok, modal & satuan"
+              >
+                <Camera className="w-4 h-4 text-amber-700" />
+                <span>{t('inventory.scanReceiptBtn')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenAddStockModal}
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{t('inventory.addRawMaterial')}</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -691,7 +711,7 @@ export const InventoryManager: React.FC = () => {
           }`}
         >
           <Package className="w-4 h-4 text-amber-500" />
-          <span>Katalog Produk Jadi ({products.length})</span>
+          <span>{t('inventory.productsTab')} ({products.length})</span>
         </button>
 
         <button
@@ -703,7 +723,7 @@ export const InventoryManager: React.FC = () => {
           }`}
         >
           <Sparkles className="w-4 h-4 text-amber-500" />
-          <span>Paket Bundling Promo ({bundles?.length || 0})</span>
+          <span>{t('pos.bundlePackages')} ({bundles?.length || 0})</span>
         </button>
 
         <button
@@ -715,7 +735,7 @@ export const InventoryManager: React.FC = () => {
           }`}
         >
           <UtensilsCrossed className="w-4 h-4 text-amber-500" />
-          <span>Penautan Bahan Baku &amp; Resep (BOM)</span>
+          <span>{t('inventory.recipesTab')}</span>
         </button>
 
         <button
@@ -727,7 +747,7 @@ export const InventoryManager: React.FC = () => {
           }`}
         >
           <Boxes className="w-4 h-4 text-amber-500" />
-          <span>Bahan Baku &amp; Mentah ({stockItems.length})</span>
+          <span>{t('inventory.rawMaterials')} ({stockItems.length})</span>
         </button>
 
         <button
@@ -739,7 +759,7 @@ export const InventoryManager: React.FC = () => {
           }`}
         >
           <Layers className="w-4 h-4 text-amber-500" />
-          <span>Riwayat Mutasi Stok ({inventoryLogs.length})</span>
+          <span>{t('inventory.stock')} ({inventoryLogs.length})</span>
         </button>
       </div>
 
@@ -2399,6 +2419,14 @@ export const InventoryManager: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Camera Raw Material Receipt Scanner Modal */}
+      {showReceiptScannerModal && (
+        <RawMaterialReceiptScannerModal
+          isOpen={showReceiptScannerModal}
+          onClose={() => setShowReceiptScannerModal(false)}
+        />
       )}
     </div>
   );

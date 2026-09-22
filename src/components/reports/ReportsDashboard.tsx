@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
 import { CashMovementType, CashMovementCategory, CashMovement } from '../../types';
@@ -73,6 +74,7 @@ export const ReportsDashboard: React.FC = () => {
     deleteCashMovement,
     setInitialCash,
   } = usePOS();
+  const { t } = useTranslation();
 
   // Navigation Sub-Tabs
   const [activeSubTab, setActiveSubTab] = useState<'omzet' | 'cash_ledger' | 'products' | 'shift'>('omzet');
@@ -687,7 +689,7 @@ export const ReportsDashboard: React.FC = () => {
             }`}
           >
             <TrendingUp className="w-4 h-4" />
-            <span>Dashboard Finansial &amp; Omzet ({dateFilterLabel})</span>
+            <span>{t('reports.overviewTab')} ({dateFilterLabel})</span>
           </button>
 
           <button
@@ -699,7 +701,7 @@ export const ReportsDashboard: React.FC = () => {
             }`}
           >
             <Wallet className="w-4 h-4" />
-            <span>Buku Kas: Uang Keluar, Belanja &amp; Modal ({filteredCashMovements.length})</span>
+            <span>{t('reports.profitLossTab')} ({filteredCashMovements.length})</span>
           </button>
 
           <button
@@ -711,7 +713,7 @@ export const ReportsDashboard: React.FC = () => {
             }`}
           >
             <ShoppingBag className="w-4 h-4" />
-            <span>Analisis Menu &amp; Profit Margin</span>
+            <span>{t('reports.topProductsTab')}</span>
           </button>
 
           <button
@@ -723,7 +725,7 @@ export const ReportsDashboard: React.FC = () => {
             }`}
           >
             <Clock className="w-4 h-4" />
-            <span>Rekap Sesi &amp; Shift Kasir</span>
+            <span>{t('shift.title')}</span>
           </button>
         </div>
       </div>

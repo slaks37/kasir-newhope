@@ -192,6 +192,50 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     const {rows}=await db.query('SELECT email,full_name,role FROM internal.internal_users WHERE is_active ORDER BY role');
     res.json({ok:true,identities:rows});
   }));
+  app.put('/api/admin/identities/:email/role',guard('VIEW_ACCESS_AUDIT'),wrap(async(req,res,db)=>{
+    if(req.internal!.role!=='ROLE_SUPERADMIN'){
+      return res.status(403).json({ok:false,error:'FORBIDDEN',detail:'Hanya Superadmin yang memiliki hak mengubah wewenang/role pengguna.'});
+    }
+    const email=req.params.email;
+    const {role}=req.body || {};
+    if(!role || !isInternalRole(role)){
+      return res.status(400).json({ok:false,error:'INVALID_ROLE',detail:'Role internal tidak valid.'});
+    }
+    if(role!=='ROLE_SUPERADMIN'){
+      const superadmins=await db.query(
+        "SELECT id FROM internal.internal_users WHERE role = 'ROLE_SUPERADMIN' AND is_active AND LOWER(email) != LOWER($1)",
+        [email]
+      );
+      if(superadmins.rows.length===0){
+        return res.status(400).json({ok:false,error:'LAST_SUPERADMIN',detail:'Tidak dapat mengubah role Superadmin terakhir pada sistem.'});
+      }
+    }
+    const updated=await db.query(
+      'UPDATE internal.internal_users SET role = $1, updated_at = NOW() WHERE LOWER(email) = LOWER($2) RETURNING id, email, full_name, role',
+      [role,email]
+    );
+    if(updated.rows.length===0){
+      return res.status(404).json({ok:false,error:'USER_NOT_FOUND',detail:'Pengguna internal tidak ditemukan.'});
+    }
+    res.json({ok:true,message:`Role pengguna ${email} berhasil diubah menjadi ${role}`,user:updated.rows[0]});
+  }));
+  app.post('/api/admin/identities',guard('VIEW_ACCESS_AUDIT'),wrap(async(req,res,db)=>{
+    if(req.internal!.role!=='ROLE_SUPERADMIN'){
+      return res.status(403).json({ok:false,error:'FORBIDDEN',detail:'Hanya Superadmin yang memiliki hak mendaftarkan operator internal baru.'});
+    }
+    const {email,fullName,role}=req.body || {};
+    if(!email || !fullName || !isInternalRole(role)){
+      return res.status(400).json({ok:false,error:'INVALID_PAYLOAD',detail:'Email, nama lengkap, dan role internal wajib diisi.'});
+    }
+    const inserted=await db.query(
+      `INSERT INTO internal.internal_users (id, email, full_name, role, is_active)
+       VALUES (gen_random_uuid(), LOWER($1), $2, $3, true)
+       ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name, role = EXCLUDED.role, is_active = true, updated_at = NOW()
+       RETURNING id, email, full_name, role`,
+      [email.trim(),fullName.trim(),role]
+    );
+    res.json({ok:true,message:`Pengguna internal ${email} berhasil ditambahkan sebagai ${role}`,user:inserted.rows[0]});
+  }));
   registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
     const f=repo.cleanFilter(req.query);

@@ -25,6 +25,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { POSProvider } from './context/POSContext';
+import { LanguageProvider } from './i18n/LanguageContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App';
 import './index.css';
@@ -42,8 +43,10 @@ function POSSession() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>
-      <POSSession />
-    </AuthProvider>
+    <LanguageProvider>
+      <AuthProvider>
+        <POSSession />
+      </AuthProvider>
+    </LanguageProvider>
   </StrictMode>,
 );

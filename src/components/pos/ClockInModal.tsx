@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { StaffMember, GeoLocationInfo, calculateDistanceMeters } from '../../types';
 import { formatDateTime } from '../../utils/formatters';
+import { newId } from '../../lib/ids';
 import {
   Clock,
   UserCheck,
@@ -20,8 +21,18 @@ import {
   ShieldCheck,
   ShieldAlert,
   Store,
+  Camera,
+  CameraOff,
+  Eye,
+  AlertTriangle,
+  Laptop,
+  Smartphone,
+  QrCode,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
+import { useTranslation } from '../../i18n/LanguageContext';
 
 interface ClockInModalProps {
   onClose: () => void;
@@ -38,6 +49,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
     activeBranch,
     settings,
   } = usePOS();
+  const { t } = useTranslation();
 
   const activeSectorPreset =
     BUSINESS_PRESETS[settings.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
@@ -50,10 +62,39 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
 
+  // Camera Selfie State
+  const [photoByStaff, setPhotoByStaff] = useState<Record<string, string>>({});
+  const [activeCameraStaffId, setActiveCameraStaffId] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   // Geolocation state
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  // Fixed Terminal Bypass & QR Mobile State
+  const [isRegisteredTerminal, setIsRegisteredTerminal] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return Boolean(localStorage.getItem('newhope_pos_terminal_id')) || Boolean(settings.allowFixedTerminalBypass);
+    }
+    return Boolean(settings.allowFixedTerminalBypass);
+  });
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [copiedQrUrl, setCopiedQrUrl] = useState<boolean>(false);
+
+  const toggleRegisterTerminal = () => {
+    if (isRegisteredTerminal) {
+      localStorage.removeItem('newhope_pos_terminal_id');
+      setIsRegisteredTerminal(false);
+    } else {
+      const terminalId = newId('pos-term');
+      localStorage.setItem('newhope_pos_terminal_id', terminalId);
+      setIsRegisteredTerminal(true);
+    }
+  };
 
   const selectedBranch = branches.find((b) => b.id === selectedBranchId) || branches[0];
 
@@ -82,13 +123,58 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
     );
   };
 
+  // Start camera stream for selfie
+  const startCamera = async (staffId: string) => {
+    setActiveCameraStaffId(staffId);
+    setCameraError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 480 }, height: { ideal: 480 }, facingMode: 'user' },
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      setCameraError(`Kamera tidak dapat diakses: ${err.message || 'Izin ditolak atau tidak ada webcam'}`);
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((t) => t.stop());
+      videoRef.current.srcObject = null;
+    }
+    setActiveCameraStaffId(null);
+  };
+
+  const capturePhoto = (staffId: string) => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 320;
+      canvas.height = video.videoHeight || 240;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setPhotoByStaff((prev) => ({ ...prev, [staffId]: dataUrl }));
+        stopCamera();
+      }
+    }
+  };
+
   // Live timer & auto-fetch location on mount
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
     fetchCurrentLocation();
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      stopCamera();
+    };
   }, []);
 
   let distanceFromBranchMeters: number | null = null;
@@ -133,6 +219,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
   const handleToggleClockIn = (staff: StaffMember) => {
     const activeRecord = getActiveAttendance(staff.id);
     const note = noteInputs[staff.id] || '';
+    const isBypassed = isRegisteredTerminal || Boolean(settings.allowFixedTerminalBypass);
 
     let geoInfo: GeoLocationInfo | undefined = undefined;
     if (userCoords) {
@@ -141,12 +228,23 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
         longitude: userCoords.longitude,
         accuracyMeters: userCoords.accuracy,
         distanceFromBranchMeters: distanceFromBranchMeters || 0,
-        isWithinRadius,
-        locationName: `Lat ${userCoords.latitude.toFixed(4)}, Lon ${userCoords.longitude.toFixed(4)}`,
+        isWithinRadius: isBypassed ? true : isWithinRadius,
+        locationName: isBypassed && !isWithinRadius
+          ? 'Terminal Kasir Toko Terdaftar (Bypass GPS PC)'
+          : `Lat ${userCoords.latitude.toFixed(4)}, Lon ${userCoords.longitude.toFixed(4)}`,
+      };
+    } else if (isBypassed && selectedBranch) {
+      geoInfo = {
+        latitude: selectedBranch.latitude,
+        longitude: selectedBranch.longitude,
+        accuracyMeters: 5,
+        distanceFromBranchMeters: 0,
+        isWithinRadius: true,
+        locationName: 'Terminal Kasir Toko Terdaftar (Bypass GPS PC)',
       };
     }
 
-    if (!activeRecord && settings.geofenceEnforcement === 'STRICT') {
+    if (!activeRecord && settings.geofenceEnforcement === 'STRICT' && !isBypassed) {
       if (!userCoords) {
         alert(
           'Akses Presensi Ditolak! Izin lokasi (GPS) wajib diaktifkan pada browser/perangkat Anda untuk melakukan presensi.'
@@ -162,11 +260,12 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
     }
 
     const branchInfo = selectedBranch ? { id: selectedBranch.id, name: selectedBranch.name } : undefined;
+    const selfiePhoto = photoByStaff[staff.id];
 
     if (activeRecord) {
       clockOutStaff(staff.id, note, geoInfo, branchInfo);
     } else {
-      clockInStaff(staff.id, note, geoInfo, branchInfo);
+      clockInStaff(staff.id, note, geoInfo, branchInfo, selfiePhoto);
     }
 
     setNoteInputs((prev) => ({ ...prev, [staff.id]: '' }));
@@ -191,14 +290,14 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-lg font-extrabold tracking-wide">
-                  Presensi & Geo-Tagging Staff (Clock In / Out)
+                  {t('attendance.title')}
                 </h2>
                 <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30 px-2.5 py-0.5 rounded-full uppercase">
                   Semua Modul & Cabang
                 </span>
               </div>
               <p className="text-xs text-slate-300">
-                Pencatatan jam masuk & pulang staff lengkap dengan geofencing GPS per cabang
+                {t('attendance.subtitle')}
               </p>
             </div>
           </div>
@@ -226,7 +325,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-1.5 font-bold text-amber-400">
               <Building2 className="w-4 h-4 text-amber-400" />
-              <span>Pilih Cabang Tugas:</span>
+              <span>{t('attendance.selectBranch')}</span>
             </div>
             <select
               value={selectedBranchId}
@@ -292,8 +391,68 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
+
+            {/* Terminal Bypass Button & Indicator */}
+            <button
+              type="button"
+              onClick={toggleRegisterTerminal}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] flex items-center space-x-1 transition-all ${
+                isRegisteredTerminal
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40 hover:bg-amber-500/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+              }`}
+              title={
+                isRegisteredTerminal
+                  ? 'PC ini terdaftar sebagai terminal toko tetap. Klik untuk batalkan.'
+                  : 'Daftarkan PC kasir ini agar staf tidak terblokir toleransi GPS desktop.'
+              }
+            >
+              <Laptop className="w-3.5 h-3.5" />
+              <span>{isRegisteredTerminal ? t('attendance.registeredTerminal') : t('attendance.registerTerminal')}</span>
+            </button>
+
+            {/* QR Absensi Mobile Button */}
+            <button
+              type="button"
+              onClick={() => setShowQrModal(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 font-bold text-[11px] flex items-center space-x-1 transition-all"
+              title="Buka QR Code untuk Absensi via Smartphone Staf"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>{t('attendance.qrMobileButton')}</span>
+            </button>
           </div>
         </div>
+
+        {/* Registered Terminal Bypass Banner */}
+        {(isRegisteredTerminal || settings.allowFixedTerminalBypass) && (
+          <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-2 flex items-center justify-between gap-2 text-xs text-emerald-950">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <b>{t('attendance.terminalBypassActive')}:</b> Perangkat ini diakui sebagai Terminal Toko Resmi. Presensi staff diizinkan tanpa terblokir oleh ketidakakuratan GPS / GeoIP desktop PC.
+              </span>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+              BYPASS GEOFENCE ON
+            </span>
+          </div>
+        )}
+
+        {/* Geofence Notice Banner */}
+        {settings.geofenceEnforcement === 'STRICT' &&
+          !isRegisteredTerminal &&
+          !settings.allowFixedTerminalBypass &&
+          userCoords &&
+          userCoords.accuracy &&
+          userCoords.accuracy > 150 && (
+          <div className="bg-amber-50 border-b border-amber-200 px-5 py-2 flex items-center gap-2 text-xs text-amber-900">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <b>Perhatian Akurasi GPS (±{userCoords.accuracy}m):</b> Perangkat kasir desktop/PC tidak memiliki chip satelit GPS sehingga mengandalkan GeoIP jaringan. Klik tombol <b>"{t('attendance.registerTerminal')}"</b> di atas atau ganti mode geofencing menjadi <b>FLEXIBLE</b> di menu Pengaturan.
+            </span>
+          </div>
+        )}
 
         {/* Tab & Controls Bar */}
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
@@ -307,9 +466,9 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
               }`}
             >
               <UserCheck className="w-4 h-4" />
-              <span>Daftar Staff ({staffMembers.length})</span>
+              <span>{t('attendance.staffList')} ({staffMembers.length})</span>
               <span className="bg-slate-950 text-amber-400 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
-                {totalActiveClockedIn} Aktif
+                {t('attendance.activeStaff', { count: totalActiveClockedIn })}
               </span>
             </button>
 
@@ -322,7 +481,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
               }`}
             >
               <History className="w-4 h-4" />
-              <span>Log Riwayat Absensi & Geo-Tag ({attendanceLogs.length})</span>
+              <span>{t('attendance.historyLog')} ({attendanceLogs.length})</span>
             </button>
           </div>
 
@@ -415,6 +574,84 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
                       )}
                     </div>
 
+                    {/* Camera Selfie Section */}
+                    {activeCameraStaffId === staff.id ? (
+                      <div className="bg-slate-900 rounded-xl p-2.5 space-y-2 border border-slate-700">
+                        <div className="relative rounded-lg overflow-hidden bg-black flex items-center justify-center h-44">
+                          <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="w-full h-full object-cover"
+                          />
+                          {cameraError && (
+                            <div className="absolute inset-0 bg-rose-950/90 p-3 text-rose-200 text-xs flex items-center justify-center text-center font-medium">
+                              {cameraError}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => capturePhoto(staff.id)}
+                            className="flex-1 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-lg flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>Jepret Foto Selfie</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={stopCamera}
+                            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg"
+                          >
+                            Batal
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      !isClockedIn && (
+                        <div className="pt-1">
+                          {photoByStaff[staff.id] ? (
+                            <div className="flex items-center justify-between bg-white border border-emerald-200 rounded-xl p-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <img
+                                  src={photoByStaff[staff.id]}
+                                  alt="Selfie"
+                                  className="w-9 h-9 rounded-lg object-cover border border-emerald-300 shadow-xs"
+                                />
+                                <div>
+                                  <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Foto Selfie Terlampir
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">Siap disimpan saat Clock In</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => startCamera(staff.id)}
+                                className="text-[10px] font-extrabold text-amber-700 hover:text-amber-800 hover:underline px-2 py-1 bg-amber-50 rounded-lg border border-amber-200"
+                              >
+                                Foto Ulang
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between bg-slate-100/70 border border-slate-200 rounded-xl px-3 py-1.5">
+                              <button
+                                type="button"
+                                onClick={() => startCamera(staff.id)}
+                                className="text-[11px] font-bold text-slate-700 hover:text-slate-950 flex items-center gap-1.5"
+                              >
+                                <Camera className="w-3.5 h-3.5 text-amber-600" />
+                                <span>Ambil Foto Selfie Presensi</span>
+                              </button>
+                              <span className="text-[9px] text-slate-400 font-medium">(Opsional)</span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
+
                     {/* Optional Note Field */}
                     <div className="space-y-1">
                       <input
@@ -442,12 +679,12 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
                       {isClockedIn ? (
                         <>
                           <LogOut className="w-4 h-4" />
-                          <span>Clock Out (Pulang / Selesai Shift)</span>
+                          <span>{t('attendance.clockOut')}</span>
                         </>
                       ) : (
                         <>
                           <LogIn className="w-4 h-4" />
-                          <span>Clock In (Presensi Masuk Work)</span>
+                          <span>{t('attendance.clockIn')}</span>
                         </>
                       )}
                     </button>
@@ -474,6 +711,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
                     <tr className="bg-slate-100 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider">
                       <th className="py-3 px-4">Nama Staff</th>
                       <th className="py-3 px-4">Cabang Toko</th>
+                      <th className="py-3 px-4">Foto Selfie</th>
                       <th className="py-3 px-4">Clock In / Out</th>
                       <th className="py-3 px-4">Durasi</th>
                       <th className="py-3 px-4">Geo-Location GPS</th>
@@ -484,7 +722,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
                   <tbody className="divide-y divide-slate-100 font-mono">
                     {attendanceLogs.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="text-center py-8 text-slate-400 font-sans">
+                        <td colSpan={8} className="text-center py-8 text-slate-400 font-sans">
                           Belum ada riwayat absensi staff.
                         </td>
                       </tr>
@@ -497,6 +735,27 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
                           </td>
                           <td className="py-3 px-4 text-slate-700 font-sans font-medium">
                             {log.branchName || 'Cabang Utama'}
+                          </td>
+                          <td className="py-3 px-4 font-sans">
+                            {log.photoUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setViewingPhotoUrl(log.photoUrl || null)}
+                                className="group relative cursor-pointer block"
+                                title="Klik untuk perbesar foto"
+                              >
+                                <img
+                                  src={log.photoUrl}
+                                  alt="Selfie"
+                                  className="w-9 h-9 rounded-lg object-cover border border-slate-300 shadow-xs group-hover:scale-105 transition-transform"
+                                />
+                                <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Eye className="w-3.5 h-3.5 text-white" />
+                                </div>
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 text-[10px] italic">Tanpa Foto</span>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-slate-800 text-[11px]">
                             <div className="text-emerald-700 font-semibold">In: {formatDateTime(log.clockInTime)}</div>
@@ -546,6 +805,122 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
             </div>
           )}
         </div>
+
+        {/* Hidden Canvas for Camera Frame Capture */}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Modal Full Preview Foto Selfie */}
+        {viewingPhotoUrl && (
+          <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-1.5">
+                  <Camera className="w-4 h-4 text-amber-600" />
+                  <span>Bukti Foto Selfie Presensi</span>
+                </h4>
+                <button
+                  onClick={() => setViewingPhotoUrl(null)}
+                  className="p-1 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <img
+                src={viewingPhotoUrl}
+                alt="Selfie Full"
+                className="w-full rounded-2xl object-cover aspect-square border border-slate-200 shadow-inner"
+              />
+              <button
+                onClick={() => setViewingPhotoUrl(null)}
+                className="w-full py-2 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-slate-800"
+              >
+                Tutup Pratinjau
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal QR Absensi Smartphone */}
+        {showQrModal && (
+          <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 text-center">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center space-x-2 text-slate-900 font-extrabold text-sm">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+                    <Smartphone className="w-4 h-4" />
+                  </div>
+                  <span>{t('attendance.qrMobileTitle')}</span>
+                </div>
+                <button
+                  onClick={() => setShowQrModal(false)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-1 text-xs text-slate-600">
+                <p className="font-semibold text-slate-800">
+                  {t('attendance.qrMobileDesc')}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Cabang: <b className="text-slate-800">{selectedBranch.name}</b>
+                </p>
+              </div>
+
+              {/* QR Image Container */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col items-center justify-center">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+                    typeof window !== 'undefined'
+                      ? `${window.location.origin}/?action=clockin&branch=${selectedBranch.id}`
+                      : 'https://newhope-pos.app'
+                  )}`}
+                  alt="QR Absensi"
+                  className="w-48 h-48 rounded-xl border border-slate-200 shadow-xs bg-white p-2"
+                />
+                <span className="text-[10px] text-slate-400 mt-2 font-mono">
+                  {typeof window !== 'undefined' ? window.location.host : 'newhope-pos.app'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      navigator.clipboard.writeText(
+                        `${window.location.origin}/?action=clockin&branch=${selectedBranch.id}`
+                      );
+                      setCopiedQrUrl(true);
+                      setTimeout(() => setCopiedQrUrl(false), 2000);
+                    }
+                  }}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors border border-slate-200"
+                >
+                  {copiedQrUrl ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-emerald-700">{t('attendance.linkCopied')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{t('attendance.copyLink')}</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowQrModal(false)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl"
+                >
+                  {t('common.close')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

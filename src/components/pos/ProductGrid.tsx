@@ -22,6 +22,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
+import { useTranslation } from '../../i18n/LanguageContext';
 
 interface ProductGridProps {
   onSelectProduct: (product: Product) => void;
@@ -29,6 +30,7 @@ interface ProductGridProps {
 
 export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => {
   const {settings}=usePOS();
+  const { t } = useTranslation();
   const {
     products,
     categories,
@@ -155,7 +157,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
   return (
     <div className="nh-product-grid flex-1 flex flex-col h-full bg-slate-50/70 p-4 space-y-4 overflow-hidden">
-      <div className="nh-app-pos-heading"><div><h1>Kasir</h1><p>Pilih produk, buat pesanan, lanjutkan pembayaran.</p></div><span>{filteredProducts.length} produk</span></div>
+      <div className="nh-app-pos-heading"><div><h1>{t('nav.pos')}</h1><p>{t('pos.posSubtitle')}</p></div><span>{t('pos.itemsCount', { count: filteredProducts.length })}</span></div>
       {/* Search & Toolbar Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Search Input for Mobile/Tablet */}
@@ -165,8 +167,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Cari produk"
-            placeholder="Cari produk..."
+            aria-label={t('common.search')}
+            placeholder={`${t('common.search')}...`}
             className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs"
           />
         </div>
@@ -176,29 +178,29 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           {/* USB Scanner Ready Pill */}
           <div className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Scanner siap</span>
+            <span>{t('pos.scannerReady')}</span>
           </div>
 
           <button
             onClick={() => setShowBarcodeModal(true)}
             className="flex items-center space-x-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shadow-xs cursor-pointer"
-            title="Ketik manual Barcode atau SKU"
+            title={t('pos.typeBarcode')}
           >
             <ScanBarcode className="w-4 h-4 text-amber-600" />
-            <span className="hidden sm:inline">Ketik Barcode</span>
+            <span className="hidden sm:inline">{t('pos.typeBarcode')}</span>
           </button>
 
           <button
             onClick={() => setShowCameraScanner(true)}
             className="flex items-center space-x-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 px-3 py-2 rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
-            title="Scan Cepat Barcode dengan Kamera"
+            title={t('pos.cameraScan')}
           >
             <Camera className="w-4 h-4 text-amber-600" />
-            <span className="hidden sm:inline">Kamera Scan</span>
+            <span className="hidden sm:inline">{t('pos.cameraScan')}</span>
           </button>
 
           <button
-            aria-label="Filter stok menipis"
+            aria-label={t('pos.lowStock')}
             aria-pressed={onlyLowStock}
             onClick={() => setOnlyLowStock(!onlyLowStock)}
             className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors shadow-xs cursor-pointer ${
@@ -208,7 +210,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             }`}
           >
             <AlertTriangle className="w-4 h-4 text-rose-500" />
-            <span className="hidden sm:inline">Stok Menipis</span>
+            <span className="hidden sm:inline">{t('pos.lowStock')}</span>
           </button>
 
           {/* View Switcher */}
@@ -260,7 +262,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>Semua Menu ({posProducts.length})</span>
+          <span>{t('pos.allCategories')} ({posProducts.length})</span>
         </button>
 
         {!free && <button
@@ -272,7 +274,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           }`}
         >
           <Sparkles className="w-4 h-4 text-amber-600" />
-          <span>🎁 Paket Bundling ({bundles?.length || 0})</span>
+          <span>🎁 {t('pos.bundlePackages')} ({bundles?.length || 0})</span>
         </button>}
 
         {categories.map((cat) => {
@@ -304,8 +306,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
           (bundles || []).filter((b) => b.isAvailable !== false).length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
               <Sparkles className="w-10 h-10 stroke-1 text-slate-300" />
-              <p className="font-semibold text-slate-600">Belum ada paket bundling aktif</p>
-              <p className="text-xs text-slate-400">Buat paket bundling di menu Manajemen Inventori.</p>
+              <p className="font-semibold text-slate-600">{t('pos.noBundlesActive')}</p>
+              <p className="text-xs text-slate-400">{t('pos.createBundleDesc')}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -367,7 +369,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
                       </span>
                     </div>
                     <span className="bg-amber-500 group-hover:bg-amber-400 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl flex items-center space-x-1 shadow-2xs">
-                      <span>+ Tambah</span>
+                      <span>+ {t('common.add')}</span>
                     </span>
                   </div>
                 </div>
@@ -377,8 +379,8 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
         ) : filteredProducts.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center space-y-2">
             <Search className="w-10 h-10 stroke-1 text-slate-300" />
-            <p className="font-semibold text-slate-600">Tidak ada produk ditemukan</p>
-            <p className="text-xs text-slate-400">Coba ubah kata kunci pencarian atau ganti kategori.</p>
+            <p className="font-semibold text-slate-600">{t('pos.noProductsFound')}</p>
+            <p className="text-xs text-slate-400">{t('pos.noProductsFoundDesc')}</p>
           </div>
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
@@ -418,7 +420,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
 
                 <div className="text-right">
                   <span className="font-bold text-sm text-amber-600">{formatRupiah(product.price)}</span>
-                  <span className="block text-[10px] text-slate-400">+ Tambah Order</span>
+                  <span className="block text-[10px] text-slate-400">+ {t('pos.addToOrder')}</span>
                 </div>
               </div>
             ))}
@@ -433,7 +435,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-base text-amber-700 flex items-center space-x-2">
                 <ScanBarcode className="w-5 h-5 text-amber-600" />
-                <span>Simulasi Barcode Scanner</span>
+                <span>{t('pos.scanSimulation')}</span>
               </h3>
               <button
                 onClick={() => setShowBarcodeModal(false)}
@@ -462,13 +464,13 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
                   onClick={() => setShowBarcodeModal(false)}
                   className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl"
                 >
-                  Batal
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-xl shadow-xs"
                 >
-                  Tambah Ke Cart
+                  {t('pos.addToCart')}
                 </button>
               </div>
             </form>
@@ -483,7 +485,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-base text-amber-900 flex items-center space-x-2">
                 <Camera className="w-5 h-5 text-amber-600" />
-                <span>Kamera Scanner Barcode Cepat</span>
+                <span>{t('pos.cameraScan')}</span>
               </h3>
               <button
                 onClick={() => setShowCameraScanner(false)}
@@ -542,7 +544,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
                 onClick={() => setShowCameraScanner(false)}
                 className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-colors"
               >
-                Tutup Kamera
+                {t('pos.closeCamera')}
               </button>
             </div>
           </div>

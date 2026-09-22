@@ -30,6 +30,34 @@ export const ROLE_LABEL: Record<InternalRole, string> = {
   ROLE_INTERNAL_SUPPORT: 'Support (Operasional Merchant)',
 };
 
+export const ROLE_DESCRIPTION: Record<InternalRole, { title: string; desc: string; badge: string; scope: string }> = {
+  ROLE_SUPERADMIN: {
+    title: 'Superadmin (Akses Penuh)',
+    desc: 'Wewenang tertinggi platform: kelola langganan, hak akses RBAC, log transaksi keuangan, dan jejak audit.',
+    badge: 'bg-rose-100 text-rose-900 border-rose-300',
+    scope: 'Seluruh sistem & penulisan data',
+  },
+  ROLE_INTERNAL_GROWTH: {
+    title: 'Growth (Agregat & Analitik)',
+    desc: 'Analisis metrik agregat: omzet platform, kohor retensi/churn, adopsi fitur tanpa akses PII merchant.',
+    badge: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+    scope: 'Analitik tingkat makro (tanpa data pribadi)',
+  },
+  ROLE_INTERNAL_SUPPORT: {
+    title: 'Support (Operasional Merchant)',
+    desc: 'Bantuan teknis merchant: akses detail merchant spesifik (wajib justifikasi & tercatat di audit log).',
+    badge: 'bg-sky-100 text-sky-950 border-sky-300',
+    scope: 'Troubleshoot per-merchant dengan audit',
+  },
+};
+
+export {
+  internalCapabilities,
+  requiresAudit,
+  requiresJustification,
+  type InternalCapability,
+} from '../lib/rbac/environments';
+
 export function getIdentity(): string | null {
   return sessionStorage.getItem(IDENTITY_KEY) || localStorage.getItem(IDENTITY_KEY);
 }
@@ -202,6 +230,10 @@ export const api={
   },
   me:():Promise<Session>=>request('me'),
   identities:():Promise<{identities:Identity[]}>=>request('identities'),
+  updateUserRole:(email:string,role:InternalRole):Promise<{ok:boolean;message:string}>=>
+    request('identities/'+encodeURIComponent(email)+'/role',undefined,{role},'PUT'),
+  createInternalUser:(body:{email:string;fullName:string;role:InternalRole}):Promise<{ok:boolean;user:Identity}>=>
+    request('identities',undefined,body,'POST'),
   overview:()=>request('overview'),
   merchants:(p?:Record<string,unknown>)=>request('merchants',p),
   merchant:(id:string,justification?:string)=>request('merchants/'+encodeURIComponent(id),{justification}),

@@ -14,6 +14,9 @@ import {
   CreditCard,
   BookOpen,
   Award,
+  ShieldAlert,
+  Info,
+  ArrowLeft,
 } from "lucide-react";
 import {
   api,
@@ -22,6 +25,7 @@ import {
   ROLE_LABEL,
   type Identity,
   type Session,
+  type InternalRole,
 } from "./api";
 import { ErrorBox, Loading } from "./ui";
 import { AuthLayout } from "../components/auth/AuthLayout";
@@ -213,6 +217,50 @@ function LoginScreen({
   );
 }
 
+function AccessDenied({
+  role,
+  requiredCap,
+  onBack,
+}: {
+  role: InternalRole;
+  requiredCap?: string;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center p-8 md:p-16 text-center max-w-lg mx-auto bg-white rounded-xl shadow-sm border border-slate-200 mt-8">
+      <div className="w-16 h-16 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+        <ShieldAlert size={32} />
+      </div>
+      <span className="text-xs font-semibold uppercase tracking-wider text-rose-600 bg-rose-50 px-2.5 py-1 rounded-full mb-2">
+        403 Akses Ditolak
+      </span>
+      <h2 className="text-xl font-bold text-slate-800 mb-2">
+        Hak Akses Tidak Mencukupi
+      </h2>
+      <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+        Peran Anda saat ini (<strong>{ROLE_LABEL[role] || role}</strong>) tidak memiliki izin{" "}
+        <code className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-xs font-mono font-bold">
+          {requiredCap || "AKSES_TERBATAS"}
+        </code>{" "}
+        untuk membuka halaman ini.
+      </p>
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 w-full text-left text-xs text-slate-600 mb-6">
+        <div className="font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+          <Info size={14} className="text-blue-500" /> Informasi Kebijakan RBAC:
+        </div>
+        Sistem pembatasan akses berbasis peran (RBAC) melindungi data sensitif merchant dan platform. Hubungi <strong>Super Administrator</strong> jika Anda memerlukan eskalasi wewenang atau hak akses operasional ke modul ini.
+      </div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="nh-app-button-primary inline-flex items-center gap-2"
+      >
+        <ArrowLeft size={16} /> Kembali ke Menu Utama
+      </button>
+    </div>
+  );
+}
+
 export default function AdminApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [reauth,setReauth]=useState(false);
@@ -337,6 +385,9 @@ export default function AdminApp() {
   if(session.mfaRequired || reauth) return <AdminMfa onVerified={s=>{setSession(s);setReauth(false);}} onLogout={()=>{setSession(null);setReauth(false);}}/>;
 
   const menu = NAV.filter((n) => session.capabilities.includes(n.cap));
+  const currentNavItem = NAV.find((n) => n.id === page);
+  const hasAccess = currentNavItem ? session.capabilities.includes(currentNavItem.cap) : true;
+
   const openSector = (s: string) => {
     setSector(s);
     if (session.capabilities.includes("VIEW_TRANSACTION_LOG"))
@@ -446,24 +497,34 @@ export default function AdminApp() {
           </div>
         </header>
         <main className="nh-admin-main" id="admin-main">
-          {page === "overview" && <Overview onOpenSector={openSector} />}
-          {page === "merchants" && (
-            <Merchants sector={sector} onSector={setSector} />
+          {!hasAccess ? (
+            <AccessDenied
+              role={session.user.role}
+              requiredCap={currentNavItem?.cap}
+              onBack={() => setPage(menu[0]?.id || "overview")}
+            />
+          ) : (
+            <>
+              {page === "overview" && <Overview onOpenSector={openSector} />}
+              {page === "merchants" && (
+                <Merchants sector={sector} onSector={setSector} />
+              )}
+              {page === "subscriptions" && <Subscriptions />}
+              {page === "commissions" && <StaffCommissions />}
+              {page === "users" && <UserManagement />}
+              {page === "blog" && <BlogManagement />}
+              {page === "transactions" && (
+                <Transactions sector={sector} onSector={setSector} />
+              )}
+              {page === "products" && (
+                <Products sector={sector} onSector={setSector} />
+              )}
+              {page === "activity" && (
+                <ActivityPage sector={sector} onSector={setSector} />
+              )}
+              {page === "audit" && <Audit />}
+            </>
           )}
-          {page === "subscriptions" && <Subscriptions />}
-          {page === "commissions" && <StaffCommissions />}
-          {page === "users" && <UserManagement />}
-          {page === "blog" && <BlogManagement />}
-          {page === "transactions" && (
-            <Transactions sector={sector} onSector={setSector} />
-          )}
-          {page === "products" && (
-            <Products sector={sector} onSector={setSector} />
-          )}
-          {page === "activity" && (
-            <ActivityPage sector={sector} onSector={setSector} />
-          )}
-          {page === "audit" && <Audit />}
         </main>
       </div>
     </div>

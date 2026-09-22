@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Product } from "../../types";
 import { formatRupiah } from "../../utils/formatters";
 import { Plus, SlidersHorizontal, ShoppingBag } from "lucide-react";
+import { useTranslation } from "../../i18n";
 
 interface ProductCardProps {
   product: Product;
@@ -12,6 +13,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   product,
   onSelect,
 }) => {
+  const { t } = useTranslation();
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const isLowStock =
     product.stock <= product.minStockAlert && product.stock > 0;
@@ -26,7 +28,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       disabled={isOutOfStock}
       onClick={() => onSelect(product)}
       className="nh-product-card"
-      aria-label={`${hasVariants ? "Pilih opsi" : "Tambahkan"} ${product.name}, ${formatRupiah(product.price)}${isOutOfStock ? ", stok habis" : ""}`}
+      aria-label={`${hasVariants ? t('common.select') : t('common.add')} ${product.name}, ${formatRupiah(product.price)}${isOutOfStock ? `, ${t('pos.outOfStock')}` : ""}`}
       title={product.description || product.name}
     >
       <span className="nh-product-image">
@@ -48,17 +50,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           className={`nh-product-stock ${isOutOfStock ? "is-out" : isLowStock ? "is-low" : ""}`}
         >
           {isOutOfStock
-            ? "Stok habis"
-            : isLowStock
-              ? `Sisa ${product.stock}`
-              : `Stok ${product.stock}`}
+            ? t('pos.outOfStock')
+            : `${t('inventory.stock')} ${product.stock}`}
         </span>
       </span>
       <span className="nh-product-info">
         <span className="nh-product-name">{product.name}</span>
         <span className="nh-product-unit">
           {product.unit}
-          {hasVariants ? " · Pilihan tersedia" : ""} · {product.sku}
+          {hasVariants ? ` · ${t('common.select')}` : ""} · {product.sku}
         </span>
         <span className="nh-product-price">
           {formatRupiah(product.price)}

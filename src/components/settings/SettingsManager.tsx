@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { newUuid } from '../../lib/ids';
+import { useTranslation } from '../../i18n/LanguageContext';
+import { LanguageSwitcher } from '../common/LanguageSwitcher';
 
 export const SettingsManager: React.FC = () => {
   const {
@@ -42,6 +44,7 @@ export const SettingsManager: React.FC = () => {
     currentUser,
     hasPermission,
   } = usePOS();
+  const { t } = useTranslation();
 
   const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING'>('STORE');
   const [formSettings, setFormSettings] = useState<StoreSettings>(settings);
@@ -283,6 +286,23 @@ export const SettingsManager: React.FC = () => {
                 </select>
               </div>
 
+              {/* Fixed POS Terminal Bypass Checkbox */}
+              <label className="flex items-center space-x-2 bg-slate-100 px-3 py-2 rounded-2xl border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer hover:bg-slate-200/70 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={formSettings.allowFixedTerminalBypass ?? true}
+                  onChange={(e) => {
+                    const val = e.target.checked;
+                    setFormSettings((prev) => ({ ...prev, allowFixedTerminalBypass: val }));
+                    updateSettings({ ...settings, allowFixedTerminalBypass: val });
+                  }}
+                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span title="Mengizinkan staf presensi langsung dari komputer kasir utama toko meskipun PC tidak memiliki chip GPS satelit">
+                  Bypass GPS untuk PC Kasir Toko
+                </span>
+              </label>
+
               <button
                 onClick={handleOpenAddBranch}
                 className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs flex items-center space-x-1.5 transition-all"
@@ -491,6 +511,24 @@ export const SettingsManager: React.FC = () => {
       ) : (
         /* STORE PROFILES & TAX TAB */
         <>
+          {/* System Language Selection */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4 mb-6">
+            <div className="flex items-center space-x-3 border-b border-slate-100 pb-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                <Globe className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-slate-900 leading-tight">
+                  {t('settings.systemLanguage')}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {t('settings.selectLanguage')}
+                </p>
+              </div>
+            </div>
+            <LanguageSwitcher mode="full" />
+          </div>
+
           {/* General Store Info */}
           <form onSubmit={handleSaveSettings} className="space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">

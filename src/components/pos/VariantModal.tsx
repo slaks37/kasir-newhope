@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Product, ProductVariant, SelectedModifier } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import { ShoppingBag, Check, Plus, Minus, X } from 'lucide-react';
+import { useTranslation } from '../../i18n';
 
 interface VariantModalProps {
   product: Product;
@@ -20,6 +21,7 @@ export const VariantModal: React.FC<VariantModalProps> = ({
   onClose,
   onAddToCart,
 }) => {
+  const { t } = useTranslation();
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(
     product.variants && product.variants.length > 0 ? product.variants[0] : undefined
   );
@@ -131,7 +133,7 @@ export const VariantModal: React.FC<VariantModalProps> = ({
           {product.variants && product.variants.length > 0 && (
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                Pilih Ukuran / Varian:
+                {t('pos.selectVariant')}
               </label>
               <div className="grid grid-cols-2 gap-2">
                 {product.variants.map((variant) => {
@@ -148,7 +150,7 @@ export const VariantModal: React.FC<VariantModalProps> = ({
                     >
                       <span className="text-xs">{variant.name}</span>
                       <span className="text-[11px] font-mono text-amber-700 font-semibold">
-                        {variant.priceExtra > 0 ? `+${formatRupiah(variant.priceExtra)}` : 'Standard'}
+                        {variant.priceExtra > 0 ? `+${formatRupiah(variant.priceExtra)}` : t('pos.standard')}
                       </span>
                     </button>
                   );
@@ -167,7 +169,7 @@ export const VariantModal: React.FC<VariantModalProps> = ({
                   </label>
                   {group.required && (
                     <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
-                      Wajib Pilih
+                      {t('pos.required')}
                     </span>
                   )}
                 </div>
@@ -212,13 +214,13 @@ export const VariantModal: React.FC<VariantModalProps> = ({
           {/* Notes Input */}
           <div className="pt-4 space-y-2">
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-              Catatan Khusus Pesanan:
+              {t('pos.specialNotes')}
             </label>
             <input
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Cth: Kurangi manis, es dipisah, ekstra tisu..."
+              placeholder={t('pos.notesPlaceholder')}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
@@ -252,7 +254,7 @@ export const VariantModal: React.FC<VariantModalProps> = ({
           >
             <div className="flex items-center space-x-2">
               <ShoppingBag className="w-5 h-5" />
-              <span>Tambah Ke Order</span>
+              <span>{t('pos.addToOrder')}</span>
             </div>
             <span className="text-sm font-extrabold font-mono">{formatRupiah(totalPrice)}</span>
           </button>

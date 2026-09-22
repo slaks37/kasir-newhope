@@ -1,5 +1,6 @@
 import React from 'react';
 import { Category } from '../../types';
+import { useTranslation } from '../../i18n';
 
 interface CategoryFilterProps {
   categories: Category[];
@@ -12,6 +13,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
   selectedCategoryId,
   onSelectCategory,
 }) => {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
       <button
@@ -22,7 +24,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
             : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
         }`}
       >
-        ✨ Semua
+        ✨ {t('common.all')}
       </button>
 
       {categories.map((cat) => {

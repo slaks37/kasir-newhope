@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import {
   Users,
   Coins,
@@ -63,6 +64,7 @@ export const SmartLaborManager: React.FC = () => {
     clockOutStaff,
     getActiveAttendance,
   } = usePOS();
+  const { t } = useTranslation();
 
   const sector: BusinessSector = settings.businessSector || 'FNB';
 
@@ -533,7 +535,7 @@ export const SmartLaborManager: React.FC = () => {
           }`}
         >
           <TrendingUp className="w-4 h-4" />
-          <span>Rekap Kinerja & Komisi Staf</span>
+          <span>{t('labor.staffTab')}</span>
           <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full text-xs">
             {laborSummary.staffMetrics.length}
           </span>
@@ -549,7 +551,7 @@ export const SmartLaborManager: React.FC = () => {
           }`}
         >
           <Settings2 className="w-4 h-4" />
-          <span>Aturan Komisi & Target Fleksibel</span>
+          <span>{t('labor.shiftsTab')}</span>
         </button>
 
         <button
@@ -562,7 +564,7 @@ export const SmartLaborManager: React.FC = () => {
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>Slip Gaji & Pencairan Kas</span>
+          <span>{t('labor.payrollTab')}</span>
           <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs font-extrabold">
             {payrollSlips.length}
           </span>

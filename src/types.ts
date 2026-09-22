@@ -147,6 +147,7 @@ export interface AttendanceRecord {
   clockInGeo?: GeoLocationInfo;
   clockOutGeo?: GeoLocationInfo;
   businessSector?: BusinessSector;
+  photoUrl?: string;
 }
 
 // Haversine formula for GPS distance calculation in meters
@@ -223,6 +224,7 @@ export interface CartItem {
   discountAmount: number;
   totalPrice: number; // (unitPrice * quantity) - discount
   servedByStaffName?: string;
+  refundedQuantity?: number; // Jumlah yang sudah diretur/refund
 }
 
 export interface Table {
@@ -305,6 +307,35 @@ export interface Order {
   parentOrderId?: string;
   businessSector?: BusinessSector;
   userId?: string;
+  // Partial refund fields
+  refunds?: OrderRefund[];
+  refundTotal?: number; // Total rupiah yang telah dikembalikan/diretur
+}
+
+export interface OrderRefundItem {
+  cartItemId: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  totalRefundAmount: number;
+  reason: string;
+}
+
+export interface OrderRefund {
+  id: string; // RFD-20260922-001
+  orderId: string;
+  orderNumber: number;
+  timestamp: string;
+  items: OrderRefundItem[];
+  subtotalRefund: number;
+  taxRefund: number;
+  serviceRefund: number;
+  totalRefund: number;
+  refundMethod: 'CASH' | 'ORIGINAL_METHOD';
+  reason: string;
+  cashierName: string;
+  shiftId?: string;
 }
 
 export type LaundryStage = 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI';
@@ -551,6 +582,8 @@ export interface StoreSettings {
   branches?: StoreBranch[];
   activeBranchId?: string;
   geofenceEnforcement?: 'STRICT' | 'FLEXIBLE';
+  allowFixedTerminalBypass?: boolean;
+  registeredTerminalId?: string;
   subscription?: SaaSSubscription;
   whatsappLifecycleEnabled?: boolean;
   enabledModules?: Partial<Record<PermissionFeature, boolean>>;

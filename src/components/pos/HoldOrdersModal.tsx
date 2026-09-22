@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import { Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { PauseCircle, Play, Trash2, X, CreditCard, Clock } from 'lucide-react';
@@ -11,6 +12,7 @@ interface HoldOrdersModalProps {
 
 export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => {
   const { heldOrders, recallHoldOrder, cancelHoldOrder } = usePOS();
+  const { t } = useTranslation();
   const [orderToPay, setOrderToPay] = useState<Order | null>(null);
 
   return (
@@ -21,7 +23,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
           <div className="flex items-center space-x-2">
             <PauseCircle className="w-5 h-5 text-amber-600" />
             <h3 className="font-extrabold text-base text-slate-900">
-              Daftar Transaksi Tersimpan &amp; Belum Lunas (Open Bill)
+              {t('holdOrders.title')}
             </h3>
           </div>
           <button
@@ -38,7 +40,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
             <div className="text-center py-12 text-slate-400 space-y-2">
               <PauseCircle className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
               <p className="font-semibold text-slate-500 text-xs">
-                Tidak ada pesanan yang tersimpan atau belum lunas.
+                {t('holdOrders.empty')}
               </p>
             </div>
           ) : (
@@ -52,7 +54,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                     <div className="flex items-center space-x-1.5 mb-0.5">
                       <span className="font-bold text-sm text-amber-800 font-mono">{order.id}</span>
                       <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-300">
-                        BELUM LUNAS
+                        {t('holdOrders.unpaid')}
                       </span>
                     </div>
                     <span className="text-[10px] text-slate-500 block font-mono">
@@ -86,13 +88,13 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                   <div className="p-2 bg-indigo-50/70 rounded-xl border border-indigo-100/80 text-[10px] space-y-0.5">
                     {order.dropOffDate && (
                       <div className="text-slate-600 flex justify-between">
-                        <span>📅 Tgl Masuk:</span>
+                        <span>📅 {t('holdOrders.dropOffDate')}:</span>
                         <span className="font-bold text-slate-800">{order.dropOffDate}</span>
                       </div>
                     )}
                     {(order.completionDate || order.completionEstimate) && (
                       <div className="text-indigo-900 flex justify-between font-bold">
-                        <span>⏰ Estimasi Ambil:</span>
+                        <span>⏰ {t('holdOrders.completionEstimate')}:</span>
                         <span className="font-black text-indigo-700">
                           {order.completionDate || order.completionEstimate}
                         </span>
@@ -108,7 +110,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                     className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold flex items-center space-x-1 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>Hapus</span>
+                    <span>{t('common.delete')}</span>
                   </button>
 
                   <button
@@ -119,7 +121,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                     className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center space-x-1 cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 fill-slate-800" />
-                    <span>Panggil Ke Cart</span>
+                    <span>{t('holdOrders.resumeOrder')}</span>
                   </button>
 
                   <button
@@ -127,7 +129,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => 
                     className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black flex items-center space-x-1 shadow-md cursor-pointer"
                   >
                     <CreditCard className="w-3.5 h-3.5" />
-                    <span>Bayar Sekarang</span>
+                    <span>{t('holdOrders.payDirect')}</span>
                   </button>
                 </div>
               </div>

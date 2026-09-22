@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah } from '../../utils/formatters';
-import { CartItem, PaymentMethod } from '../../types';
+import { CartItem, PaymentMethod, Order } from '../../types';
+import { ReceiptModal } from './ReceiptModal';
 import {
   Users,
   Divide,
@@ -15,6 +17,7 @@ import {
   ArrowRight,
   Plus,
   Minus,
+  Printer,
 } from 'lucide-react';
 
 interface SplitBillModalProps {
@@ -29,6 +32,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   onPaymentSuccess,
 }) => {
   const { cart, processPayment, selectedTable, selectedCustomer, clearCart, settings } = usePOS();
+  const { t } = useTranslation();
   const [splitMode, setSplitMode] = useState<'EQUAL' | 'BY_ITEM'>('EQUAL');
 
   // Equal Split State
@@ -43,6 +47,11 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   const [personCount, setPersonCount] = useState<number>(2);
   const [paidPersons, setPaidPersons] = useState<number[]>([]);
   const [activePayingPerson, setActivePayingPerson] = useState<number | null>(null);
+
+  // Stored paid orders & receipt preview modal
+  const [paidOrders, setPaidOrders] = useState<Record<number, Order>>({});
+  const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
+  const [isAllCompleted, setIsAllCompleted] = useState(false);
 
   if (!isOpen) return null;
 
@@ -81,17 +90,31 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       skipClearCart: !isFinished,
     };
 
-    processPayment(paymentMethod, perPaxAmount, undefined, undefined, undefined, undefined, undefined, extraOptions);
+    const createdOrder = processPayment(
+      paymentMethod,
+      perPaxAmount,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      extraOptions
+    );
+
+    if (createdOrder) {
+      setPaidOrders((prev) => ({ ...prev, [paxIndex]: createdOrder }));
+      // Langsung munculkan nota untuk pemesan yang baru bayar
+      setSelectedReceiptOrder(createdOrder);
+    }
 
     setPaidPax(nextPaid);
     setActivePayingPax(null);
 
-    // If all pax paid, finish
+    // If all pax paid, mark completed
     if (isFinished) {
-      alert('Semua bagian split bill telah lunas dibayar!');
+      setIsAllCompleted(true);
       clearCart();
       if (onPaymentSuccess) onPaymentSuccess();
-      onClose();
     }
   };
 
@@ -119,16 +142,30 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       skipClearCart: !allPaid,
     };
 
-    processPayment(paymentMethod, personTotal, undefined, undefined, undefined, undefined, undefined, extraOptions);
+    const createdOrder = processPayment(
+      paymentMethod,
+      personTotal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      extraOptions
+    );
+
+    if (createdOrder) {
+      setPaidOrders((prev) => ({ ...prev, [personIdx]: createdOrder }));
+      // Langsung munculkan nota untuk pemesan yang baru bayar
+      setSelectedReceiptOrder(createdOrder);
+    }
 
     setPaidPersons(updated);
     setActivePayingPerson(null);
 
     if (allPaid) {
-      alert('Seluruh tagihan menu telah berhasil dilunasi!');
+      setIsAllCompleted(true);
       clearCart();
       if (onPaymentSuccess) onPaymentSuccess();
-      onClose();
     }
   };
 
@@ -142,7 +179,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
               <Divide className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-black text-lg text-slate-950">Split Bill (Pisah Tagihan)</h3>
+              <h3 className="font-black text-lg text-slate-950">{t('splitBill.title')}</h3>
               <p className="text-xs text-slate-500">
                 {selectedTable ? `Meja ${selectedTable.name}` : 'Tagihan Kasir'} • Total:{' '}
                 <span className="font-mono font-black text-slate-900">{formatRupiah(grandTotal)}</span>
@@ -168,7 +205,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
             }`}
           >
             <Users className="w-4 h-4 text-amber-500" />
-            <span>Bagi Rata (Equal Split)</span>
+            <span>{t('splitBill.equalSplit')}</span>
           </button>
           <button
             onClick={() => setSplitMode('BY_ITEM')}
@@ -179,7 +216,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
             }`}
           >
             <Receipt className="w-4 h-4 text-amber-500" />
-            <span>Pisah per Menu (By Item)</span>
+            <span>{t('splitBill.byItemSplit')}</span>
           </button>
         </div>
 
@@ -191,8 +228,8 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
             {/* Pax Counter */}
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center justify-between">
               <div>
-                <span className="font-black text-sm text-slate-900 block">Jumlah Orang (Pax)</span>
-                <span className="text-xs text-slate-500">Bagi total tagihan sama rata</span>
+                <span className="font-black text-sm text-slate-900 block">{t('splitBill.paxCount')}</span>
+                <span className="text-xs text-slate-500">{t('splitBill.equalSplit')}</span>
               </div>
               <div className="flex items-center space-x-3">
                 <button
@@ -217,18 +254,18 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
 
             {/* Per Person Amount Display */}
             <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-center">
-              <span className="text-xs font-bold text-amber-900 block">Nominal per Orang</span>
+              <span className="text-xs font-bold text-amber-900 block">{t('splitBill.amountPerPerson')}</span>
               <span className="font-mono font-black text-2xl text-slate-950 block mt-0.5">
                 {formatRupiah(perPaxAmount)}
               </span>
               <span className="text-[11px] text-slate-500">
-                ({formatRupiah(grandTotal)} dibagi {paxCount} orang)
+                ({formatRupiah(grandTotal)} / {paxCount})
               </span>
             </div>
 
             {/* List of Pax and Payment Triggers */}
             <div className="space-y-2.5">
-              <span className="text-xs font-black text-slate-700 block">Daftar Pembayaran Orang</span>
+              <span className="text-xs font-black text-slate-700 block">{t('splitBill.title')}</span>
               {Array.from({ length: paxCount }).map((_, idx) => {
                 const pNum = idx + 1;
                 const isPaid = paidPax.includes(pNum);
@@ -258,7 +295,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                         </div>
                         <div>
                           <span className="font-black text-xs text-slate-950 block">
-                            Orang ke-{pNum}
+                            {t('splitBill.person', { index: pNum })}
                           </span>
                           <span className="font-mono font-bold text-xs text-slate-600">
                             {formatRupiah(perPaxAmount)}
@@ -268,16 +305,29 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
 
                       <div>
                         {isPaid ? (
-                          <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-950 font-black text-xs border border-emerald-300 flex items-center space-x-1">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Lunas</span>
-                          </span>
+                          <div className="flex items-center space-x-2">
+                            <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-950 font-black text-xs border border-emerald-300 flex items-center space-x-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>{t('splitBill.paid')}</span>
+                            </span>
+                            {paidOrders[pNum] && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedReceiptOrder(paidOrders[pNum])}
+                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                                title={`Cetak / Lihat Nota Orang ke-${pNum}`}
+                              >
+                                <Printer className="w-3.5 h-3.5 text-slate-700" />
+                                <span>{t('splitBill.printReceipt')}</span>
+                              </button>
+                            )}
+                          </div>
                         ) : isPaying ? (
                           <button
                             onClick={() => setActivePayingPax(null)}
-                            className="px-3 py-1 text-xs font-bold text-slate-500 hover:text-slate-800"
+                            className="px-3 py-1 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
                           >
-                            Batal
+                            {t('common.cancel')}
                           </button>
                         ) : (
                           <button
@@ -285,7 +335,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1.5"
                           >
                             <CreditCard className="w-3.5 h-3.5" />
-                            <span>Bayar Bagian Ini</span>
+                            <span>{t('splitBill.pay')}</span>
                           </button>
                         )}
                       </div>
@@ -295,7 +345,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                     {isPaying && (
                       <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
                         <span className="text-[11px] font-bold text-slate-600 block">
-                          Pilih Metode Bayar Orang ke-{pNum}:
+                          {t('checkout.paymentMethod')}:
                         </span>
                         <div className="grid grid-cols-3 gap-2">
                           <button
@@ -308,7 +358,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <Banknote className="w-3.5 h-3.5" />
-                            <span>Tunai</span>
+                            <span>{t('checkout.cash')}</span>
                           </button>
                           <button
                             type="button"
@@ -320,7 +370,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <QrCode className="w-3.5 h-3.5" />
-                            <span>QRIS</span>
+                            <span>{t('checkout.qris')}</span>
                           </button>
                           <button
                             type="button"
@@ -332,14 +382,14 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <CreditCard className="w-3.5 h-3.5" />
-                            <span>Debit / Transfer</span>
+                            <span>{t('checkout.debitCreditCard')}</span>
                           </button>
                         </div>
                         <button
                           onClick={() => handlePayEqualPax(pNum)}
                           className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs shadow-xs cursor-pointer flex items-center justify-center space-x-1.5"
                         >
-                          <span>Konfirmasi Pembayaran ({formatRupiah(perPaxAmount)})</span>
+                          <span>{t('checkout.payNow')} ({formatRupiah(perPaxAmount)})</span>
                           <ArrowRight className="w-4 h-4" />
                         </button>
                       </div>
@@ -358,7 +408,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
           <div className="space-y-5">
             {/* Person Count Selector */}
             <div className="flex items-center justify-between bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-              <span className="text-xs font-bold text-slate-700">Jumlah Orang Pemesan:</span>
+              <span className="text-xs font-bold text-slate-700">{t('splitBill.paxCount')}:</span>
               <div className="flex items-center space-x-2">
                 {[2, 3, 4, 5].map((cnt) => (
                   <button
@@ -370,7 +420,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                         : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    {cnt} Orang
+                    {cnt}
                   </button>
                 ))}
               </div>
@@ -378,7 +428,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
 
             {/* Menu Items Assignment Table */}
             <div className="space-y-2">
-              <span className="text-xs font-black text-slate-700 block">Tentukan Pemilik Setiap Menu:</span>
+              <span className="text-xs font-black text-slate-700 block">{t('splitBill.selectPersonToAssign')}:</span>
               <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
                 {cart.map((item) => {
                   const assignedTo = itemAssignments[item.id] || 1;
@@ -395,7 +445,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                       </div>
 
                       <div className="flex items-center space-x-1.5 shrink-0">
-                        <span className="text-[11px] text-slate-400 font-bold">Milik:</span>
+                        <span className="text-[11px] text-slate-400 font-bold">{t('common.select')}:</span>
                         <select
                           value={assignedTo}
                           onChange={(e) =>
@@ -408,7 +458,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                         >
                           {Array.from({ length: personCount }).map((_, i) => (
                             <option key={i + 1} value={i + 1}>
-                              Orang ke-{i + 1}
+                              {t('splitBill.person', { index: i + 1 })}
                             </option>
                           ))}
                         </select>
@@ -421,7 +471,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
 
             {/* Summary Per Person */}
             <div className="space-y-2.5">
-              <span className="text-xs font-black text-slate-700 block">Tagihan per Orang:</span>
+              <span className="text-xs font-black text-slate-700 block">{t('splitBill.amountPerPerson')}:</span>
               {Array.from({ length: personCount }).map((_, idx) => {
                 const pNum = idx + 1;
                 const pSub = getPersonSubtotal(pNum);
@@ -440,7 +490,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="font-black text-xs text-slate-950 block">
-                          Orang ke-{pNum}
+                          {t('splitBill.person', { index: pNum })}
                         </span>
                         <span className="font-mono font-bold text-sm text-amber-700">
                           {formatRupiah(pSub)}
@@ -449,16 +499,29 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
 
                       <div>
                         {isPaid ? (
-                          <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-950 font-black text-xs border border-emerald-300 flex items-center space-x-1">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Lunas</span>
-                          </span>
+                          <div className="flex items-center space-x-2">
+                            <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-950 font-black text-xs border border-emerald-300 flex items-center space-x-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>{t('splitBill.paid')}</span>
+                            </span>
+                            {paidOrders[pNum] && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedReceiptOrder(paidOrders[pNum])}
+                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                                title={`Cetak / Lihat Nota Orang ke-${pNum}`}
+                              >
+                                <Printer className="w-3.5 h-3.5 text-slate-700" />
+                                <span>{t('splitBill.printReceipt')}</span>
+                              </button>
+                            )}
+                          </div>
                         ) : isPaying ? (
                           <button
                             onClick={() => setActivePayingPerson(null)}
-                            className="px-3 py-1 text-xs font-bold text-slate-500 hover:text-slate-800"
+                            className="px-3 py-1 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
                           >
-                            Batal
+                            {t('common.cancel')}
                           </button>
                         ) : (
                           <button
@@ -466,7 +529,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             onClick={() => setActivePayingPerson(pNum)}
                             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs transition-all cursor-pointer disabled:opacity-40"
                           >
-                            Bayar Bagian Ini
+                            {t('splitBill.pay')}
                           </button>
                         )}
                       </div>
@@ -475,7 +538,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                     {isPaying && (
                       <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
                         <span className="text-[11px] font-bold text-slate-600 block">
-                          Metode Bayar Orang ke-{pNum}:
+                          {t('checkout.paymentMethod')}:
                         </span>
                         <div className="grid grid-cols-3 gap-2">
                           <button
@@ -488,7 +551,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <Banknote className="w-3.5 h-3.5" />
-                            <span>Tunai</span>
+                            <span>{t('checkout.cash')}</span>
                           </button>
                           <button
                             type="button"
@@ -500,7 +563,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <QrCode className="w-3.5 h-3.5" />
-                            <span>QRIS</span>
+                            <span>{t('checkout.qris')}</span>
                           </button>
                           <button
                             type="button"
@@ -512,14 +575,14 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
                             }`}
                           >
                             <CreditCard className="w-3.5 h-3.5" />
-                            <span>Debit / Transfer</span>
+                            <span>{t('checkout.debitCreditCard')}</span>
                           </button>
                         </div>
                         <button
                           onClick={() => handlePayPerson(pNum)}
                           className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs shadow-xs cursor-pointer flex items-center justify-center space-x-1.5"
                         >
-                          <span>Selesaikan Tagihan Orang ke-{pNum} ({formatRupiah(pSub)})</span>
+                          <span>{t('checkout.payNow')} ({formatRupiah(pSub)})</span>
                           <ArrowRight className="w-4 h-4" />
                         </button>
                       </div>
@@ -530,7 +593,55 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
             </div>
           </div>
         )}
+
+        {/* All Paid Celebration & Quick Receipt Hub */}
+        {isAllCompleted && (
+          <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl space-y-3 animate-in fade-in duration-200">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center space-x-2 text-emerald-950">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+                <div>
+                  <h4 className="font-extrabold text-sm text-emerald-950">
+                    {t('splitBill.allCompleted')}
+                  </h4>
+                  <p className="text-xs text-emerald-700">
+                    {t('splitBill.printReceipt')}:
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+              >
+                {t('splitBill.finishAndClose')}
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-emerald-200">
+              {Object.entries(paidOrders).map(([pIndex, ord]) => (
+                <button
+                  key={pIndex}
+                  type="button"
+                  onClick={() => setSelectedReceiptOrder(ord)}
+                  className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-950 border border-emerald-300 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>{t('splitBill.printReceipt')} ({t('splitBill.person', { index: pIndex })}) ({formatRupiah(ord.total)})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Receipt Modal Preview */}
+      {selectedReceiptOrder && (
+        <ReceiptModal
+          order={selectedReceiptOrder}
+          settings={settings}
+          onClose={() => setSelectedReceiptOrder(null)}
+        />
+      )}
     </div>
   );
 };

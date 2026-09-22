@@ -50,7 +50,44 @@ export const DigitalScaleModal: React.FC<DigitalScaleModalProps> = ({ isOpen, on
         const port = await (navigator as any).serial.requestPort();
         await port.open({ baudRate: 9600 });
         setIsConnectedSerial(true);
-        setScaleStatusText('Port Serial USB Terhubung (Baud 9600)');
+        setScaleStatusText('Port Serial USB Terhubung (Baud 9600) - Membaca data timbangan...');
+
+        // Start reading stream from hardware scale
+        if (port.readable) {
+          const textDecoder = new TextDecoderStream();
+          port.readable.pipeTo(textDecoder.writable).catch(() => {});
+          const reader = textDecoder.readable.getReader();
+
+          (async () => {
+            let buffer = '';
+            try {
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                  buffer += value;
+                  const lines = buffer.split(/[\r\n]+/);
+                  buffer = lines.pop() || '';
+                  for (const line of lines) {
+                    // Common scale output formats (CAS, Sayaki, GPrinter, Toledo):
+                    // "ST,GS,+  1.250kg", "US,GS,+  1.250kg", "WN: 1.250kg", "=01.250"
+                    const match = line.match(/([+-]?\d+\.?\d*)\s*(?:kg|g)?/i);
+                    if (match) {
+                      const parsed = parseFloat(match[1]);
+                      if (!isNaN(parsed) && parsed >= 0) {
+                        setWeightKg(parsed);
+                        setIsStable(!line.includes('US'));
+                        setScaleStatusText(`Live stream timbangan: ${parsed.toFixed(3)} kg`);
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (err: any) {
+              setScaleStatusText(`Serial stream terputus: ${err.message || ''}`);
+            }
+          })();
+        }
       } catch (err: any) {
         setScaleStatusText(`Gagal sambung serial: ${err.message || 'Dibatalkan'}`);
       }

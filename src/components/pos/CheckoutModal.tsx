@@ -3,6 +3,7 @@ import { useModalFocus } from '../../hooks/useModalFocus';
 import { usePOS } from '../../context/POSContext';
 import { PaymentMethod, Order } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
+import { useTranslation } from '../../i18n/LanguageContext';
 import {
   Banknote,
   QrCode,
@@ -73,6 +74,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     staffMembers,
     selectedStaff,
   } = usePOS();
+  const { t } = useTranslation();
 
   const cart = pendingOrderToPay ? pendingOrderToPay.items : posCart;
   const selectedCustomer = pendingOrderToPay?.customer || posCustomer;
@@ -282,23 +284,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
           <div>
             <div className="flex items-center space-x-2">
-              <h3 id="checkout-title" className="font-extrabold text-lg text-slate-900">Proses pembayaran</h3>
+              <h3 id="checkout-title" className="font-extrabold text-lg text-slate-900">
+                {t('checkout.checkoutTitle')}
+              </h3>
               <span className="px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-100 text-amber-900 border border-amber-300 uppercase tracking-wide">
                 {orderType === 'DINE_IN'
-                  ? `Dine In (${selectedTable ? selectedTable.name : 'Meja Kasir'})`
+                  ? `${t('pos.dineIn')} (${selectedTable ? selectedTable.name : 'Meja Kasir'})`
                   : orderType === 'TAKEAWAY'
-                  ? 'Takeaway / Bungkus'
-                  : 'Delivery / Kirim'}
+                  ? t('pos.takeAway')
+                  : t('pos.delivery')}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {cart.length} item pesanan • Total Tagihan:{' '}
+              {t('pos.itemsCount', { count: cart.length })} • {t('pos.grandTotal')}:{' '}
               <span className="font-extrabold font-mono text-amber-800">{formatRupiah(grandTotal)}</span>
             </p>
           </div>
 
           <button
-            aria-label="Tutup pembayaran"
+            aria-label={t('common.close')}
             disabled={isProcessing}
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
@@ -312,15 +316,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           {/* Left Column: Payment Method Selection */}
           <div className="md:col-span-5 space-y-3">
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-              Metode Pembayaran:
+              {t('checkout.paymentMethod')}:
             </label>
 
             <div className="space-y-2">
               {[
-                { id: 'CASH', label: 'Tunai / Cash', icon: Banknote, color: 'text-emerald-600' },
-                { id: 'QRIS', label: 'QRIS (Scan Toko)', icon: QrCode, color: 'text-rose-600' },
-                { id: 'DEBIT', label: 'Kartu Debit / EDC', icon: CreditCard, color: 'text-indigo-600' },
-                { id: 'SHOPEEPAY', label: 'E-Wallet ShopeePay/OVO', icon: Smartphone, color: 'text-amber-600' },
+                { id: 'CASH', label: t('checkout.cash'), icon: Banknote, color: 'text-emerald-600' },
+                { id: 'QRIS', label: t('checkout.qris'), icon: QrCode, color: 'text-rose-600' },
+                { id: 'DEBIT', label: t('checkout.debitCreditCard'), icon: CreditCard, color: 'text-indigo-600' },
+                { id: 'SHOPEEPAY', label: t('checkout.bankTransfer'), icon: Smartphone, color: 'text-amber-600' },
               ].map((method) => {
                 const Icon = method.icon;
                 const isSelected = paymentMethod === method.id;
@@ -684,7 +688,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             onClick={onClose}
             className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
           >
-            Batal
+            {t('common.cancel')}
           </button>
 
           <div className="flex items-center gap-2">
@@ -696,13 +700,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 className="px-4 py-2.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-black text-xs rounded-xl flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-40"
               >
                 <Bookmark className="w-3.5 h-3.5 text-amber-700" />
-                <span>
-                  {settings.businessSector === 'LAUNDRY'
-                    ? 'Simpan Cucian (Bayar Nanti)'
-                    : settings.businessSector === 'FNB'
-                    ? 'Simpan Pesanan Meja (Bayar Nanti)'
-                    : 'Simpan Transaksi (Bayar Nanti)'}
-                </span>
+                <span>{t('pos.holdBill')}</span>
               </button>
             )}
 
@@ -714,12 +712,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {isProcessing ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Memproses...</span>
+                  <span>{t('checkout.processing')}</span>
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Konfirmasi Lunas ({formatRupiah(grandTotal)})</span>
+                  <span>{t('checkout.payNow')} ({formatRupiah(grandTotal)})</span>
                 </>
               )}
             </button>

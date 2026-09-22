@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { KDSTicket, KDSStatus } from '../../types';
+import { useTranslation } from '../../i18n';
 import {
   ChefHat,
   Clock,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 
 export const KitchenDisplaySystem: React.FC = () => {
+  const { t } = useTranslation();
   const { kdsTickets, updateKDSTicketStatus, clearCompletedKDSTickets } = usePOS();
   const [filterStatus, setFilterStatus] = useState<KDSStatus | 'ALL'>('ALL');
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -85,13 +87,13 @@ export const KitchenDisplaySystem: React.FC = () => {
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-black text-slate-900">Kitchen Display System (KDS)</h2>
+              <h2 className="text-lg font-black text-slate-900">{t('tables.kdsTab')}</h2>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 uppercase">
                 Real-Time Kitchen
               </span>
             </div>
             <p className="text-xs text-slate-500 font-medium">
-              Monitor pesanan dapur, tiket varian/add-on, timer pengerjaan, dan status hidangan meja.
+              {t('tables.kdsSubtitle')}
             </p>
           </div>
         </div>
@@ -107,23 +109,23 @@ export const KitchenDisplaySystem: React.FC = () => {
                 ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
                 : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'
             }`}
-            title="Toggle Audio Notifikasi Pesanan Baru"
+            title="Toggle Audio"
           >
             {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            <span className="hidden sm:inline">{soundEnabled ? 'Audio Aktif' : 'Mute'}</span>
+            <span className="hidden sm:inline">{soundEnabled ? t('tables.audioActive') : t('tables.mute')}</span>
           </button>
 
           {servedCount > 0 && (
             <button
               onClick={() => {
-                if (confirm('Bersihkan semua tiket dapur yang sudah selesai disajikan?')) {
+                if (confirm('Clear completed tickets?')) {
                   clearCompletedKDSTickets();
                 }
               }}
               className="p-2.5 rounded-2xl bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-800 text-slate-300 hover:text-rose-300 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
             >
               <Trash2 className="w-4 h-4" />
-              <span>Arsip Selesai ({servedCount})</span>
+              <span>{t('tables.archiveServed', { count: servedCount })}</span>
             </button>
           )}
         </div>
@@ -140,7 +142,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            Semua ({kdsTickets.length})
+            {t('tables.allTickets', { count: kdsTickets.length })}
           </button>
           <button
             onClick={() => setFilterStatus('PENDING')}
@@ -151,7 +153,7 @@ export const KitchenDisplaySystem: React.FC = () => {
             }`}
           >
             <AlertCircle className="w-3.5 h-3.5" />
-            <span>Antrean Baru ({pendingCount})</span>
+            <span>{t('tables.newQueue', { count: pendingCount })}</span>
           </button>
           <button
             onClick={() => setFilterStatus('PREPARING')}
@@ -162,7 +164,7 @@ export const KitchenDisplaySystem: React.FC = () => {
             }`}
           >
             <Flame className="w-3.5 h-3.5" />
-            <span>Dimasak ({preparingCount})</span>
+            <span>{t('tables.cookingCount', { count: preparingCount })}</span>
           </button>
           <button
             onClick={() => setFilterStatus('READY')}
@@ -173,7 +175,7 @@ export const KitchenDisplaySystem: React.FC = () => {
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Siap Saji ({readyCount})</span>
+            <span>{t('tables.readyCount', { count: readyCount })}</span>
           </button>
           <button
             onClick={() => setFilterStatus('SERVED')}
@@ -184,12 +186,12 @@ export const KitchenDisplaySystem: React.FC = () => {
             }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Tersaji ({servedCount})</span>
+            <span>{t('tables.servedCount', { count: servedCount })}</span>
           </button>
         </div>
 
         <div className="text-xs text-slate-500 font-bold px-3 py-1 bg-slate-50 rounded-xl border border-slate-200">
-          Total Tiket Aktif:{' '}
+          {t('tables.totalActiveTickets')}{' '}
           <span className="text-slate-900 font-black">{pendingCount + preparingCount + readyCount}</span>
         </div>
       </div>
@@ -200,9 +202,9 @@ export const KitchenDisplaySystem: React.FC = () => {
           <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
             <Utensils className="w-8 h-8" />
           </div>
-          <h3 className="font-black text-base text-slate-800">Tidak ada tiket pesanan di dapur</h3>
+          <h3 className="font-black text-base text-slate-800">{t('tables.noTickets')}</h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Setiap pesanan kasir F&amp;B dengan opsi &apos;Kirim ke Dapur&apos; akan muncul otomatis di layar ini secara real-time.
+            {t('tables.noTicketsDesc')}
           </p>
         </div>
       ) : (
@@ -335,12 +337,12 @@ export const KitchenDisplaySystem: React.FC = () => {
                       }`}
                     >
                       {ticket.status === 'PENDING'
-                        ? 'Menunggu'
+                        ? t('tables.kdsNew')
                         : ticket.status === 'PREPARING'
-                        ? 'Sedang Dimasak'
+                        ? t('tables.kdsCooking')
                         : ticket.status === 'READY'
-                        ? 'Siap Saji'
-                        : 'Selesai'}
+                        ? t('tables.kdsReady')
+                        : t('tables.kdsCompleted')}
                     </span>
                   </div>
 
@@ -354,7 +356,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                         className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <Flame className="w-3.5 h-3.5" />
-                        <span>Mulai Masak</span>
+                        <span>{t('tables.startCooking')}</span>
                       </button>
                     )}
 
@@ -367,7 +369,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                         className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Makanan Siap!</span>
+                        <span>{t('tables.markReady')}</span>
                       </button>
                     )}
 
@@ -380,7 +382,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                         className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <Utensils className="w-3.5 h-3.5" />
-                        <span>Sajikan ke Meja</span>
+                        <span>{t('tables.markServed')}</span>
                       </button>
                     )}
 
@@ -390,7 +392,7 @@ export const KitchenDisplaySystem: React.FC = () => {
                         className="px-2.5 py-1.5 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-200 text-[11px] font-bold cursor-pointer"
                         title="Buka Kembali Tiket"
                       >
-                        Kembalikan
+                        {t('common.back')}
                       </button>
                     )}
                   </div>

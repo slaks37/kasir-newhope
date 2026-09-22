@@ -28,6 +28,7 @@ import {
 import { SplitBillModal } from './SplitBillModal';
 import { DigitalScaleModal } from './DigitalScaleModal';
 import { UpsellSuggestions } from '../ai/UpsellSuggestions';
+import { useTranslation } from '../../i18n/LanguageContext';
 
 interface CartPanelProps {
   onOpenCustomerSelect: () => void;
@@ -62,10 +63,12 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     settings,
     shift,
     holdOrder,
+    heldOrders,
     staffMembers,
     selectedStaff,
     setSelectedStaff,
   } = usePOS();
+  const { t } = useTranslation();
 
   const [editingItemNotes, setEditingItemNotes] = useState<{ id: string; notes: string } | null>(null);
   const [editingItemDiscount, setEditingItemDiscount] = useState<{ id: string; percent: number; amount: number } | null>(null);
@@ -115,11 +118,13 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         <div className="nh-light-panel p-3 bg-slate-900 text-white flex items-center justify-between shadow-xs">
           <div className="flex items-center space-x-2">
             <ShoppingBag className="w-5 h-5 text-amber-400" />
-            <h3 id="mobile-cart-title" className="font-extrabold text-sm text-white">Keranjang pesanan ({cart.reduce((s, i) => s + i.quantity, 0)} item)</h3>
+            <h3 id="mobile-cart-title" className="font-extrabold text-sm text-white">
+              {t('pos.cartTitle')} ({t('pos.itemsCount', { count: cart.reduce((s, i) => s + i.quantity, 0) })})
+            </h3>
           </div>
           {onCloseMobile && (
             <button
-              aria-label="Tutup keranjang"
+              aria-label={t('common.close')}
               onClick={onCloseMobile}
               className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white"
             >
@@ -129,15 +134,20 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         </div>
       )}
 
-      {!isMobileModal && <div className="nh-cart-heading"><h2>Pesanan saat ini</h2><span>{cart.reduce((sum, item) => sum + item.quantity, 0)} item</span></div>}
+      {!isMobileModal && (
+        <div className="nh-cart-heading">
+          <h2>{t('pos.cartTitle')}</h2>
+          <span>{t('pos.itemsCount', { count: cart.reduce((sum, item) => sum + item.quantity, 0) })}</span>
+        </div>
+      )}
       {/* Header: Order Type & Customer/Table Details */}
       <div className="p-3 border-b border-slate-200 space-y-3 bg-white">
         {/* Order Type Tabs */}
         <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1 rounded-xl">
           {[
-            { id: 'DINE_IN', label: 'Dine In' },
-            { id: 'TAKEAWAY', label: 'Takeaway' },
-            { id: 'DELIVERY', label: 'Delivery' },
+            { id: 'DINE_IN', label: t('pos.dineIn') },
+            { id: 'TAKEAWAY', label: t('pos.takeAway') },
+            { id: 'DELIVERY', label: t('pos.delivery') },
             { id: 'ONLINE', label: 'Online' },
           ].map((type) => (
             <button
@@ -159,7 +169,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         {/* Quick Recent Tx Shortcut Link */}
         <div className="flex items-center justify-between px-1">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-            Detail Pesanan
+            {t('pos.orderDetail')}
           </span>
           {onOpenRecentTransactions && (
             <button
@@ -168,7 +178,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center space-x-1 hover:underline"
             >
               <History className="w-3.5 h-3.5" />
-              <span>Transaksi Terakhir (Void)</span>
+              <span>{t('recentTransactions.title')}</span>
             </button>
           )}
         </div>
@@ -193,7 +203,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             } ${orderType !== 'DINE_IN' ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Grid2X2 className="w-4 h-4 text-amber-600 shrink-0" />
-            <span className="truncate">{selectedTable ? selectedTable.name : `Pilih ${slotNoun}`}</span>
+            <span className="truncate">{selectedTable ? selectedTable.name : `${t('common.filter')} ${slotNoun}`}</span>
             {selectedTable && (
               <span
                 onClick={(e) => {
@@ -218,7 +228,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           >
             <UserPlus className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="truncate">
-              {selectedCustomer ? selectedCustomer.name : 'Pilih Member'}
+              {selectedCustomer ? selectedCustomer.name : t('pos.selectCustomer')}
             </span>
             {selectedCustomer && (
               <span
@@ -262,19 +272,37 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               ✕
             </span>
           ) : (
-            <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">Ubah</span>
+            <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold">{t('common.edit')}</span>
           )}
         </button>
       </div>
+
+      {/* Unpaid / Held Orders Quick Alert Bar */}
+      {heldOrders.length > 0 && (
+        <div className="mx-3 mt-2 mb-1 p-2.5 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between shadow-2xs">
+          <div className="flex items-center space-x-2 text-xs text-amber-900 font-bold">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping inline-block shrink-0" />
+            <span className="truncate">
+              <strong>{heldOrders.length}</strong> {t('holdOrders.unpaid')}
+            </span>
+          </div>
+          <button
+            onClick={onOpenHoldOrders}
+            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-[11px] font-black transition-all shadow-xs cursor-pointer shrink-0"
+          >
+            {t('holdOrders.payDirect')}
+          </button>
+        </div>
+      )}
 
       {/* Cart Items List */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2.5 divide-y divide-slate-100">
         {cart.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center space-y-2 py-12">
             <ShoppingBag className="w-12 h-12 stroke-1 text-slate-300" />
-            <p className="font-semibold text-slate-700 text-sm">Keranjang Masih Kosong</p>
+            <p className="font-semibold text-slate-700 text-sm">{t('pos.cartEmptyTitle')}</p>
             <p className="text-xs text-slate-400 max-w-[200px]">
-              Pilih produk untuk mulai membuat pesanan pelanggan.
+              {t('pos.cartEmptyDesc')}
             </p>
           </div>
         ) : (
@@ -313,7 +341,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     className="flex items-center space-x-1 hover:text-amber-600 transition-colors"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span className="text-[10px]">Catatan</span>
+                    <span className="text-[10px]">{t('pos.itemNotes')}</span>
                   </button>
 
                   <button
@@ -327,7 +355,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     className="flex items-center space-x-1 hover:text-amber-600 transition-colors"
                   >
                     <Tag className="w-3.5 h-3.5" />
-                    <span className="text-[10px]">Diskon</span>
+                    <span className="text-[10px]">{t('pos.itemDiscount')}</span>
                   </button>
                 </div>
 
@@ -361,33 +389,33 @@ export const CartPanel: React.FC<CartPanelProps> = ({
       <div className="nh-cart-summary p-3 bg-slate-50/90 border-t border-slate-200 space-y-2">
         <div className="space-y-1 text-xs">
           <div className="flex justify-between text-slate-600">
-            <span>Subtotal:</span>
+            <span>{t('pos.subtotal')}:</span>
             <span className="font-mono font-medium">{formatRupiah(subtotal)}</span>
           </div>
 
           {totalDiscount > 0 && (
             <div className="flex justify-between text-rose-600 font-semibold">
-              <span>Diskon:</span>
+              <span>{t('pos.discount')}:</span>
               <span className="font-mono">-{formatRupiah(totalDiscount)}</span>
             </div>
           )}
 
           {settings.enableTax && (
             <div className="flex justify-between text-slate-600">
-              <span>Pajak (PB1 {settings.taxRate}%):</span>
+              <span>{t('pos.tax')} ({settings.taxRate}%):</span>
               <span className="font-mono">{formatRupiah(taxTotal)}</span>
             </div>
           )}
 
           {settings.enableService && (
             <div className="flex justify-between text-slate-600">
-              <span>Biaya Layanan ({settings.serviceRate}%):</span>
+              <span>{t('pos.service')} ({settings.serviceRate}%):</span>
               <span className="font-mono">{formatRupiah(serviceChargeTotal)}</span>
             </div>
           )}
 
           <div className="flex justify-between items-center text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-200">
-            <span>Total Bayar:</span>
+            <span>{t('pos.grandTotal')}:</span>
             <span className="text-base text-amber-700 font-mono font-extrabold">
               {formatRupiah(grandTotal)}
             </span>
@@ -402,7 +430,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             className="w-full flex items-center justify-center space-x-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
           >
             <Divide className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Split Bill (Bagi Rata / Per Item)</span>
+            <span>{t('splitBill.title')}</span>
           </button>
         )}
 
@@ -439,13 +467,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               className="col-span-8 flex items-center justify-center space-x-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 py-2.5 rounded-xl text-xs font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
             >
               <PauseCircle className="w-4 h-4 text-amber-700" />
-              <span className="truncate">
-                {sector === 'LAUNDRY'
-                  ? 'Simpan Cucian (Bayar Nanti)'
-                  : sector === 'FNB' && selectedTable
-                  ? `Simpan ${selectedTable.name} (Bayar Nanti)`
-                  : 'Simpan Transaksi (Bayar Nanti)'}
-              </span>
+              <span className="truncate">{t('pos.holdBill')}</span>
             </button>
 
             <button
@@ -454,7 +476,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               className="col-span-4 flex items-center justify-center space-x-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-              <span>Batal</span>
+              <span>{t('pos.clearCart')}</span>
             </button>
           </div>
 
@@ -465,7 +487,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             className="nh-cart-pay w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center space-x-2 shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <CreditCard className="w-4 h-4" />
-            <span>Bayar Langsung ({formatRupiah(grandTotal)})</span>
+            <span>{t('pos.checkout')} ({formatRupiah(grandTotal)})</span>
           </button>
         </div>
       </div>
@@ -474,7 +496,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
       {editingItemNotes && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 max-w-sm w-full space-y-3 text-slate-900 shadow-2xl">
-            <h4 className="font-bold text-sm text-amber-700">Tambah Catatan Item</h4>
+            <h4 className="font-bold text-sm text-amber-700">{t('pos.itemNotes')}</h4>
             <input
               type="text"
               autoFocus
@@ -490,13 +512,13 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 onClick={() => setEditingItemNotes(null)}
                 className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800"
               >
-                Batal
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveNotes}
                 className="px-4 py-1.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs hover:bg-amber-600"
               >
-                Simpan
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -507,7 +529,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
       {editingItemDiscount && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 max-w-sm w-full space-y-3 text-slate-900 shadow-2xl">
-            <h4 className="font-bold text-sm text-amber-700">Atur Diskon Item</h4>
+            <h4 className="font-bold text-sm text-amber-700">{t('pos.itemDiscount')}</h4>
             <div className="space-y-2">
               <label className="text-xs text-slate-500">Diskon Persen (%):</label>
               <input
@@ -529,13 +551,13 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 onClick={() => setEditingItemDiscount(null)}
                 className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800"
               >
-                Batal
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveDiscount}
                 className="px-4 py-1.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs hover:bg-amber-600"
               >
-                Terapkan
+                {t('common.confirm')}
               </button>
             </div>
           </div>
@@ -605,7 +627,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     </div>
                     {selectedStaff?.id === staff.id ? (
                       <span className="text-amber-600 font-bold text-xs flex items-center gap-1 bg-amber-100 px-2 py-1 rounded-lg">
-                        <Check className="w-3.5 h-3.5" /> Terpilih
+                        <Check className="w-3.5 h-3.5" /> {t('customers.selected')}
                       </span>
                     ) : (
                       <span className="text-xs text-slate-400 hover:text-slate-600">Pilih</span>
@@ -628,7 +650,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                   onClick={() => setShowStaffModal(false)}
                   className="px-4 py-2 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-slate-800"
                 >
-                  Selesai
+                  {t('common.close')}
                 </button>
               </div>
             </div>

@@ -5,9 +5,11 @@ import { formatRupiah } from '../../utils/formatters';
 import { Users, UserPlus, Award, Phone, Mail, Search, CheckCircle2, Gift, Upload, User, MessageSquare } from 'lucide-react';
 import { newId } from '../../lib/ids';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
+import { useTranslation } from '../../i18n';
 
 export const CustomerManager: React.FC = () => {
   const { customers, saveCustomer, settings } = usePOS();
+  const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -85,10 +87,10 @@ export const CustomerManager: React.FC = () => {
         <div>
           <h2 className="font-extrabold text-2xl text-slate-900 flex items-center space-x-2">
             <Users className="w-7 h-7 text-amber-600" />
-            <span>Manajemen Pelanggan & Loyalty CRM</span>
+            <span>{t('customers.title')}</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Program poin reward member, riwayat riil belanja pelanggan, dan level keanggotaan.
+            {t('customers.subtitle')}
           </p>
         </div>
 
@@ -105,7 +107,7 @@ export const CustomerManager: React.FC = () => {
             className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2.5 rounded-2xl flex items-center space-x-2 shadow-xs text-xs transition-all cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
-            <span>Pendaftaran Member Baru</span>
+            <span>{t('customers.registerMember')}</span>
           </button>
         </div>
       </div>
@@ -117,9 +119,9 @@ export const CustomerManager: React.FC = () => {
             <Award className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-semibold block">Aturan Perolehan Poin</span>
+            <span className="text-[10px] text-slate-500 uppercase font-semibold block">{t('customers.pointsRule')}</span>
             <p className="text-xs font-bold text-slate-900 mt-0.5">
-              Setiap kelipatan {formatRupiah(settings.loyaltyEarnRate)} = 1 Poin
+              {t('customers.pointsRuleDesc', { rate: formatRupiah(settings.loyaltyEarnRate) })}
             </p>
           </div>
         </div>
@@ -129,9 +131,9 @@ export const CustomerManager: React.FC = () => {
             <Gift className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-semibold block">Penukaran Diskon</span>
+            <span className="text-[10px] text-slate-500 uppercase font-semibold block">{t('customers.discountRedeem')}</span>
             <p className="text-xs font-bold text-slate-900 mt-0.5">
-              1 Poin = Potongan {formatRupiah(settings.loyaltyRedeemRate)}
+              {t('customers.discountRedeemDesc', { rate: formatRupiah(settings.loyaltyRedeemRate) })}
             </p>
           </div>
         </div>
@@ -141,9 +143,9 @@ export const CustomerManager: React.FC = () => {
             <CheckCircle2 className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-semibold block">Total Member Aktif</span>
+            <span className="text-[10px] text-slate-500 uppercase font-semibold block">{t('customers.activeMembers')}</span>
             <p className="text-sm font-extrabold text-slate-900 font-mono mt-0.5">
-              {customers.length} Orang Terdaftar
+              {t('customers.registeredCount', { count: customers.length })}
             </p>
           </div>
         </div>
@@ -156,7 +158,7 @@ export const CustomerManager: React.FC = () => {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Cari berdasarkan nama atau nomor HP..."
+          placeholder={t('customers.searchPlaceholder')}
           className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
         />
       </div>
@@ -196,14 +198,14 @@ export const CustomerManager: React.FC = () => {
             {/* Metrics */}
             <div className="grid grid-cols-2 gap-2 text-xs pt-1">
               <div className="p-2.5 bg-slate-50 rounded-2xl border border-slate-100">
-                <span className="text-[10px] text-slate-500 block font-medium">Total Poin Loyalty</span>
+                <span className="text-[10px] text-slate-500 block font-medium">{t('customers.totalLoyaltyPoints')}</span>
                 <span className="font-extrabold text-base text-amber-700 font-mono block">
-                  {cust.points} Poin
+                  {cust.points} {t('customers.pointsLabel')}
                 </span>
               </div>
 
               <div className="p-2.5 bg-slate-50 rounded-2xl border border-slate-100">
-                <span className="text-[10px] text-slate-500 block font-medium">Total Belanja</span>
+                <span className="text-[10px] text-slate-500 block font-medium">{t('customers.totalSpent')}</span>
                 <span className="font-bold text-xs text-slate-900 font-mono block">
                   {formatRupiah(cust.totalSpent)}
                 </span>
@@ -211,8 +213,8 @@ export const CustomerManager: React.FC = () => {
             </div>
 
             <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-              <span>{cust.visitCount} Kali Transaksi</span>
-              <span>Kunjungan Terakhir: {cust.lastVisit}</span>
+              <span>{t('customers.transactionCount', { count: cust.visitCount })}</span>
+              <span>{t('customers.lastVisit')}: {cust.lastVisit}</span>
             </div>
           </div>
         ))}
@@ -222,7 +224,7 @@ export const CustomerManager: React.FC = () => {
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-sm w-full space-y-4 text-slate-900 shadow-2xl">
-            <h3 className="font-bold text-base text-amber-700">Pendaftaran Member Baru</h3>
+            <h3 className="font-bold text-base text-amber-700">{t('customers.registerMember')}</h3>
 
             <form onSubmit={handleCreateCustomer} className="space-y-3">
               {/* Photo Upload Field */}
@@ -241,7 +243,7 @@ export const CustomerManager: React.FC = () => {
                         onClick={() => setAvatar('')}
                         className="absolute inset-0 bg-slate-900/60 text-white text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                       >
-                        Hapus
+                        {t('common.delete')}
                       </button>
                     </>
                   ) : (
@@ -252,7 +254,7 @@ export const CustomerManager: React.FC = () => {
                 <div className="flex-1 space-y-1">
                   <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-colors shadow-2xs">
                     <Upload className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Upload Foto Member</span>
+                    <span>{t('customers.uploadPhoto')}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -260,24 +262,24 @@ export const CustomerManager: React.FC = () => {
                       className="hidden"
                     />
                   </label>
-                  <p className="text-[10px] text-slate-400">Pilih foto dari galeri / perangkat</p>
+                  <p className="text-[10px] text-slate-400">{t('customers.chooseFromGallery')}</p>
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Nama Lengkap *</label>
+                <label className="text-xs font-semibold text-slate-700">{t('customers.fullName')} *</label>
                 <input
                   type="text"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Cth: Maya Putri"
+                  placeholder={t('customers.fullName')}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Nomor Telepon / WA *</label>
+                <label className="text-xs font-semibold text-slate-700">{t('customers.phoneWA')} *</label>
                 <input
                   type="tel"
                   required
@@ -289,12 +291,12 @@ export const CustomerManager: React.FC = () => {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Email (Opsional)</label>
+                <label className="text-xs font-semibold text-slate-700">{t('customers.emailOptional')}</label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="maya@gmail.com"
+                  placeholder="name@email.com"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -305,13 +307,13 @@ export const CustomerManager: React.FC = () => {
                   onClick={() => setShowAddModal(false)}
                   className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl"
                 >
-                  Batal
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-xs"
                 >
-                  Simpan Member
+                  {t('customers.saveMember')}
                 </button>
               </div>
             </form>

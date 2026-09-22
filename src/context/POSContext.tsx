@@ -34,6 +34,8 @@ import {
   BookingStatus,
   StaffCommissionRule,
   PayrollSlip,
+  OrderRefund,
+  OrderRefundItem,
 } from '../types';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
 import { ROLE_PERMISSIONS } from '../data/rolePermissions';
@@ -146,7 +148,8 @@ interface POSContextType {
     staffId: string,
     notes?: string,
     geoInfo?: GeoLocationInfo,
-    branchInfo?: { id: string; name: string }
+    branchInfo?: { id: string; name: string },
+    photoUrl?: string
   ) => void;
   clockOutStaff: (
     staffId: string,
@@ -161,6 +164,26 @@ interface POSContextType {
   saveStockItem: (item: StockItem) => void;
   deleteStockItem: (id: string) => void;
   adjustStockItemQuantity: (id: string, qtyChange: number, reason: string) => void;
+  processRawMaterialReceipt: (payload: {
+    receiptImage?: string;
+    supplierName?: string;
+    receiptDate?: string;
+    items: {
+      stockItemId?: string;
+      name: string;
+      sku?: string;
+      type?: 'BAHAN_BAKU' | 'SETENGAH_JADI';
+      quantity: number;
+      unit: string;
+      costPrice: number;
+      location?: string;
+    }[];
+    paidFromCashDrawer: boolean;
+    notes?: string;
+  }) => {
+    savedItems: StockItem[];
+    totalCost: number;
+  };
 
   // Product Bundles (Paket Promo & Bundling)
   bundles: ProductBundle[];
@@ -237,6 +260,11 @@ interface POSContextType {
     }
   ) => Order | null;
   voidOrder: (orderId: string, reason?: string) => void;
+  refundOrderItems: (
+    orderId: string,
+    refundItems: { cartItemId: string; quantity: number; reason: string }[],
+    refundMethod?: 'CASH' | 'ORIGINAL_METHOD'
+  ) => OrderRefund | null;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
   syncStatus: SyncStatus;
   /** Memaksa pengiriman sekarang. Dipakai tombol "coba lagi". */
@@ -1318,7 +1346,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     staffId: string,
     notes?: string,
     geoInfo?: GeoLocationInfo,
-    branchInfo?: { id: string; name: string }
+    branchInfo?: { id: string; name: string },
+    photoUrl?: string
   ) => {
     const staff = staffMembers.find((s) => s.id === staffId);
     if (!staff) return;
@@ -1338,6 +1367,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       branchName: bName,
       clockInGeo: geoInfo,
       businessSector: settings.businessSector,
+      photoUrl,
     };
 
     setAttendanceLogs((prev) => [newRecord, ...prev]);
@@ -1442,6 +1472,129 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     );
     setInventoryLogs((logs) => [log, ...logs]);
     if (soundEnabled) playPOSSound('click');
+  };
+
+  // Input Bahan Baku Otomatis dari Kamera / Scan Nota Belanja Supplier
+  const processRawMaterialReceipt = (payload: {
+    receiptImage?: string;
+    supplierName?: string;
+    receiptDate?: string;
+    items: {
+      stockItemId?: string;
+      name: string;
+      sku?: string;
+      type?: 'BAHAN_BAKU' | 'SETENGAH_JADI';
+      quantity: number;
+      unit: string;
+      costPrice: number;
+      location?: string;
+    }[];
+    paidFromCashDrawer: boolean;
+    notes?: string;
+  }) => {
+    const timestamp = new Date().toISOString();
+    let updatedStockItems = [...stockItems];
+    const newLogs: InventoryLog[] = [];
+    const savedItems: StockItem[] = [];
+    let totalCost = 0;
+
+    payload.items.forEach((item) => {
+      if (!item.name || item.quantity <= 0) return;
+      const itemCost = item.quantity * (item.costPrice || 0);
+      totalCost += itemCost;
+
+      // Find existing stock item by ID or exact name match
+      const existing = item.stockItemId
+        ? updatedStockItems.find((s) => s.id === item.stockItemId)
+        : updatedStockItems.find(
+            (s) => s.name.toLowerCase().trim() === item.name.toLowerCase().trim()
+          );
+
+      if (existing) {
+        const prevStock = existing.stock;
+        const newStock = prevStock + item.quantity;
+        const updatedItem: StockItem = {
+          ...existing,
+          stock: newStock,
+          costPrice: item.costPrice > 0 ? item.costPrice : existing.costPrice,
+          unit: item.unit || existing.unit,
+          lastUpdated: timestamp,
+        };
+
+        updatedStockItems = updatedStockItems.map((s) =>
+          s.id === existing.id ? updatedItem : s
+        );
+        savedItems.push(updatedItem);
+
+        newLogs.push({
+          id: newId('log'),
+          productId: existing.id,
+          productName: `[Bahan Baku] ${existing.name}`,
+          type: 'IN',
+          quantity: item.quantity,
+          previousStock: prevStock,
+          newStock,
+          reason: `Pembelian Supplier (${payload.supplierName || 'Scan Nota Kamera'})`,
+          timestamp,
+          user: shift.cashierName,
+          businessSector: settings.businessSector,
+        });
+      } else {
+        // Create new StockItem
+        const newItem: StockItem = {
+          id: newId('stk'),
+          sku: item.sku || `RAW-${Math.floor(100 + Math.random() * 900)}`,
+          name: item.name,
+          type: item.type || 'BAHAN_BAKU',
+          categoryId: categories[0]?.id || 'cat-makanan',
+          categoryName: categories[0]?.name || 'Umum',
+          stock: item.quantity,
+          minStockAlert: Math.max(10, Math.round(item.quantity * 0.2)),
+          unit: item.unit || 'pcs',
+          costPrice: item.costPrice || 0,
+          location: item.location || 'Gudang Bahan Kering',
+          notes: payload.notes || `Input dari Nota ${payload.supplierName || ''}`,
+          lastUpdated: timestamp,
+        };
+
+        updatedStockItems = [newItem, ...updatedStockItems];
+        savedItems.push(newItem);
+
+        newLogs.push({
+          id: newId('log'),
+          productId: newItem.id,
+          productName: `[Bahan Baku Baru] ${newItem.name}`,
+          type: 'IN',
+          quantity: item.quantity,
+          previousStock: 0,
+          newStock: item.quantity,
+          reason: `Pembelian Supplier Baru (${payload.supplierName || 'Scan Nota Kamera'})`,
+          timestamp,
+          user: shift.cashierName,
+          businessSector: settings.businessSector,
+        });
+      }
+    });
+
+    setStockItems(updatedStockItems);
+    if (newLogs.length > 0) {
+      setInventoryLogs((prev) => [...newLogs, ...prev]);
+    }
+
+    // Deduct cash from drawer if paid from cashier drawer
+    if (payload.paidFromCashDrawer && totalCost > 0) {
+      setShift((prevShift) => {
+        const newExpected = Math.max(0, prevShift.expectedCash - totalCost);
+        return {
+          ...prevShift,
+          expectedCash: newExpected,
+        };
+      });
+    }
+
+    if (soundEnabled) playPOSSound('payment_success');
+
+    return { savedItems, totalCost };
   };
 
   const addPromoCode = (promo: {
@@ -1981,6 +2134,33 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
       }
+
+      // Deduct multi-ingredient Bill of Materials (recipeIngredients) if configured
+      if (p.recipeIngredients && p.recipeIngredients.length > 0) {
+        p.recipeIngredients.forEach((ing) => {
+          const rawDeductQty = ing.quantity * totalQtySold;
+          const stockItem = stockItems.find((s) => s.id === ing.ingredientId);
+          if (stockItem) {
+            const alreadyDeducted = rawDeductions.get(stockItem.id) || 0;
+            const previousStock = Math.max(0, stockItem.stock - alreadyDeducted);
+            rawDeductions.set(stockItem.id, alreadyDeducted + rawDeductQty);
+
+            newLogs.push({
+              id: newId('log'),
+              productId: stockItem.id,
+              productName: `[Bahan Baku] ${stockItem.name}`,
+              type: 'SALE',
+              quantity: rawDeductQty,
+              previousStock,
+              newStock: Math.max(0, previousStock - rawDeductQty),
+              reason: `Pengurangan Resep BOM Trx ${invoiceNum} (${p.name}: ${ing.quantity} ${ing.unit} x ${totalQtySold})`,
+              timestamp: logTimestamp,
+              user: shift.cashierName,
+              businessSector: settings.businessSector,
+            });
+          }
+        });
+      }
     });
 
     setProducts((prevProducts) =>
@@ -2120,7 +2300,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
-    // 2. Restore Product Stock & Create Inventory Refund Log
+    // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log
     const returnedQtyByProduct = new Map<string, number>();
     targetOrder.items.forEach((item) => {
       returnedQtyByProduct.set(
@@ -2131,6 +2311,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const refundTimestamp = new Date().toISOString();
     const refundLogs: InventoryLog[] = [];
+    const rawRestores = new Map<string, number>();
 
     products.forEach((p) => {
       const totalQtyReturned = returnedQtyByProduct.get(p.id);
@@ -2148,6 +2329,58 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         timestamp: refundTimestamp,
         user: shift.cashierName,
       });
+
+      // Restore linked raw material if configured
+      if (p.linkedStockItemId) {
+        const rawRestoreQty = (p.recipeQty || 1) * totalQtyReturned;
+        const stockItem = stockItems.find((s) => s.id === p.linkedStockItemId);
+        if (stockItem) {
+          const alreadyRestored = rawRestores.get(stockItem.id) || 0;
+          const previousStock = stockItem.stock + alreadyRestored;
+          rawRestores.set(stockItem.id, alreadyRestored + rawRestoreQty);
+
+          refundLogs.push({
+            id: newId('log'),
+            productId: stockItem.id,
+            productName: `[Bahan Baku] ${stockItem.name}`,
+            type: 'REFUND',
+            quantity: rawRestoreQty,
+            previousStock,
+            newStock: previousStock + rawRestoreQty,
+            reason: `Void Trx ${targetOrder.id}: Pengembalian Bahan Baku (${p.name})`,
+            timestamp: refundTimestamp,
+            user: shift.cashierName,
+            businessSector: settings.businessSector,
+          });
+        }
+      }
+
+      // Restore multi-ingredient BOM if configured
+      if (p.recipeIngredients && p.recipeIngredients.length > 0) {
+        p.recipeIngredients.forEach((ing) => {
+          const rawRestoreQty = ing.quantity * totalQtyReturned;
+          const stockItem = stockItems.find((s) => s.id === ing.ingredientId);
+          if (stockItem) {
+            const alreadyRestored = rawRestores.get(stockItem.id) || 0;
+            const previousStock = stockItem.stock + alreadyRestored;
+            rawRestores.set(stockItem.id, alreadyRestored + rawRestoreQty);
+
+            refundLogs.push({
+              id: newId('log'),
+              productId: stockItem.id,
+              productName: `[Bahan Baku] ${stockItem.name}`,
+              type: 'REFUND',
+              quantity: rawRestoreQty,
+              previousStock,
+              newStock: previousStock + rawRestoreQty,
+              reason: `Void Trx ${targetOrder.id}: Pengembalian Resep BOM (${p.name}: ${ing.quantity} ${ing.unit} x ${totalQtyReturned})`,
+              timestamp: refundTimestamp,
+              user: shift.cashierName,
+              businessSector: settings.businessSector,
+            });
+          }
+        });
+      }
     });
 
     setProducts((prevProducts) =>
@@ -2156,6 +2389,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return totalQtyReturned ? { ...p, stock: p.stock + totalQtyReturned } : p;
       })
     );
+
+    if (rawRestores.size > 0) {
+      setStockItems((prevStockItems) =>
+        prevStockItems.map((s) => {
+          const restore = rawRestores.get(s.id);
+          return restore
+            ? { ...s, stock: s.stock + restore, lastUpdated: refundTimestamp }
+            : s;
+        })
+      );
+    }
 
     if (refundLogs.length > 0) {
       setInventoryLogs((logs) => [...refundLogs, ...logs]);
@@ -2188,6 +2432,227 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     if (soundEnabled) playPOSSound('delete');
+  };
+
+  // Retur / Refund Item Parsial
+  const refundOrderItems = (
+    orderId: string,
+    refundItems: { cartItemId: string; quantity: number; reason: string }[],
+    refundMethod: 'CASH' | 'ORIGINAL_METHOD' = 'CASH'
+  ): OrderRefund | null => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder || targetOrder.status === 'VOID' || refundItems.length === 0) return null;
+
+    const refundTimestamp = new Date().toISOString();
+    const refundId = `RFD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
+
+    let subtotalRefund = 0;
+    const orderRefundItems: OrderRefundItem[] = [];
+    const returnedQtyByProduct = new Map<string, number>();
+
+    // Validate and calculate refund amounts
+    refundItems.forEach((rf) => {
+      const lineItem = targetOrder.items.find((i) => i.id === rf.cartItemId);
+      if (!lineItem || rf.quantity <= 0) return;
+
+      const alreadyRefunded = lineItem.refundedQuantity || 0;
+      const maxRefundable = Math.max(0, lineItem.quantity - alreadyRefunded);
+      const qtyToRefund = Math.min(rf.quantity, maxRefundable);
+      if (qtyToRefund <= 0) return;
+
+      // Unit refund is proportional to line item total price divided by line quantity
+      const unitRefund = lineItem.totalPrice / lineItem.quantity;
+      const lineRefundTotal = Math.round(unitRefund * qtyToRefund);
+      subtotalRefund += lineRefundTotal;
+
+      orderRefundItems.push({
+        cartItemId: lineItem.id,
+        productId: lineItem.productId,
+        productName: lineItem.name,
+        quantity: qtyToRefund,
+        unitPrice: lineItem.unitPrice,
+        totalRefundAmount: lineRefundTotal,
+        reason: rf.reason || 'Retur Barang Pelanggan',
+      });
+
+      returnedQtyByProduct.set(
+        lineItem.productId,
+        (returnedQtyByProduct.get(lineItem.productId) || 0) + qtyToRefund
+      );
+    });
+
+    if (orderRefundItems.length === 0) return null;
+
+    // Calculate tax & service charge refund proportionally if applicable
+    const subtotalOriginal = targetOrder.subtotal || targetOrder.total;
+    const ratio = subtotalOriginal > 0 ? subtotalRefund / subtotalOriginal : 0;
+    const taxRefund = targetOrder.taxTotal > 0 ? Math.round(targetOrder.taxTotal * ratio) : 0;
+    const serviceRefund = targetOrder.serviceChargeTotal > 0 ? Math.round(targetOrder.serviceChargeTotal * ratio) : 0;
+    const totalRefund = subtotalRefund + taxRefund + serviceRefund;
+
+    const newRefund: OrderRefund = {
+      id: refundId,
+      orderId: targetOrder.id,
+      orderNumber: targetOrder.orderNumber,
+      timestamp: refundTimestamp,
+      items: orderRefundItems,
+      subtotalRefund,
+      taxRefund,
+      serviceRefund,
+      totalRefund,
+      refundMethod,
+      reason: refundItems.map((r) => r.reason).filter(Boolean).join(', ') || 'Retur Parsial Item',
+      cashierName: shift.cashierName,
+      shiftId: shift.id,
+    };
+
+    // 1. Update Order: cartItems refundedQuantity, order.refunds, and order.refundTotal
+    setOrders((prevOrders) =>
+      prevOrders.map((o) => {
+        if (o.id === orderId) {
+          const updatedItems = o.items.map((it) => {
+            const rfItem = orderRefundItems.find((r) => r.cartItemId === it.id);
+            if (!rfItem) return it;
+            return {
+              ...it,
+              refundedQuantity: (it.refundedQuantity || 0) + rfItem.quantity,
+            };
+          });
+
+          const currentRefunds = o.refunds || [];
+          const newRefundTotal = (o.refundTotal || 0) + totalRefund;
+
+          // Check if all items in order are now 100% refunded
+          const allRefunded = updatedItems.every(
+            (it) => (it.refundedQuantity || 0) >= it.quantity
+          );
+
+          return {
+            ...o,
+            items: updatedItems,
+            refunds: [newRefund, ...currentRefunds],
+            refundTotal: newRefundTotal,
+            status: allRefunded ? 'VOID' : o.status,
+            voidReason: allRefunded ? `Semua item diretur (${newRefund.reason})` : o.voidReason,
+          };
+        }
+        return o;
+      })
+    );
+
+    // 2. Restore Product Stock & Raw Materials
+    const refundLogs: InventoryLog[] = [];
+    const rawRestores = new Map<string, number>();
+
+    products.forEach((p) => {
+      const totalQtyReturned = returnedQtyByProduct.get(p.id);
+      if (!totalQtyReturned) return;
+
+      refundLogs.push({
+        id: newId('log'),
+        productId: p.id,
+        productName: p.name,
+        type: 'REFUND',
+        quantity: totalQtyReturned,
+        previousStock: p.stock,
+        newStock: p.stock + totalQtyReturned,
+        reason: `Retur Parsial Trx ${targetOrder.id}: ${newRefund.reason}`,
+        timestamp: refundTimestamp,
+        user: shift.cashierName,
+      });
+
+      // Restore linked raw material if configured
+      if (p.linkedStockItemId) {
+        const rawRestoreQty = (p.recipeQty || 1) * totalQtyReturned;
+        const stockItem = stockItems.find((s) => s.id === p.linkedStockItemId);
+        if (stockItem) {
+          const alreadyRestored = rawRestores.get(stockItem.id) || 0;
+          const previousStock = stockItem.stock + alreadyRestored;
+          rawRestores.set(stockItem.id, alreadyRestored + rawRestoreQty);
+
+          refundLogs.push({
+            id: newId('log'),
+            productId: stockItem.id,
+            productName: `[Bahan Baku] ${stockItem.name}`,
+            type: 'REFUND',
+            quantity: rawRestoreQty,
+            previousStock,
+            newStock: previousStock + rawRestoreQty,
+            reason: `Retur Parsial Trx ${targetOrder.id}: Pengembalian Bahan Baku (${p.name})`,
+            timestamp: refundTimestamp,
+            user: shift.cashierName,
+            businessSector: settings.businessSector,
+          });
+        }
+      }
+
+      // Restore multi-ingredient BOM if configured
+      if (p.recipeIngredients && p.recipeIngredients.length > 0) {
+        p.recipeIngredients.forEach((ing) => {
+          const rawRestoreQty = ing.quantity * totalQtyReturned;
+          const stockItem = stockItems.find((s) => s.id === ing.ingredientId);
+          if (stockItem) {
+            const alreadyRestored = rawRestores.get(stockItem.id) || 0;
+            const previousStock = stockItem.stock + alreadyRestored;
+            rawRestores.set(stockItem.id, alreadyRestored + rawRestoreQty);
+
+            refundLogs.push({
+              id: newId('log'),
+              productId: stockItem.id,
+              productName: `[Bahan Baku] ${stockItem.name}`,
+              type: 'REFUND',
+              quantity: rawRestoreQty,
+              previousStock,
+              newStock: previousStock + rawRestoreQty,
+              reason: `Retur Parsial Trx ${targetOrder.id}: Pengembalian Resep BOM (${p.name}: ${ing.quantity} ${ing.unit} x ${totalQtyReturned})`,
+              timestamp: refundTimestamp,
+              user: shift.cashierName,
+              businessSector: settings.businessSector,
+            });
+          }
+        });
+      }
+    });
+
+    setProducts((prevProducts) =>
+      prevProducts.map((p) => {
+        const totalQtyReturned = returnedQtyByProduct.get(p.id);
+        return totalQtyReturned ? { ...p, stock: p.stock + totalQtyReturned } : p;
+      })
+    );
+
+    if (rawRestores.size > 0) {
+      setStockItems((prevStockItems) =>
+        prevStockItems.map((s) => {
+          const restore = rawRestores.get(s.id);
+          return restore
+            ? { ...s, stock: s.stock + restore, lastUpdated: refundTimestamp }
+            : s;
+        })
+      );
+    }
+
+    if (refundLogs.length > 0) {
+      setInventoryLogs((logs) => [...refundLogs, ...logs]);
+    }
+
+    // 3. Deduct from Shift Sales if CASH refund
+    if (refundMethod === 'CASH') {
+      setShift((prevShift) => {
+        const cashSales = Math.max(0, prevShift.cashSales - totalRefund);
+        const totalSales = Math.max(0, prevShift.totalSales - totalRefund);
+        return {
+          ...prevShift,
+          cashSales,
+          totalSales,
+          expectedCash: Math.max(0, prevShift.initialCash + cashSales),
+        };
+      });
+    }
+
+    if (soundEnabled) playPOSSound('delete');
+
+    return newRefund;
   };
 
   // Hold Order / Save Pending Transaction (Bayar Nanti)
@@ -3017,6 +3482,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveStockItem: requireWritable(saveStockItem),
         deleteStockItem: requireWritable(deleteStockItem),
         adjustStockItemQuantity: requireWritable(adjustStockItemQuantity),
+        processRawMaterialReceipt: requireWritable(processRawMaterialReceipt),
         bundles,
         saveBundle: requireWritable(saveBundle),
         deleteBundle: requireWritable(deleteBundle),
@@ -3049,6 +3515,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         clearCart,
         processPayment: requireWritable(processPayment),
         voidOrder: requireWritable(voidOrder),
+        refundOrderItems: requireWritable(refundOrderItems),
         syncStatus,
         forceSync: () => void runSync(syncTarget),
         holdOrder: requireWritable(holdOrder),

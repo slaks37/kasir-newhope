@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { BUSINESS_PRESETS } from "../data/businessPresets";
+import { useTranslation } from "../i18n/LanguageContext";
 
 interface SidebarProps {
   onOpenAiCopilot: () => void;
@@ -51,10 +52,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     getActiveAttendance,
     currentUser,
   } = usePOS();
+  const { t } = useTranslation();
 
   const activePreset =
     BUSINESS_PRESETS[settings?.businessSector || "FNB"] || BUSINESS_PRESETS.FNB;
-  const layoutTabLabel = activePreset.layoutTerm?.tabLabel || "Denah Layout";
+  const layoutTabLabel = t('nav.tables') || activePreset.layoutTerm?.tabLabel || "Denah Layout";
 
   // Count low stock items for badge alert
   const lowStockCount = products.filter(
@@ -64,12 +66,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     {
       id: "overview" as const,
-      label: "Ringkasan",
+      label: t('nav.overview'),
       icon: LayoutDashboard,
     },
     {
       id: "pos" as const,
-      label: "Kasir",
+      label: t('nav.pos'),
       icon: ShoppingCart,
       badge: heldOrders.length > 0 ? heldOrders.length : undefined,
       badgeColor: "bg-amber-500 text-slate-950",
@@ -81,40 +83,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: "inventory" as const,
-      label: "Produk & Stok",
+      label: t('nav.inventory'),
       icon: Package,
       badge: lowStockCount > 0 ? lowStockCount : undefined,
       badgeColor: "bg-rose-600 text-white",
     },
     {
       id: "customers" as const,
-      label: "Pelanggan",
+      label: t('nav.customers'),
       icon: Users,
     },
     {
       id: "reports" as const,
-      label: "Laporan",
+      label: t('nav.reports'),
       icon: BarChart3,
     },
     {
       id: "ai" as const,
-      label: "AI Copilot",
+      label: t('nav.ai'),
       icon: Bot,
       special: true,
     },
     {
       id: "labor" as const,
-      label: "Gaji & Komisi",
+      label: t('nav.labor'),
       icon: Coins,
     },
     {
       id: "settings" as const,
-      label: "Pengaturan",
+      label: t('nav.settings'),
       icon: Settings,
     },
     {
       id: "payment" as const,
-      label: "Langganan & Bayar",
+      label: t('nav.payment'),
       icon: CreditCard,
     },
   ];
@@ -167,18 +169,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
       <div className="nh-sidebar-foot">
-        <p className="nh-sidebar-caption">OPERASIONAL</p>
+        <p className="nh-sidebar-caption">{t('header.toolsMenu')}</p>
         <button
           onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenClockIn())}
           className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
-          title={isPaymentRequired ? "Selesaikan pembayaran terlebih dahulu" : undefined}
+          title={isPaymentRequired ? "Payment required" : undefined}
         >
           <UserCheck />
           <span>
-            Absensi staf
+            {t('header.staffAttendance')}
             <small>
               {staffMembers.filter((s) => getActiveAttendance(s.id)).length}{" "}
-              staf sedang bertugas
+              {t('attendance.activeStaff', { count: staffMembers.filter((s) => getActiveAttendance(s.id)).length })}
             </small>
           </span>
           {isPaymentRequired && <Lock size={13} className="ml-auto text-amber-500" />}
@@ -186,15 +188,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenEndShift())}
           className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
-          title={isPaymentRequired ? "Selesaikan pembayaran terlebih dahulu" : undefined}
+          title={isPaymentRequired ? "Payment required" : undefined}
         >
           <Clock />
           <span>
-            {shift.status === "OPEN" ? "Kelola shift" : "Mulai shift"}
+            {shift.status === "OPEN" ? t('shift.manageShift') : t('shift.startShift')}
             <small>
               {shift.status === "OPEN"
-                ? shift.cashierName || currentUser?.name || "Kasir"
-                : "Belum ada shift aktif"}
+                ? shift.cashierName || currentUser?.name || t('receipt.cashier')
+                : t('shift.noActiveShift')}
             </small>
           </span>
           {isPaymentRequired ? (
@@ -209,11 +211,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <>
             <button onClick={onGoToHome} className="nh-sidebar-item">
               <Home />
-              <span>Halaman utama</span>
+              <span>{t('nav.home')}</span>
             </button>
             <a href="#blog" className="nh-sidebar-item">
               <BookOpen />
-              <span>Blog Harapan Baru</span>
+              <span>{t('nav.blog')}</span>
             </a>
           </>
         )}

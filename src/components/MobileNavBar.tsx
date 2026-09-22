@@ -22,6 +22,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../data/businessPresets';
+import { useTranslation } from '../i18n/LanguageContext';
 
 interface MobileNavBarProps {
   onOpenAiCopilot: () => void;
@@ -50,23 +51,24 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     currentUser,
     shift,
   } = usePOS();
+  const { t } = useTranslation();
 
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   const activePreset = BUSINESS_PRESETS[settings?.businessSector || 'FNB'] || BUSINESS_PRESETS.FNB;
-  const layoutTabLabel = activePreset.layoutTerm?.tabLabel || 'Meja';
+  const layoutTabLabel = t('nav.tables') || activePreset.layoutTerm?.tabLabel || 'Meja';
 
   const lowStockCount = products.filter((p) => p.stock <= p.minStockAlert).length;
 
   const mainNavItems = [
     {
       id: 'overview' as const,
-      label: 'Ringkasan',
+      label: t('nav.overview'),
       icon: LayoutDashboard,
     },
     {
       id: 'pos' as const,
-      label: 'Kasir',
+      label: t('nav.pos'),
       icon: ShoppingCart,
       badge: heldOrders.length > 0 ? heldOrders.length : undefined,
       badgeColor: 'bg-amber-500 text-slate-950',
@@ -78,7 +80,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     },
     {
       id: 'inventory' as const,
-      label: 'Stok',
+      label: t('nav.inventory'),
       icon: Package,
       badge: lowStockCount > 0 ? lowStockCount : undefined,
       badgeColor: 'bg-rose-600 text-white',
@@ -88,38 +90,38 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
   const moreNavItems = [
     {
       id: 'customers' as const,
-      label: 'Pelanggan & Member',
+      label: t('nav.customers'),
       icon: Users,
       desc: 'Database & riwayat poin pelanggan',
     },
     {
       id: 'reports' as const,
-      label: 'Laporan & Analitik',
+      label: t('nav.reports'),
       icon: BarChart3,
       desc: 'Omzet harian, laba kotor & ringkasan kas',
     },
     {
       id: 'ai' as const,
-      label: 'AI Copilot Assistant',
+      label: t('nav.ai'),
       icon: Bot,
       desc: 'Tanya asisten pintar bisnis Anda',
       special: true,
     },
     {
       id: 'settings' as const,
-      label: 'Pengaturan Toko',
+      label: t('nav.settings'),
       icon: Settings,
       desc: 'Struk, pajak, staf & langganan',
     },
     {
       id: 'labor' as const,
-      label: 'Gaji & Komisi Staf',
+      label: t('nav.labor'),
       icon: Coins,
       desc: 'Perhitungan komisi, bagi hasil tim & slip gaji',
     },
     {
       id: 'payment' as const,
-      label: 'Langganan & Bayar',
+      label: t('nav.payment'),
       icon: CreditCard,
       desc: 'Kelola paket langganan toko & pembayaran',
     },

@@ -2,6 +2,7 @@ import React from 'react';
 import { Order, StoreSettings } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { Printer, Share2, CheckCircle2, Download, ShoppingBag, X } from 'lucide-react';
+import { useTranslation } from '../../i18n';
 
 interface ReceiptModalProps {
   order: Order;
@@ -10,6 +11,7 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onClose }) => {
+  const { t } = useTranslation();
   const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.receiptPaperSize || '80mm');
 
   React.useEffect(() => {
@@ -48,8 +50,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
           <div className="flex items-center space-x-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             <div>
-              <h3 className="font-bold text-base text-slate-900 leading-tight">Pembayaran Sukses</h3>
-              <p className="text-[10px] text-slate-500 font-medium">Struk siap dicetak (Format Termal {paperSize})</p>
+              <h3 className="font-bold text-base text-slate-900 leading-tight">{t('receipt.paymentSuccess')}</h3>
+              <p className="text-[10px] text-slate-500 font-medium">{t('receipt.receiptReady', { paperSize })}</p>
             </div>
           </div>
           <div className="flex items-center space-x-2">
@@ -63,7 +65,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
-                title="Ukuran Struk Standar Toko/Resto 80mm"
+                title="80mm"
               >
                 80mm
               </button>
@@ -75,7 +77,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
-                title="Ukuran Struk Mini / Bluetooth 58mm"
+                title="58mm"
               >
                 58mm
               </button>
@@ -94,7 +96,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
         <div className="p-5 overflow-y-auto flex-1 bg-slate-100 flex flex-col items-center">
           {/* Mobile size selector */}
           <div className="sm:hidden flex items-center justify-center space-x-1 bg-white p-1 rounded-xl border border-slate-200 mb-3 shadow-xs">
-            <span className="text-[10px] text-slate-500 px-1 font-semibold">Format Nota:</span>
+            <span className="text-[10px] text-slate-500 px-1 font-semibold">{t('receipt.receiptFormat')}:</span>
             <button
               type="button"
               onClick={() => setPaperSize('80mm')}
@@ -104,7 +106,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              80mm (Standar)
+              {t('receipt.standard80mm')}
             </button>
             <button
               type="button"
@@ -115,7 +117,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              58mm (Mini)
+              {t('receipt.mini58mm')}
             </button>
           </div>
 
@@ -147,48 +149,48 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             {/* Receipt Meta */}
             <div className="space-y-0.5 text-[10px] text-slate-700 py-1 border-b border-dashed border-slate-300">
               <div className="flex justify-between">
-                <span>No. Faktur:</span>
+                <span>{t('receipt.invoiceNo')}:</span>
                 <span className="font-bold">{order.id}</span>
               </div>
               <div className="flex justify-between">
-                <span>Tanggal:</span>
+                <span>{t('receipt.date')}:</span>
                 <span>{formatDateTime(order.date)}</span>
               </div>
               <div className="flex justify-between">
-                <span>Kasir:</span>
+                <span>{t('receipt.cashier')}:</span>
                 <span>{order.cashierName}</span>
               </div>
               {order.servedByStaffName && (
                 <div className="flex justify-between font-bold text-amber-900">
-                  <span>Dilayani Oleh:</span>
+                  <span>{t('receipt.servedBy')}:</span>
                   <span>{order.servedByStaffName}</span>
                 </div>
               )}
               {order.dropOffDate && (
                 <div className="flex justify-between font-semibold text-blue-900 bg-blue-50 p-1 rounded">
-                  <span>Tgl Masuk / Cuci:</span>
+                  <span>{t('receipt.dropOffDate')}:</span>
                   <span>{order.dropOffDate}</span>
                 </div>
               )}
               {(order.completionDate || order.completionEstimate) && (
                 <div className="flex justify-between font-bold text-indigo-900 bg-indigo-50 p-1 rounded">
-                  <span>Tgl Selesai / Jadi:</span>
+                  <span>{t('receipt.completionDate')}:</span>
                   <span>{order.completionDate || order.completionEstimate}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span>Tipe Order:</span>
+                <span>{t('receipt.orderType')}:</span>
                 <span className="font-bold">{order.orderType}</span>
               </div>
               {order.tableName && (
                 <div className="flex justify-between">
-                  <span>Meja:</span>
+                  <span>{t('receipt.table')}:</span>
                   <span className="font-bold">{order.tableName}</span>
                 </div>
               )}
               {order.customer && (
                 <div className="flex justify-between">
-                  <span>Member:</span>
+                  <span>{t('receipt.member')}:</span>
                   <span className="font-bold">{order.customer.name}</span>
                 </div>
               )}
@@ -220,49 +222,49 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             {/* Price Totals */}
             <div className="space-y-1 text-[11px] pt-1">
               <div className="flex justify-between text-slate-700">
-                <span>Subtotal:</span>
+                <span>{t('receipt.subtotal')}:</span>
                 <span>{formatRupiah(order.subtotal)}</span>
               </div>
 
               {order.discountTotal > 0 && (
                 <div className="flex justify-between text-slate-700">
-                  <span>Diskon:</span>
+                  <span>{t('receipt.discount')}:</span>
                   <span>-{formatRupiah(order.discountTotal)}</span>
                 </div>
               )}
 
               {order.taxTotal > 0 && (
                 <div className="flex justify-between text-slate-700">
-                  <span>Pajak (PB1):</span>
+                  <span>{t('receipt.tax')}:</span>
                   <span>{formatRupiah(order.taxTotal)}</span>
                 </div>
               )}
 
               {order.serviceChargeTotal > 0 && (
                 <div className="flex justify-between text-slate-700">
-                  <span>Layanan:</span>
+                  <span>{t('receipt.service')}:</span>
                   <span>{formatRupiah(order.serviceChargeTotal)}</span>
                 </div>
               )}
 
               <div className="flex justify-between font-extrabold text-sm pt-1 border-t border-slate-900 text-slate-900">
-                <span>TOTAL:</span>
+                <span>{t('receipt.total')}:</span>
                 <span>{formatRupiah(order.total)}</span>
               </div>
 
               <div className="flex justify-between text-[10px] text-slate-700 pt-1">
-                <span>Metode Pembayaran:</span>
+                <span>{t('receipt.paymentMethod')}:</span>
                 <span className="font-bold">{order.paymentMethod}</span>
               </div>
 
               {order.cashReceived && (
                 <>
                   <div className="flex justify-between text-[10px] text-slate-700">
-                    <span>Tunai Diterima:</span>
+                    <span>{t('receipt.cashPaid')}:</span>
                     <span>{formatRupiah(order.cashReceived)}</span>
                   </div>
                   <div className="flex justify-between text-[10px] text-slate-700 font-bold">
-                    <span>Kembalian:</span>
+                    <span>{t('receipt.change')}:</span>
                     <span>{formatRupiah(order.changeAmount || 0)}</span>
                   </div>
                 </>
@@ -286,7 +288,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
               className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 shadow-xs"
             >
               <Share2 className="w-4 h-4" />
-              <span>Kirim WA</span>
+              <span>{t('receipt.shareWhatsApp')}</span>
             </button>
 
             <button
@@ -294,7 +296,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
               className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 shadow-xs"
             >
               <Printer className="w-4 h-4" />
-              <span>Cetak Struk</span>
+              <span>{t('receipt.print')}</span>
             </button>
           </div>
 
@@ -302,7 +304,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             onClick={onClose}
             className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-md"
           >
-            Selesai & Transaksi Baru
+            {t('receipt.doneNewTransaction')}
           </button>
         </div>
       </div>

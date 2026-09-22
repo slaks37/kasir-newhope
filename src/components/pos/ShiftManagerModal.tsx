@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext';
+import { useTranslation } from '../../i18n/LanguageContext';
 import { Shift } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import {
@@ -28,6 +29,7 @@ interface ShiftManagerModalProps {
 
 export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose }) => {
   const { shift, shiftHistory, startShift, endShift, orders } = usePOS();
+  const { t } = useTranslation();
 
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
 
@@ -80,7 +82,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="font-extrabold text-base sm:text-lg text-slate-900 leading-tight">
-                  Manajemen Shift & Sesi Kasir
+                  {t('shift.title')}
                 </h3>
                 <span
                   className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
@@ -89,18 +91,18 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                       : 'bg-rose-100 text-rose-800 border border-rose-300'
                   }`}
                 >
-                  {isShiftOpen ? '● SHIFT AKTIF' : '○ SHIFT DITUTUP'}
+                  {isShiftOpen ? `● ${t('shift.activeShift').toUpperCase()}` : `○ ${t('shift.closedShift').toUpperCase()}`}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Catat sesi masuk/keluar kasir, rekapitulasi modal uang laci, dan audit saldo kas.
+                {t('shift.subtitle')}
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-colors"
+            className="p-2 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -110,26 +112,26 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
         <div className="flex border-b border-slate-200 bg-slate-100/60 p-1.5 px-4 shrink-0 space-x-2">
           <button
             onClick={() => setActiveTab('current')}
-            className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+            className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
               activeTab === 'current'
                 ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
             <UserCheck className="w-4 h-4 text-amber-600" />
-            <span>Sesi Shift Saja ({isShiftOpen ? 'Aktif' : 'Tutup'})</span>
+            <span>{t('shift.currentTab')}</span>
           </button>
 
           <button
             onClick={() => setActiveTab('history')}
-            className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+            className={`flex items-center space-x-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
               activeTab === 'history'
                 ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
             <History className="w-4 h-4 text-purple-600" />
-            <span>Riwayat & Log Shift ({shiftHistory.length})</span>
+            <span>{t('shift.historyTab')} ({shiftHistory.length})</span>
           </button>
         </div>
 
@@ -205,7 +207,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                   <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-2">
                     <div>
                       <span className="text-[10px] font-extrabold text-amber-800 uppercase tracking-wider block">
-                        Kasir Bertugas Saat Ini
+                        {t('shift.cashierName')}
                       </span>
                       <h4 className="font-extrabold text-base text-slate-900">
                         {shift.cashierName}
@@ -214,7 +216,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                     <div className="text-right">
                       <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block">
-                        Waktu Mulai Shift
+                        {t('common.date')}
                       </span>
                       <span className="text-xs font-mono font-bold text-slate-800">
                         {formatDateTime(shift.startTime)}
@@ -226,7 +228,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
                       <span className="text-[10px] text-slate-500 font-semibold block uppercase">
-                        Modal Awal Uang Laci
+                        {t('shift.startingCash')}
                       </span>
                       <span className="font-mono font-extrabold text-slate-900 text-sm">
                         {formatRupiah(shift.initialCash)}
@@ -235,16 +237,16 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
                       <span className="text-[10px] text-slate-500 font-semibold block uppercase">
-                        Total Trx Selesai
+                        {t('reports.totalTransactions')}
                       </span>
                       <span className="font-mono font-extrabold text-slate-900 text-sm">
-                        {activeShiftOrdersCount} Order
+                        {activeShiftOrdersCount}
                       </span>
                     </div>
 
                     <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3">
                       <span className="text-[10px] text-amber-800 font-extrabold block uppercase">
-                        Total Omzet Sesi Ini
+                        {t('shift.totalSales')}
                       </span>
                       <span className="font-mono font-extrabold text-amber-800 text-sm">
                         {formatRupiah(shift.totalSales)}
@@ -253,7 +255,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3">
                       <span className="text-[10px] text-emerald-800 font-extrabold block uppercase">
-                        Ekspektasi Kas Laci
+                        {t('shift.expectedCash')}
                       </span>
                       <span className="font-mono font-extrabold text-emerald-800 text-sm">
                         {formatRupiah(shift.expectedCash)}
@@ -264,23 +266,23 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                   {/* Payment Breakdown */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2 text-xs">
                     <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider block">
-                      Rincian Metode Pembayaran Shift Ini:
+                      {t('checkout.paymentMethod')}:
                     </span>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono">
                       <div className="bg-white p-2 rounded-xl border border-slate-200">
-                        <span className="text-[10px] text-slate-500 block">Tunai (Cash):</span>
+                        <span className="text-[10px] text-slate-500 block">{t('checkout.cash')}:</span>
                         <strong className="text-slate-900">{formatRupiah(shift.cashSales)}</strong>
                       </div>
                       <div className="bg-white p-2 rounded-xl border border-slate-200">
-                        <span className="text-[10px] text-slate-500 block">QRIS:</span>
+                        <span className="text-[10px] text-slate-500 block">{t('checkout.qris')}:</span>
                         <strong className="text-slate-900">{formatRupiah(shift.qrisSales)}</strong>
                       </div>
                       <div className="bg-white p-2 rounded-xl border border-slate-200">
-                        <span className="text-[10px] text-slate-500 block">Kartu (EDC):</span>
+                        <span className="text-[10px] text-slate-500 block">{t('checkout.debitCreditCard')}:</span>
                         <strong className="text-slate-900">{formatRupiah(shift.cardSales)}</strong>
                       </div>
                       <div className="bg-white p-2 rounded-xl border border-slate-200">
-                        <span className="text-[10px] text-slate-500 block">E-Wallet:</span>
+                        <span className="text-[10px] text-slate-500 block">{t('checkout.bankTransfer')}:</span>
                         <strong className="text-slate-900">{formatRupiah(shift.eWalletSales)}</strong>
                       </div>
                     </div>
@@ -292,14 +294,14 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                   <div className="flex items-center space-x-2 text-rose-700">
                     <LogOut className="w-5 h-5 text-rose-600" />
                     <h4 className="font-extrabold text-base text-rose-950">
-                      Form Penutupan / Akhiri Shift
+                      {t('shift.confirmClose')}
                     </h4>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
                       <label className="block font-extrabold text-slate-800 mb-1">
-                        Jumlah Uang Tunai Fisik di Laci Kasir (Rp):
+                        {t('shift.actualCash')} (Rp):
                       </label>
                       <div className="relative">
                         <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-extrabold text-slate-400">
@@ -309,20 +311,13 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                           type="number"
                           value={actualCashInput}
                           onChange={(e) => setActualCashInput(e.target.value)}
-                          placeholder="Masukkan total hitungan uang tunai laci..."
+                          placeholder="0"
                           className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-4 py-2.5 font-mono text-sm text-slate-900 font-extrabold focus:outline-none focus:ring-2 focus:ring-amber-500"
                           required
                         />
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1">
-                        <span>Ekspektasi Uang Tunai Laci: <strong className="font-mono text-slate-800">{formatRupiah(shift.expectedCash)}</strong></span>
-                        <button
-                          type="button"
-                          onClick={() => setActualCashInput(String(shift.expectedCash))}
-                          className="text-amber-700 font-bold hover:underline"
-                        >
-                          Isi Otomatis (Sama)
-                        </button>
+                        <span>{t('shift.expectedCash')}: <strong className="font-mono text-slate-800">{formatRupiah(shift.expectedCash)}</strong></span>
                       </div>
                     </div>
 
@@ -335,13 +330,11 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                         : 'bg-rose-50 text-rose-900 border-rose-200'
                     }`}>
                       <div>
-                        <span className="text-[10px] uppercase font-bold block">Status Selisih Kas:</span>
+                        <span className="text-[10px] uppercase font-bold block">{t('shift.discrepancy')}:</span>
                         <strong className="text-sm">
                           {differenceNum === 0
-                            ? 'UANG KAS PAS (SESUAI)'
-                            : differenceNum > 0
-                            ? `LEBIH +${formatRupiah(differenceNum)}`
-                            : `KURANG ${formatRupiah(differenceNum)}`}
+                            ? '0'
+                            : formatRupiah(differenceNum)}
                         </strong>
                       </div>
                       <ShieldAlert className="w-5 h-5 opacity-70" />
@@ -349,13 +342,13 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">
-                        Catatan Akhir Shift (Opsional):
+                        {t('shift.notes')}:
                       </label>
                       <input
                         type="text"
                         value={shiftNotes}
                         onChange={(e) => setShiftNotes(e.target.value)}
-                        placeholder="Contoh: Kasir berganti ke Rina, selisih Rp 0..."
+                        placeholder={t('shift.notesPlaceholder')}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
                       />
                     </div>
@@ -363,10 +356,10 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+                    className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer"
                   >
                     <LogOut className="w-4 h-4" />
-                    <span>Akhiri Shift Kasir Sekarang</span>
+                    <span>{t('shift.closeShiftBtn')}</span>
                   </button>
                 </form>
               </div>
@@ -378,10 +371,10 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                     <XCircle className="w-6 h-6" />
                   </div>
                   <h4 className="font-extrabold text-slate-900 text-base">
-                    Belum Ada Shift Kasir Aktif
+                    {t('shift.closedShift')}
                   </h4>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Mulaikan shift kasir baru untuk mencatat transaksi penjualan, memperhitungkan modal uang laci, dan melacak aktivitas sesi kasir.
+                    {t('shift.subtitle')}
                   </p>
                 </div>
 
@@ -389,20 +382,20 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                   <div className="flex items-center space-x-2 text-amber-700">
                     <Play className="w-5 h-5 fill-amber-500 text-amber-600" />
                     <h4 className="font-extrabold text-base text-slate-900">
-                      Form Mulai Shift Baru
+                      {t('shift.openShiftBtn')}
                     </h4>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">
-                        Nama Kasir Bertugas:
+                        {t('shift.cashierName')}:
                       </label>
                       <input
                         type="text"
                         value={newCashierName}
                         onChange={(e) => setNewCashierName(e.target.value)}
-                        placeholder="Masukkan nama kasir (contoh: Ahmad Kasir)..."
+                        placeholder={t('shift.cashierName')}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
                         required
                       />
@@ -410,7 +403,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
 
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">
-                        Modal Uang Kasir Awal / Laci (Rp):
+                        {t('shift.startingCash')} (Rp):
                       </label>
                       <div className="relative">
                         <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-extrabold text-slate-400">
@@ -425,18 +418,15 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
                           required
                         />
                       </div>
-                      <span className="text-[10px] text-slate-400 mt-1 block">
-                        Uang kembalian awal yang dimasukkan ke laci meja kasir.
-                      </span>
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer"
                   >
                     <Play className="w-4 h-4 fill-white" />
-                    <span>Mulai Shift Kasir Sekarang</span>
+                    <span>{t('shift.openShiftBtn')}</span>
                   </button>
                 </form>
               </div>
