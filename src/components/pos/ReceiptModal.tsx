@@ -131,13 +131,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
           >
             {/* Header Store */}
             <div className="text-center space-y-1 pb-2 border-b border-dashed border-slate-300">
-              {settings.logoUrl && (
-                <div className="flex justify-center mb-1">
+              {settings.showLogoOnReceipt !== false && settings.logoUrl && (
+                <div className="flex justify-center mb-2 receipt-logo-wrapper">
                   <img
                     src={settings.logoUrl}
-                    alt="Logo"
+                    alt={settings.storeName || 'Logo Perusahaan'}
                     referrerPolicy="no-referrer"
-                    className="w-12 h-12 object-cover rounded-xl border border-slate-200"
+                    className={`object-contain mx-auto ${
+                      paperSize === '58mm' ? 'max-h-12 max-w-[110px]' : 'max-h-16 max-w-[150px]'
+                    } ${settings.receiptLogoGrayscale !== false ? 'receipt-thermal-grayscale' : ''}`}
                   />
                 </div>
               )}

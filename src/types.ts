@@ -559,8 +559,9 @@ export interface StoreSettings {
   storeName: string;
   tagline: string;
   address: string;
-  phone: string;
   logoUrl?: string;
+  showLogoOnReceipt?: boolean;
+  receiptLogoGrayscale?: boolean;
   taxRate: number; // e.g. 10 for 10% PB1/PPN
   enableTax: boolean;
   serviceRate: number; // e.g. 5 for 5% service

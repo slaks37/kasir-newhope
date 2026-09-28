@@ -2062,6 +2062,8 @@ var INITIAL_SETTINGS = {
   storeMode: "FNB",
   autoPrintReceipt: false,
   receiptPaperSize: "80mm",
+  showLogoOnReceipt: true,
+  receiptLogoGrayscale: true,
   loyaltyEarnRate: 1e4,
   loyaltyRedeemRate: 100,
   branches: INITIAL_BRANCHES,

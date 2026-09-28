@@ -503,6 +503,8 @@ export const INITIAL_SETTINGS: StoreSettings = {
   storeMode: 'FNB',
   autoPrintReceipt: false,
   receiptPaperSize: '80mm',
+  showLogoOnReceipt: true,
+  receiptLogoGrayscale: true,
   loyaltyEarnRate: 10000,
   loyaltyRedeemRate: 100,
   branches: INITIAL_BRANCHES,

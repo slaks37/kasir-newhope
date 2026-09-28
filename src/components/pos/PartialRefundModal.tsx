@@ -356,6 +356,18 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
                 }`}
               >
                 <div className="text-center space-y-1 border-b border-dashed border-slate-300 pb-3">
+                  {settings.showLogoOnReceipt !== false && settings.logoUrl && (
+                    <div className="flex justify-center mb-1.5 receipt-logo-wrapper">
+                      <img
+                        src={settings.logoUrl}
+                        alt={settings.storeName || 'Logo'}
+                        referrerPolicy="no-referrer"
+                        className={`object-contain mx-auto ${
+                          thermalSize === '58mm' ? 'max-h-11 max-w-[100px]' : 'max-h-14 max-w-[130px]'
+                        } ${settings.receiptLogoGrayscale !== false ? 'receipt-thermal-grayscale' : ''}`}
+                      />
+                    </div>
+                  )}
                   <h3 className="font-black text-sm uppercase">{settings.storeName || 'NEWHOPE POS'}</h3>
                   <p className="text-[10px] text-slate-500">{settings.address || 'Cabang Utama'}</p>
                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">

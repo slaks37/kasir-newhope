@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
@@ -46,9 +46,15 @@ export const SettingsManager: React.FC = () => {
   } = usePOS();
   const { t } = useTranslation();
 
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
   const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING'>('STORE');
   const [formSettings, setFormSettings] = useState<StoreSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
+
+  useEffect(() => {
+    setFormSettings(settings);
+  }, [settings]);
 
   // New Promo Code state
   const [promoCode, setPromoCode] = useState('');
@@ -80,6 +86,11 @@ export const SettingsManager: React.FC = () => {
       };
       reader.readAsDataURL(file);
     }
+    e.target.value = '';
+  };
+
+  const handleRemoveLogo = () => {
+    setFormSettings((prev) => ({ ...prev, logoUrl: undefined }));
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -537,6 +548,79 @@ export const SettingsManager: React.FC = () => {
                 <span>Identitas Toko / Resto</span>
               </h3>
 
+              {/* Logo Usaha / Perusahaan */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center space-x-4">
+                    {/* Logo Preview Box */}
+                    <div className="w-20 h-20 rounded-2xl bg-white border-2 border-dashed border-slate-300 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs relative">
+                      {formSettings.logoUrl ? (
+                        <img
+                          src={formSettings.logoUrl}
+                          alt="Logo Toko"
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-contain p-1"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center text-slate-400 p-2 text-center">
+                          <Image className="w-6 h-6 stroke-[1.5]" />
+                          <span className="text-[9px] font-bold mt-1">Belum Ada</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-extrabold text-slate-900">Logo Usaha / Perusahaan</span>
+                        {formSettings.logoUrl && (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                            Terpasang
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-tight">
+                        Logo ini akan ditampilkan di sistem POS dan dapat dicetak otomatis pada nota/struk kasir.
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        Format: PNG, JPG, WebP, SVG (Maks. 5MB). Disarankan berlatar transparan atau kontras tinggi.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center space-x-2 w-full sm:w-auto">
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLogoUpload}
+                      className="hidden"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => logoInputRef.current?.click()}
+                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{formSettings.logoUrl ? 'Ganti Logo' : 'Unggah Logo'}</span>
+                    </button>
+
+                    {formSettings.logoUrl && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveLogo}
+                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center space-x-1 transition-all cursor-pointer"
+                        title="Hapus logo usaha"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Hapus</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs text-slate-700 font-semibold">Nama Toko / Usaha *</label>
@@ -821,6 +905,87 @@ export const SettingsManager: React.FC = () => {
                   <div className="text-[11px] text-emerald-700 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 flex items-center space-x-1.5 font-medium">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
                     <span>Kompatibel: Printer USB, Bluetooth, LAN, Sunmi, iMin, PDF</span>
+                  </div>
+                </div>
+
+                {/* Logo pada Struk Nota */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 md:col-span-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                    <div>
+                      <span className="font-bold text-xs text-slate-900 block">Cetak Logo Perusahaan di Nota</span>
+                      <span className="text-[11px] text-slate-500">
+                        Menampilkan logo perusahaan pada bagian paling atas nota kasir dan tanda terima retur
+                      </span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formSettings.showLogoOnReceipt !== false}
+                        onChange={(e) => setFormSettings((p) => ({ ...p, showLogoOnReceipt: e.target.checked }))}
+                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                      />
+                      <span className="ml-2 text-xs font-bold text-slate-800">
+                        {formSettings.showLogoOnReceipt !== false ? 'Aktif' : 'Non-Aktif'}
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {/* Grayscale Optimization Toggle */}
+                    <div className="flex items-start space-x-2.5 bg-white p-3 rounded-xl border border-slate-200">
+                      <input
+                        type="checkbox"
+                        id="grayscaleToggle"
+                        checked={formSettings.receiptLogoGrayscale !== false}
+                        onChange={(e) => setFormSettings((p) => ({ ...p, receiptLogoGrayscale: e.target.checked }))}
+                        className="w-4 h-4 accent-amber-500 rounded mt-0.5 cursor-pointer"
+                      />
+                      <label htmlFor="grayscaleToggle" className="text-[11px] cursor-pointer">
+                        <span className="font-bold text-slate-900 block">Optimasi Cetak Termal (Grayscale Monokrom)</span>
+                        <span className="text-slate-500">
+                          Mempertajam kontras logo hitam-putih untuk head printer termal agar hasil cetak nota bersih, tajam, dan tidak buram.
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Logo Status & Quick Upload or Message */}
+                    <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-200">
+                      <div className="flex items-center space-x-2.5 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
+                          {formSettings.logoUrl ? (
+                            <img
+                              src={formSettings.logoUrl}
+                              alt="Logo"
+                              className={`w-full h-full object-contain ${
+                                formSettings.receiptLogoGrayscale !== false ? 'grayscale contrast-125' : ''
+                              }`}
+                            />
+                          ) : (
+                            <Image className="w-5 h-5 text-slate-400" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-800 block truncate">
+                            {formSettings.logoUrl ? 'Logo Siap Dicetak' : 'Belum Ada Logo'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {formSettings.logoUrl
+                              ? (formSettings.showLogoOnReceipt !== false ? 'Tampil di bagian atas struk' : 'Dinonaktifkan dari struk')
+                              : 'Unggah logo pada form di atas'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {!formSettings.logoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => logoInputRef.current?.click()}
+                          className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-bold rounded-lg shadow-2xs shrink-0 cursor-pointer"
+                        >
+                          Unggah
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
