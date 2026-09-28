@@ -15,6 +15,18 @@
   ],
   "rewrites": [
     {
+      "source": "/.well-known/oauth-protected-resource",
+      "destination": "/api/mcp/resource"
+    },
+    {
+      "source": "/.well-known/oauth-protected-resource/api/mcp",
+      "destination": "/api/mcp/resource"
+    },
+    {
+      "source": "/.well-known/oauth-authorization-server",
+      "destination": "/api/mcp/metadata"
+    },
+    {
       "source": "/admin(.*)",
       "destination": "/admin.html"
     },

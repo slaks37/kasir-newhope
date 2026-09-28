@@ -36,6 +36,7 @@ import { PORTS, SERVICE_URL } from '../shared/service';
 import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
 import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
+import mcpHandler from '../../src/server/mcpHandler';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -68,6 +69,10 @@ const breakers: Record<string, Breaker> = {
 };
 
 const app = express();
+app.use((req, res, next) => {
+  if (req.path === '/api/mcp' || req.path.startsWith('/api/mcp/') || req.path.startsWith('/.well-known/oauth-')) return void mcpHandler(req, res);
+  next();
+});
 
 const PUBLIC_API_PATHS = new Set([
   '/api/health',

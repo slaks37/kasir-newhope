@@ -21,7 +21,7 @@ try {
   console.warn('Fetch setter shim error:', e);
 }
 
-import { StrictMode } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { POSProvider } from './context/POSContext';
@@ -32,6 +32,7 @@ import './index.css';
 import './styles/app-theme.css';
 
 installAuthenticatedFetch();
+const McpConnections = lazy(() => import('./components/mcp/McpConnections').then(m => ({ default: m.McpConnections })));
 
 // Do not initialize or persist account-scoped POS state under an anonymous
 // fallback while the saved Auth session is still being restored.
@@ -45,7 +46,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>
       <AuthProvider>
-        <POSSession />
+        {window.location.pathname === '/mcp/connect' || window.location.pathname === '/mcp/connections'
+          ? <Suspense fallback={<p role="status">Memuat koneksi MCP…</p>}><McpConnections consent={window.location.pathname === '/mcp/connect'} /></Suspense>
+          : <POSSession />}
       </AuthProvider>
     </LanguageProvider>
   </StrictMode>,
