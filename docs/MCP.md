@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented locally; disabled by default. Do not announce this as live until the
-database migration, deployment, and real ChatGPT/Claude OAuth tests below pass.
+Implemented with a default-off server switch. The production migration was
+applied on 2026-09-28. Production endpoint smoke testing and real ChatGPT/Claude
+OAuth acceptance are separate checks; do not claim either client is connected
+until its owner completes consent and a tool call succeeds.
 No production data is sent by installing this code. Each owner explicitly grants
 one business to one connection in the browser before any connector can read it.
 
@@ -20,7 +22,7 @@ MCP does not call DeepSeek/Agnes and does not spend POS AI wallet credits. The A
 client's own plan/usage policies still apply. Reads are synchronized database
 data, not unsynced device data. Untracked stock is null, not a fabricated zero.
 
-## Operator rollout (not performed automatically)
+## Operator rollout and acceptance
 
 1. Review and apply only `supabase/migrations/20260928135919_mcp_readonly_connections.sql`
    to the intended database using the project's reviewed migration workflow.
