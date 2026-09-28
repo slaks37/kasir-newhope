@@ -22,7 +22,7 @@ data, not unsynced device data. Untracked stock is null, not a fabricated zero.
 
 ## Operator rollout (not performed automatically)
 
-1. Review and apply only `supabase/migrations/20260928061236_mcp_readonly_connections.sql`
+1. Review and apply only `supabase/migrations/20260928135919_mcp_readonly_connections.sql`
    to the intended database using the project's reviewed migration workflow.
    Do not blindly push unrelated pending migrations. The `mcp_private` schema is
    private, has RLS and no anon/authenticated grants. Server DATABASE_URL must

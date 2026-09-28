@@ -21,7 +21,7 @@ try {
   const migrations = ['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql', ...fs.readdirSync('migrations').filter(f => /^\d{4}_.*\.sql$/.test(f) && f !== '0001_compat.sql').sort().map(f => 'migrations/' + f)];
   for (const file of migrations) await pg.exec(fs.readFileSync(file,'utf8'));
   for (const file of ['free-plan-selection.sql','free-plan-ai-credit-access.sql','restrict-browser-rls-policies.sql','intelligence-cache.sql']) await pg.exec(fs.readFileSync('docs/security/' + file,'utf8'));
-  await pg.exec(fs.readFileSync('supabase/migrations/20260928061236_mcp_readonly_connections.sql','utf8'));
+  await pg.exec(fs.readFileSync('supabase/migrations/20260928135919_mcp_readonly_connections.sql','utf8'));
   const tenant = randomUUID(), merchant = randomUUID(), product = randomUUID(), cashier = randomUUID(), sale = randomUUID();
   await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Synthetic tenant','owner-a')", [tenant]);
   await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Synthetic shop','FNB','shop-a')", [merchant,tenant]);
