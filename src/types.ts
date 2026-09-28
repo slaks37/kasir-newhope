@@ -559,6 +559,7 @@ export interface StoreSettings {
   storeName: string;
   tagline: string;
   address: string;
+  phone?: string;
   logoUrl?: string;
   showLogoOnReceipt?: boolean;
   receiptLogoGrayscale?: boolean;
