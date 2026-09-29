@@ -554,6 +554,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return {
       ...loaded,
+      // Brand assets come from the active business, not account-wide browser data.
+      logoUrl: undefined,
       storeName: storeName || (loaded.storeName && loaded.storeName !== 'New Hope POS' ? loaded.storeName : 'Toko Saya'),
       businessSector: sector,
       subscription: sub,
@@ -622,6 +624,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }
 
   const activeSector = settings.businessSector || 'FNB';
+  useEffect(() => {
+    if (!authUser?.id) return;
+    let active = true;
+    const sector = activeSector;
+    setSettings(prev => ({ ...prev, logoUrl: undefined }));
+    const loadLogo = async () => {
+      try {
+        const businessId = makeBusinessId(authUser.id, sector);
+        const response = await fetch(`/api/v1/sync/receipt-logo?businessId=${encodeURIComponent(businessId)}`);
+        const data = await response.json();
+        if (active && response.ok && data.ok) {
+          setSettings(prev => (prev.businessSector || 'FNB') === sector
+            ? { ...prev, logoUrl: data.logoUrl || undefined } : prev);
+        }
+      } catch { /* Offline: no cross-business logo fallback. */ }
+    };
+    void loadLogo();
+    return () => { active = false; };
+  }, [authUser?.id, activeSector]);
   const defaultPreset = BUSINESS_PRESETS[activeSector] || BUSINESS_PRESETS.FNB;
 
   /*
@@ -3076,6 +3097,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const newSettings: StoreSettings = {
       ...settings,
+      logoUrl: undefined,
       storeName,
       businessSector: sector,
       storeMode: preset.storeMode,

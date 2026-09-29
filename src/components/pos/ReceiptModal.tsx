@@ -3,6 +3,7 @@ import { Order, StoreSettings } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { Printer, Share2, CheckCircle2, Download, ShoppingBag, X } from 'lucide-react';
 import { useTranslation } from '../../i18n';
+import { printReceiptImages } from '../../lib/printReceipt';
 
 interface ReceiptModalProps {
   order: Order;
@@ -17,14 +18,14 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
   React.useEffect(() => {
     if (settings.autoPrintReceipt) {
       const timer = setTimeout(() => {
-        window.print();
+        void printReceiptImages('receipt-paper');
       }, 300);
       return () => clearTimeout(timer);
     }
   }, [settings.autoPrintReceipt]);
 
   const handlePrint = () => {
-    window.print();
+    void printReceiptImages('receipt-paper');
   };
 
   const handleShareWhatsApp = () => {

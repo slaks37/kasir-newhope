@@ -97,6 +97,46 @@ const str = (v: unknown, max: number): string | null => {
 };
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  // A receipt logo belongs to a business unit, never to the browser or owner account.
+  // Store only small raster data URLs: no remote image fetches or SVG script content.
+  app.get('/api/v1/sync/receipt-logo', async (req, res) => {
+    const principal = trustedPrincipal(req);
+    const businessId = str(req.query.businessId, 96);
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) return res.status(403).json({ ok: false, error: 'BUSINESS_NOT_OWNED' });
+    const { rows } = await db.query('SELECT logo_url FROM internal.merchants WHERE external_ref = $1', [businessId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'BUSINESS_NOT_FOUND' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ ok: true, logoUrl: rows[0].logo_url || null });
+  });
+
+  app.put('/api/v1/sync/receipt-logo', async (req, res) => {
+    const principal = trustedPrincipal(req);
+    const businessId = str(req.body?.businessId, 96);
+    const logoUrl = req.body?.logoUrl;
+    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+    if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    if (!(await canAccessBusiness(db, principal, businessId))) return res.status(403).json({ ok: false, error: 'BUSINESS_NOT_OWNED' });
+    if (logoUrl !== null && logoUrl !== undefined) {
+      if (typeof logoUrl !== 'string' || logoUrl.length > 200_000) return res.status(413).json({ ok: false, error: 'LOGO_TOO_LARGE' });
+      const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(logoUrl);
+      if (!match) return res.status(400).json({ ok: false, error: 'INVALID_LOGO' });
+      const bytes = Buffer.from(match[2], 'base64');
+      const valid = match[1] === 'png' ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+        : match[1] === 'jpeg' ? bytes.subarray(0, 3).equals(Buffer.from([255,216,255]))
+        : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
+      if (!valid) return res.status(400).json({ ok: false, error: 'INVALID_LOGO' });
+    }
+    const { rows } = await db.query(
+      'UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE external_ref = $2 RETURNING id',
+      [logoUrl || null, businessId]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'BUSINESS_NOT_FOUND' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ ok: true });
+  });
+
   /**
    * POST /api/v1/sync/transactions
    *

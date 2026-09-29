@@ -432,6 +432,40 @@ var str = (v, max) => {
   return t ? t.slice(0, max) : null;
 };
 function registerSyncRoutes(app, db) {
+  app.get("/api/v1/sync/receipt-logo", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    const businessId = str(req.query.businessId, 96);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    if (!businessId) return res.status(400).json({ ok: false, error: "BUSINESS_ID_REQUIRED" });
+    if (!await canAccessBusiness(db, principal, businessId)) return res.status(403).json({ ok: false, error: "BUSINESS_NOT_OWNED" });
+    const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE external_ref = $1", [businessId]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ ok: true, logoUrl: rows[0].logo_url || null });
+  });
+  app.put("/api/v1/sync/receipt-logo", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    const businessId = str(req.body?.businessId, 96);
+    const logoUrl = req.body?.logoUrl;
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    if (!businessId) return res.status(400).json({ ok: false, error: "BUSINESS_ID_REQUIRED" });
+    if (!await canAccessBusiness(db, principal, businessId)) return res.status(403).json({ ok: false, error: "BUSINESS_NOT_OWNED" });
+    if (logoUrl !== null && logoUrl !== void 0) {
+      if (typeof logoUrl !== "string" || logoUrl.length > 2e5) return res.status(413).json({ ok: false, error: "LOGO_TOO_LARGE" });
+      const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(logoUrl);
+      if (!match) return res.status(400).json({ ok: false, error: "INVALID_LOGO" });
+      const bytes = Buffer.from(match[2], "base64");
+      const valid = match[1] === "png" ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) : match[1] === "jpeg" ? bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255])) : bytes.subarray(0, 4).toString() === "RIFF" && bytes.subarray(8, 12).toString() === "WEBP";
+      if (!valid) return res.status(400).json({ ok: false, error: "INVALID_LOGO" });
+    }
+    const { rows } = await db.query(
+      "UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE external_ref = $2 RETURNING id",
+      [logoUrl || null, businessId]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ ok: true });
+  });
   app.post("/api/v1/sync/transactions", async (req, res) => {
     const body = req.body ?? {};
     const businessId = str(body.businessId, 96);
@@ -1399,14 +1433,14 @@ function registerSyncRoutes(app, db) {
 }
 
 // src/server/syncHandler.ts
-var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers"]);
+var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers", "/api/v1/sync/receipt-logo"]);
 function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
   let runtime;
   return async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
     if (!allowedPaths.has(path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+    if (path === "/api/v1/sync/receipt-logo" ? !["GET", "PUT"].includes(req.method) : req.method !== "POST") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
     const principal = await authenticate(req);
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     for (const key of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[key];

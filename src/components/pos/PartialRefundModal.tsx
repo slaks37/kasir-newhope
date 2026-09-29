@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { printReceiptImages } from '../../lib/printReceipt';
 import { usePOS } from '../../context/POSContext';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Order, OrderRefund } from '../../types';
@@ -108,7 +109,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
   };
 
   const handlePrintReturnReceipt = () => {
-    window.print();
+    void printReceiptImages('thermal-return-receipt');
   };
 
   const handleShareWhatsApp = () => {

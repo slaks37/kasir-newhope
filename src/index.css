@@ -264,7 +264,6 @@ html, body {
 
   #receipt-paper img,
   #thermal-return-receipt img {
-    filter: grayscale(100%) contrast(140%) !important;
     max-width: 38mm !important;
     max-height: 22mm !important;
     width: auto !important;
@@ -277,6 +276,11 @@ html, body {
     background: transparent !important;
   }
 
+  #receipt-paper img.receipt-thermal-grayscale,
+  #thermal-return-receipt img.receipt-thermal-grayscale {
+    filter: grayscale(100%) contrast(140%) !important;
+  }
+
   #receipt-paper.paper-58mm img {
     max-width: 28mm !important;
     max-height: 18mm !important;
@@ -286,4 +290,3 @@ html, body {
 .receipt-thermal-grayscale {
   filter: grayscale(100%) contrast(125%);
 }
-

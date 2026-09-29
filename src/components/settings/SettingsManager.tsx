@@ -34,6 +34,7 @@ import { LanguageSwitcher } from '../common/LanguageSwitcher';
 
 export const SettingsManager: React.FC = () => {
   const {
+    tenant,
     settings,
     updateSettings,
     promoCodes,
@@ -47,14 +48,23 @@ export const SettingsManager: React.FC = () => {
   const { t } = useTranslation();
 
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const logoEditedRef = useRef(false);
+  const lastBusinessIdRef = useRef(tenant.businessId);
 
   const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING'>('STORE');
   const [formSettings, setFormSettings] = useState<StoreSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setFormSettings(settings);
-  }, [settings]);
+    if (lastBusinessIdRef.current !== tenant.businessId) {
+      lastBusinessIdRef.current = tenant.businessId;
+      logoEditedRef.current = false;
+      setFormSettings(settings);
+      return;
+    }
+    setFormSettings(prev => logoEditedRef.current ? { ...settings, logoUrl: prev.logoUrl } : settings);
+  }, [settings, tenant.businessId]);
 
   // New Promo Code state
   const [promoCode, setPromoCode] = useState('');
@@ -73,31 +83,78 @@ export const SettingsManager: React.FC = () => {
   const [branchSector, setBranchSector] = useState<BusinessSector>('FNB');
   const [isGettingGps, setIsGettingGps] = useState(false);
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
         alert('Ukuran gambar logo maksimal 5MB');
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormSettings((prev) => ({ ...prev, logoUrl: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        alert('Logo harus berupa PNG, JPEG, atau WebP.');
+        return;
+      }
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const img = new window.Image();
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('INVALID_IMAGE'));
+          img.src = objectUrl;
+        });
+        const ratio = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * ratio));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * ratio));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('CANVAS_UNAVAILABLE');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        let logoUrl = canvas.toDataURL('image/png');
+        if (logoUrl.length > 180_000) {
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          logoUrl = canvas.toDataURL('image/jpeg', 0.75);
+        }
+        if (logoUrl.length > 180_000) throw new Error('LOGO_TOO_LARGE');
+        logoEditedRef.current = true;
+        setFormSettings(prev => ({ ...prev, logoUrl }));
+      } catch {
+        alert('Logo tidak dapat diproses. Coba gambar yang lebih kecil.');
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
-    e.target.value = '';
   };
 
   const handleRemoveLogo = () => {
+    logoEditedRef.current = true;
     setFormSettings((prev) => ({ ...prev, logoUrl: undefined }));
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings(formSettings);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      if (formSettings.logoUrl !== settings.logoUrl) {
+        const response = await fetch('/api/v1/sync/receipt-logo', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ businessId: tenant.businessId, logoUrl: formSettings.logoUrl || null }),
+        });
+        if (!response.ok) throw new Error('LOGO_SAVE_FAILED');
+      }
+      updateSettings(formSettings);
+      logoEditedRef.current = false;
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch {
+      alert('Logo belum tersimpan di server. Periksa koneksi dan coba lagi.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAddPromo = (e: React.FormEvent) => {
@@ -1019,10 +1076,11 @@ export const SettingsManager: React.FC = () => {
             <div className="flex justify-end">
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md flex items-center space-x-2 transition-all"
+                disabled={isSaving}
+                className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-slate-950 font-extrabold text-xs rounded-xl shadow-md flex items-center space-x-2 transition-all"
               >
                 <Save className="w-4 h-4" />
-                <span>Simpan Perubahan</span>
+                <span>{isSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
               </button>
             </div>
           </form>

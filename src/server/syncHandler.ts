@@ -3,7 +3,7 @@ import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
 
-const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers']);
+const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers','/api/v1/sync/receipt-logo']);
 
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */
 export function createSyncHandler(
@@ -15,7 +15,7 @@ export function createSyncHandler(
     res.setHeader('Cache-Control','no-store');
     const path=String(req.url||'').split('?')[0].replace(/\/+$/,'');
     if(!allowedPaths.has(path)) return res.status(404).json({ok:false,error:'NOT_FOUND'});
-    if(req.method!=='POST') return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
+    if(path==='/api/v1/sync/receipt-logo' ? !['GET','PUT'].includes(req.method) : req.method!=='POST') return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
     const principal=await authenticate(req);
     if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
     // Never trust browser-supplied gateway or principal headers.
