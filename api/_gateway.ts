@@ -1,8 +1,10 @@
 import { handleNativeApi } from './_runtime';
+import { normalizeVercelUrl } from '../src/server/vercelUrl';
 
 // When an external gateway is configured, an outage must never switch to a
 // synthetic or independently mutable billing backend.
 export async function proxyToGateway(req:any,res:any):Promise<void>{
+  normalizeVercelUrl(req);
   const base=(process.env.GATEWAY_URL || '').replace(/\/$/,'');
   if(base){
     try{

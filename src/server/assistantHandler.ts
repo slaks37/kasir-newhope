@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerAssistantRoutes } from '../../services/ai/routes';
+import { normalizeVercelUrl } from './vercelUrl';
 
 const methods: Record<string,string> = {
   '/api/v1/assistant/query':'POST', '/api/v1/assistant/credits':'GET',
@@ -13,6 +14,7 @@ const methods: Record<string,string> = {
 export function createAssistantHandler(authenticate=authenticateBearer, connect=()=>connectDb({schema:'ai',max:2})) {
   let runtime: Promise<express.Express>|undefined;
   return async (req:any,res:any) => {
+    normalizeVercelUrl(req);
     res.setHeader('Cache-Control','no-store');
     const path=String(req.url||'').split('?')[0].replace(/\/+$/,'');
     if(!methods[path])return res.status(404).json({ok:false,error:'NOT_FOUND'});

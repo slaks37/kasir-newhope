@@ -66,7 +66,7 @@ function MerchantDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <span>Kembali ke Daftar Merchant</span>
         </button>
 
-        <span className="text-xs font-bold text-slate-500 font-mono">ID Tenant: {id}</span>
+        <span className="text-xs font-bold text-slate-500 font-mono">ID: {id}</span>
       </div>
 
       {needsJustification && (

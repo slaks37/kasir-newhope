@@ -204,7 +204,23 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   for(const [key,value] of Object.entries(params || {})) if(value!==undefined && value!==null && value!=='') query.set(key,String(value));
   const response=await fetch('/api/admin/'+path+(query.size?'?'+query:''),
     {method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
-  const result=await response.json();
+  const contentType=response.headers.get('content-type') || '';
+  let result:any=null;
+  if(contentType.includes('application/json')) {
+    try {
+      result=await response.json();
+    } catch {
+      result=null;
+    }
+  }
+  if(!result) {
+    const rawText=await response.text().catch(()=>'');
+    if(!response.ok) {
+      if(response.status===404) throw new ApiError(404,'NOT_FOUND','Layanan atau rute admin tidak ditemukan (404).');
+      throw new ApiError(response.status,'SERVER_ERROR',rawText.slice(0,150) || `Server merespons dengan status ${response.status}.`);
+    }
+    throw new ApiError(response.status,'INVALID_RESPONSE','Respons server tidak berformat JSON.');
+  }
   if(response.status===403 && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {
     window.dispatchEvent(new Event('admin-mfa-required'));
     throw new ApiError(403,result.error,'Verifikasi autentikator diperlukan. Setelah verifikasi, tinjau dan kirim kembali tindakan Anda.');

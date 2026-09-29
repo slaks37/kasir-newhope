@@ -1432,11 +1432,42 @@ function registerSyncRoutes(app, db) {
   });
 }
 
+// src/server/vercelUrl.ts
+function normalizeVercelUrl(req) {
+  if (!req || typeof req.url !== "string") return;
+  try {
+    const parsed = new URL(req.url, "http://localhost");
+    const customPath = parsed.searchParams.get("__path");
+    if (customPath) {
+      parsed.searchParams.delete("__path");
+      const extraQs = parsed.searchParams.toString();
+      if (customPath.includes("?")) {
+        req.url = customPath + (extraQs ? `&${extraQs}` : "");
+      } else {
+        req.url = customPath + (extraQs ? `?${extraQs}` : "");
+      }
+      req.originalUrl = req.url;
+      return;
+    }
+  } catch {
+  }
+  if (req.url.includes("[...slug]")) {
+    const matched = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || req.headers?.["x-original-url"];
+    if (typeof matched === "string" && matched.startsWith("/") && !matched.includes("[...slug]")) {
+      const qIdx = req.url.indexOf("?");
+      const query = qIdx !== -1 ? req.url.slice(qIdx) : "";
+      req.url = matched.includes("?") ? matched : matched + query;
+      req.originalUrl = req.url;
+    }
+  }
+}
+
 // src/server/syncHandler.ts
 var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers", "/api/v1/sync/receipt-logo"]);
 function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
   let runtime;
   return async (req, res) => {
+    normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
     if (!allowedPaths.has(path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });

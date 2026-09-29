@@ -27,6 +27,46 @@
       "destination": "/api/mcp/metadata"
     },
     {
+      "source": "/api/admin/(.*)",
+      "destination": "/api/admin/[...slug]?__path=/api/admin/$1"
+    },
+    {
+      "source": "/api/admin",
+      "destination": "/api/admin/[...slug]?__path=/api/admin"
+    },
+    {
+      "source": "/api/v1/sync/(.*)",
+      "destination": "/api/v1/sync/[...slug]?__path=/api/v1/sync/$1"
+    },
+    {
+      "source": "/api/v1/sync",
+      "destination": "/api/v1/sync/[...slug]?__path=/api/v1/sync"
+    },
+    {
+      "source": "/api/v1/subscription/(.*)",
+      "destination": "/api/v1/subscription/[...slug]?__path=/api/v1/subscription/$1"
+    },
+    {
+      "source": "/api/v1/subscription",
+      "destination": "/api/v1/subscription/[...slug]?__path=/api/v1/subscription"
+    },
+    {
+      "source": "/api/v1/assistant/(.*)",
+      "destination": "/api/v1/assistant/[...slug]?__path=/api/v1/assistant/$1"
+    },
+    {
+      "source": "/api/v1/assistant",
+      "destination": "/api/v1/assistant/[...slug]?__path=/api/v1/assistant"
+    },
+    {
+      "source": "/api/mcp/(.*)",
+      "destination": "/api/mcp/[...slug]?__path=/api/mcp/$1"
+    },
+    {
+      "source": "/api/mcp",
+      "destination": "/api/mcp/[...slug]?__path=/api/mcp"
+    },
+    {
       "source": "/admin(.*)",
       "destination": "/admin.html"
     },
