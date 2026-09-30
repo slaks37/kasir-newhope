@@ -1,32 +1,26 @@
-# Online-first migration — work in progress
+# Online-first migration — verification record
 
-Status: local implementation checkpoint, not a completed migration or production release.
+## Implemented
 
-## Verified in this checkpoint
+- Authenticated owner ID scopes client storage, business IDs and all server sync calls. Selecting another cashier profile no longer changes the store identity.
+- Operational records (products, categories, tables, customers, orders, shifts, staff, local role profiles, stock items/logs, bookings, KDS, payroll and other POS collections) use an owner/sector-scoped server store. A per-record durable outbox survives reloads; accepted writes have revisions and an admin-visible audit event. Polling runs every six seconds, on focus and after reconnect.
+- Stale edits receive a conflict instead of overwriting another device. The owner can keep the server version (with a local recovery copy) or explicitly rebase the local edit. One unresolved conflict holds the batch for review.
+- Catalog writes use explicit versioned product mutations and tombstones; the legacy full-snapshot endpoint no longer retires omitted products. Product metadata is mirrored into `pos.products`. Stock is **not** overwritten in the normalized ledger by catalog sync.
+- Migration `0043_shared_pos_state.sql` / Supabase `20260930121546_shared_pos_state.sql` creates dedicated storage with RLS, tenant/merchant policy and `svc_pos`-only access. The handler sets transaction-local scope before reading/writing.
+- Financial transactions still use the idempotent normalized ledger, not an order UI snapshot. Admin revenue/profit come from that ledger. The trial outlet cap and queued Carwash sales remain unchanged.
+- Receipt and return receipt printing use an isolated iframe with loaded styles/images/fonts and surfaced browser errors. Chrome print preview rendered a 30-line fixture through the footer.
 
-- Store storage keys, business IDs and synchronization targets use the authenticated owner, not the selected local cashier profile. Switching local roles no longer reloads another store's collections.
-- Native POS handler permits authenticated catalog GET and attendance/payroll POST, with explicit method checks. Anonymous/forged-principal tests reject before DB access.
-- Catalog GET no longer references the nonexistent `pos.categories` table. Categories derive from product category names with matching IDs. Reads and snapshot retirement are merchant-scoped, not tenant-wide.
-- New remote products no longer receive fabricated stock of 100. Inventory-ledger hydration is still needed; zero here is a conservative fallback, not verified stock.
-- Receipt and return receipt printing use an isolated iframe, load styles/images/fonts, and surface errors. Print dialog initiation is not proof of physical printing.
-- Chrome print-preview test with 30 synthetic line items includes the end-of-receipt text beyond the clipped source modal. No payment or physical print was performed.
-- User's intended setup: Epson TM-T82, Bluetooth, Windows + Chrome. User currently has no printer available and deferred hardware testing.
+## Remaining limitations and decisions
 
-## Not complete — do not claim full synchronization
-
-- Most operational collections still live in localStorage. Need authenticated shared persistence and hydration for orders, CRM, users/roles, shifts, stock, workflows and settings.
-- Current catalog writer still uses legacy full snapshots. Merchant-scoped retirement preserves delete behavior, but continuous polling/pushing is NOT safe until revision checks and explicit deletion tombstones replace the snapshot protocol.
-- Need durable acknowledged mutations, cross-device conflict handling, offline recovery, and transactional audit events for every accepted change.
-- Local PIN role switching is an owner-authenticated kiosk mechanism; it is not separate authenticated employee membership authorization.
-- Existing legacy data under cashier-specific keys must be retained and recovered deliberately. Do not purge old caches or pending transaction queues.
-- Normalized sales ingestion remains required for financial/admin reports; a shared UI snapshot must never substitute for the transaction ledger.
-- Two real pending Carwash sales still need the owner to select which trial outlet to defer, or upgrade. Do not silently disable an outlet or discard the sales.
-- Physical Bluetooth/driver test, logo print verification on the actual printer, and production push/deployment verification remain outstanding.
+- Local cashier profiles are an owner-authenticated kiosk role mechanism, not independently authenticated employee accounts. A real employee membership model would need separate Auth identities and server-side role enforcement.
+- Operational changes propagate on polling rather than live push. A conflict needs human resolution; it cannot be silently auto-merged.
+- Stock quantities shown in the client can still conflict across simultaneous devices; the normalized inventory ledger remains authoritative. Reconciliation/hydration of per-outlet inventory balances is a separate step before claiming fully accurate live stock.
+- Old cashier-specific storage and transaction queues are preserved. They are not automatically reassigned to an owner; recovery requires reviewing their identity and business scope.
+- F&B and Laundry occupy both trial outlet slots. Carwash stays deferred and its two queued sales must not be sent as another branch or discarded. They can sync only after an outlet slot is freed or capacity is upgraded.
+- Epson TM-T82 Bluetooth on Windows + Chrome has **not** been physically tested; the owner has no printer available yet. Browser print preview does not prove driver, pairing or physical output.
 
 ## Checks
 
-Run `npm run lint`, `npm run test:subscriptions`, `node --import tsx scripts/dev/test-sync-boundary.ts`, and `npm run build`.
+`npm run lint`, `npm run test:subscriptions`, `node --import tsx scripts/dev/test-shared-state-client.ts`, `node --import tsx scripts/dev/test-sync-boundary.ts`, `npm run build`.
 
-Browser-only synthetic print fixture: `scripts/dev/receipt-print-fixture.html` served by Vite. It contains no client credentials and performs no backend writes.
-
-The earlier attempted production expansion of `svc_billing` write grants was rejected and was not applied. Business provisioning now uses existing `svc_pos` permissions; do not reintroduce broader billing grants as a workaround.
+Browser-only synthetic print fixture: `scripts/dev/receipt-print-fixture.html`. It contains no client credentials and performs no backend writes.

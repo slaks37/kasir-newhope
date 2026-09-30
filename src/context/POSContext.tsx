@@ -54,7 +54,6 @@ import {
   flush as flushSync,
   getStatus as getSyncStatus,
   orderToPayload,
-  pushCatalog,
   pushCustomers,
   pushAttendance,
   pushPayroll,
@@ -72,6 +71,7 @@ import {
 import { useAuth } from './AuthContext';
 import { isFreePlan, freeProductAllowed } from '../config/freePlanPolicy';
 import { mergeServerOutlets, prepareOutletBusiness } from '../lib/sync/outlets';
+import { SharedStateSync, recordIdOf, type SharedRecord, type SharedSyncStatus } from '../lib/sync/sharedState';
 import { subscriptionAccess } from '../config/subscriptionPolicy';
 import {
   INITIAL_CATEGORIES,
@@ -378,7 +378,13 @@ const loadScopedData = <T,>(entity: string, userId: string, sector: BusinessSect
   try {
     const key = getScopedKey(entity, userId, sector);
     const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed=JSON.parse(saved);
+      if (Array.isArray(parsed) && entity==='kds_tickets') return parsed.filter(row=>!['kds-01','kds-02'].includes(row.id)) as T;
+      if (Array.isArray(parsed) && entity==='carwash_queue') return parsed.filter(row=>!['cwq-01','cwq-02','cwq-03'].includes(row.id)) as T;
+      if (Array.isArray(parsed) && entity==='bookings') return parsed.filter(row=>!['bkg-01','bkg-02'].includes(row.id)) as T;
+      return parsed;
+    }
   } catch (e) {
     console.error(`Failed to load scoped data for ${entity}:`, e);
   }
@@ -424,8 +430,6 @@ const purgeLegacyMockData = () => {
       // Purge legacy fallback keys and mock user items
       if (
         key.startsWith('mokamajoo_') ||
-        key === 'newhope_users' ||
-        key === 'newhope_current_user' ||
         key === 'newhope_shift' ||
         key === 'newhope_settings' ||
         key === 'newhope_orders' ||
@@ -448,6 +452,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const { user: authUser, session: authSession } = useAuth();
   // Store identity is independent of the local cashier profile.
   const storeOwnerId = authUser?.id || 'usr-owner';
+  const legacyKeys = React.useRef<Set<string> | null>(null);
+  if (!legacyKeys.current) {
+    legacyKeys.current = new Set<string>();
+    try {
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key) legacyKeys.current.add(key);
+      }
+    } catch { /* Browser storage may be unavailable. */ }
+  }
 
   const defaultOwnerUser: User = {
     id: authUser?.id || 'usr-owner',
@@ -474,13 +488,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('newhope_users');
+    const saved = localStorage.getItem(`newhope_users_${storeOwnerId}`) || localStorage.getItem('newhope_users');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const cleaned = parsed.filter((u) => u.name !== 'Budi Santoso' && u.email !== 'budi@newhope.id');
-          if (cleaned.length > 0) return cleaned;
+          const admins=cleaned.filter((u:User)=>u.role==='ADMIN');
+          if (cleaned.length > 0 && admins.every((u:User)=>u.id===storeOwnerId)) return cleaned;
         }
       } catch {}
     }
@@ -488,12 +503,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem('newhope_current_user');
+    const saved = localStorage.getItem(`newhope_current_user_${storeOwnerId}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.name !== 'Budi Santoso' && parsed.email !== 'budi@newhope.id') {
-          return parsed;
+          if (parsed.id===storeOwnerId || users.some(u=>u.id===parsed.id)) return parsed;
         }
       } catch (e) {
         console.error('Failed to parse current user', e);
@@ -517,11 +532,25 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         status: 'ACTIVE',
         createdAt: authUser.created_at || new Date().toISOString(),
       };
-      setCurrentUser(updatedUser);
-      setUsers((prev) => {
-        const filtered = prev.filter((u) => u.name !== 'Budi Santoso' && u.email !== 'budi@newhope.id' && u.id !== authUser.id);
-        return [updatedUser, ...filtered];
-      });
+      const scopedRoster=localStorage.getItem(`newhope_users_${authUser.id}`);
+      let restored:User[]=[];
+      try { const parsed=scopedRoster?JSON.parse(scopedRoster):[];if(Array.isArray(parsed))restored=parsed; } catch {}
+      let legacy:User[]=[];
+      try {const parsed=JSON.parse(localStorage.getItem('newhope_users')||'[]');if(Array.isArray(parsed))legacy=parsed;} catch {}
+      const legacyOwners=legacy.filter(u=>u.role==='ADMIN');
+      const safeLegacy=!scopedRoster&&legacyOwners.length>0&&legacyOwners.every(u=>u.id===authUser.id)
+        ? legacy.filter(u=>u.id!==authUser.id) : [];
+      const roster=[updatedUser,...(restored.length?restored:safeLegacy).filter(u=>u.id!==authUser.id&&u.role!=='ADMIN')];
+      setUsers(roster);
+      void Promise.all(roster.map(async user=>user.id!==authUser.id&&!user.pin.startsWith('sha256$')
+        ? {...user,pin:await hashPin(user.pin)} : user)).then(secured=>{
+          setUsers(previous=>previous.length===roster.length&&previous.every((user,index)=>user.id===roster[index].id)
+            ? secured : previous);
+        });
+      const last=localStorage.getItem(`newhope_current_user_${authUser.id}`);
+      let previous:User|undefined;
+      try {previous=last?JSON.parse(last):undefined;} catch {}
+      setCurrentUser(roster.find(u=>u.id===previous?.id&&u.status==='ACTIVE')||updatedUser);
     }
   }, [authUser]);
 
@@ -745,15 +774,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [bizId, activeSector, storeNameForSync, storeOwnerId, settings.activeBranchId, runSync]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
-    return loadScopedData('categories', storeOwnerId, activeSector, defaultPreset.categories);
+    return loadScopedData('categories', storeOwnerId, activeSector, []);
   });
 
   const [products, setProducts] = useState<Product[]>(() => {
-    return loadScopedData('products', storeOwnerId, activeSector, defaultPreset.products);
+    return loadScopedData('products', storeOwnerId, activeSector, []);
   });
 
   const [tables, setTables] = useState<Table[]>(() => {
-    return loadScopedData('tables', storeOwnerId, activeSector, defaultPreset.tables);
+    return loadScopedData('tables', storeOwnerId, activeSector, []);
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
@@ -901,17 +930,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // KDS Tickets (F&B Kitchen Display System)
   const [kdsTickets, setKdsTickets] = useState<KDSTicket[]>(() => {
-    return loadScopedData('kds_tickets', storeOwnerId, activeSector, INITIAL_KDS_TICKETS);
+    return loadScopedData('kds_tickets', storeOwnerId, activeSector, []);
   });
 
   // Carwash Bay Queue (Carwash Bay Capacity Pipeline)
   const [carwashQueue, setCarwashQueue] = useState<CarwashQueueItem[]>(() => {
-    return loadScopedData('carwash_queue', storeOwnerId, activeSector, INITIAL_CARWASH_QUEUE);
+    return loadScopedData('carwash_queue', storeOwnerId, activeSector, []);
   });
 
   // Appointment Bookings (Barbershop Time-Slot Resource Engine)
   const [bookings, setBookings] = useState<AppointmentBooking[]>(() => {
-    return loadScopedData('bookings', storeOwnerId, activeSector, INITIAL_BOOKINGS);
+    return loadScopedData('bookings', storeOwnerId, activeSector, []);
   });
 
   // Staff Commission Rules
@@ -928,6 +957,159 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [sentLifecycleHookIds, setSentLifecycleHookIds] = useState<string[]>(() => {
     return loadScopedData('sent_lifecycle_hooks', storeOwnerId, activeSector, []);
   });
+
+  const [sharedSyncStatus, setSharedSyncStatus] = useState<SharedSyncStatus>({ready:false,pending:0,error:null});
+  const sharedSync = React.useRef<SharedStateSync | null>(null);
+  const sharedSettings = React.useMemo(() => {
+    const { subscription: _subscription, branches: _branches, activeBranchId: _activeBranchId,
+      logoUrl: _logoUrl, registeredTerminalId: _registeredTerminalId,
+      autoPrintReceipt: _autoPrintReceipt, receiptPaperSize: _receiptPaperSize,
+      businessSector: _businessSector, ...rest } = settings;
+    return {id:'main',...rest};
+  },[settings]);
+
+  // Hydrate operational records from the owner account and keep each change in
+  // a durable, versioned outbox. Normalized transactions still use the ledger.
+  useEffect(() => {
+    if(!authUser?.id) return;
+    const store=new SharedStateSync(authUser.id,activeSector,(records,initial)=>{
+      const grouped=new Map<string,SharedRecord[]>();
+      for(const record of records){
+        const group=grouped.get(record.kind)||[];group.push(record);grouped.set(record.kind,group);
+      }
+      const apply=<T extends object>(kind:string,current:T[],set:React.Dispatch<React.SetStateAction<T[]>>) => {
+        const rows=grouped.get(kind)||[];
+        const fromServer=rows.filter(row=>!row.deleted&&row.value).map(row=>row.value as T);
+        const known=new Set(rows.map(row=>row.recordId));
+        const legacyKey=kind==='staff_members' ? getGlobalUserKey(kind,authUser.id)
+          : getScopedKey(kind,authUser.id,activeSector);
+        store.prime(kind,fromServer);
+        set(previous=>{
+          const imported=initial && legacyKeys.current?.has(legacyKey)
+            ? previous.filter(row=>!known.has(recordIdOf(kind,row))) : [];
+          const merged=[...fromServer,...imported];
+          return JSON.stringify(previous)===JSON.stringify(merged)?previous:merged;
+        });
+      };
+      apply('categories',categories,setCategories);
+      apply('products',products,setProducts);
+      apply('tables',tables,setTables);
+      apply('customers',customers,setCustomers);
+      apply('orders',orders,setOrders);
+      apply('held_orders',heldOrders,setHeldOrders);
+      apply('inventory_logs',inventoryLogs,setInventoryLogs);
+      apply('cash_movements',cashMovements,setCashMovements);
+      apply('shift_history',shiftHistory,setShiftHistory);
+      apply('promo_codes',promoCodes,setPromoCodes);
+      apply('stock_items',stockItems,setStockItems);
+      apply('bundles',bundles,setBundles);
+      apply('attendance_logs',attendanceLogs,setAttendanceLogs);
+      apply('kds_tickets',kdsTickets,setKdsTickets);
+      apply('carwash_queue',carwashQueue,setCarwashQueue);
+      apply('bookings',bookings,setBookings);
+      apply('commission_rules',commissionRules,setCommissionRules);
+      apply('payroll_slips',payrollSlips,setPayrollSlips);
+      apply('staff_members',staffMembers,setStaffMembers);
+      const lifecycle=(grouped.get('sent_lifecycle_hooks')||[]).filter(row=>!row.deleted).map(row=>row.recordId);
+      store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
+      if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
+      const remoteShift=grouped.get('shift')?.find(row=>!row.deleted&&row.recordId==='main')?.value?.data as Shift|undefined;
+      store.prime('shift',remoteShift?[{id:'main',data:remoteShift}]:[]);
+      if(remoteShift && JSON.stringify(remoteShift)!==JSON.stringify(shift))setShift(remoteShift);
+      const remoteSettings=grouped.get('store_settings')?.find(row=>!row.deleted&&row.recordId==='main')?.value;
+      store.prime('store_settings',remoteSettings?[remoteSettings]:[]);
+      if(remoteSettings){
+        const {id: _id,...safe}=remoteSettings;
+        setSettings(prev=>({...prev,...safe,subscription:prev.subscription,branches:prev.branches,
+          activeBranchId:prev.activeBranchId,logoUrl:prev.logoUrl,
+          registeredTerminalId:prev.registeredTerminalId,businessSector:prev.businessSector,
+          autoPrintReceipt:prev.autoPrintReceipt,receiptPaperSize:prev.receiptPaperSize} as StoreSettings));
+      }
+      const userRows=grouped.get('users')||[];
+      const remoteUsers=userRows.filter(row=>!row.deleted&&row.value).map(row=>row.value as unknown as User);
+      const userIds=new Set(userRows.map(row=>row.recordId));
+      store.prime('users',remoteUsers);
+      setUsers(previous=>{
+        const importedUsers=initial&&legacyKeys.current?.has(`newhope_users_${authUser.id}`)
+          ? previous.filter(user=>user.id!==authUser.id&&user.role!=='ADMIN'&&user.pin.startsWith('sha256$')&&!userIds.has(user.id)) : [];
+        const combined=[previous.find(user=>user.id===authUser.id)||defaultOwnerUser,...remoteUsers,...importedUsers];
+        return JSON.stringify(previous)===JSON.stringify(combined)?previous:combined;
+      });
+      // One-time migration for accounts whose catalog was synced before the
+      // versioned store existed. A tombstone counts as a record: never revive it.
+      if(initial && !grouped.get('products')?.length && !products.length){
+        void pullCatalog({businessId:makeBusinessId(authUser.id,activeSector),sector:activeSector,
+          storeName:settings.storeName,ownerRef:authUser.id}).then(legacy=>{
+          if(!legacy || sharedSync.current!==store)return;
+          if(legacy.products.length)setProducts(previous=>previous.length?previous:legacy.products.map((product:any)=>({
+            id:product.id,name:product.name,price:product.price,costPrice:product.costPrice,
+            sku:product.sku||'',unit:product.unit||'pcs',description:product.description||'',
+            categoryId:product.categoryId||'cat-1',image:'',stock:0,minStockAlert:5,
+            isAvailable:product.isAvailable,
+          })));
+          if(legacy.categories.length)setCategories(previous=>previous.length?previous:legacy.categories.map((category:any)=>({
+            id:category.id,name:category.name,icon:'Package',color:'#3B82F6',
+          })));
+        });
+      }
+    },setSharedSyncStatus);
+    sharedSync.current=store;
+    const prime=<T extends object>(kind:string,rows:T[])=>store.prime(kind,rows);
+    prime('categories',categories);prime('products',products.map(product=>({
+      ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
+    })));prime('tables',tables);prime('customers',customers);
+    prime('orders',orders);prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
+    prime('cash_movements',cashMovements);prime('shift_history',shiftHistory);
+    prime('promo_codes',promoCodes);prime('stock_items',stockItems);prime('bundles',bundles);
+    prime('attendance_logs',attendanceLogs);prime('kds_tickets',kdsTickets);
+    prime('carwash_queue',carwashQueue);prime('bookings',bookings);
+    prime('commission_rules',commissionRules);prime('payroll_slips',payrollSlips);
+    prime('staff_members',staffMembers);prime('shift',[{id:'main',data:shift}]);
+    prime('store_settings',[sharedSettings]);
+    store.start();
+    const onOnline=()=>void store.refresh(false);
+    const onFocus=()=>void store.refresh(false);
+    window.addEventListener('online',onOnline);window.addEventListener('focus',onFocus);
+    return ()=>{store.stop();if(sharedSync.current===store)sharedSync.current=null;
+      window.removeEventListener('online',onOnline);window.removeEventListener('focus',onFocus);};
+  // Collection changes are tracked by the effect below. Recreating this owner/sector
+  // connection on every edit would discard its in-flight version baseline.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[authUser?.id,activeSector]);
+
+  useEffect(()=>{
+    if(!authUser?.id)return;
+    if(currentUser.id!==authUser.id && !users.some(user=>user.id===currentUser.id&&user.status==='ACTIVE'))
+      setCurrentUser(users.find(user=>user.id===authUser.id)||defaultOwnerUser);
+  },[users,currentUser.id,authUser?.id]);
+
+  useEffect(()=>{
+    sharedSync.current?.setOutletId(/^[0-9a-f-]{36}$/i.test(settings.activeBranchId||'')
+      ?settings.activeBranchId:undefined);
+  },[settings.activeBranchId,activeSector]);
+
+  useEffect(()=>{
+    const store=sharedSync.current;
+    if(!store)return;
+    store.track('categories',categories);store.track('products',products.map(product=>({
+      ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
+    })));store.track('tables',tables);
+    store.track('customers',customers);store.track('orders',orders);
+    store.track('held_orders',heldOrders);store.track('inventory_logs',inventoryLogs);
+    store.track('cash_movements',cashMovements);store.track('shift_history',shiftHistory);
+    store.track('promo_codes',promoCodes);store.track('stock_items',stockItems);
+    store.track('bundles',bundles);store.track('attendance_logs',attendanceLogs);
+    store.track('kds_tickets',kdsTickets);store.track('carwash_queue',carwashQueue);
+    store.track('bookings',bookings);store.track('commission_rules',commissionRules);
+    store.track('payroll_slips',payrollSlips);store.track('staff_members',staffMembers);
+    store.track('shift',[{id:'main',data:shift}]);
+    store.track('store_settings',[sharedSettings]);
+    store.track('sent_lifecycle_hooks',sentLifecycleHookIds.map(id=>({id})));
+    store.track('users',users.filter(user=>user.id!==authUser?.id&&user.pin.startsWith('sha256$')));
+  },[categories,products,tables,customers,orders,heldOrders,inventoryLogs,cashMovements,
+    shiftHistory,promoCodes,stockItems,bundles,attendanceLogs,kdsTickets,
+    carwashQueue,bookings,commissionRules,payrollSlips,staffMembers,shift,
+    sharedSettings,sentLifecycleHookIds,users,authUser?.id]);
 
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
@@ -1069,47 +1251,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [sentLifecycleHookIds, storeOwnerId, settings.businessSector]);
 
   /*
-   * SINKRONISASI KATALOG.
-   *
-   * Dikirim utuh, bukan yang berubah saja — lihat alasannya di endpoint
-   * /api/v1/sync/catalog. Tanpa ini, produk hanya sampai ke database kalau ia
-   * TERJUAL, sehingga produk yang tidak pernah laku — justru yang paling perlu
-   * diketahui pemilik — tidak akan pernah muncul di panel.
-   *
-   * Ditunda 8 detik dan di-reset setiap perubahan. `products` ikut berubah pada
-   * SETIAP penjualan karena stoknya berkurang; tanpa penundaan, satu jam sibuk
-   * akan mengirim ratusan katalog identik.
-   */
-  useEffect(() => {
-    if (products.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushCatalog(
-        {
-          businessId: makeBusinessId(storeOwnerId, activeSector),
-          outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
-          sector: activeSector,
-          storeName: settings.storeName,
-          ownerRef: storeOwnerId,
-        },
-        products.filter(p=>!isFreePlan(settings.subscription) || freeProductAllowed(settings.subscription?.freeSelection,p.id,activeSector)).map((p) => ({
-          id: p.id,
-          name: p.name,
-          sku: p.sku,
-          price: p.price,
-          costPrice: p.costPrice,
-          unit: p.unit,
-          description: p.description,
-          categoryName: categories.find((c) => c.id === p.categoryId)?.name,
-          isAvailable: p.isAvailable,
-        }))
-      );
-    }, 8_000);
-
-    return () => window.clearTimeout(timer);
-  }, [products, categories, storeOwnerId, activeSector, settings.storeName, settings.subscription, settings.activeBranchId]);
-
-  /*
    * SINKRONISASI DATA PELANGGAN (CRM) KE POSTGRESQL.
    *
    * Seperti katalog, data pelanggan dikirim berkala saat ada perubahan agar
@@ -1195,84 +1336,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => window.clearTimeout(timer);
   }, [payrollSlips, storeOwnerId, activeSector, settings.storeName]);
-
-  /*
-   * HIDRASI KATALOG DARI SERVER (PULL-SYNC).
-   * Menarik produk & kategori terbaru saat online jika membuka di perangkat baru.
-   */
-  useEffect(() => {
-    let active = true;
-    async function hydrateCatalog() {
-      const target: SyncTarget = {
-        businessId: makeBusinessId(storeOwnerId, activeSector),
-        sector: activeSector,
-        storeName: settings.storeName,
-        ownerRef: storeOwnerId,
-      };
-      const remote = await pullCatalog(target);
-      if (!active || !remote) return;
-
-      if (remote.products.length > 0) {
-        setProducts((localProds) => {
-          const map = new Map(localProds.map((p) => [p.id, p]));
-          for (const rp of remote.products) {
-            const existing = map.get(rp.id);
-            if (existing) {
-              map.set(rp.id, {
-                ...existing,
-                name: rp.name,
-                price: rp.price,
-                costPrice: rp.costPrice,
-                sku: rp.sku || existing.sku,
-                unit: rp.unit || existing.unit,
-                description: rp.description ?? existing.description,
-                isAvailable: rp.isAvailable,
-              });
-            } else {
-              map.set(rp.id, {
-                id: rp.id,
-                name: rp.name,
-                price: rp.price,
-                costPrice: rp.costPrice,
-                sku: rp.sku || '',
-                unit: rp.unit || 'pcs',
-                description: rp.description || '',
-                categoryId: rp.categoryId || 'cat-1',
-                image: '',
-                // No stock snapshot was returned: never invent inventory.
-                stock: 0,
-                minStockAlert: 5,
-                isAvailable: rp.isAvailable,
-              });
-            }
-          }
-          return Array.from(map.values());
-        });
-      }
-
-      if (remote.categories.length > 0) {
-        setCategories((localCats) => {
-          const map = new Map(localCats.map((c) => [c.id, c]));
-          for (const rc of remote.categories) {
-            if (!map.has(rc.id)) {
-              map.set(rc.id, {
-                id: rc.id,
-                name: rc.name,
-                icon: 'Package',
-                color: '#3B82F6',
-              });
-            }
-          }
-          return Array.from(map.values());
-        });
-      }
-    }
-
-    void hydrateCatalog();
-    return () => {
-      active = false;
-    };
-  }, [storeOwnerId, activeSector, settings.storeName]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -1651,8 +1714,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setPromoCodes((prev) => [newPromo, ...prev]);
     if (soundEnabled) playPOSSound('click');
   };
-  useEffect(() => { safeSetLocalStorage('newhope_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { safeSetLocalStorage('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
+  useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_users_${authUser.id}`, JSON.stringify(users)); }, [users,authUser?.id]);
+  useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_current_user_${authUser.id}`, JSON.stringify(currentUser)); }, [currentUser,authUser?.id]);
   useEffect(() => {
     localStorage.setItem(
       getScopedKey('cash_movements', storeOwnerId, activeSector),
@@ -3034,9 +3097,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('sent_lifecycle_hooks', uId, currentSec), JSON.stringify(sentLifecycleHookIds));
 
     // 2. Load target sector state
-    const targetCategories = loadScopedData('categories', uId, sector, preset.categories);
-    const targetProducts = loadScopedData('products', uId, sector, preset.products);
-    const targetTables = loadScopedData('tables', uId, sector, preset.tables);
+    const targetCategories = loadScopedData<Category[]>('categories', uId, sector, []);
+    const targetProducts = loadScopedData('products', uId, sector, []);
+    const targetTables = loadScopedData('tables', uId, sector, []);
     const targetStockItems = loadScopedData('stock_items', uId, sector, INITIAL_STOCK_ITEMS);
     const targetOrders = loadScopedData('orders', uId, sector, []);
     const targetHeldOrders = loadScopedData('held_orders', uId, sector, []);
@@ -3500,7 +3563,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         voidOrder: requireWritable(voidOrder),
         refundOrderItems: requireWritable(refundOrderItems),
         syncStatus,
-        forceSync: () => void runSync(syncTarget, true),
+        forceSync: () => { void runSync(syncTarget, true); void sharedSync.current?.refresh(false); void sharedSync.current?.flush(); },
         holdOrder: requireWritable(holdOrder),
         recallHoldOrder: requireWritable(recallHoldOrder),
         cancelHoldOrder: requireWritable(cancelHoldOrder),
@@ -3550,6 +3613,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     >
       {/* Anything below can read the active business unit via useTenant(). */}
       <TenantProvider value={tenant}>{children}</TenantProvider>
+      {(sharedSyncStatus.pending>0 || sharedSyncStatus.error) && (
+        <div role="status" className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-lg">
+          {sharedSyncStatus.error?.startsWith('Konflik data')
+            ? sharedSyncStatus.error
+            : `${sharedSyncStatus.pending} perubahan operasional menunggu sinkronisasi.`}
+          {sharedSyncStatus.error && !sharedSyncStatus.error.startsWith('Konflik data') &&
+            <span className="block text-xs">{sharedSyncStatus.error}</span>}
+          {sharedSyncStatus.conflict && <div className="mt-2 flex gap-2">
+            <button className="rounded-lg border border-amber-700 px-2 py-1" onClick={()=>void sharedSync.current?.resolveConflict('server')}>
+              Pakai data server
+            </button>
+            <button className="rounded-lg bg-amber-800 px-2 py-1 text-white" onClick={()=>void sharedSync.current?.resolveConflict('local')}>
+              Pakai perubahan saya
+            </button>
+          </div>}
+        </div>
+      )}
     </POSContext.Provider>
   );
 };

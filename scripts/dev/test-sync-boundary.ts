@@ -16,6 +16,9 @@ for(const [url,method,status] of [
   ['/api/v1/sync/attendance','POST',401],
   ['/api/v1/sync/payroll','POST',401],
   ['/api/v1/sync/payroll','GET',405],
+  ['/api/v1/sync/state','GET',401],
+  ['/api/v1/sync/state','POST',401],
+  ['/api/v1/sync/state','DELETE',405],
   ['/api/admin/merchants','POST',404],
   ['/api/v1/sync/../admin','POST',404],
 ] as const){

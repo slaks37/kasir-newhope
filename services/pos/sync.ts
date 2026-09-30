@@ -23,6 +23,7 @@ import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessErr
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
+import { registerSharedStateRoutes } from './sharedState';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -99,6 +100,7 @@ const outletRef = (value: unknown): string | null => typeof value === 'string' &
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerSharedStateRoutes(app,db);
   // Explicit owner onboarding; provisioning stays inside the existing POS role.
   // No outlet is opened here: billing separately enforces the active-outlet cap.
   app.post('/api/v1/sync/business', async (req, res) => {
@@ -759,7 +761,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         if (!outq.rows.length) throw new BillingError(409, 'OUTLET_SETUP_REQUIRED');
         outletId = outq.rows[0].id;
         }
-        const seen: string[] = [];
         assertFreeScope(await freePlanState(c,tenantId),sector,[...desiredProductRefs]);
         if (freeScope) {
           const misplaced = await c.query(`SELECT id FROM pos.products WHERE tenant_id=$1
@@ -773,7 +774,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           const ref = str(p.id, 96);
           const name = str(p.name, 100);
           if (!ref || !name) continue;
-          seen.push(ref);
 
           /*
            * CATALOG SYNC: hanya metadata produk.
@@ -822,24 +822,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           upserted++;
         }
 
-        // Legacy full-snapshot protocol: scope retirement to this merchant,
-        // never all sibling businesses owned by the same tenant.
-        // Replacing this with explicit tombstones + revisions is still needed
-        // before enabling continuous two-way catalog synchronization.
-        let retired = 0;
-        if (!freeScope && seen.length > 0) {
-          const r = await c.query(
-            `UPDATE pos.products SET is_available = FALSE
-              WHERE tenant_id = $1 AND merchant_id = $3
-                AND external_ref IS NOT NULL
-                AND NOT (external_ref = ANY($2::text[])) AND is_available
-              RETURNING id`,
-            [tenantId, seen, merchantId]
-          );
-          retired = r.rows.length;
-        }
-
-        return { tenantId, upserted, retired };
+        // Older clients still send whole catalog snapshots. Never interpret an
+        // omitted row as a deletion: an offline/stale device could hide live
+        // products. Versioned shared-state tombstones perform explicit deletion.
+        return { tenantId, upserted, retired: 0 };
       });
 
       res.json({ ok: true, ...out });

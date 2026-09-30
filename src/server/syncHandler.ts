@@ -12,6 +12,7 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/customers': ['POST'],
   '/api/v1/sync/attendance': ['POST'],
   '/api/v1/sync/payroll': ['POST'],
+  '/api/v1/sync/state': ['GET','POST'],
   '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
 };
 

@@ -179,16 +179,52 @@ async function main(){
   assert.equal((await outletRequest({id:deferred.id,name:deferred.name,isActive:false})).status,200);
   assert.equal((await db.query("SELECT count(*)::int n FROM internal.tenants WHERE owner_user_ref='owner-three'")).rows[0].n,1);
   console.log('PASS: explicit first outlet, deferred branch retention, activation cap and signup tenant reuse');
+  const stateRequest=(owner:string,operations:any[])=>fetch(url+'/api/v1/sync/state',{method:'POST',headers:{'x-auth-sub':owner,'content-type':'application/json'},body:JSON.stringify({sector:'FNB',operations})});
+  const stateOperation={kind:'tables',recordId:'table-1',baseRevision:0,deleted:false,value:{id:'table-1',name:'Meja 1',status:'AVAILABLE'}};
+  const firstState=await stateRequest('owner-three',[stateOperation]);
+  assert.equal(firstState.status,200,await firstState.clone().text());
+  assert.equal((await firstState.json()).versions[0].revision,1);
+  const staleState=await stateRequest('owner-three',[stateOperation]);
+  assert.equal(staleState.status,409,'A stale device may not overwrite a newer table');
+  const secondState=await stateRequest('owner-three',[{...stateOperation,baseRevision:1,value:{...stateOperation.value,status:'OCCUPIED'}}]);
+  assert.equal(secondState.status,200,await secondState.clone().text());
+  const stateRead=await (await fetch(url+'/api/v1/sync/state?sector=FNB',{headers:{'x-auth-sub':'owner-three'}})).json();
+  assert.equal(stateRead.records.find((r:any)=>r.kind==='tables'&&r.recordId==='table-1').value.status,'OCCUPIED');
+  const otherStateRead=await (await fetch(url+'/api/v1/sync/state?sector=FNB',{headers:{'x-auth-sub':'owner-one'}})).json();
+  assert.equal(otherStateRead.records.some((r:any)=>r.recordId==='table-1'),false);
+  const unsafeSettings=await stateRequest('owner-three',[{kind:'store_settings',recordId:'main',baseRevision:0,deleted:false,value:{subscription:{status:'ACTIVE'}}}]);
+  assert.equal(unsafeSettings.status,400,'Subscription cannot be set through operational state');
+  const unsafeRole=await stateRequest('owner-three',[{kind:'users',recordId:'staff-1',baseRevision:0,deleted:false,value:{id:'staff-1',role:'ADMIN',pin:'1234'}}]);
+  assert.equal(unsafeRole.status,400,'Client cannot fabricate a synced ADMIN');
+  const stateAudit=await db.query("SELECT count(*)::int n FROM internal.audit_logs WHERE event_type='SHARED_STATE_CHANGED' AND merchant_id=$1",[firstOutlet.merchant_id]);
+  assert.equal(stateAudit.rows[0].n,2,'Only successful operational mutations are audited');
+  const sharedProduct={kind:'products',recordId:'shared-product',baseRevision:0,deleted:false,
+    value:{id:'shared-product',name:'Produk bersama',sku:'SHARED-1',price:15000,costPrice:5000,
+      unit:'pcs',categoryName:'Minuman',isAvailable:true,stock:2}};
+  const productCreate=await stateRequest('owner-three',[sharedProduct]);
+  assert.equal(productCreate.status,200,await productCreate.clone().text());
+  assert.equal((await db.query("SELECT name,price,is_available FROM pos.products WHERE tenant_id=$1 AND external_ref='shared-product'",
+    [signupTenant])).rows[0].name,'Produk bersama');
+  assert.equal((await stateRequest('owner-three',[sharedProduct])).status,409,'Stale catalog update must conflict');
+  const productDelete=await stateRequest('owner-three',[{...sharedProduct,baseRevision:1,deleted:true,value:null}]);
+  assert.equal(productDelete.status,200,await productDelete.clone().text());
+  assert.equal((await db.query("SELECT is_available FROM pos.products WHERE tenant_id=$1 AND external_ref='shared-product'",
+    [signupTenant])).rows[0].is_available,false,'Explicit tombstone retires a product');
+  const deletedState=await (await fetch(url+'/api/v1/sync/state?sector=FNB',{headers:{'x-auth-sub':'owner-three'}})).json();
+  assert.equal(deletedState.records.find((r:any)=>r.kind==='products'&&r.recordId==='shared-product').deleted,true);
+  console.log('PASS: shared state rejects stale/foreign changes, restricts privileged fields and audits accepted writes');
   const sync=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',storeName:'Fresh Merchant',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}]})});
   assert.equal(sync.status,200,'real catalog sync: '+await sync.text());
   const product=(await db.query("SELECT id,tenant_id,merchant_id,outlet_id FROM pos.products WHERE external_ref='product-test'")).rows[0];
   const catalogHeaders={'x-auth-sub':'owner-three','content-type':'application/json'};
-  const secondDevice=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:catalogHeaders,body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'},{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000}]})});
+  const secondDevice=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:catalogHeaders,body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000}]})});
   assert.equal(secondDevice.status,200,await secondDevice.clone().text());
-  assert.equal((await db.query('SELECT is_available FROM pos.products WHERE id=$1',[product.id])).rows[0].is_available,true);
+  assert.equal((await db.query('SELECT is_available FROM pos.products WHERE id=$1',[product.id])).rows[0].is_available,true,
+    'An old-device snapshot omitting a product may not retire it');
   const remoteCatalog=await (await fetch(url+'/api/v1/sync/catalog?businessId=owner-three_FNB&sector=FNB',{headers:catalogHeaders})).json();
   assert.equal(remoteCatalog.ok,true,JSON.stringify(remoteCatalog));
-  assert.equal(remoteCatalog.products.length,2);
+  assert.equal(remoteCatalog.products.length,3);
+  assert.equal(remoteCatalog.products.find((p:any)=>p.id==='shared-product').isAvailable,false);
   const beverage=remoteCatalog.products.find((p:any)=>p.id==='device-b-product');
   assert.ok(remoteCatalog.categories.some((c:any)=>c.id===beverage.categoryId&&c.name==='Minuman'),'Product category must use the same external ID as the returned categories');
   const foreignCatalog=await (await fetch(url+'/api/v1/sync/catalog?businessId=owner-three_FNB&sector=FNB',{headers:{'x-auth-sub':'owner-one'}})).json();
