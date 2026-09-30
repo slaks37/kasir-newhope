@@ -25,15 +25,18 @@ REVOKE ALL ON pos.shared_state_records FROM PUBLIC, anon, authenticated;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='svc_pos') THEN
     GRANT SELECT, INSERT, UPDATE ON pos.shared_state_records TO svc_pos;
-    CREATE POLICY shared_state_pos_tenant ON pos.shared_state_records
-      TO svc_pos
-      USING (
-        tenant_id::text = current_setting('app.tenant_id', true)
-        AND (merchant_id IS NULL OR merchant_id::text = current_setting('app.merchant_id', true))
-      )
-      WITH CHECK (
-        tenant_id::text = current_setting('app.tenant_id', true)
-        AND (merchant_id IS NULL OR merchant_id::text = current_setting('app.merchant_id', true))
-      );
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='pos'
+      AND tablename='shared_state_records' AND policyname='shared_state_pos_tenant') THEN
+      CREATE POLICY shared_state_pos_tenant ON pos.shared_state_records
+        TO svc_pos
+        USING (
+          tenant_id::text = current_setting('app.tenant_id', true)
+          AND (merchant_id IS NULL OR merchant_id::text = current_setting('app.merchant_id', true))
+        )
+        WITH CHECK (
+          tenant_id::text = current_setting('app.tenant_id', true)
+          AND (merchant_id IS NULL OR merchant_id::text = current_setting('app.merchant_id', true))
+        );
+    END IF;
   END IF;
 END $$;
