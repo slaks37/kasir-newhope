@@ -52,6 +52,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const [fullName, setFullName] = useState("");
   const [storeName, setStoreName] = useState("");
+  const [firstOutletName, setFirstOutletName] = useState("");
+  const [openSecondOutlet, setOpenSecondOutlet] = useState(false);
+  const [secondOutletName, setSecondOutletName] = useState("");
   const [sector, setSector] = useState<BusinessSector>("FNB");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -108,6 +111,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setError("Nama toko / usaha wajib diisi.");
       return;
     }
+    if (mode === "register" && openSecondOutlet && !secondOutletName.trim()) {
+      setError("Isi nama outlet kedua atau pilih untuk membukanya nanti.");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -138,6 +145,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           fullName: fullName.trim() || storeName.trim(),
           storeName: storeName.trim(),
           sector,
+          firstOutletName: firstOutletName.trim() || `${storeName.trim()} — Cabang Utama`,
+          secondOutletName: openSecondOutlet ? secondOutletName.trim() : '',
         });
         if (err) {
           if (
@@ -274,6 +283,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   />
                 </div>
               </div>
+              <div className="nh-field-row">
+                <div className="nh-field">
+                  <label htmlFor="first-outlet-name">Outlet 1 — buka saat aktivasi</label>
+                  <input id="first-outlet-name" value={firstOutletName} maxLength={150}
+                    onChange={e=>setFirstOutletName(e.target.value)}
+                    placeholder={storeName ? `${storeName} — Cabang Utama` : 'Nama outlet utama'} />
+                </div>
+                <div className="nh-field">
+                  <label htmlFor="second-outlet-name">Outlet 2 — opsional</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700" htmlFor="open-second-outlet">
+                    <input id="open-second-outlet" type="checkbox" checked={openSecondOutlet} onChange={e=>setOpenSecondOutlet(e.target.checked)} />
+                    Buka sekarang (atau tunda sampai nanti)
+                  </label>
+                  {openSecondOutlet && <input id="second-outlet-name" value={secondOutletName} maxLength={150}
+                    onChange={e=>setSecondOutletName(e.target.value)} placeholder="Nama outlet kedua" required />}
+                </div>
+              </div>
+              <p className="nh-field-hint">Kapasitas paket dihitung dari outlet yang aktif. Outlet berikutnya bisa dibuka nanti melalui Pengaturan.</p>
               <fieldset className="nh-sector-field">
                 <legend>Jenis usaha</legend>
                 <div className="nh-sector-options">

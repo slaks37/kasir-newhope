@@ -66,20 +66,32 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   }));
   app.post('/api/v1/subscription/outlets',run(async(req,res)=>{
     const tenantId=await tenant(req),b=req.body || {};
-    if(!b.name || String(b.name).length>150) throw new BillingError(400,'INVALID_OUTLET_NAME');
+    const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
+    if(!principal || principal.subject==='local-development') throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    const sector=String(b.businessSector || 'FNB');
+    if(!['FNB','RETAIL','LAUNDRY','BARBERSHOP','CARWASH'].includes(sector)) throw new BillingError(400,'INVALID_BUSINESS_SECTOR');
+    if(!b.name || !String(b.name).trim() || String(b.name).length>150) throw new BillingError(400,'INVALID_OUTLET_NAME');
     const result=await db.tx(async c=>{
       await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
       await assertTenantWritable(c,tenantId);
-      const merchant=(await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,b.businessSector || 'FNB'])).rows[0];
-      if(!merchant) throw new BillingError(409,'SYNC_BUSINESS_BEFORE_ADDING_OUTLET');
+      let merchant=(await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,sector])).rows[0];
+      if(!merchant) {
+        const created=await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
+          VALUES(uuidv7(),$1,$2,$3,$4)
+          ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1
+          RETURNING id`,[tenantId,String(b.storeName || b.name).slice(0,150),sector,`${principal.subject}_${sector}`]);
+        merchant=created.rows[0];
+      }
+      if(!merchant) throw new BillingError(409,'BUSINESS_OWNERSHIP_CONFLICT');
       const id=/^[0-9a-f-]{36}$/i.test(b.id || '')?b.id:randomUUID();
-      const existing=(await c.query('SELECT tenant_id FROM internal.outlets WHERE id=$1',[id])).rows[0];
-      if(existing && existing.tenant_id!==tenantId) throw new BillingError(403,'OUTLET_NOT_OWNED');
+      const existing=(await c.query('SELECT * FROM internal.outlets WHERE id=$1',[id])).rows[0];
+      if(existing && (existing.tenant_id!==tenantId || existing.merchant_id!==merchant.id)) throw new BillingError(403,'OUTLET_NOT_OWNED');
       if(b.isActive!==false) await assertOutletCapacity(c,tenantId,id);
       const {rows}=await c.query(`INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id,tenantId,merchant.id,String(b.name),String(b.address || ''),Number(b.latitude)||0,Number(b.longitude)||0,Math.max(1,Number(b.allowedRadiusMeters)||100),b.isActive!==false]);
+        [id,tenantId,merchant.id,String(b.name).trim(),String(b.address ?? existing?.address ?? ''),Number(b.latitude ?? existing?.latitude)||0,Number(b.longitude ?? existing?.longitude)||0,Math.max(1,Number(b.allowedRadiusMeters ?? existing?.radius_meters)||100),b.isActive!==false]);
       return rows[0];
     });res.json({ok:true,outlet:result});
   }));

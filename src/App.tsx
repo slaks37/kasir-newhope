@@ -26,6 +26,7 @@ import { SubscriptionLockScreen } from './components/auth/SubscriptionLockScreen
 import { subscriptionAccess } from './config/subscriptionPolicy';
 import { isFreePlan } from './config/freePlanPolicy';
 import { FreePlanSelection } from './components/auth/FreePlanSelection';
+import { OutletSetupGate } from './components/auth/OutletSetupGate';
 import { Product, ProductVariant, SelectedModifier, Order, PermissionFeature } from './types';
 import { formatRupiah } from './utils/formatters';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag } from 'lucide-react';
@@ -407,6 +408,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
       )}
 
       {free && (!settings.subscription?.freeSelection || settings.subscription.freeSelection.sector!==settings.businessSector || editFreeSelection) && <FreePlanSelection onClose={settings.subscription?.freeSelection?.sector===settings.businessSector?()=>setEditFreeSelection(false):undefined}/>}
+      {!isPaymentRequired && !free && activeTab !== 'payment' && <OutletSetupGate onManagePlan={() => setActiveTab('payment')} />}
       {!free && activeTab !== 'payment' && (() => {
         const sub = settings.subscription;
         if (!sub) return null;

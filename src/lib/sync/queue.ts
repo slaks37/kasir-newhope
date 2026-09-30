@@ -48,6 +48,7 @@ export interface SyncPayloadItem {
 
 export interface SyncPayloadTxn {
   clientTxnId: string;
+  branchId?: string;
   invoiceNumber?: string;
   cashierRef?: string;
   cashierName?: string;
@@ -80,6 +81,7 @@ type SyncMeta = Omit<SyncStatus, 'pending' | 'inFlight'>;
 
 export interface SyncTarget {
   businessId: string;
+  outletId?: string;
   sector: BusinessSector;
   storeName: string;
   ownerRef: string;
@@ -167,6 +169,7 @@ function batchKey(businessId: string, txns: SyncPayloadTxn[]): string {
 export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadTxn {
   return {
     clientTxnId: order.id,
+    branchId: order.branchId,
     invoiceNumber: order.id,
     cashierName: order.cashierName,
     cashierRole,
@@ -230,6 +233,7 @@ export async function pushCatalog(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         businessId: target.businessId,
+        outletId: target.outletId,
         sector: target.sector,
         storeName: target.storeName,
         ownerRef: target.ownerRef,
@@ -396,7 +400,7 @@ let flushing = new Set<string>();
  * jalur transaksi kasir, dan kegagalan sinkronisasi tidak boleh menjatuhkan
  * penjualan.
  */
-export async function flush(target: SyncTarget): Promise<SyncStatus> {
+export async function flush(target: SyncTarget, force = false): Promise<SyncStatus> {
   const { businessId } = target;
 
   // Satu pengiriman per unit usaha pada satu waktu. Dua pengiriman paralel akan
@@ -410,22 +414,24 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
 
   // Hormati backoff. Percobaan tanpa jeda saat server sedang bermasalah hanya
   // memperparah keadaannya.
-  if (meta.failures > 0 && meta.lastErrorAt) {
+  if (!force && meta.failures > 0 && meta.lastErrorAt) {
     const wait = BACKOFF_MS[Math.min(meta.failures - 1, BACKOFF_MS.length - 1)];
     const since = Date.now() - new Date(meta.lastErrorAt).getTime();
     if (Number.isFinite(since) && since >= 0 && since < wait) return getStatus(businessId);
   }
 
   flushing.add(businessId);
-  const batch = all.slice(0, BATCH_SIZE);
+  const firstOutlet = all[0]?.branchId || target.outletId;
+  const batch = all.filter(txn => (txn.branchId || target.outletId) === firstOutlet).slice(0, BATCH_SIZE);
 
   try {
     const res = await fetch('/api/v1/sync/transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        idempotencyKey: batchKey(businessId, batch),
+        idempotencyKey: batchKey(`${businessId}:${firstOutlet || 'legacy'}`, batch),
         businessId,
+        outletId: firstOutlet,
         sector: target.sector,
         storeName: target.storeName,
         ownerRef: target.ownerRef,
@@ -433,7 +439,10 @@ export async function flush(target: SyncTarget): Promise<SyncStatus> {
       }),
     });
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const failure = await res.json().catch(() => null);
+      throw new Error(failure?.error ? `${failure.error} (HTTP ${res.status})` : `HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (!data?.ok) throw new Error(data?.error || 'SYNC_FAILED');
 

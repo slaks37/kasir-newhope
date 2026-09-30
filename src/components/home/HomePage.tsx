@@ -82,7 +82,7 @@ const sectors = [
     title: "Toko tertata, belanja jadi mudah.",
     description:
       "Layani belanja harian dan pantau persediaan tanpa menghitung ulang satu per satu.",
-    photo: "photo-1556742049-0a67e557b640",
+    photo: "/retail-store.jpg",
     alt: "Ilustrasi pelayanan pelanggan di toko ritel",
     features: [
       "Scan barcode saat checkout",
@@ -235,7 +235,7 @@ const plans = [
       "Hingga 2 outlet",
       "Produk dan staf tidak terbatas",
       "Kuota AI trial terbatas",
-      "Data read-only 14 hari setelah trial",
+      "Setelah trial: Free selamanya, 10 produk & 1 outlet",
     ],
     cta: "Coba Gratis 45 Hari",
   },
@@ -290,7 +290,9 @@ function SectionTitle({
 }
 function BusinessPhoto({ sector }: { sector: (typeof sectors)[number] }) {
   const [failed, setFailed] = useState(false);
-  const base = `https://images.unsplash.com/${sector.photo}`;
+  React.useEffect(() => setFailed(false), [sector.photo]);
+  const localPhoto = sector.photo.startsWith('/');
+  const base = localPhoto ? sector.photo : `https://images.unsplash.com/${sector.photo}`;
   return (
     <div className="nh-business-photo">
       {failed ? (
@@ -300,8 +302,8 @@ function BusinessPhoto({ sector }: { sector: (typeof sectors)[number] }) {
         </div>
       ) : (
         <img
-          src={`${base}?fit=crop&fm=webp&w=1000&q=80`}
-          srcSet={`${base}?fit=crop&fm=webp&w=500&q=80 500w, ${base}?fit=crop&fm=webp&w=1000&q=80 1000w`}
+          src={localPhoto ? base : `${base}?fit=crop&fm=webp&w=1000&q=80`}
+          srcSet={localPhoto ? undefined : `${base}?fit=crop&fm=webp&w=500&q=80 500w, ${base}?fit=crop&fm=webp&w=1000&q=80 1000w`}
           sizes="(max-width: 850px) 100vw, 50vw"
           alt={sector.alt}
           width="1000"

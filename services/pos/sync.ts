@@ -18,11 +18,11 @@
 
 import type express from 'express';
 import { randomBytes } from 'node:crypto';
-import { assertTenantWritable, assertOutletCapacity, BillingError } from '../billing/engine';
+import { assertTenantWritable, BillingError } from '../billing/engine';
 import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessError } from '../billing/freePlan';
 import type { Db } from '../shared/db';
 import { SECTORS, writeActivity, type Sector } from './activity';
-import { canAccessBusiness, trustedPrincipal } from '../shared/auth';
+import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -95,6 +95,8 @@ const str = (v: unknown, max: number): string | null => {
   const t = v.trim();
   return t ? t.slice(0, max) : null;
 };
+const outletRef = (value: unknown): string | null => typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   // A receipt logo belongs to a business unit, never to the browser or owner account.
@@ -156,6 +158,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     // tunggal kepemilikan tenant baru maupun tenant yang sudah ada.
     const ownerRef = principal.subject;
     const idemKey = str(body.idempotencyKey, 120);
+    const requestedOutletId = outletRef(body.outletId);
     const txns: SyncTxn[] = Array.isArray(body.transactions) ? body.transactions : [];
 
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
@@ -165,6 +168,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         detail: 'businessId dan sector wajib; sector harus salah satu dari ' + SECTORS.join(', '),
       });
     }
+    if (body.outletId && !requestedOutletId) return res.status(400).json({ok:false,error:'INVALID_OUTLET_ID'});
     if (txns.length > MAX_BATCH) {
       return res.status(413).json({
         ok: false,
@@ -206,7 +210,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         } else {
         // Tenant (owner level)
         const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-        const t = await c.query(
+        const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+        const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
           `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -230,20 +235,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
         // Outlet (store branch level)
         const outq = await c.query(
-          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-          [merchantId]
+          `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+          [merchantId, requestedOutletId]
         );
-        if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-        } else {
-            await assertOutletCapacity(c,tenantId);
-            const outins = await c.query(
-                `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-                 [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-        }
+        if (!outq.rows.length) throw new BillingError(409, 'OUTLET_SETUP_REQUIRED');
+        outletId = outq.rows[0].id;
         }
 
         /* -- STAF & PRODUK -------------------------------------------------- */
@@ -664,10 +661,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
     const ownerRef = principal.subject;
     const products: any[] = Array.isArray(b.products) ? b.products : [];
+    const requestedOutletId = outletRef(b.outletId);
 
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
     }
+    if (b.outletId && !requestedOutletId) return res.status(400).json({ok:false,error:'INVALID_OUTLET_ID'});
     if (products.length > 2000) {
       return res.status(413).json({ ok: false, error: 'CATALOG_TOO_LARGE' });
     }
@@ -690,7 +689,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           await assertTenantWritable(c, tenantId);
         } else {
         const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-        const t = await c.query(
+        const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+        const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
           `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -717,20 +717,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         }
 
         const outq = await c.query(
-          `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-          [merchantId]
+          `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+          [merchantId, requestedOutletId]
         );
-        if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-        } else {
-            await assertOutletCapacity(c,tenantId);
-            const outins = await c.query(
-                `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-                 [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-        }
+        if (!outq.rows.length) throw new BillingError(409, 'OUTLET_SETUP_REQUIRED');
+        outletId = outq.rows[0].id;
         }
         const seen: string[] = [];
         assertFreeScope(await freePlanState(c,tenantId),sector,[...desiredProductRefs]);
@@ -925,7 +917,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -1089,7 +1082,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -1194,7 +1188,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL

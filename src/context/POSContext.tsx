@@ -593,15 +593,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!active || !response.ok || !data.ok || !Array.isArray(data.rows)) return;
         setSettings(prev => {
           const merged = mergeServerOutlets(prev.branches || INITIAL_BRANCHES, data.rows);
-          const selected = merged.find(branch => branch.id === (isFreePlan(prev.subscription)?prev.subscription?.freeSelection?.branchId:prev.activeBranchId) && branch.isActive);
-          return { ...prev, branches: merged, activeBranchId: selected?.id || merged.find(branch => branch.isActive)?.id };
+          const eligible = merged.filter(branch => branch.isActive && branch.businessSector === (prev.businessSector || 'FNB'));
+          const selected = eligible.find(branch => branch.id === (isFreePlan(prev.subscription)?prev.subscription?.freeSelection?.branchId:prev.activeBranchId));
+          return { ...prev, branches: merged, activeBranchId: selected?.id || eligible[0]?.id };
         });
       } catch { /* Keep offline branches when the server cannot be reached. */ }
     };
     void refresh();
     window.addEventListener('focus', refresh);
-    return () => { active = false; window.removeEventListener('focus', refresh); };
-  }, [authUser?.id, authSession?.access_token]);
+    window.addEventListener('outlets-updated', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); window.removeEventListener('outlets-updated', refresh); };
+  }, [authUser?.id, authSession?.access_token, settings.businessSector]);
 
   const freeOwnerOnly=isFreePlan(settings.subscription);
   useEffect(()=>{
@@ -674,6 +676,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const syncTarget: SyncTarget = {
     businessId: tenant.businessId,
+    outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
     sector: activeSector,
     storeName: settings.storeName,
     ownerRef: currentUser.id,
@@ -691,10 +694,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * menjatuhkan penjualan yang sudah sah.
    */
   const runSync = React.useCallback(
-    async (target: SyncTarget) => {
+    async (target: SyncTarget, force = false) => {
       try {
         setSyncStatus(getSyncStatus(target.businessId, true));
-        const after = await flushSync(target);
+        const after = await flushSync(target, force);
         setSyncStatus(after);
       } catch {
         setSyncStatus(getSyncStatus(target.businessId));
@@ -709,6 +712,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const target: SyncTarget = {
       businessId: bizId,
+      outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
       sector: activeSector,
       storeName: storeNameForSync,
       ownerRef: currentUser.id,
@@ -718,12 +722,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSyncStatus(getSyncStatus(bizId));
 
     // 1. Saat dibuka — mengirim apa pun yang tertinggal dari sesi sebelumnya.
-    void runSync(target);
+    void runSync(target, Boolean(target.outletId));
 
     // 2. Saat jaringan kembali. Ini pemicu terpenting bagi kasir yang seharian
     //    offline lalu masuk area ber-WiFi.
     const onOnline = () => void runSync(target);
+    const onOutletsUpdated = () => void runSync(target, true);
     window.addEventListener('online', onOnline);
+    window.addEventListener('outlets-updated', onOutletsUpdated);
 
     // 3. Denyut berkala sebagai jaring pengaman. Event 'online' tidak selalu
     //    menyala di semua perangkat, dan server bisa saja yang tadi mati.
@@ -731,9 +737,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => {
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('outlets-updated', onOutletsUpdated);
       window.clearInterval(timer);
     };
-  }, [bizId, activeSector, storeNameForSync, currentUser.id, runSync]);
+  }, [bizId, activeSector, storeNameForSync, currentUser.id, settings.activeBranchId, runSync]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
     return loadScopedData('categories', currentUser.id, activeSector, defaultPreset.categories);
@@ -1078,6 +1085,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       void pushCatalog(
         {
           businessId: makeBusinessId(currentUser.id, activeSector),
+          outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
           sector: activeSector,
           storeName: settings.storeName,
           ownerRef: currentUser.id,
@@ -1097,7 +1105,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 8_000);
 
     return () => window.clearTimeout(timer);
-  }, [products, categories, currentUser.id, activeSector, settings.storeName, settings.subscription]);
+  }, [products, categories, currentUser.id, activeSector, settings.storeName, settings.subscription, settings.activeBranchId]);
 
   /*
    * SINKRONISASI DATA PELANGGAN (CRM) KE POSTGRESQL.
@@ -1317,6 +1325,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activeBranch = branches.find((b) => b.id === settings.activeBranchId) || branches[0];
 
   const setActiveBranchId = (branchId: string) => {
+    if (!branches.some(branch => branch.id === branchId && branch.isActive && branch.businessSector === activeSector)) throw new Error('OUTLET_NOT_ACTIVE_FOR_BUSINESS');
     if (isFreePlan(settings.subscription) && branchId !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LOCKED');
     setSettings((prev) => ({ ...prev, activeBranchId: branchId }));
   };
@@ -1344,6 +1353,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { ...prev, branches: updated, activeBranchId: prev.activeBranchId === originalId ? branchToSave.id : prev.activeBranchId };
     });
     if (soundEnabled) playPOSSound('click');
+    window.dispatchEvent(new Event('outlets-updated'));
   };
 
   const deleteBranch = async (branchId: string) => {
@@ -1357,10 +1367,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!response.ok || !result.ok) { window.alert(result.error || 'Outlet gagal dinonaktifkan'); return; }
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
-      const updated = existing.filter((b) => b.id !== branchId);
+      const updated = existing.map((b) => b.id === branchId ? { ...b, isActive: false } : b);
       return { ...prev, branches: updated };
     });
     if (soundEnabled) playPOSSound('delete');
+    window.dispatchEvent(new Event('outlets-updated'));
   };
 
   const clockInStaff = (
@@ -2000,6 +2011,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const newOrder: Order = {
       id: invoiceNum,
       orderNumber: orders.length + 1,
+      branchId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
       date: new Date().toISOString(),
       items: effectiveItems,
       orderType,
@@ -3539,7 +3551,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         voidOrder: requireWritable(voidOrder),
         refundOrderItems: requireWritable(refundOrderItems),
         syncStatus,
-        forceSync: () => void runSync(syncTarget),
+        forceSync: () => void runSync(syncTarget, true),
         holdOrder: requireWritable(holdOrder),
         recallHoldOrder: requireWritable(recallHoldOrder),
         cancelHoldOrder: requireWritable(cancelHoldOrder),

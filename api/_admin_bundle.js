@@ -146,7 +146,8 @@ async function canAccessBusiness(db, principal, businessId) {
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1 ORDER BY created_at ASC LIMIT 1`,
+    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
     [principal.subject]
   );
   if (rows[0]?.id) return rows[0].id;
@@ -878,21 +879,33 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   }));
   app.post("/api/v1/subscription/outlets", run(async (req, res) => {
     const tenantId = await tenant(req), b = req.body || {};
-    if (!b.name || String(b.name).length > 150) throw new BillingError(400, "INVALID_OUTLET_NAME");
+    const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
+    if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    const sector = String(b.businessSector || "FNB");
+    if (!["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(sector)) throw new BillingError(400, "INVALID_BUSINESS_SECTOR");
+    if (!b.name || !String(b.name).trim() || String(b.name).length > 150) throw new BillingError(400, "INVALID_OUTLET_NAME");
     const result = await db.tx(async (c) => {
       await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
       await assertTenantWritable(c, tenantId);
-      const merchant = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, b.businessSector || "FNB"])).rows[0];
-      if (!merchant) throw new BillingError(409, "SYNC_BUSINESS_BEFORE_ADDING_OUTLET");
+      let merchant = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
+      if (!merchant) {
+        const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
+          VALUES(uuidv7(),$1,$2,$3,$4)
+          ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1
+          RETURNING id`, [tenantId, String(b.storeName || b.name).slice(0, 150), sector, `${principal.subject}_${sector}`]);
+        merchant = created.rows[0];
+      }
+      if (!merchant) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
       const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID2();
-      const existing = (await c.query("SELECT tenant_id FROM internal.outlets WHERE id=$1", [id])).rows[0];
-      if (existing && existing.tenant_id !== tenantId) throw new BillingError(403, "OUTLET_NOT_OWNED");
+      const existing = (await c.query("SELECT * FROM internal.outlets WHERE id=$1", [id])).rows[0];
+      if (existing && (existing.tenant_id !== tenantId || existing.merchant_id !== merchant.id)) throw new BillingError(403, "OUTLET_NOT_OWNED");
       if (b.isActive !== false) await assertOutletCapacity(c, tenantId, id);
       const { rows } = await c.query(
         `INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id, tenantId, merchant.id, String(b.name), String(b.address || ""), Number(b.latitude) || 0, Number(b.longitude) || 0, Math.max(1, Number(b.allowedRadiusMeters) || 100), b.isActive !== false]
+        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), Number(b.latitude ?? existing?.latitude) || 0, Number(b.longitude ?? existing?.longitude) || 0, Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
       );
       return rows[0];
     });
@@ -2312,6 +2325,7 @@ var str = (v, max) => {
   const t = v.trim();
   return t ? t.slice(0, max) : null;
 };
+var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
     const principal = trustedPrincipal(req);
@@ -2356,6 +2370,7 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const ownerRef = principal.subject;
     const idemKey = str(body.idempotencyKey, 120);
+    const requestedOutletId = outletRef(body.outletId);
     const txns = Array.isArray(body.transactions) ? body.transactions : [];
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({
@@ -2364,6 +2379,7 @@ function registerSyncRoutes(app, db) {
         detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS2.join(", ")
       });
     }
+    if (body.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
     if (txns.length > MAX_BATCH) {
       return res.status(413).json({
         ok: false,
@@ -2400,7 +2416,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -2420,20 +2437,12 @@ function registerSyncRoutes(app, db) {
           );
           merchantId = m.rows[0].id;
           const outq = await c.query(
-            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-            [merchantId]
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+            [merchantId, requestedOutletId]
           );
-          if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-          } else {
-            await assertOutletCapacity(c, tenantId);
-            const outins = await c.query(
-              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-          }
+          if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
+          outletId = outq.rows[0].id;
         }
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
@@ -2759,9 +2768,11 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const ownerRef = principal.subject;
     const products = Array.isArray(b.products) ? b.products : [];
+    const requestedOutletId = outletRef(b.outletId);
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({ ok: false, error: "BAD_REQUEST" });
     }
+    if (b.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
     if (products.length > 2e3) {
       return res.status(413).json({ ok: false, error: "CATALOG_TOO_LARGE" });
     }
@@ -2782,7 +2793,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -2806,20 +2818,12 @@ function registerSyncRoutes(app, db) {
             throw new ProductLimitError("PRODUCT_LIMIT_EXCEEDED");
           }
           const outq = await c.query(
-            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-            [merchantId]
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+            [merchantId, requestedOutletId]
           );
-          if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-          } else {
-            await assertOutletCapacity(c, tenantId);
-            const outins = await c.query(
-              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-          }
+          if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
+          outletId = outq.rows[0].id;
         }
         const seen = [];
         assertFreeScope(await freePlanState(c, tenantId), sector, [...desiredProductRefs]);
@@ -2981,7 +2985,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -3130,7 +3135,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -3226,7 +3232,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL

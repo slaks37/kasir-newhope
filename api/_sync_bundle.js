@@ -62,6 +62,25 @@ async function canAccessBusiness(db, principal, businessId) {
   );
   return rows.length === 1;
 }
+async function tenantForPrincipal(db, principal) {
+  const { rows } = await db.query(
+    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
+    [principal.subject]
+  );
+  if (rows[0]?.id) return rows[0].id;
+  if (principal.subject === "local-development" && LOCAL_BYPASS()) {
+    const res = await db.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    return res.rows[0]?.id ?? null;
+  }
+  return null;
+}
 
 // services/shared/db.ts
 import fs from "node:fs";
@@ -262,9 +281,6 @@ var SAAS_PLANS = [
   }
 ];
 var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
-function findSaaSPlan(planId) {
-  return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;
-}
 
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
@@ -334,19 +350,6 @@ async function assertTenantWritable(db, tenantId) {
   const end = s.current_period_end || new Date(Date.parse(s.created_at) + TRIAL_DAYS * DAY_MS).toISOString();
   const access = subscriptionAccess({ status: s.status || "TRIAL", currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0 });
   if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
-}
-async function assertOutletCapacity(db, tenantId, excludeId) {
-  const free = await freePlanState(db, tenantId);
-  if (free.free) {
-    if (!excludeId || excludeId !== free.selection?.branchId) throw new BillingError(403, "FREE_BRANCH_LIMIT");
-    return;
-  }
-  await db.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
-  await assertTenantWritable(db, tenantId);
-  const { rows } = await db.query("SELECT plan_id,extra_outlets FROM contract.subscription_operations WHERE tenant_id=$1", [tenantId]);
-  const limit = (findSaaSPlan(rows[0]?.plan_id)?.maxOutlets ?? 2) + Number(rows[0]?.extra_outlets || 0);
-  const used = await db.query("SELECT count(*)::int AS count FROM internal.outlets WHERE tenant_id=$1 AND is_active AND ($2::uuid IS NULL OR id<>$2)", [tenantId, excludeId || null]);
-  if (Number(used.rows[0].count) >= limit) throw new BillingError(409, "OUTLET_LIMIT_REACHED");
 }
 
 // services/pos/activity.ts
@@ -431,6 +434,7 @@ var str = (v, max) => {
   const t = v.trim();
   return t ? t.slice(0, max) : null;
 };
+var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
     const principal = trustedPrincipal(req);
@@ -475,6 +479,7 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const ownerRef = principal.subject;
     const idemKey = str(body.idempotencyKey, 120);
+    const requestedOutletId = outletRef(body.outletId);
     const txns = Array.isArray(body.transactions) ? body.transactions : [];
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({
@@ -483,6 +488,7 @@ function registerSyncRoutes(app, db) {
         detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS.join(", ")
       });
     }
+    if (body.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
     if (txns.length > MAX_BATCH) {
       return res.status(413).json({
         ok: false,
@@ -519,7 +525,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -539,20 +546,12 @@ function registerSyncRoutes(app, db) {
           );
           merchantId = m.rows[0].id;
           const outq = await c.query(
-            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-            [merchantId]
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+            [merchantId, requestedOutletId]
           );
-          if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-          } else {
-            await assertOutletCapacity(c, tenantId);
-            const outins = await c.query(
-              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-          }
+          if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
+          outletId = outq.rows[0].id;
         }
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
@@ -878,9 +877,11 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const ownerRef = principal.subject;
     const products = Array.isArray(b.products) ? b.products : [];
+    const requestedOutletId = outletRef(b.outletId);
     if (!businessId || !sector || !SECTOR_SET.has(sector)) {
       return res.status(400).json({ ok: false, error: "BAD_REQUEST" });
     }
+    if (b.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
     if (products.length > 2e3) {
       return res.status(413).json({ ok: false, error: "CATALOG_TOO_LARGE" });
     }
@@ -901,7 +902,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
            VALUES (uuidv7(), $1, $2, $3)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -925,20 +927,12 @@ function registerSyncRoutes(app, db) {
             throw new ProductLimitError("PRODUCT_LIMIT_EXCEEDED");
           }
           const outq = await c.query(
-            `SELECT id FROM internal.outlets WHERE merchant_id = $1 ORDER BY created_at ASC LIMIT 1`,
-            [merchantId]
+            `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
+             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
+            [merchantId, requestedOutletId]
           );
-          if (outq.rows.length) {
-            outletId = outq.rows[0].id;
-          } else {
-            await assertOutletCapacity(c, tenantId);
-            const outins = await c.query(
-              `INSERT INTO internal.outlets (id, tenant_id, merchant_id, name)
-                 VALUES (uuidv7(), $1, $2, $3) RETURNING id`,
-              [tenantId, merchantId, `${storeName} (Cabang Utama)`]
-            );
-            outletId = outins.rows[0].id;
-          }
+          if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
+          outletId = outq.rows[0].id;
         }
         const seen = [];
         assertFreeScope(await freePlanState(c, tenantId), sector, [...desiredProductRefs]);
@@ -1100,7 +1094,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -1249,7 +1244,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
@@ -1345,7 +1341,8 @@ function registerSyncRoutes(app, db) {
           await assertTenantWritable(c, tenantId);
         } else {
           const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const t = await c.query(
+          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
+          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
             `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
              VALUES (uuidv7(), $1, $2, $3)
              ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL

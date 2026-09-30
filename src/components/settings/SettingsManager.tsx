@@ -76,6 +76,7 @@ export const SettingsManager: React.FC = () => {
   const [savingBranch, setSavingBranch] = useState(false);
   const [editingBranch, setEditingBranch] = useState<StoreBranch | null>(null);
   const [branchName, setBranchName] = useState('');
+  const [branchActive, setBranchActive] = useState(true);
   const [branchAddress, setBranchAddress] = useState('');
   const [branchLat, setBranchLat] = useState(-6.2215);
   const [branchLon, setBranchLon] = useState(106.8014);
@@ -173,6 +174,7 @@ export const SettingsManager: React.FC = () => {
   };
 
   const handleOpenAddBranch = () => {
+    setBranchActive(true);
     setEditingBranch(null);
     setBranchName('');
     setBranchAddress('');
@@ -184,6 +186,7 @@ export const SettingsManager: React.FC = () => {
   };
 
   const handleOpenEditBranch = (b: StoreBranch) => {
+    setBranchActive(b.isActive);
     setEditingBranch(b);
     setBranchName(b.name);
     setBranchAddress(b.address);
@@ -228,7 +231,7 @@ export const SettingsManager: React.FC = () => {
       longitude: branchLon,
       allowedRadiusMeters: branchRadius,
       businessSector: branchSector,
-      isActive: true,
+      isActive: branchActive,
     };
 
     try {
@@ -398,7 +401,7 @@ export const SettingsManager: React.FC = () => {
                       <h4 className="font-extrabold text-base text-slate-900 mt-1">{b.name}</h4>
                     </div>
                     <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-extrabold border border-emerald-200">
-                      {b.isActive ? 'Aktif' : 'Nonaktif'}
+                      {b.isActive ? 'Aktif · memakai slot' : 'Ditunda · tanpa slot'}
                     </span>
                   </div>
 
@@ -436,7 +439,7 @@ export const SettingsManager: React.FC = () => {
                       className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center space-x-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>Hapus</span>
+                      <span>Tunda cabang</span>
                     </button>
                   )}
                 </div>
@@ -459,6 +462,10 @@ export const SettingsManager: React.FC = () => {
                 </div>
 
                 <form onSubmit={handleSaveBranchForm} className="space-y-4">
+                  <label className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
+                    <input type="checkbox" checked={branchActive} onChange={e => setBranchActive(e.target.checked)} className="mt-1" />
+                    <span>Aktifkan cabang sekarang. Jika ditunda, data cabang tetap disimpan dan tidak memakai slot paket. Edit cabang ini untuk mengaktifkannya nanti.</span>
+                  </label>
                   <div className="space-y-1">
                     <label className="text-xs text-slate-700 font-extrabold">Nama Cabang Toko *</label>
                     <input

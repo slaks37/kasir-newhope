@@ -264,6 +264,7 @@ export interface Customer {
 export interface Order {
   id: string; // INV-20260810-001
   orderNumber: number;
+  branchId?: string;
   date: string; // ISO date string
   items: CartItem[];
   orderType: OrderType;

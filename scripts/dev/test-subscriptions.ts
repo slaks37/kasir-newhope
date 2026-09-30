@@ -29,6 +29,7 @@ async function main(){
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/restrict-browser-rls-policies.sql','utf8'));
+ await pg.exec(fs.readFileSync('supabase/migrations/20260930064750_explicit_outlet_onboarding_grants.sql','utf8'));
  // Repeat application must preserve data and permissions.
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
@@ -156,6 +157,26 @@ async function main(){
   const detailAudit=await db.query("SELECT target_id,justification FROM internal.internal_access_log WHERE resource LIKE '%/subscription-detail' AND internal_role='ROLE_INTERNAL_SUPPORT' AND action='VIEW_MERCHANT_DETAIL'");
   assert.ok(detailAudit.rows.some(r=>r.target_id===tenant && r.justification==='Investigate billing ticket'));
   console.log('PASS: subscription detail is audited, MFA protected, tenant scoped, payload redacted and read-only');
+  // Signup provisions a tenant without external_ref. Outlet setup and sync must reuse it.
+  const signupTenant=randomUUID();
+  await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Fresh Merchant','owner-three')",[signupTenant]);
+  const outletRequest=(body:Record<string,unknown>)=>fetch(url+'/api/v1/subscription/outlets',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessSector:'FNB',...body})});
+  const noOutlet=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[]})});
+  assert.equal(noOutlet.status,409);assert.equal((await noOutlet.json()).error,'OUTLET_SETUP_REQUIRED');
+  const firstOutletResponse=await outletRequest({name:'Outlet 1'});
+  assert.equal(firstOutletResponse.status,200,await firstOutletResponse.clone().text());
+  const firstOutlet=(await firstOutletResponse.json()).outlet;
+  assert.equal(firstOutlet.tenant_id,signupTenant);
+  const deferred=(await (await outletRequest({name:'Outlet 2',isActive:false})).json()).outlet;
+  assert.equal(deferred.is_active,false);
+  assert.equal((await subscriptionStatus(db,signupTenant)).outlets.used,1);
+  assert.equal((await outletRequest({id:deferred.id,name:deferred.name,isActive:true})).status,200);
+  const overCap=await outletRequest({name:'Outlet 3'});
+  assert.equal(overCap.status,409);assert.equal((await overCap.json()).error,'OUTLET_LIMIT_REACHED');
+  assert.equal((await outletRequest({name:'Later outlet',isActive:false})).status,200);
+  assert.equal((await outletRequest({id:deferred.id,name:deferred.name,isActive:false})).status,200);
+  assert.equal((await db.query("SELECT count(*)::int n FROM internal.tenants WHERE owner_user_ref='owner-three'")).rows[0].n,1);
+  console.log('PASS: explicit first outlet, deferred branch retention, activation cap and signup tenant reuse');
   const sync=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',storeName:'Fresh Merchant',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}]})});
   assert.equal(sync.status,200,'real catalog sync: '+await sync.text());
   const product=(await db.query("SELECT id,tenant_id,merchant_id,outlet_id FROM pos.products WHERE external_ref='product-test'")).rows[0];
@@ -273,7 +294,13 @@ async function main(){
   assert.equal((await fetch(url+'/api/v1/webhooks/doku',{method:'POST',headers,body:raw.replace('SUCCESS','FAILED')})).status,401);
   console.log('PASS: support RBAC, failed-audit rollback, trial extension, manual plan grant, checkout idempotency, real signed webhook and tamper rejection');
   console.log('PASS: forged admin rejected, merchant cannot become admin, authenticated reports, tenant query ignored, simulation/webhook rejected, durable support audit');
-  await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');assert.equal((await subscriptionStatus(c,tenant)).subscription.tenantId,tenant);});
+  await db.tx(async c=>{
+    await c.exec('SET LOCAL ROLE svc_billing');
+    assert.equal((await subscriptionStatus(c,tenant)).subscription.tenantId,tenant);
+    const provisioned=randomUUID();
+    await c.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Backend provisioning','provision-owner')",[provisioned]);
+    await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Provisioned business','RETAIL')",[randomUUID(),provisioned]);
+  });
   await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');await assertOutletCapacity(c,tenant);}),/OUTLET_LIMIT_REACHED/);
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
   console.log('PASS: billing and internal service roles can read their authorized data');

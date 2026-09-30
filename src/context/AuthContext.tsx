@@ -26,6 +26,8 @@ export interface SignUpOptions {
   fullName?: string;
   storeName?: string;
   sector?: BusinessSector;
+  firstOutletName?: string;
+  secondOutletName?: string;
 }
 
 export interface AuthContextType {
@@ -255,6 +257,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Cloud signup must never create a synthetic offline session or cache a password.
         const result = await registerCloudAccount(supabase, {
           email: cleanEmail, password, fullName, storeName, sector,
+          firstOutletName: opts.firstOutletName?.trim() || `${storeName} — Cabang Utama`,
+          secondOutletName: opts.secondOutletName?.trim() || '',
           redirectTo: window.location.origin,
         });
         if (result.session) {

@@ -3,7 +3,7 @@ import type { AuthError, Session, SupabaseClient } from '@supabase/supabase-js';
 /** Only the Auth API handles passwords, verification and signup rate limits. */
 export async function registerCloudAccount(
   client: Pick<SupabaseClient, 'auth'>,
-  input: { email: string; password: string; fullName: string; storeName: string; sector: string; redirectTo: string },
+  input: { email: string; password: string; fullName: string; storeName: string; sector: string; firstOutletName: string; secondOutletName: string; redirectTo: string },
 ): Promise<{ error: AuthError | null; session: Session | null; requiresEmailConfirmation: boolean }> {
   try {
     const { data, error } = await client.auth.signUp({
@@ -11,7 +11,8 @@ export async function registerCloudAccount(
       password: input.password,
       options: {
         emailRedirectTo: input.redirectTo,
-        data: { full_name: input.fullName, store_name: input.storeName, business_sector: input.sector },
+        data: { full_name: input.fullName, store_name: input.storeName, business_sector: input.sector,
+          first_outlet_name: input.firstOutletName, second_outlet_name: input.secondOutletName },
       },
     });
     if (error) return { error, session: null, requiresEmailConfirmation: false };
