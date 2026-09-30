@@ -5117,6 +5117,36 @@ function registerAssistantRoutes(app, database) {
   );
 }
 
+// src/server/vercelUrl.ts
+function normalizeVercelUrl(req) {
+  if (!req || typeof req.url !== "string") return;
+  try {
+    const parsed = new URL(req.url, "http://localhost");
+    const customPath = parsed.searchParams.get("__path");
+    if (customPath) {
+      parsed.searchParams.delete("__path");
+      const extraQs = parsed.searchParams.toString();
+      if (customPath.includes("?")) {
+        req.url = customPath + (extraQs ? `&${extraQs}` : "");
+      } else {
+        req.url = customPath + (extraQs ? `?${extraQs}` : "");
+      }
+      req.originalUrl = req.url;
+      return;
+    }
+  } catch {
+  }
+  if (req.url.includes("[...slug]")) {
+    const matched = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || req.headers?.["x-original-url"];
+    if (typeof matched === "string" && matched.startsWith("/") && !matched.includes("[...slug]")) {
+      const qIdx = req.url.indexOf("?");
+      const query = qIdx !== -1 ? req.url.slice(qIdx) : "";
+      req.url = matched.includes("?") ? matched : matched + query;
+      req.originalUrl = req.url;
+    }
+  }
+}
+
 // src/server/assistantHandler.ts
 var methods = {
   "/api/v1/assistant/query": "POST",
@@ -5129,6 +5159,7 @@ var methods = {
 function createAssistantHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "ai", max: 2 })) {
   let runtime;
   return async (req, res) => {
+    normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
     if (!methods[path]) return res.status(404).json({ ok: false, error: "NOT_FOUND" });

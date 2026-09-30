@@ -2,10 +2,12 @@ import express from 'express';
 import { connectDb } from '../../services/shared/db';
 import { authenticateBearer } from '../../services/shared/auth';
 import { registerMcpRoutes } from '../../services/mcp/routes';
+import { normalizeVercelUrl } from './vercelUrl';
 
 export function createMcpHandler(connect = () => connectDb({ schema: 'mcp_private', max: 2 }), authenticate = authenticateBearer) {
   let runtime: Promise<express.Express> | undefined;
   return async (req: any, res: any) => {
+    normalizeVercelUrl(req);
     if (process.env.MCP_ENABLED !== 'true') return res.status(503).json({ error: 'MCP_NOT_ENABLED' });
     try {
       runtime ??= connect().then(db => {

@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
+import { normalizeVercelUrl } from './vercelUrl';
 
 const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers','/api/v1/sync/receipt-logo']);
 
@@ -12,6 +13,7 @@ export function createSyncHandler(
 ) {
   let runtime:Promise<express.Express>|undefined;
   return async (req:any,res:any)=>{
+    normalizeVercelUrl(req);
     res.setHeader('Cache-Control','no-store');
     const path=String(req.url||'').split('?')[0].replace(/\/+$/,'');
     if(!allowedPaths.has(path)) return res.status(404).json({ok:false,error:'NOT_FOUND'});

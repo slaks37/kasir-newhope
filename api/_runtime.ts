@@ -40,7 +40,10 @@ async function buildRuntime() {
   });
   return app;
 }
+import { normalizeVercelUrl } from '../src/server/vercelUrl';
+
 export async function handleNativeApi(req:any,res:any) {
+  normalizeVercelUrl(req);
   try{
     runtime ??= buildRuntime().catch(err=>{runtime=undefined;throw err;});
     const app=await runtime;

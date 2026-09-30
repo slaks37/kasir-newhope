@@ -6,8 +6,10 @@ import startTrialHandler from '../../api/_subscription/start-trial';
 import statusHandler from '../../api/_subscription/status';
 import outletsHandler from '../../api/_subscription/outlets';
 import proratedUpgradeHandler from '../../api/_subscription/prorated-upgrade';
+import { normalizeVercelUrl } from './vercelUrl';
 
 export default async function handler(req: any, res: any) {
+  normalizeVercelUrl(req);
   let action = '';
   if (req.query?.slug) {
     action = Array.isArray(req.query.slug) ? req.query.slug[0] : req.query.slug;

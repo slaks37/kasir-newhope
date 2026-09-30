@@ -896,8 +896,39 @@ async function handler8(req, res) {
   }
 }
 
+// src/server/vercelUrl.ts
+function normalizeVercelUrl(req) {
+  if (!req || typeof req.url !== "string") return;
+  try {
+    const parsed = new URL(req.url, "http://localhost");
+    const customPath = parsed.searchParams.get("__path");
+    if (customPath) {
+      parsed.searchParams.delete("__path");
+      const extraQs = parsed.searchParams.toString();
+      if (customPath.includes("?")) {
+        req.url = customPath + (extraQs ? `&${extraQs}` : "");
+      } else {
+        req.url = customPath + (extraQs ? `?${extraQs}` : "");
+      }
+      req.originalUrl = req.url;
+      return;
+    }
+  } catch {
+  }
+  if (req.url.includes("[...slug]")) {
+    const matched = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || req.headers?.["x-original-url"];
+    if (typeof matched === "string" && matched.startsWith("/") && !matched.includes("[...slug]")) {
+      const qIdx = req.url.indexOf("?");
+      const query = qIdx !== -1 ? req.url.slice(qIdx) : "";
+      req.url = matched.includes("?") ? matched : matched + query;
+      req.originalUrl = req.url;
+    }
+  }
+}
+
 // src/server/subscriptionDispatcher.ts
 async function handler9(req, res) {
+  normalizeVercelUrl(req);
   let action = "";
   if (req.query?.slug) {
     action = Array.isArray(req.query.slug) ? req.query.slug[0] : req.query.slug;
