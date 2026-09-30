@@ -21,6 +21,7 @@ export class SharedStateSync {
   private conflict:{kind:string;recordId:string}|undefined;
   private stopped=false;
   private inFlight=false;
+  private outletBlocked=false;
   private timer:number|undefined;
   private poll:number|undefined;
   private onStatus:(value:SharedSyncStatus)=>void;
@@ -44,7 +45,10 @@ export class SharedStateSync {
     this.emit();
   }
   stop(){this.stopped=true;window.clearTimeout(this.timer);window.clearInterval(this.poll);}
-  setOutletId(value:string|undefined){this.outletId=value;}
+  setOutletId(value:string|undefined){
+    if(this.outletId!==value){this.outletId=value;this.outletBlocked=false;}
+  }
+  async resumeAfterOutletUpdate(){this.outletBlocked=false;this.error=null;await this.refresh(false);await this.flush();}
   start(){void this.refresh(true);this.poll=window.setInterval(()=>void this.refresh(false),6000);}
   async refresh(_initial:boolean){
     if(this.stopped) return;
@@ -69,10 +73,10 @@ export class SharedStateSync {
         kind:op.kind,recordId:op.recordId,value:op.value,revision:op.baseRevision,deleted:op.deleted});
       const firstReady=!this.ready;
       this.ready=true;
-      if(!this.conflict)this.error=null;
+      if(!this.conflict && !this.outletBlocked)this.error=null;
       this.emit();
       this.onRecords([...visible.values()],firstReady);
-      if(this.pending.size) void this.flush();
+      if(this.pending.size && !this.outletBlocked) await this.flush();
     } catch(error){this.error=error instanceof Error?error.message:'STATE_UNAVAILABLE';this.emit();}
   }
   /** Called after remote hydration, before the matching React state effects run. */
@@ -122,7 +126,7 @@ export class SharedStateSync {
     if(choice==='server')await this.refresh(false);else await this.flush();
   }
   async flush(){
-    if(this.inFlight || this.stopped || this.conflict || !navigator.onLine || !this.pending.size) return;
+    if(this.inFlight || this.stopped || this.conflict || this.outletBlocked || !navigator.onLine || !this.pending.size) return;
     this.inFlight=true;
     const operations=[...this.pending.values()].slice(0,100);
     try {
@@ -131,8 +135,11 @@ export class SharedStateSync {
       const data=await response.json();
       if(!response.ok || !data.ok){
         if(data.error==='STATE_CONFLICT')this.conflict={kind:data.kind,recordId:data.recordId};
+        if(data.error==='OUTLET_SETUP_REQUIRED')this.outletBlocked=true;
         this.error=data.error==='STATE_CONFLICT'
           ? `Konflik data ${data.kind}/${data.recordId}. Perubahan lokal disimpan; perlu ditinjau sebelum digabung.`
+          : data.error==='OUTLET_SETUP_REQUIRED'
+          ? 'Outlet belum aktif. Perubahan tetap tersimpan dan akan dikirim setelah outlet dibuka.'
           : data.error||`HTTP_${response.status}`;
         this.emit();return;
       }

@@ -8,7 +8,7 @@ type OutletRow = { id: string; name: string; business_sector: string; is_active:
 
 /** An outlet is counted only when the owner explicitly activates it. */
 export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) {
-  const { user } = useAuth();
+  const { user, configured } = useAuth();
   const { settings, syncStatus } = usePOS();
   const sector = settings.businessSector || 'FNB';
   const [rows, setRows] = useState<OutletRow[]>([]);
@@ -47,13 +47,24 @@ export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) 
   useEffect(() => {
     void refresh();
     window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
     window.addEventListener('outlets-updated', refresh);
-    return () => { window.removeEventListener('focus', refresh); window.removeEventListener('outlets-updated', refresh); };
+    return () => { window.removeEventListener('focus', refresh); window.removeEventListener('online', refresh); window.removeEventListener('outlets-updated', refresh); };
   }, [user?.id, sector]);
 
   const active = rows.filter(row => row.is_active);
   const current = active.filter(row => row.business_sector === sector);
-  if (!user?.id || !loaded || current.length) return null;
+  const selectedIsActive = current.some(row => row.id === settings.activeBranchId);
+  if (!user?.id || !configured || (loaded && selectedIsActive && !error)) return null;
+
+  if (!loaded || current.length) return <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-labelledby="outlet-check-title">
+    <div className="w-full max-w-md rounded-3xl bg-white p-6 text-slate-900 shadow-2xl space-y-4">
+      <h2 id="outlet-check-title" className="text-xl font-black">Verifikasi outlet cloud</h2>
+      <p role={error?'alert':undefined} className="text-sm text-slate-700">{error || (loaded ? 'Menyiapkan outlet aktif di perangkat ini…' : 'Memeriksa outlet aktif dan kapasitas paket…')}</p>
+      {(error || loaded) && <button type="button" onClick={()=>{void refresh();window.dispatchEvent(new Event('outlets-updated'));}} className="rounded-xl bg-amber-500 px-4 py-2 font-bold">Coba lagi</button>}
+      <p className="text-xs text-slate-600">Kasir belum dibuka agar transaksi tidak hanya tersimpan di perangkat saat status cloud belum terverifikasi.</p>
+    </div>
+  </div>;
 
   const save = async (body: Record<string, unknown>) => {
     const response = await fetch('/api/v1/subscription/outlets', {

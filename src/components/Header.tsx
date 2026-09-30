@@ -152,9 +152,16 @@ export const Header: React.FC<HeaderProps> = ({
         {(syncStatus.pending > 0 || syncStatus.failures > 0) && (
           <button
             className={`nh-header-sync ${syncStatus.failures > 0 ? "has-error" : ""} ${syncStatus.failures >= 3 ? "is-critical text-red-600 font-bold animate-pulse" : ""}`}
-            onClick={forceSync}
+            onClick={syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED') ? undefined : forceSync}
+            disabled={syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED')}
             title={
-              syncStatus.failures >= 3
+              syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED')
+                ? `${syncStatus.pending} transaksi menunggu. Outlet belum aktif; aktifkan slot atau tingkatkan paket agar pengiriman dapat dilanjutkan.`
+                : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
+                ? 'Antrean transaksi lokal tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
+                : syncStatus.lastError === 'LOCAL_QUEUE_WRITE_FAILED'
+                ? 'Penyimpanan browser gagal. Transaksi baru tidak dapat diselesaikan sampai masalah ini diperbaiki.'
+                : syncStatus.failures >= 3
                 ? `PERINGATAN: ${syncStatus.failures}x gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Cek koneksi & klik untuk coba lagi.`
                 : syncStatus.failures > 0
                 ? `Gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Klik untuk mencoba lagi.`

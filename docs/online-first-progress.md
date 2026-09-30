@@ -10,6 +10,8 @@
 - Financial transactions still use the idempotent normalized ledger, not an order UI snapshot. Admin revenue/profit come from that ledger. The trial outlet cap and queued Carwash sales remain unchanged.
 - A sale for an inventory-linked product now prepares a primary stock location when a new outlet has none, and writes stock movement against the transaction's outlet. Voids restore stock to that original outlet, including when submitted from another active branch.
 - Receipt and return receipt printing use an isolated iframe with loaded styles/images/fonts and surfaced browser errors. Chrome print preview rendered a 30-line fixture through the footer.
+- The cloud outlet gate now blocks a new checkout while outlet capacity cannot be verified or the active outlet has not been selected. Pending Carwash sales remain in their original queue; entitlement rejection pauses automatic retries until the outlet changes.
+- A completed sale, void, or payment of a previously held order first persists its financial event to the durable outbox. A full/corrupt browser store now fails visibly instead of reporting success or overwriting recoverable queue bytes. Paying a held order also submits the normalized transaction for admin reporting.
 
 ## Remaining limitations and decisions
 
@@ -18,6 +20,8 @@
 - Stock quantities shown in the client can still conflict across simultaneous devices; the normalized inventory ledger remains authoritative. Reconciliation/hydration of per-outlet inventory balances is a separate step before claiming fully accurate live stock.
 - Old cashier-specific storage and transaction queues are preserved. They are not automatically reassigned to an owner; recovery requires reviewing their identity and business scope.
 - F&B and Laundry occupy both trial outlet slots. Carwash stays deferred and its two queued sales must not be sent as another branch or discarded. They can sync only after an outlet slot is freed or capacity is upgraded.
+- Production acceptance is still pending: the last read-only check found zero normalized transactions and zero shared operational records. This matches the deferred Carwash outlet, not proof that a two-device sale has reached admin. A real sale on an active outlet and a second-device readback must be verified before claiming cloud-first completion.
+- Successful checkouts can still be queued locally during a transient server failure; the UI must distinguish cloud-confirmed from pending for a strict online-first guarantee. Operational collections still use local cache and full-state polling, and customer/attendance/payroll retain separate legacy mirror writes. These are follow-up migration steps, not solved by adding a load balancer.
 - Epson TM-T82 Bluetooth on Windows + Chrome has **not** been physically tested; the owner has no printer available yet. Browser print preview does not prove driver, pairing or physical output.
 
 ## Checks

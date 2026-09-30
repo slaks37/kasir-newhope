@@ -91,24 +91,21 @@ const queueKey = (businessId: string) => `${QUEUE_PREFIX}${businessId}`;
 const metaKey = (businessId: string) => `${META_PREFIX}${businessId}`;
 
 function readQueue(businessId: string): SyncPayloadTxn[] {
+  const raw = localStorage.getItem(queueKey(businessId));
+  if (!raw) return [];
   try {
-    const raw = localStorage.getItem(queueKey(businessId));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // Antrian rusak lebih buruk daripada antrian kosong: kalau JSON-nya tidak
-    // bisa dibaca, tidak ada yang bisa diselamatkan dari sana.
-    return [];
-  }
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as SyncPayloadTxn[];
+  } catch { /* Preserve the original bytes for manual recovery. */ }
+  throw new Error('LOCAL_QUEUE_CORRUPT');
 }
 
 function writeQueue(businessId: string, rows: SyncPayloadTxn[]): void {
   try {
     localStorage.setItem(queueKey(businessId), JSON.stringify(rows));
   } catch (err) {
-    // Kuota localStorage penuh. Tidak boleh diam — ini berarti transaksi
-    // berikutnya berisiko hilang.
     console.error('[sync] gagal menulis antrian:', err);
+    throw new Error('LOCAL_QUEUE_WRITE_FAILED');
   }
 }
 
@@ -199,7 +196,11 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
 }
 
 export function getStatus(businessId: string, inFlight = false): SyncStatus {
-  return { ...readMeta(businessId), pending: readQueue(businessId).length, inFlight };
+  const meta = readMeta(businessId);
+  try { return { ...meta, pending: readQueue(businessId).length, inFlight }; }
+  catch(error) { return { ...meta, pending: 1,
+    lastError:error instanceof Error && error.message==='LOCAL_QUEUE_CORRUPT'?'LOCAL_QUEUE_CORRUPT':'LOCAL_QUEUE_READ_FAILED',
+    failures:Math.max(1,meta.failures), inFlight }; }
 }
 
 /**
@@ -411,6 +412,10 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
   if (all.length === 0) return getStatus(businessId);
 
   const meta = readMeta(businessId);
+
+  // Entitlement is a durable business decision, not a transient network error.
+  // Only an explicit retry (outlet-updated event) can resume this queue.
+  if (!force && meta.lastError?.startsWith('OUTLET_SETUP_REQUIRED')) return getStatus(businessId);
 
   // Hormati backoff. Percobaan tanpa jeda saat server sedang bermasalah hanya
   // memperparah keadaannya.

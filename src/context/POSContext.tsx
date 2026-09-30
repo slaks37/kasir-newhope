@@ -1069,9 +1069,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     store.start();
     const onOnline=()=>void store.refresh(false);
     const onFocus=()=>void store.refresh(false);
+    const onOutletsUpdated=()=>void store.resumeAfterOutletUpdate();
     window.addEventListener('online',onOnline);window.addEventListener('focus',onFocus);
+    window.addEventListener('outlets-updated',onOutletsUpdated);
     return ()=>{store.stop();if(sharedSync.current===store)sharedSync.current=null;
-      window.removeEventListener('online',onOnline);window.removeEventListener('focus',onFocus);};
+      window.removeEventListener('online',onOnline);window.removeEventListener('focus',onFocus);
+      window.removeEventListener('outlets-updated',onOutletsUpdated);};
   // Collection changes are tracked by the effect below. Recreating this owner/sector
   // connection on every edit would discard its in-flight version baseline.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2064,6 +2067,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       userId: currentUser.id,
     };
 
+    // Persist the financial event before changing any visible POS state. If
+    // the browser cannot store the outbox, do not present a completed sale.
+    try { enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role)); }
+    catch (error) {
+      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
+      window.alert('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah; jangan tutup halaman dan hubungi admin.');
+      return null;
+    }
+
     // Auto-create KDS Ticket if F&B sector
     if (isFnb) {
       const kdsTicket: KDSTicket = {
@@ -2291,14 +2303,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 5. Add Order to list
     setOrders((prevOrders) => [newOrder, ...prevOrders]);
 
-    // 6. Antrikan untuk sinkronisasi.
-    //
-    // enqueue() menulis ke localStorage secara sinkron SEBELUM baris berikutnya
-    // berjalan — jadi kalau tab tertutup tepat setelah ini, transaksinya tetap
-    // terkirim saat aplikasi dibuka lagi. Pengirimannya sendiri sengaja tidak
-    // di-await: kasir tidak boleh menunggu jaringan untuk menyelesaikan
-    // penjualan.
-    enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role));
+    // The durable outbox was written before any local sale effects above.
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
@@ -2314,6 +2319,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const voidOrder = (orderId: string, reason = 'Kesalahan Input Kasir') => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'VOID') return;
+
+    try {
+      enqueueSync(tenant.businessId,
+        orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role));
+    } catch (error) {
+      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
+      window.alert('Pembatalan belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
+      return;
+    }
 
     // 1. Update order status to VOID and payment status to CANCELLED
     setOrders((prevOrders) =>
@@ -2338,10 +2352,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // memperlakukan tabrakan berstatus CANCELLED sebagai pembaruan, bukan
     // duplikat — kalau tidak, uang yang sudah dikembalikan ke pelanggan akan
     // terus terhitung sebagai omzet di admin panel.
-    enqueueSync(
-      tenant.businessId,
-      orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role)
-    );
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
@@ -2894,6 +2904,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       changeAmount,
       qrisRef: paymentMethod === 'QRIS' ? (qrisRef || `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}`) : undefined,
     };
+
+    try { enqueueSync(tenant.businessId,orderToPayload(updatedOrder,currentUser.role)); }
+    catch (error) {
+      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
+      window.alert('Pembayaran belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
+      return null;
+    }
+    setSyncStatus(getSyncStatus(tenant.businessId));
+    void runSync(syncTarget);
 
     // Update in orders
     setOrders((prev) => {

@@ -1,14 +1,17 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import {fileURLToPath} from 'node:url';
 import {defineConfig} from 'vite';
+
+const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': projectDir,
       },
     },
     build: {
@@ -17,8 +20,8 @@ export default defineConfig(() => {
         // ter-bundle ke aplikasi kasir: kode yang tidak pernah terkirim ke
         // browser merchant adalah kode yang tidak bisa dibaca merchant.
         input: {
-          main: path.resolve(__dirname, 'index.html'),
-          admin: path.resolve(__dirname, 'admin.html'),
+          main: path.resolve(projectDir, 'index.html'),
+          admin: path.resolve(projectDir, 'admin.html'),
         },
       },
     },
