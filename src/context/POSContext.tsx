@@ -71,7 +71,7 @@ import {
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
 import { isFreePlan, freeProductAllowed } from '../config/freePlanPolicy';
-import { mergeServerOutlets } from '../lib/sync/outlets';
+import { mergeServerOutlets, prepareOutletBusiness } from '../lib/sync/outlets';
 import { subscriptionAccess } from '../config/subscriptionPolicy';
 import {
   INITIAL_CATEGORIES,
@@ -1333,6 +1333,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const saveBranch = async (branchToSave: StoreBranch) => {
     if (isFreePlan(settings.subscription) && branchToSave.id !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LIMIT');
     const originalId = branchToSave.id;
+    await prepareOutletBusiness(branchToSave.businessSector || activeSector, settings.storeName);
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...branchToSave, businessSector: branchToSave.businessSector || activeSector }),

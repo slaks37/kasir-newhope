@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Building2, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePOS } from '../../context/POSContext';
+import { prepareOutletBusiness } from '../../lib/sync/outlets';
 
 type OutletRow = { id: string; name: string; business_sector: string; is_active: boolean };
 
@@ -66,6 +67,7 @@ export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) 
     if (!firstName.trim() || busy) return;
     setBusy(true); setError('');
     try {
+      await prepareOutletBusiness(sector,settings.storeName);
       await save({ name: firstName.trim(), storeName: settings.storeName, businessSector: sector, isActive: true });
       if (openSecond && secondName.trim() && active.length + 2 <= limit) {
         await save({ name: secondName.trim(), storeName: settings.storeName, businessSector: sector, isActive: true });

@@ -2,9 +2,7 @@ import plansHandler from '../../api/_subscription/plans';
 import freePlanHandler from '../../api/_subscription/free-plan';
 import verifyHandler from '../../api/_subscription/verify';
 import checkoutHandler from '../../api/_subscription/checkout';
-import startTrialHandler from '../../api/_subscription/start-trial';
-import statusHandler from '../../api/_subscription/status';
-import outletsHandler from '../../api/_subscription/outlets';
+import outletBillingHandler from './outletBillingHandler';
 import proratedUpgradeHandler from '../../api/_subscription/prorated-upgrade';
 import { normalizeVercelUrl } from './vercelUrl';
 
@@ -30,11 +28,9 @@ export default async function handler(req: any, res: any) {
     case 'checkout':
       return checkoutHandler(req, res);
     case 'start-trial':
-      return startTrialHandler(req, res);
     case 'status':
-      return statusHandler(req, res);
     case 'outlets':
-      return outletsHandler(req, res);
+      return outletBillingHandler(req, res);
     case 'prorated-upgrade':
       return proratedUpgradeHandler(req, res);
     default:

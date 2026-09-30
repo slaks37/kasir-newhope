@@ -4,7 +4,7 @@ import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
 import { normalizeVercelUrl } from './vercelUrl';
 
-const allowedPaths=new Set(['/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers','/api/v1/sync/receipt-logo']);
+const allowedPaths=new Set(['/api/v1/sync/business','/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers','/api/v1/sync/receipt-logo']);
 
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */
 export function createSyncHandler(

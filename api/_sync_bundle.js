@@ -436,6 +436,39 @@ var str = (v, max) => {
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
+  app.post("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const sector = str(req.body?.sector, 16);
+    const storeName = str(req.body?.storeName, 100);
+    if (!sector || !SECTOR_SET.has(sector) || !storeName) return res.status(400).json({ ok: false, error: "INVALID_BUSINESS" });
+    const businessId = `${principal.subject}_${sector}`;
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, principal.subject);
+        let tenantId = await tenantForPrincipal(c, principal);
+        if (!tenantId) {
+          const created2 = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
+            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
+            DO UPDATE SET name=EXCLUDED.name RETURNING id`, [storeName, principal.subject]);
+          tenantId = created2.rows[0].id;
+        }
+        if (!tenantId) throw new BillingError(409, "TENANT_NOT_PROVISIONED");
+        await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+        await assertTenantWritable(c, tenantId);
+        const existing = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
+        if (existing) return { tenantId, merchantId: existing.id };
+        const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
+          VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
+          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1 RETURNING id`, [tenantId, storeName, sector, businessId]);
+        if (!created.rows.length) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
+        return { tenantId, merchantId: created.rows[0].id };
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return res.status(error instanceof BillingError ? error.status : 500).json({ ok: false, error: error instanceof BillingError ? error.message : "BUSINESS_SETUP_FAILED" });
+    }
+  });
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
     const principal = trustedPrincipal(req);
     const businessId = str(req.query.businessId, 96);
@@ -1460,7 +1493,7 @@ function normalizeVercelUrl(req) {
 }
 
 // src/server/syncHandler.ts
-var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers", "/api/v1/sync/receipt-logo"]);
+var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/business", "/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers", "/api/v1/sync/receipt-logo"]);
 function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
   let runtime;
   return async (req, res) => {

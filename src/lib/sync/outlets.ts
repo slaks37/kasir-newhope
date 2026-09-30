@@ -1,5 +1,14 @@
 import type { StoreBranch } from '../../types';
 
+export async function prepareOutletBusiness(sector: string, storeName: string): Promise<void> {
+  const response = await fetch('/api/v1/sync/business', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sector, storeName }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.error || 'BUSINESS_SETUP_FAILED');
+}
+
 export function mergeServerOutlets(local: StoreBranch[], rows: any[]): StoreBranch[] {
   const remote = rows.map((row): StoreBranch => ({
     ...local.find(branch => branch.id === row.id),

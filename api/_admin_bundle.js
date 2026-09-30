@@ -887,16 +887,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const result = await db.tx(async (c) => {
       await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
       await assertTenantWritable(c, tenantId);
-      let merchant = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
-      if (!merchant) {
-        const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
-          VALUES(uuidv7(),$1,$2,$3,$4)
-          ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1
-          RETURNING id`, [tenantId, String(b.storeName || b.name).slice(0, 150), sector, `${principal.subject}_${sector}`]);
-        merchant = created.rows[0];
-      }
-      if (!merchant) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
+      const merchant = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
+      if (!merchant) throw new BillingError(409, "BUSINESS_SETUP_REQUIRED");
       const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID2();
       const existing = (await c.query("SELECT * FROM internal.outlets WHERE id=$1", [id])).rows[0];
       if (existing && (existing.tenant_id !== tenantId || existing.merchant_id !== merchant.id)) throw new BillingError(403, "OUTLET_NOT_OWNED");
@@ -1453,40 +1445,14 @@ async function merchantDirectory(db, f = {}, financialDetail = true) {
   w.add((p) => `d.merchant_name ILIKE ${p}`, c.search ? `%${c.search}%` : null);
   const { rows } = await db.query(
     `SELECT d.*, h.churn_risk_score, h.days_since_last_txn,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
-       GREATEST(COALESCE(r.transaction_count, 0), COALESCE(d.transaction_count, 0))::int AS transaction_count,
-       GREATEST(COALESCE(r.gross_revenue, 0), COALESCE(d.gross_revenue, 0)) AS gross_revenue,
-       COALESCE(r.last_transaction_at, d.last_transaction_at) AS last_transaction_at,
-       COALESCE(
-         NULLIF((SELECT COALESCE(sum(gross_profit), 0) FROM contract.admin_product_sales WHERE merchant_id = d.merchant_id OR merchant_id = d.tenant_id), 0),
-         (SELECT COALESCE(sum(i.total_price - COALESCE(i.unit_cost, 0) * i.quantity), 0)
-            FROM pos.transaction_items i
-            JOIN pos.transactions t ON t.id = i.transaction_id
-           WHERE (t.merchant_id = d.merchant_id OR t.tenant_id = d.tenant_id OR t.business_id = d.business_id)
-             AND t.payment_status NOT IN ('CANCELLED')),
-         0
-       ) AS gross_profit
+       r.transaction_count,r.gross_revenue,r.last_transaction_at,
+       (SELECT count(*)::int FROM internal.outlets WHERE merchant_id=d.merchant_id AND is_active) AS outlet_count,
+       (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit
        FROM contract.merchant_directory d
-       LEFT JOIN contract.merchant_health_latest h ON (h.merchant_id = d.merchant_id OR h.tenant_id = d.tenant_id)
+       LEFT JOIN contract.merchant_health_latest h ON h.merchant_id = d.merchant_id
        LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id
-       LEFT JOIN LATERAL (
-         SELECT count(*)::int AS transaction_count,
-                COALESCE(sum(total_amount),0) AS gross_revenue,
-                max(created_at) AS last_transaction_at
-           FROM (
-             SELECT total_amount, created_at
-               FROM contract.merchant_revenue
-              WHERE merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id
-             UNION ALL
-             SELECT total_amount, created_at
-               FROM pos.transactions
-              WHERE (merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id)
-                AND payment_status NOT IN ('CANCELLED')
-                AND NOT EXISTS (
-                  SELECT 1 FROM contract.merchant_revenue
-                   WHERE merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id
-                )
-           ) tx
-       ) r ON true
+       LEFT JOIN LATERAL (SELECT count(*)::int AS transaction_count,COALESCE(sum(total_amount),0) AS gross_revenue,max(created_at) AS last_transaction_at
+         FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) r ON true
        ${w.sql()}
       ORDER BY d.merchant_name,d.merchant_id
       LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
@@ -1518,60 +1484,31 @@ async function merchantDirectory(db, f = {}, financialDetail = true) {
 async function merchantDetail(db, merchantId) {
   if (!UUID_RE.test(merchantId)) return null;
   const [profile, bySector, health, topProducts, customerStats] = await Promise.all([
-    db.query(`SELECT d.*, s.status AS raw_status, s.plan_id, s.current_period_end, s.grace_period_end,
-      COALESCE(
-        (SELECT sum(cogs) FROM contract.admin_product_sales WHERE merchant_id = d.merchant_id OR merchant_id = d.tenant_id),
-        (SELECT sum(COALESCE(i.unit_cost, 0) * i.quantity) FROM pos.transaction_items i JOIN pos.transactions t ON t.id = i.transaction_id WHERE (t.merchant_id = d.merchant_id OR t.tenant_id = d.tenant_id OR t.business_id = d.business_id) AND t.payment_status <> 'CANCELLED'),
-        0
-      ) AS cogs,
-      COALESCE(
-        NULLIF((SELECT sum(gross_profit) FROM contract.admin_product_sales WHERE merchant_id = d.merchant_id OR merchant_id = d.tenant_id), 0),
-        (SELECT sum(i.total_price - COALESCE(i.unit_cost, 0) * i.quantity) FROM pos.transaction_items i JOIN pos.transactions t ON t.id = i.transaction_id WHERE (t.merchant_id = d.merchant_id OR t.tenant_id = d.tenant_id OR t.business_id = d.business_id) AND t.payment_status <> 'CANCELLED'),
-        0
-      ) AS gross_profit,
-      COALESCE(
-        (SELECT sum(discount_amount) FROM contract.merchant_revenue WHERE merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id),
-        (SELECT sum(discount_amount) FROM pos.transactions WHERE (merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id) AND payment_status <> 'CANCELLED'),
-        0
-      ) AS discount_amount,
-      COALESCE(
-        (SELECT sum(tax_amount) FROM contract.merchant_revenue WHERE merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id),
-        (SELECT sum(tax_amount) FROM pos.transactions WHERE (merchant_id = d.merchant_id OR tenant_id = d.tenant_id OR business_id = d.business_id) AND payment_status <> 'CANCELLED'),
-        0
-      ) AS tax_amount
-      FROM contract.merchant_directory d
-      LEFT JOIN billing.subscriptions s ON s.tenant_id = d.tenant_id
-     WHERE d.merchant_id = $1 OR d.tenant_id = $1`, [merchantId]),
+    db.query(`SELECT d.*,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
+      (SELECT COALESCE(sum(cogs),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS cogs,
+      (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit,
+      (SELECT COALESCE(sum(discount_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS discount_amount,
+      (SELECT COALESCE(sum(tax_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS tax_amount
+      FROM contract.merchant_directory d LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id WHERE d.merchant_id = $1`, [merchantId]),
+    // Satu merchant bisa menjalankan lebih dari satu sektor.
     db.query(
       `SELECT business_sector,
               COUNT(*)::int                     AS transaction_count,
               COALESCE(SUM(total_amount), 0)    AS gross_revenue,
               COALESCE(AVG(total_amount), 0)    AS avg_basket,
               MAX(created_at)                   AS last_transaction_at
-         FROM (
-           SELECT business_sector, total_amount, created_at
-             FROM contract.merchant_revenue
-            WHERE merchant_id = $1 OR tenant_id = $1
-            UNION ALL
-            SELECT business_sector, total_amount, created_at
-              FROM pos.transactions
-             WHERE (merchant_id = $1 OR tenant_id = $1)
-               AND payment_status NOT IN ('CANCELLED')
-               AND NOT EXISTS (
-                 SELECT 1 FROM contract.merchant_revenue
-                  WHERE merchant_id = $1 OR tenant_id = $1
-               )
-         ) tx
+         FROM contract.merchant_revenue
+        WHERE merchant_id = $1
         GROUP BY business_sector
         ORDER BY gross_revenue DESC`,
       [merchantId]
     ),
-    db.query(`SELECT * FROM contract.merchant_health_latest WHERE merchant_id = $1 OR tenant_id = $1`, [merchantId]),
+    db.query(`SELECT * FROM contract.merchant_health_latest WHERE merchant_id = $1`, [merchantId]),
     db.query(
       `SELECT business_sector, product_name, category_name,
               units_sold::int, revenue, gross_profit, last_sold_at
          FROM contract.admin_product_sales
-        WHERE merchant_id = $1 OR merchant_id = (SELECT tenant_id FROM contract.merchant_directory WHERE merchant_id = $1 OR tenant_id = $1 LIMIT 1)
+        WHERE merchant_id = $1
         ORDER BY revenue DESC
         LIMIT 15`,
       [merchantId]
@@ -1579,29 +1516,19 @@ async function merchantDetail(db, merchantId) {
     db.query(
       `SELECT COUNT(*)::int AS customer_count, COALESCE(SUM(total_spent), 0) AS total_customer_spent
          FROM pos.customers
-        WHERE merchant_id = $1 OR tenant_id = $1 OR tenant_id = (SELECT tenant_id FROM contract.merchant_directory WHERE merchant_id = $1 OR tenant_id = $1 LIMIT 1)`,
+        WHERE merchant_id = $1`,
       [merchantId]
     ).catch(() => ({ rows: [{ customer_count: 0, total_customer_spent: 0 }] }))
   ]);
   if (!profile.rows.length) return null;
-  const p = profile.rows[0];
-  const revBySector = bySector.rows.reduce((sum, r) => sum + Number(r.gross_revenue), 0);
-  const txBySector = bySector.rows.reduce((sum, r) => sum + Number(r.transaction_count), 0);
   return {
     profile: {
-      ...withSubscription(p),
-      gross_revenue: revBySector || Number(p.gross_revenue || 0),
-      transaction_count: txBySector || Number(p.transaction_count || 0),
-      customer_count: Number(customerStats.rows[0]?.customer_count || 0),
-      last_transaction_at: bySector.rows[0]?.last_transaction_at || p.last_transaction_at
+      ...withSubscription(profile.rows[0]),
+      gross_revenue: bySector.rows.reduce((sum, r) => sum + Number(r.gross_revenue), 0),
+      transaction_count: bySector.rows.reduce((sum, r) => sum + Number(r.transaction_count), 0),
+      customer_count: Number(customerStats.rows[0]?.customer_count || 0)
     },
-    sectors: bySector.rows.length ? bySector.rows : [{
-      business_sector: p.business_sector,
-      transaction_count: Number(p.transaction_count || 0),
-      gross_revenue: Number(p.gross_revenue || 0),
-      avg_basket: Number(p.transaction_count) ? Number(p.gross_revenue) / Number(p.transaction_count) : 0,
-      last_transaction_at: p.last_transaction_at
-    }],
+    sectors: bySector.rows,
     health: health.rows[0] ?? null,
     topProducts: topProducts.rows
   };
@@ -2393,6 +2320,39 @@ var str = (v, max) => {
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
+  app.post("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const sector = str(req.body?.sector, 16);
+    const storeName = str(req.body?.storeName, 100);
+    if (!sector || !SECTOR_SET.has(sector) || !storeName) return res.status(400).json({ ok: false, error: "INVALID_BUSINESS" });
+    const businessId = `${principal.subject}_${sector}`;
+    try {
+      const result = await db.tx(async (c) => {
+        await assertBusinessCanBeClaimed(c, businessId, principal.subject);
+        let tenantId = await tenantForPrincipal(c, principal);
+        if (!tenantId) {
+          const created2 = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
+            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
+            DO UPDATE SET name=EXCLUDED.name RETURNING id`, [storeName, principal.subject]);
+          tenantId = created2.rows[0].id;
+        }
+        if (!tenantId) throw new BillingError(409, "TENANT_NOT_PROVISIONED");
+        await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+        await assertTenantWritable(c, tenantId);
+        const existing = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
+        if (existing) return { tenantId, merchantId: existing.id };
+        const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
+          VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
+          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1 RETURNING id`, [tenantId, storeName, sector, businessId]);
+        if (!created.rows.length) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
+        return { tenantId, merchantId: created.rows[0].id };
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return res.status(error instanceof BillingError ? error.status : 500).json({ ok: false, error: error instanceof BillingError ? error.message : "BUSINESS_SETUP_FAILED" });
+    }
+  });
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
     const principal = trustedPrincipal(req);
     const businessId = str(req.query.businessId, 96);

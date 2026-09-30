@@ -74,16 +74,8 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     const result=await db.tx(async c=>{
       await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
       await assertTenantWritable(c,tenantId);
-      let merchant=(await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,sector])).rows[0];
-      if(!merchant) {
-        const created=await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
-          VALUES(uuidv7(),$1,$2,$3,$4)
-          ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-          DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1
-          RETURNING id`,[tenantId,String(b.storeName || b.name).slice(0,150),sector,`${principal.subject}_${sector}`]);
-        merchant=created.rows[0];
-      }
-      if(!merchant) throw new BillingError(409,'BUSINESS_OWNERSHIP_CONFLICT');
+      const merchant=(await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,sector])).rows[0];
+      if(!merchant) throw new BillingError(409,'BUSINESS_SETUP_REQUIRED');
       const id=/^[0-9a-f-]{36}$/i.test(b.id || '')?b.id:randomUUID();
       const existing=(await c.query('SELECT * FROM internal.outlets WHERE id=$1',[id])).rows[0];
       if(existing && (existing.tenant_id!==tenantId || existing.merchant_id!==merchant.id)) throw new BillingError(403,'OUTLET_NOT_OWNED');

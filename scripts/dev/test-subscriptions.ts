@@ -17,6 +17,7 @@ import { testDokuNotifications } from './test-doku-notifications';
 import { mergeServerOutlets } from '../../src/lib/sync/outlets';
 import { INITIAL_BRANCHES } from '../../src/data/initialData';
 import { testFreeSync } from './test-free-sync';
+import { merchantDirectory, merchantDetail } from '../../src/server/repo';
 
 async function main(){
  const pg=new PGlite();
@@ -29,7 +30,6 @@ async function main(){
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/restrict-browser-rls-policies.sql','utf8'));
- await pg.exec(fs.readFileSync('supabase/migrations/20260930064750_explicit_outlet_onboarding_grants.sql','utf8'));
  // Repeat application must preserve data and permissions.
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
@@ -163,6 +163,8 @@ async function main(){
   const outletRequest=(body:Record<string,unknown>)=>fetch(url+'/api/v1/subscription/outlets',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessSector:'FNB',...body})});
   const noOutlet=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[]})});
   assert.equal(noOutlet.status,409);assert.equal((await noOutlet.json()).error,'OUTLET_SETUP_REQUIRED');
+  const prepare=await fetch(url+'/api/v1/sync/business',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({sector:'FNB',storeName:'Fresh Merchant'})});
+  assert.equal(prepare.status,200,await prepare.clone().text());
   const firstOutletResponse=await outletRequest({name:'Outlet 1'});
   assert.equal(firstOutletResponse.status,200,await firstOutletResponse.clone().text());
   const firstOutlet=(await firstOutletResponse.json()).outlet;
@@ -194,6 +196,15 @@ async function main(){
   const totals=await fetch(url+'/api/admin/overview',{headers:{authorization:'Bearer test-admin'}});
   const overview=await totals.json();assert.equal(Number(overview.totals.gross_profit),15000,JSON.stringify(overview));
   assert.equal(Number(overview.totals.gross_revenue),20000);
+  const siblingMerchant=randomUUID();
+  await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Fresh sibling','LAUNDRY')",[siblingMerchant,product.tenant_id]);
+  const directory=await merchantDirectory(db,{search:'Fresh',limit:100});
+  const ownRow=directory.rows.find((r:any)=>r.merchant_id===product.merchant_id);
+  const siblingRow=directory.rows.find((r:any)=>r.merchant_id===siblingMerchant);
+  assert.equal(Number(ownRow.transaction_count),1,'Multiple outlets must not multiply the transaction count');
+  assert.equal(Number(ownRow.gross_revenue),20000);
+  assert.equal(Number(siblingRow.transaction_count),0,'Sibling merchant must not inherit tenant-wide sales');
+  assert.equal(Number((await merchantDetail(db,siblingMerchant))?.profile.gross_revenue),0);
   console.log('PASS: real POS sale reaches monitoring with correct revenue/profit; repeat sync does not duplicate it; outlet hydration preserves drafts');
   const log=await fetch(url+'/api/v1/sync/activity',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',eventType:'TEST_OPERATION',summary:'Real activity round trip',appModule:'POS'})});
   assert.equal(log.status,200,'activity sync: '+await log.text());
@@ -297,9 +308,6 @@ async function main(){
   await db.tx(async c=>{
     await c.exec('SET LOCAL ROLE svc_billing');
     assert.equal((await subscriptionStatus(c,tenant)).subscription.tenantId,tenant);
-    const provisioned=randomUUID();
-    await c.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Backend provisioning','provision-owner')",[provisioned]);
-    await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Provisioned business','RETAIL')",[randomUUID(),provisioned]);
   });
   await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');await assertOutletCapacity(c,tenant);}),/OUTLET_LIMIT_REACHED/);
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
