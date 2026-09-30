@@ -182,6 +182,17 @@ async function main(){
   const sync=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',storeName:'Fresh Merchant',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}]})});
   assert.equal(sync.status,200,'real catalog sync: '+await sync.text());
   const product=(await db.query("SELECT id,tenant_id,merchant_id,outlet_id FROM pos.products WHERE external_ref='product-test'")).rows[0];
+  const catalogHeaders={'x-auth-sub':'owner-three','content-type':'application/json'};
+  const secondDevice=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:catalogHeaders,body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'},{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000}]})});
+  assert.equal(secondDevice.status,200,await secondDevice.clone().text());
+  assert.equal((await db.query('SELECT is_available FROM pos.products WHERE id=$1',[product.id])).rows[0].is_available,true);
+  const remoteCatalog=await (await fetch(url+'/api/v1/sync/catalog?businessId=owner-three_FNB&sector=FNB',{headers:catalogHeaders})).json();
+  assert.equal(remoteCatalog.ok,true,JSON.stringify(remoteCatalog));
+  assert.equal(remoteCatalog.products.length,2);
+  const beverage=remoteCatalog.products.find((p:any)=>p.id==='device-b-product');
+  assert.ok(remoteCatalog.categories.some((c:any)=>c.id===beverage.categoryId&&c.name==='Minuman'),'Product category must use the same external ID as the returned categories');
+  const foreignCatalog=await (await fetch(url+'/api/v1/sync/catalog?businessId=owner-three_FNB&sector=FNB',{headers:{'x-auth-sub':'owner-one'}})).json();
+  assert.equal(foreignCatalog.products.length,0,'A different owner must not read this catalog');
   const stockItem=randomUUID(),location=randomUUID();
   await db.query('INSERT INTO pos.inventory_items(id,tenant_id,merchant_id,item_name) VALUES($1,$2,$3,$4)',[stockItem,product.tenant_id,product.merchant_id,'Test stock']);
   await db.query('INSERT INTO pos.inventory_locations(id,tenant_id,merchant_id,outlet_id) VALUES($1,$2,$3,$4)',[location,product.tenant_id,product.merchant_id,product.outlet_id]);
@@ -198,6 +209,10 @@ async function main(){
   assert.equal(Number(overview.totals.gross_revenue),20000);
   const siblingMerchant=randomUUID();
   await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Fresh sibling','LAUNDRY')",[siblingMerchant,product.tenant_id]);
+  await db.query("UPDATE internal.merchants SET external_ref='owner-three_LAUNDRY' WHERE id=$1",[siblingMerchant]);
+  const siblingCatalog=await (await fetch(url+'/api/v1/sync/catalog?businessId=owner-three_LAUNDRY&sector=LAUNDRY',{headers:catalogHeaders})).json();
+  assert.deepEqual(siblingCatalog.products,[],'Same owner, different merchant must not inherit FNB products');
+  console.log('PASS: catalog category IDs agree and reads stay merchant/owner scoped');
   const directory=await merchantDirectory(db,{search:'Fresh',limit:100});
   const ownRow=directory.rows.find((r:any)=>r.merchant_id===product.merchant_id);
   const siblingRow=directory.rows.find((r:any)=>r.merchant_id===siblingMerchant);

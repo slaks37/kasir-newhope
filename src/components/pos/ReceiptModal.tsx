@@ -14,19 +14,24 @@ interface ReceiptModalProps {
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onClose }) => {
   const { t } = useTranslation();
   const [paperSize, setPaperSize] = React.useState<'58mm' | '80mm'>(settings.receiptPaperSize || '80mm');
+  const [printError, setPrintError] = React.useState('');
+  const [printing, setPrinting] = React.useState(false);
+  const handlePrint = React.useCallback(async () => {
+    setPrintError('');
+    setPrinting(true);
+    try { await printReceiptImages('receipt-paper'); }
+    catch (error) { setPrintError(error instanceof Error ? error.message : 'Gagal membuka cetak nota.'); }
+    finally { setPrinting(false); }
+  }, []);
 
   React.useEffect(() => {
     if (settings.autoPrintReceipt) {
       const timer = setTimeout(() => {
-        void printReceiptImages('receipt-paper');
+        void handlePrint();
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [settings.autoPrintReceipt]);
-
-  const handlePrint = () => {
-    void printReceiptImages('receipt-paper');
-  };
+  }, [settings.autoPrintReceipt, handlePrint]);
 
   const handleShareWhatsApp = () => {
     const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nFaktur: ${order.id}\nTanggal: ${formatDateTime(
@@ -284,6 +289,14 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
         </div>
 
         {/* Footer Action Bar */}
+        <div className="px-4 py-2 text-xs text-slate-600 bg-white border-t border-slate-200 print:hidden">
+          <details>
+            <summary className="cursor-pointer font-semibold">Printer Epson / Bluetooth belum muncul?</summary>
+            <p className="mt-2">Pasangkan printer di Windows, lalu tambahkan sebagai printer dengan driver yang sesuai model Epson. Klik Cetak, pilih printer Epson (bukan Simpan PDF), pilih kertas {paperSize}, skala 100%, tanpa header/footer. Jika hanya muncul sebagai port COM, konfigurasi port itu pada driver printer di Windows terlebih dahulu.</p>
+            <p className="mt-1">Cetak melalui driver Windows; browser tidak otomatis memasangkan Bluetooth. Dialog cetak bukan konfirmasi kertas sudah tercetak.</p>
+          </details>
+          {printError && <p role="alert" className="mt-2 text-red-700">{printError}</p>}
+        </div>
         <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
             <button
@@ -296,6 +309,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
 
             <button
               onClick={handlePrint}
+              disabled={printing}
               className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 shadow-xs"
             >
               <Printer className="w-4 h-4" />

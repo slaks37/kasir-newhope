@@ -4,7 +4,16 @@ import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
 import { normalizeVercelUrl } from './vercelUrl';
 
-const allowedPaths=new Set(['/api/v1/sync/business','/api/v1/sync/catalog','/api/v1/sync/transactions','/api/v1/sync/activity','/api/v1/sync/customers','/api/v1/sync/receipt-logo']);
+const allowedMethods: Record<string, readonly string[]> = {
+  '/api/v1/sync/business': ['POST'],
+  '/api/v1/sync/catalog': ['GET', 'POST'],
+  '/api/v1/sync/transactions': ['POST'],
+  '/api/v1/sync/activity': ['POST'],
+  '/api/v1/sync/customers': ['POST'],
+  '/api/v1/sync/attendance': ['POST'],
+  '/api/v1/sync/payroll': ['POST'],
+  '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
+};
 
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */
 export function createSyncHandler(
@@ -16,8 +25,8 @@ export function createSyncHandler(
     normalizeVercelUrl(req);
     res.setHeader('Cache-Control','no-store');
     const path=String(req.url||'').split('?')[0].replace(/\/+$/,'');
-    if(!allowedPaths.has(path)) return res.status(404).json({ok:false,error:'NOT_FOUND'});
-    if(path==='/api/v1/sync/receipt-logo' ? !['GET','PUT'].includes(req.method) : req.method!=='POST') return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
+    if(!Object.hasOwn(allowedMethods,path)) return res.status(404).json({ok:false,error:'NOT_FOUND'});
+    if(!allowedMethods[path].includes(req.method)) return res.status(405).json({ok:false,error:'METHOD_NOT_ALLOWED'});
     const principal=await authenticate(req);
     if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
     // Never trust browser-supplied gateway or principal headers.

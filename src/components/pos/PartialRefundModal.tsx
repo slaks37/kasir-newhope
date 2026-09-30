@@ -109,7 +109,9 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
   };
 
   const handlePrintReturnReceipt = () => {
-    void printReceiptImages('thermal-return-receipt');
+    void printReceiptImages('thermal-return-receipt').catch(error => {
+      alert(error instanceof Error ? error.message : 'Gagal membuka cetak nota retur.');
+    });
   };
 
   const handleShareWhatsApp = () => {

@@ -822,18 +822,19 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           upserted++;
         }
 
-        // Produk yang tidak ada lagi di perangkat: disembunyikan, bukan dibuang.
+        // Legacy full-snapshot protocol: scope retirement to this merchant,
+        // never all sibling businesses owned by the same tenant.
+        // Replacing this with explicit tombstones + revisions is still needed
+        // before enabling continuous two-way catalog synchronization.
         let retired = 0;
         if (!freeScope && seen.length > 0) {
           const r = await c.query(
-            `UPDATE pos.products
-                SET is_available = FALSE
-              WHERE tenant_id = $1
+            `UPDATE pos.products SET is_available = FALSE
+              WHERE tenant_id = $1 AND merchant_id = $3
                 AND external_ref IS NOT NULL
-                AND NOT (external_ref = ANY($2::text[]))
-                AND is_available
+                AND NOT (external_ref = ANY($2::text[])) AND is_available
               RETURNING id`,
-            [tenantId, seen]
+            [tenantId, seen, merchantId]
           );
           retired = r.rows.length;
         }
@@ -1047,21 +1048,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         return res.json({ ok: true, products: [], categories: [] });
       }
       const tenantId = tenantRes.rows[0].tenant_id;
-      const [prodRes, catRes] = await Promise.all([
-        db.query(
+      const merchantId = tenantRes.rows[0].merchant_id;
+      const prodRes = await db.query(
           `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
-                  p.is_available, c.name AS category_name, c.id AS category_id
+                  p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
-             LEFT JOIN pos.categories c ON c.id = p.category_id
-            WHERE p.tenant_id = $1 AND p.is_available
+            WHERE p.tenant_id = $1 AND p.merchant_id = $2
             ORDER BY p.name ASC`,
-          [tenantId]
-        ),
-        db.query(
-          `SELECT id, name, external_ref FROM pos.categories WHERE tenant_id = $1 ORDER BY name ASC`,
-          [tenantId]
-        ),
-      ]);
+          [tenantId, merchantId]
+      );
+      const categoryId = (r: any) => r.category_id || `category:${r.category_name}`;
       res.json({
         ok: true,
         products: prodRes.rows.map((r: any) => ({
@@ -1073,13 +1069,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           unit: r.unit,
           description: r.description,
           categoryName: r.category_name,
-          categoryId: r.category_id,
+          categoryId: categoryId(r),
           isAvailable: Boolean(r.is_available),
         })),
-        categories: catRes.rows.map((r: any) => ({
-          id: r.external_ref || r.id,
-          name: r.name,
-        })),
+        categories: [...new Map(prodRes.rows.map((r: any) => [categoryId(r), {
+          id: categoryId(r), name: r.category_name,
+        }])).values()],
       });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message || 'CATALOG_FETCH_FAILED' });

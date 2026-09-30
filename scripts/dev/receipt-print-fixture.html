@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Uji cetak nota lokal — bukan transaksi</title>
+  <style>
+    body { font: 14px Arial; background: #f8fafc; }
+    .modal { height: 260px; overflow: hidden; width: 330px; border: 2px solid #334155; }
+    #receipt-paper { background: white; font: 11px monospace; padding: 10px; }
+    .item { display: flex; justify-content: space-between; padding: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Uji cetak nota lokal</h1>
+  <p>Data sintetis. Tidak menyimpan transaksi, memanggil API, atau melakukan pembayaran.</p>
+  <button id="print">Buka preview cetak</button>
+  <label>Ukuran kertas <select id="paper"><option value="80">80mm</option><option value="58">58mm</option></select></label>
+  <p id="status" role="status"></p>
+  <div class="modal"><div id="receipt-paper" class="paper-80mm">
+    <h2>NOTA UJI PRINTER</h2>
+    <p>New Hope POS — data sintetis</p>
+    <div id="items"></div>
+    <hr><p>TOTAL: Rp 30.000</p><p>AKHIR NOTA — bagian ini tidak boleh terpotong.</p>
+  </div></div>
+  <script type="module">
+    import { printReceiptImages } from '/src/lib/printReceipt.ts';
+    for(let n=1;n<=30;n++){
+      const row=document.createElement('div');row.className='item';
+      const name=document.createElement('span');name.textContent='Produk uji '+n;
+      const price=document.createElement('span');price.textContent='Rp 1.000';
+      row.append(name,price);document.getElementById('items').append(row);
+    }
+    document.getElementById('paper').onchange=event=>document.getElementById('receipt-paper').className='paper-'+event.target.value+'mm';
+    document.getElementById('print').onclick=async()=>{
+      try{await printReceiptImages('receipt-paper');document.getElementById('status').textContent='Dialog cetak diminta; belum membuktikan hasil cetak fisik.';}
+      catch(error){document.getElementById('status').textContent=error.message;}
+    };
+  </script>
+</body>
+</html>

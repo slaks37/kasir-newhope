@@ -11,7 +11,11 @@ for(const [url,method,status] of [
   ['/api/v1/sync/receipt-logo','GET',401],
   ['/api/v1/sync/receipt-logo','PUT',401],
   ['/api/v1/sync/receipt-logo','POST',405],
-  ['/api/v1/sync/catalog','GET',405],
+  ['/api/v1/sync/catalog','GET',401],
+  ['/api/v1/sync/catalog','DELETE',405],
+  ['/api/v1/sync/attendance','POST',401],
+  ['/api/v1/sync/payroll','POST',401],
+  ['/api/v1/sync/payroll','GET',405],
   ['/api/admin/merchants','POST',404],
   ['/api/v1/sync/../admin','POST',404],
 ] as const){

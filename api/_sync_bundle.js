@@ -1023,14 +1023,12 @@ function registerSyncRoutes(app, db) {
         let retired = 0;
         if (!freeScope && seen.length > 0) {
           const r = await c.query(
-            `UPDATE pos.products
-                SET is_available = FALSE
-              WHERE tenant_id = $1
+            `UPDATE pos.products SET is_available = FALSE
+              WHERE tenant_id = $1 AND merchant_id = $3
                 AND external_ref IS NOT NULL
-                AND NOT (external_ref = ANY($2::text[]))
-                AND is_available
+                AND NOT (external_ref = ANY($2::text[])) AND is_available
               RETURNING id`,
-            [tenantId, seen]
+            [tenantId, seen, merchantId]
           );
           retired = r.rows.length;
         }
@@ -1213,21 +1211,16 @@ function registerSyncRoutes(app, db) {
         return res.json({ ok: true, products: [], categories: [] });
       }
       const tenantId = tenantRes.rows[0].tenant_id;
-      const [prodRes, catRes] = await Promise.all([
-        db.query(
-          `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
-                  p.is_available, c.name AS category_name, c.id AS category_id
+      const merchantId = tenantRes.rows[0].merchant_id;
+      const prodRes = await db.query(
+        `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
+                  p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
-             LEFT JOIN pos.categories c ON c.id = p.category_id
-            WHERE p.tenant_id = $1 AND p.is_available
+            WHERE p.tenant_id = $1 AND p.merchant_id = $2
             ORDER BY p.name ASC`,
-          [tenantId]
-        ),
-        db.query(
-          `SELECT id, name, external_ref FROM pos.categories WHERE tenant_id = $1 ORDER BY name ASC`,
-          [tenantId]
-        )
-      ]);
+        [tenantId, merchantId]
+      );
+      const categoryId = (r) => r.category_id || `category:${r.category_name}`;
       res.json({
         ok: true,
         products: prodRes.rows.map((r) => ({
@@ -1239,13 +1232,13 @@ function registerSyncRoutes(app, db) {
           unit: r.unit,
           description: r.description,
           categoryName: r.category_name,
-          categoryId: r.category_id,
+          categoryId: categoryId(r),
           isAvailable: Boolean(r.is_available)
         })),
-        categories: catRes.rows.map((r) => ({
-          id: r.external_ref || r.id,
-          name: r.name
-        }))
+        categories: [...new Map(prodRes.rows.map((r) => [categoryId(r), {
+          id: categoryId(r),
+          name: r.category_name
+        }])).values()]
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message || "CATALOG_FETCH_FAILED" });
@@ -1493,15 +1486,24 @@ function normalizeVercelUrl(req) {
 }
 
 // src/server/syncHandler.ts
-var allowedPaths = /* @__PURE__ */ new Set(["/api/v1/sync/business", "/api/v1/sync/catalog", "/api/v1/sync/transactions", "/api/v1/sync/activity", "/api/v1/sync/customers", "/api/v1/sync/receipt-logo"]);
+var allowedMethods = {
+  "/api/v1/sync/business": ["POST"],
+  "/api/v1/sync/catalog": ["GET", "POST"],
+  "/api/v1/sync/transactions": ["POST"],
+  "/api/v1/sync/activity": ["POST"],
+  "/api/v1/sync/customers": ["POST"],
+  "/api/v1/sync/attendance": ["POST"],
+  "/api/v1/sync/payroll": ["POST"],
+  "/api/v1/sync/receipt-logo": ["GET", "PUT"]
+};
 function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
   let runtime;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
-    if (!allowedPaths.has(path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-    if (path === "/api/v1/sync/receipt-logo" ? !["GET", "PUT"].includes(req.method) : req.method !== "POST") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+    if (!Object.hasOwn(allowedMethods, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if (!allowedMethods[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
     const principal = await authenticate(req);
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     for (const key of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[key];

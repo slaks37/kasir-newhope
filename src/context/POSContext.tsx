@@ -446,6 +446,8 @@ purgeLegacyMockData();
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user: authUser, session: authSession } = useAuth();
+  // Store identity is independent of the local cashier profile.
+  const storeOwnerId = authUser?.id || 'usr-owner';
 
   const defaultOwnerUser: User = {
     id: authUser?.id || 'usr-owner',
@@ -524,7 +526,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [authUser]);
 
   const [settings, setSettings] = useState<StoreSettings>(() => {
-    const uId = currentUser?.id || authUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const loaded = loadGlobalUserData('settings', uId, INITIAL_SETTINGS);
     const storeName = authUser?.user_metadata?.store_name || authUser?.user_metadata?.full_name;
     const sector = (authUser?.user_metadata?.business_sector || authUser?.user_metadata?.sector || loaded.businessSector || 'FNB') as BusinessSector;
@@ -653,9 +655,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * definition of "which business am I looking at".
    */
   const tenant: TenantInfo = {
-    businessId: makeBusinessId(currentUser.id, activeSector),
-    merchantId: currentUser.id,
-    tenantId: currentUser.id,
+    businessId: makeBusinessId(storeOwnerId, activeSector),
+    merchantId: storeOwnerId,
+    tenantId: storeOwnerId,
     sector: activeSector,
     businessName: settings.storeName,
     storeMode: settings.storeMode,
@@ -679,11 +681,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
     sector: activeSector,
     storeName: settings.storeName,
-    ownerRef: currentUser.id,
+    ownerRef: storeOwnerId,
   };
 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
-    getSyncStatus(makeBusinessId(currentUser.id, activeSector))
+    getSyncStatus(makeBusinessId(storeOwnerId, activeSector))
   );
 
   /**
@@ -715,7 +717,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
       sector: activeSector,
       storeName: storeNameForSync,
-      ownerRef: currentUser.id,
+      ownerRef: storeOwnerId,
     };
 
     // Berpindah pengguna atau sektor berarti antrian yang berbeda.
@@ -740,44 +742,44 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       window.removeEventListener('outlets-updated', onOutletsUpdated);
       window.clearInterval(timer);
     };
-  }, [bizId, activeSector, storeNameForSync, currentUser.id, settings.activeBranchId, runSync]);
+  }, [bizId, activeSector, storeNameForSync, storeOwnerId, settings.activeBranchId, runSync]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
-    return loadScopedData('categories', currentUser.id, activeSector, defaultPreset.categories);
+    return loadScopedData('categories', storeOwnerId, activeSector, defaultPreset.categories);
   });
 
   const [products, setProducts] = useState<Product[]>(() => {
-    return loadScopedData('products', currentUser.id, activeSector, defaultPreset.products);
+    return loadScopedData('products', storeOwnerId, activeSector, defaultPreset.products);
   });
 
   const [tables, setTables] = useState<Table[]>(() => {
-    return loadScopedData('tables', currentUser.id, activeSector, defaultPreset.tables);
+    return loadScopedData('tables', storeOwnerId, activeSector, defaultPreset.tables);
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
-    return loadScopedData('customers', currentUser.id, activeSector, seedCustomersFor(activeSector));
+    return loadScopedData('customers', storeOwnerId, activeSector, seedCustomersFor(activeSector));
   });
 
   const [orders, setOrders] = useState<Order[]>(() => {
-    return loadScopedData('orders', currentUser.id, activeSector, []);
+    return loadScopedData('orders', storeOwnerId, activeSector, []);
   });
 
 
   const [heldOrders, setHeldOrders] = useState<Order[]>(() => {
-    return loadScopedData('held_orders', currentUser.id, activeSector, []);
+    return loadScopedData('held_orders', storeOwnerId, activeSector, []);
   });
 
   const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(() => {
-    return loadScopedData('inventory_logs', currentUser.id, activeSector, []);
+    return loadScopedData('inventory_logs', storeOwnerId, activeSector, []);
   });
 
   const [cashMovements, setCashMovements] = useState<CashMovement[]>(() => {
-    return loadScopedData('cash_movements', authUser?.id || currentUser.id, activeSector, []);
+    return loadScopedData('cash_movements', storeOwnerId, activeSector, []);
   });
 
   const [shift, setShift] = useState<Shift>(() => {
     const activeCashier = authUser?.user_metadata?.full_name || currentUser.name || 'Kasir';
-    const loaded = loadScopedData('shift', authUser?.id || currentUser.id, activeSector, INITIAL_SHIFT);
+    const loaded = loadScopedData('shift', storeOwnerId, activeSector, INITIAL_SHIFT);
 
     if (
       !loaded.cashierName ||
@@ -861,11 +863,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [orders, cashMovements, shift.id, shift.status, shift.initialCash]);
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
-    return loadScopedData('shift_history', currentUser.id, activeSector, []);
+    return loadScopedData('shift_history', storeOwnerId, activeSector, []);
   });
 
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => {
-    return loadScopedData('promo_codes', currentUser.id, activeSector, seedPromosFor(activeSector));
+    return loadScopedData('promo_codes', storeOwnerId, activeSector, seedPromosFor(activeSector));
   });
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -878,193 +880,193 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Staff Members State & Selection
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => {
-    return loadGlobalUserData('staff_members', currentUser.id, INITIAL_STAFF_MEMBERS);
+    return loadGlobalUserData('staff_members', storeOwnerId, INITIAL_STAFF_MEMBERS);
   });
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
 
   // Stock Items State
   const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    return loadScopedData('stock_items', currentUser.id, activeSector, INITIAL_STOCK_ITEMS);
+    return loadScopedData('stock_items', storeOwnerId, activeSector, INITIAL_STOCK_ITEMS);
   });
 
   // Product Bundles State
   const [bundles, setBundles] = useState<ProductBundle[]>(() => {
-    return loadScopedData('bundles', currentUser.id, activeSector, INITIAL_BUNDLES);
+    return loadScopedData('bundles', storeOwnerId, activeSector, INITIAL_BUNDLES);
   });
 
   // Attendance Logs State (Clock In / Out)
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>(() => {
-    return loadScopedData('attendance_logs', currentUser.id, activeSector, seedAttendanceFor(activeSector));
+    return loadScopedData('attendance_logs', storeOwnerId, activeSector, seedAttendanceFor(activeSector));
   });
 
   // KDS Tickets (F&B Kitchen Display System)
   const [kdsTickets, setKdsTickets] = useState<KDSTicket[]>(() => {
-    return loadScopedData('kds_tickets', currentUser.id, activeSector, INITIAL_KDS_TICKETS);
+    return loadScopedData('kds_tickets', storeOwnerId, activeSector, INITIAL_KDS_TICKETS);
   });
 
   // Carwash Bay Queue (Carwash Bay Capacity Pipeline)
   const [carwashQueue, setCarwashQueue] = useState<CarwashQueueItem[]>(() => {
-    return loadScopedData('carwash_queue', currentUser.id, activeSector, INITIAL_CARWASH_QUEUE);
+    return loadScopedData('carwash_queue', storeOwnerId, activeSector, INITIAL_CARWASH_QUEUE);
   });
 
   // Appointment Bookings (Barbershop Time-Slot Resource Engine)
   const [bookings, setBookings] = useState<AppointmentBooking[]>(() => {
-    return loadScopedData('bookings', currentUser.id, activeSector, INITIAL_BOOKINGS);
+    return loadScopedData('bookings', storeOwnerId, activeSector, INITIAL_BOOKINGS);
   });
 
   // Staff Commission Rules
   const [commissionRules, setCommissionRules] = useState<StaffCommissionRule[]>(() => {
-    return loadScopedData('commission_rules', currentUser.id, activeSector, INITIAL_COMMISSION_RULES);
+    return loadScopedData('commission_rules', storeOwnerId, activeSector, INITIAL_COMMISSION_RULES);
   });
 
   // Payroll Slips (Smart Labor & Commission Core)
   const [payrollSlips, setPayrollSlips] = useState<PayrollSlip[]>(() => {
-    return loadScopedData('payroll_slips', currentUser.id, activeSector, []);
+    return loadScopedData('payroll_slips', storeOwnerId, activeSector, []);
   });
 
   // Automated WhatsApp Lifecycle Hooks
   const [sentLifecycleHookIds, setSentLifecycleHookIds] = useState<string[]>(() => {
-    return loadScopedData('sent_lifecycle_hooks', currentUser.id, activeSector, []);
+    return loadScopedData('sent_lifecycle_hooks', storeOwnerId, activeSector, []);
   });
 
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('categories', uId, sec), JSON.stringify(categories));
-  }, [categories, currentUser.id, settings.businessSector]);
+  }, [categories, storeOwnerId, settings.businessSector]);
 
   // Debounce: products berubah SETIAP transaksi (stok berkurang). Tanpa
   // penundaan, satu jam sibuk menghasilkan ratusan JSON.stringify katalog penuh.
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     const timer = window.setTimeout(() => {
       localStorage.setItem(getScopedKey('products', uId, sec), JSON.stringify(products));
     }, 2_000);
     return () => window.clearTimeout(timer);
-  }, [products, currentUser.id, settings.businessSector]);
+  }, [products, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('tables', uId, sec), JSON.stringify(tables));
-  }, [tables, currentUser.id, settings.businessSector]);
+  }, [tables, storeOwnerId, settings.businessSector]);
 
   // Debounce: sama seperti products — bahan baku terpotong setiap transaksi.
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     const timer = window.setTimeout(() => {
       localStorage.setItem(getScopedKey('stock_items', uId, sec), JSON.stringify(stockItems));
     }, 2_000);
     return () => window.clearTimeout(timer);
-  }, [stockItems, currentUser.id, settings.businessSector]);
+  }, [stockItems, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('bundles', uId, sec), JSON.stringify(bundles));
-  }, [bundles, currentUser.id, settings.businessSector]);
+  }, [bundles, storeOwnerId, settings.businessSector]);
 
   // Cap 50 order terbaru. Order lama sudah aman di server lewat sync queue —
   // menyimpan semuanya membengkakkan localStorage (limit 5 MB) dan memperlambat
   // JSON.stringify di setiap transaksi.
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('orders', uId, sec), JSON.stringify(orders.slice(0, 50)));
-  }, [orders, currentUser.id, settings.businessSector]);
+  }, [orders, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('held_orders', uId, sec), JSON.stringify(heldOrders));
-  }, [heldOrders, currentUser.id, settings.businessSector]);
+  }, [heldOrders, storeOwnerId, settings.businessSector]);
 
   // Cap 50 log terbaru — alasan sama dengan orders di atas.
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('inventory_logs', uId, sec), JSON.stringify(inventoryLogs.slice(0, 50)));
-  }, [inventoryLogs, currentUser.id, settings.businessSector]);
+  }, [inventoryLogs, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('shift', uId, sec), JSON.stringify(shift));
-  }, [shift, currentUser.id, settings.businessSector]);
+  }, [shift, storeOwnerId, settings.businessSector]);
 
   // Cap 30 shift terbaru (kurang-lebih 1 bulan harian).
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('shift_history', uId, sec), JSON.stringify(shiftHistory.slice(0, 30)));
-  }, [shiftHistory, currentUser.id, settings.businessSector]);
+  }, [shiftHistory, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     localStorage.setItem(getGlobalUserKey('settings', uId), JSON.stringify(settings));
-  }, [settings, currentUser.id]);
+  }, [settings, storeOwnerId]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('customers', uId, sec), JSON.stringify(customers));
-  }, [customers, currentUser.id, settings.businessSector]);
+  }, [customers, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     localStorage.setItem(getGlobalUserKey('staff_members', uId), JSON.stringify(staffMembers));
-  }, [staffMembers, currentUser.id]);
+  }, [staffMembers, storeOwnerId]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('attendance_logs', uId, sec), JSON.stringify(attendanceLogs));
-  }, [attendanceLogs, currentUser.id, settings.businessSector]);
+  }, [attendanceLogs, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('promo_codes', uId, sec), JSON.stringify(promoCodes));
-  }, [promoCodes, currentUser.id, settings.businessSector]);
+  }, [promoCodes, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('kds_tickets', uId, sec), JSON.stringify(kdsTickets));
-  }, [kdsTickets, currentUser.id, settings.businessSector]);
+  }, [kdsTickets, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('carwash_queue', uId, sec), JSON.stringify(carwashQueue));
-  }, [carwashQueue, currentUser.id, settings.businessSector]);
+  }, [carwashQueue, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('bookings', uId, sec), JSON.stringify(bookings));
-  }, [bookings, currentUser.id, settings.businessSector]);
+  }, [bookings, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('commission_rules', uId, sec), JSON.stringify(commissionRules));
-  }, [commissionRules, currentUser.id, settings.businessSector]);
+  }, [commissionRules, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('payroll_slips', uId, sec), JSON.stringify(payrollSlips));
-  }, [payrollSlips, currentUser.id, settings.businessSector]);
+  }, [payrollSlips, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = currentUser?.id || 'usr-admin';
+    const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
     localStorage.setItem(getScopedKey('sent_lifecycle_hooks', uId, sec), JSON.stringify(sentLifecycleHookIds));
-  }, [sentLifecycleHookIds, currentUser.id, settings.businessSector]);
+  }, [sentLifecycleHookIds, storeOwnerId, settings.businessSector]);
 
   /*
    * SINKRONISASI KATALOG.
@@ -1084,11 +1086,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const timer = window.setTimeout(() => {
       void pushCatalog(
         {
-          businessId: makeBusinessId(currentUser.id, activeSector),
+          businessId: makeBusinessId(storeOwnerId, activeSector),
           outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
           sector: activeSector,
           storeName: settings.storeName,
-          ownerRef: currentUser.id,
+          ownerRef: storeOwnerId,
         },
         products.filter(p=>!isFreePlan(settings.subscription) || freeProductAllowed(settings.subscription?.freeSelection,p.id,activeSector)).map((p) => ({
           id: p.id,
@@ -1105,7 +1107,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 8_000);
 
     return () => window.clearTimeout(timer);
-  }, [products, categories, currentUser.id, activeSector, settings.storeName, settings.subscription, settings.activeBranchId]);
+  }, [products, categories, storeOwnerId, activeSector, settings.storeName, settings.subscription, settings.activeBranchId]);
 
   /*
    * SINKRONISASI DATA PELANGGAN (CRM) KE POSTGRESQL.
@@ -1119,10 +1121,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const timer = window.setTimeout(() => {
       void pushCustomers(
         {
-          businessId: makeBusinessId(currentUser.id, activeSector),
+          businessId: makeBusinessId(storeOwnerId, activeSector),
           sector: activeSector,
           storeName: settings.storeName,
-          ownerRef: currentUser.id,
+          ownerRef: storeOwnerId,
         },
         customers.map((c) => ({
           id: c.id,
@@ -1137,7 +1139,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 10_000);
 
     return () => window.clearTimeout(timer);
-  }, [customers, currentUser.id, activeSector, settings.storeName]);
+  }, [customers, storeOwnerId, activeSector, settings.storeName]);
 
   /*
    * SINKRONISASI PRESENSI / CLOCK-IN STAF KE POSTGRESQL.
@@ -1148,10 +1150,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const timer = window.setTimeout(() => {
       void pushAttendance(
         {
-          businessId: makeBusinessId(currentUser.id, activeSector),
+          businessId: makeBusinessId(storeOwnerId, activeSector),
           sector: activeSector,
           storeName: settings.storeName,
-          ownerRef: currentUser.id,
+          ownerRef: storeOwnerId,
         },
         attendanceLogs.slice(0, 100).map((a) => ({
           id: a.id,
@@ -1171,7 +1173,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 5_000);
 
     return () => window.clearTimeout(timer);
-  }, [attendanceLogs, currentUser.id, activeSector, settings.storeName]);
+  }, [attendanceLogs, storeOwnerId, activeSector, settings.storeName]);
 
   /*
    * SINKRONISASI PENGGAJIAN / SLIP GAJI STAF KE POSTGRESQL.
@@ -1182,17 +1184,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const timer = window.setTimeout(() => {
       void pushPayroll(
         {
-          businessId: makeBusinessId(currentUser.id, activeSector),
+          businessId: makeBusinessId(storeOwnerId, activeSector),
           sector: activeSector,
           storeName: settings.storeName,
-          ownerRef: currentUser.id,
+          ownerRef: storeOwnerId,
         },
         payrollSlips.slice(0, 50)
       );
     }, 5_000);
 
     return () => window.clearTimeout(timer);
-  }, [payrollSlips, currentUser.id, activeSector, settings.storeName]);
+  }, [payrollSlips, storeOwnerId, activeSector, settings.storeName]);
 
   /*
    * HIDRASI KATALOG DARI SERVER (PULL-SYNC).
@@ -1202,10 +1204,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let active = true;
     async function hydrateCatalog() {
       const target: SyncTarget = {
-        businessId: makeBusinessId(currentUser.id, activeSector),
+        businessId: makeBusinessId(storeOwnerId, activeSector),
         sector: activeSector,
         storeName: settings.storeName,
-        ownerRef: currentUser.id,
+        ownerRef: storeOwnerId,
       };
       const remote = await pullCatalog(target);
       if (!active || !remote) return;
@@ -1237,7 +1239,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 description: rp.description || '',
                 categoryId: rp.categoryId || 'cat-1',
                 image: '',
-                stock: 100,
+                // No stock snapshot was returned: never invent inventory.
+                stock: 0,
                 minStockAlert: 5,
                 isAvailable: rp.isAvailable,
               });
@@ -1269,7 +1272,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => {
       active = false;
     };
-  }, [currentUser.id, activeSector, settings.storeName]);
+  }, [storeOwnerId, activeSector, settings.storeName]);
 
   /*
    * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
@@ -1652,73 +1655,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => { safeSetLocalStorage('newhope_current_user', JSON.stringify(currentUser)); }, [currentUser]);
   useEffect(() => {
     localStorage.setItem(
-      getScopedKey('cash_movements', authUser?.id || currentUser.id, activeSector),
+      getScopedKey('cash_movements', storeOwnerId, activeSector),
       JSON.stringify(cashMovements)
     );
-  }, [cashMovements, authUser?.id, currentUser.id, activeSector]);
+  }, [cashMovements, authUser?.id, storeOwnerId, activeSector]);
 
   const switchUser = (user: User) => {
     if (isFreePlan(settings.subscription) && user.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
-    const oldUId = currentUser.id;
-    const currentSec = settings.businessSector || 'FNB';
-
-    // 1. Save old user's sector state before switching
-    localStorage.setItem(getScopedKey('categories', oldUId, currentSec), JSON.stringify(categories));
-    localStorage.setItem(getScopedKey('products', oldUId, currentSec), JSON.stringify(products));
-    localStorage.setItem(getScopedKey('tables', oldUId, currentSec), JSON.stringify(tables));
-    localStorage.setItem(getScopedKey('stock_items', oldUId, currentSec), JSON.stringify(stockItems));
-    localStorage.setItem(getScopedKey('orders', oldUId, currentSec), JSON.stringify(orders.slice(0, 50)));
-    localStorage.setItem(getScopedKey('held_orders', oldUId, currentSec), JSON.stringify(heldOrders));
-    localStorage.setItem(getScopedKey('inventory_logs', oldUId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
-    localStorage.setItem(getScopedKey('shift', oldUId, currentSec), JSON.stringify(shift));
-    localStorage.setItem(getScopedKey('shift_history', oldUId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
-    localStorage.setItem(getScopedKey('customers', oldUId, currentSec), JSON.stringify(customers));
-    localStorage.setItem(getScopedKey('attendance_logs', oldUId, currentSec), JSON.stringify(attendanceLogs));
-    localStorage.setItem(getScopedKey('promo_codes', oldUId, currentSec), JSON.stringify(promoCodes));
-    localStorage.setItem(getScopedKey('cash_movements', oldUId, currentSec), JSON.stringify(cashMovements));
-    localStorage.setItem(getScopedKey('kds_tickets', oldUId, currentSec), JSON.stringify(kdsTickets));
-    localStorage.setItem(getScopedKey('carwash_queue', oldUId, currentSec), JSON.stringify(carwashQueue));
-    localStorage.setItem(getScopedKey('bookings', oldUId, currentSec), JSON.stringify(bookings));
-    localStorage.setItem(getScopedKey('commission_rules', oldUId, currentSec), JSON.stringify(commissionRules));
-    localStorage.setItem(getScopedKey('payroll_slips', oldUId, currentSec), JSON.stringify(payrollSlips));
-    localStorage.setItem(getScopedKey('sent_lifecycle_hooks', oldUId, currentSec), JSON.stringify(sentLifecycleHookIds));
-
-    // 2. Set new user
+    if (!users.some(candidate => candidate.id === user.id && candidate.status === 'ACTIVE')) {
+      throw new Error('USER_NOT_ACTIVE');
+    }
+    // Switching cashier changes the actor, not the store or its data.
     setCurrentUser(user);
-
-    const newUId = user.id;
-    const userSettings = loadGlobalUserData('settings', newUId, INITIAL_SETTINGS);
-    const userSec = userSettings.businessSector || 'FNB';
-    const preset = BUSINESS_PRESETS[userSec] || BUSINESS_PRESETS.FNB;
-
-    setSettings(userSettings);
-    setCategories(loadScopedData('categories', newUId, userSec, preset.categories));
-    setProducts(loadScopedData('products', newUId, userSec, preset.products));
-    setTables(loadScopedData('tables', newUId, userSec, preset.tables));
-    setStockItems(loadScopedData('stock_items', newUId, userSec, INITIAL_STOCK_ITEMS));
-    setOrders(loadScopedData('orders', newUId, userSec, []));
-    setHeldOrders(loadScopedData('held_orders', newUId, userSec, []));
-    setInventoryLogs(loadScopedData('inventory_logs', newUId, userSec, []));
-    const loadedShift = loadScopedData('shift', newUId, userSec, INITIAL_SHIFT);
-    setShift({
-      ...loadedShift,
-      cashierName: user.name,
-    });
-    setShiftHistory(loadScopedData('shift_history', newUId, userSec, []));
-
-    setCustomers(loadScopedData('customers', newUId, userSec, seedCustomersFor(userSec)));
-    setAttendanceLogs(loadScopedData('attendance_logs', newUId, userSec, seedAttendanceFor(userSec)));
-    setPromoCodes(loadScopedData('promo_codes', newUId, userSec, seedPromosFor(userSec)));
-    setCashMovements(loadScopedData('cash_movements', newUId, userSec, []));
-    setKdsTickets(loadScopedData('kds_tickets', newUId, userSec, []));
-    setCarwashQueue(loadScopedData('carwash_queue', newUId, userSec, []));
-    setBookings(loadScopedData('bookings', newUId, userSec, []));
-    setCommissionRules(loadScopedData('commission_rules', newUId, userSec, []));
-    setPayrollSlips(loadScopedData('payroll_slips', newUId, userSec, []));
-    setSentLifecycleHookIds(loadScopedData('sent_lifecycle_hooks', newUId, userSec, []));
-    // Staff roster stays per-account (one roster across the merchant's
-    // businesses); the exposed list is filtered to the active sector.
-    setStaffMembers(loadGlobalUserData('staff_members', newUId, INITIAL_STAFF_MEMBERS));
 
     clearCart();
     setSearchQuery('');
@@ -2104,7 +2052,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       itemCount: newOrder.items.reduce((s, i) => s + i.quantity, 0),
       paymentMethod: newOrder.paymentMethod,
       orderType: newOrder.orderType,
-      tenantId: currentUser.id,
+      tenantId: storeOwnerId,
       userRole: currentUser.role,
     });
 
@@ -3061,7 +3009,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const preset = BUSINESS_PRESETS[sector];
     if (!preset) return;
 
-    const uId = currentUser.id;
+    const uId = storeOwnerId;
     const currentSec = settings.businessSector || 'FNB';
 
     // 1. Save current sector state to its own scoped storage before switching
@@ -3177,7 +3125,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cashierName,
         shiftId: sId,
         businessSector: activeSector,
-        userId: authUser?.id || currentUser.id,
+        userId: storeOwnerId,
       };
       setCashMovements((prev) => [initialLog, ...prev]);
     }
@@ -3234,7 +3182,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       cashierName: activeCashier,
       shiftId: shift.id,
       businessSector: activeSector,
-      userId: authUser?.id || currentUser.id,
+      userId: storeOwnerId,
       recipientOrSource: recipientOrSource?.trim(),
     };
 
