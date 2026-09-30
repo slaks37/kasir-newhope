@@ -8,6 +8,7 @@
 - Catalog writes use explicit versioned product mutations and tombstones; the legacy full-snapshot endpoint no longer retires omitted products. Product metadata is mirrored into `pos.products`. Stock is **not** overwritten in the normalized ledger by catalog sync.
 - Migration `0043_shared_pos_state.sql` / Supabase `20260930121546_shared_pos_state.sql` creates dedicated storage with RLS, tenant/merchant policy and `svc_pos`-only access. The handler sets transaction-local scope before reading/writing.
 - Financial transactions still use the idempotent normalized ledger, not an order UI snapshot. Admin revenue/profit come from that ledger. The trial outlet cap and queued Carwash sales remain unchanged.
+- A sale for an inventory-linked product now prepares a primary stock location when a new outlet has none, and writes stock movement against the transaction's outlet. Voids restore stock to that original outlet, including when submitted from another active branch.
 - Receipt and return receipt printing use an isolated iframe with loaded styles/images/fonts and surfaced browser errors. Chrome print preview rendered a 30-line fixture through the footer.
 
 ## Remaining limitations and decisions

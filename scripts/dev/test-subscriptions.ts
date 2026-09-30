@@ -257,6 +257,25 @@ async function main(){
   assert.equal(Number(siblingRow.transaction_count),0,'Sibling merchant must not inherit tenant-wide sales');
   assert.equal(Number((await merchantDetail(db,siblingMerchant))?.profile.gross_revenue),0);
   console.log('PASS: real POS sale reaches monitoring with correct revenue/profit; repeat sync does not duplicate it; outlet hydration preserves drafts');
+  assert.equal((await outletRequest({id:deferred.id,name:deferred.name,isActive:true})).status,200);
+  const secondOutletSale={...saleBody,outletId:deferred.id,idempotencyKey:'second-outlet-sale',
+    transactions:[{...saleBody.transactions[0],clientTxnId:'real-sale-second-outlet'}]};
+  const saleWithoutLocation=await fetch(url+'/api/v1/sync/transactions',{method:'POST',headers:catalogHeaders,
+    body:JSON.stringify(secondOutletSale)});
+  assert.equal(saleWithoutLocation.status,200,await saleWithoutLocation.clone().text());
+  assert.equal((await saleWithoutLocation.json()).accepted,1);
+  const secondBalance=(await db.query(`SELECT b.current_stock,b.outlet_id,b.location_id
+    FROM pos.inventory_balances b WHERE b.inventory_item_id=$1 AND b.outlet_id=$2`,[stockItem,deferred.id])).rows[0];
+  assert.equal(Number(secondBalance.current_stock),-1,'New outlet needs its own inventory location and balance');
+  assert.ok(secondBalance.location_id);
+  assert.equal((await db.query("SELECT count(*)::int n FROM pos.inventory_transactions WHERE outlet_id=$1 AND reference_type='SALE_DEDUCT'",[deferred.id])).rows[0].n,1);
+  const voidSecondOutlet=await fetch(url+'/api/v1/sync/transactions',{method:'POST',headers:catalogHeaders,
+    body:JSON.stringify({...secondOutletSale,outletId:firstOutlet.id,idempotencyKey:'second-outlet-void',
+      transactions:[{...secondOutletSale.transactions[0],paymentStatus:'CANCELLED'}]})});
+  assert.equal(voidSecondOutlet.status,200,await voidSecondOutlet.clone().text());
+  assert.equal(Number((await db.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1 AND outlet_id=$2',
+    [stockItem,deferred.id])).rows[0].current_stock),0,'Void restores the original outlet');
+  console.log('PASS: new outlet without stock location syncs sale and void against its own inventory');
   const log=await fetch(url+'/api/v1/sync/activity',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',eventType:'TEST_OPERATION',summary:'Real activity round trip',appModule:'POS'})});
   assert.equal(log.status,200,'activity sync: '+await log.text());
   const activity=await fetch(url+'/api/admin/activity',{headers:{authorization:'Bearer test-admin'}});assert.ok((await activity.json()).rows.some((r:any)=>r.event_type==='TEST_OPERATION'));

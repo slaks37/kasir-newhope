@@ -2524,6 +2524,21 @@ var SyncAccessError = class extends Error {
 };
 var ProductLimitError = class extends Error {
 };
+async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
+  const existing = await db.query(`SELECT id FROM pos.inventory_locations
+    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_primary AND is_active
+    ORDER BY created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
+  if (existing.rows.length) return existing.rows[0].id;
+  await db.query(`INSERT INTO pos.inventory_locations
+    (id,tenant_id,merchant_id,outlet_id,name,is_primary,is_active)
+    VALUES(uuidv7(),$1,$2,$3,'Gudang Utama',true,true)
+    ON CONFLICT(outlet_id,name) DO NOTHING`, [tenantId, merchantId, outletId]);
+  const created = await db.query(`SELECT id FROM pos.inventory_locations
+    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_active
+    ORDER BY is_primary DESC,created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
+  if (!created.rows.length) throw new BillingError(409, "INVENTORY_LOCATION_REQUIRED");
+  return created.rows[0].id;
+}
 async function assertBusinessCanBeClaimed(db, businessId, ownerSubject) {
   if (ownerSubject === "local-development") return;
   const { rows } = await db.query(
@@ -2703,6 +2718,7 @@ function registerSyncRoutes(app, db) {
           if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
           outletId = outq.rows[0].id;
         }
+        const defaultInventoryLocationId = await ensureInventoryLocation(c, tenantId, merchantId, outletId);
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
         const productLimit = await productLimitForTenant(c, tenantId);
@@ -2867,10 +2883,10 @@ function registerSyncRoutes(app, db) {
                 `UPDATE pos.transactions
                     SET order_status = 'VOIDED',
                         voided_at = COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
-                  WHERE tenant_id = $1 AND client_txn_id = $2
+                  WHERE tenant_id = $1 AND client_txn_id = $2 AND merchant_id = $4
                     AND order_status <> 'VOIDED'
                 RETURNING id`,
-                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null]
+                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null, merchantId]
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
@@ -2880,14 +2896,16 @@ function registerSyncRoutes(app, db) {
                 );
                 const voidedItems = await c.query(
                   `SELECT ti.product_id, ti.quantity,
-                          p.inventory_item_id, p.merchant_id, p.outlet_id
+                          p.inventory_item_id, p.merchant_id, tx.outlet_id
                      FROM pos.transaction_items ti
                      JOIN pos.products p ON p.id = ti.product_id
+                     JOIN pos.transactions tx ON tx.id=ti.transaction_id
                     WHERE ti.transaction_id = $1
                       AND p.inventory_item_id IS NOT NULL`,
                   [voidedTxnId]
                 );
                 for (const vi of voidedItems.rows) {
+                  const fallbackLocation = vi.outlet_id === outletId ? defaultInventoryLocationId : await ensureInventoryLocation(c, tenantId, merchantId, vi.outlet_id);
                   await c.query(
                     `INSERT INTO pos.inventory_transactions
                        (id, tenant_id, merchant_id, outlet_id, location_id,
@@ -2895,11 +2913,12 @@ function registerSyncRoutes(app, db) {
                         reference_id, reason, created_at)
                      VALUES (
                        uuidv7(), $1, $2, $3,
-                       (SELECT location_id FROM pos.inventory_balances
-                         WHERE inventory_item_id = $5 AND outlet_id = $3 LIMIT 1),
+                       COALESCE((SELECT location_id FROM pos.inventory_balances
+                         WHERE inventory_item_id = $5 AND outlet_id = $3 AND location_id IS NOT NULL
+                         ORDER BY updated_at DESC LIMIT 1),$7::uuid),
                        $5, $4, 'VOID_RESTORE', $6,
                        'Pengembalian stok \u2014 transaksi dibatalkan', CURRENT_TIMESTAMP)`,
-                    [tenantId, vi.merchant_id, vi.outlet_id, vi.quantity, vi.inventory_item_id, voidedTxnId]
+                    [tenantId, vi.merchant_id, vi.outlet_id, vi.quantity, vi.inventory_item_id, voidedTxnId, fallbackLocation]
                   );
                 }
                 voided++;
@@ -2965,10 +2984,11 @@ function registerSyncRoutes(app, db) {
                     inventory_item_id, quantity_delta, reference_type,
                     reference_id, reason, created_at)
                  SELECT
-                   uuidv7(), p.tenant_id, p.merchant_id, p.outlet_id,
-                   (SELECT ib.location_id FROM pos.inventory_balances ib
+                   uuidv7(), p.tenant_id, p.merchant_id, $4::uuid,
+                   COALESCE((SELECT ib.location_id FROM pos.inventory_balances ib
                      WHERE ib.inventory_item_id = p.inventory_item_id
-                       AND ib.outlet_id = p.outlet_id LIMIT 1),
+                       AND ib.outlet_id = $4::uuid AND ib.location_id IS NOT NULL
+                     ORDER BY ib.updated_at DESC LIMIT 1),$5::uuid),
                    p.inventory_item_id,
                    -($2::numeric),
                    'SALE_DEDUCT',
@@ -2978,7 +2998,7 @@ function registerSyncRoutes(app, db) {
                  FROM pos.products p
                  WHERE p.id = $1
                    AND p.inventory_item_id IS NOT NULL`,
-                [productId, qty, txnId]
+                [productId, qty, txnId, outletId, defaultInventoryLocationId]
               );
             }
           }
