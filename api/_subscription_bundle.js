@@ -1238,7 +1238,10 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       await fn(req, res);
     } catch (err) {
       if (req.path === DOKU_NOTIFICATION_PATH && err instanceof BillingError) console.warn("[doku] NOTIFICATION_REJECTED", err.message);
-      if (!(err instanceof BillingError)) console.error("[billing] INTERNAL_OPERATION_FAILED");
+      if (!(err instanceof BillingError)) {
+        const diagnostic = err;
+        console.error("[billing] INTERNAL_OPERATION_FAILED", { route: req.path, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
+      }
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "BILLING_UNAVAILABLE" });
     }
   };

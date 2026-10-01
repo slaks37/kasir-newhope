@@ -329,6 +329,10 @@ export function registerReportRoutes(app: Express, db: Db) {
       if(!Number.isInteger(limit)||limit<1||limit>500)throw new ReportRequestError(400,'INVALID_LIMIT');
       return res.json(await serverTransactions(db,principal.subject,filter,cursorFor(req.query.cursor),limit));
     } catch(error) {
+      if(!(error instanceof ReportRequestError)){
+        const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
+        console.error('[reports] read failed',{route,code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
+      }
       return res.status(error instanceof ReportRequestError?error.status:503).json({ok:false,
         error:error instanceof ReportRequestError?error.message:'REPORT_UNAVAILABLE'});
     }

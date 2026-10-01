@@ -129,7 +129,12 @@ export function registerFinanceRoutes(app:Express,db:Db){
       const rows=(await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`,[s.tenantId,s.merchantId,s.outletId])).rows;
       const current=rows.find(r=>r.status==='OPEN');
       return {shift:current?await calculateShift(c,s,current):null,history:rows.filter(r=>r.status==='CLOSED').map(r=>r.summary).filter(Boolean)};
-    });res.json({ok:true,...result});}catch(error){res.status(error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
+    });res.json({ok:true,...result});}catch(error){
+      if(!(error instanceof FinanceError)&&!(error instanceof BillingError)){
+        const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
+        console.error('[finance] shift read failed',{code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
+      }
+      res.status(error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
   });
   route('/api/v1/finance/shift/open',async(c,s,req)=>{
     const b=req.body;if(!ID.test(b.clientShiftId||'')||!Number.isFinite(b.initialCash)||b.initialCash<0||b.initialCash>9999999999)throw new FinanceError(400,'INVALID_SHIFT');

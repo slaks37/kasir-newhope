@@ -825,7 +825,10 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       await fn(req, res);
     } catch (err) {
       if (req.path === DOKU_NOTIFICATION_PATH && err instanceof BillingError) console.warn("[doku] NOTIFICATION_REJECTED", err.message);
-      if (!(err instanceof BillingError)) console.error("[billing] INTERNAL_OPERATION_FAILED");
+      if (!(err instanceof BillingError)) {
+        const diagnostic = err;
+        console.error("[billing] INTERNAL_OPERATION_FAILED", { route: req.path, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
+      }
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "BILLING_UNAVAILABLE" });
     }
   };
@@ -2489,6 +2492,10 @@ function registerFinanceRoutes(app, db) {
       });
       res.json({ ok: true, ...result });
     } catch (error) {
+      if (!(error instanceof FinanceError) && !(error instanceof BillingError)) {
+        const diagnostic = error;
+        console.error("[finance] shift read failed", { code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
+      }
       res.status(error instanceof FinanceError || error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof FinanceError || error instanceof BillingError ? error.message : "SHIFT_UNAVAILABLE" });
     }
   });
@@ -3283,6 +3290,10 @@ function registerReportRoutes(app, db) {
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ReportRequestError(400, "INVALID_LIMIT");
       return res.json(await serverTransactions(db, principal.subject, filter, cursorFor(req.query.cursor), limit));
     } catch (error) {
+      if (!(error instanceof ReportRequestError)) {
+        const diagnostic = error;
+        console.error("[reports] read failed", { route, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
+      }
       return res.status(error instanceof ReportRequestError ? error.status : 503).json({
         ok: false,
         error: error instanceof ReportRequestError ? error.message : "REPORT_UNAVAILABLE"

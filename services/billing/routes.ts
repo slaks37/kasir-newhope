@@ -12,7 +12,10 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
       if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
-      if (!(err instanceof BillingError)) console.error('[billing] INTERNAL_OPERATION_FAILED');
+      if (!(err instanceof BillingError)){
+        const diagnostic=err as {code?:string;constraint?:string;table?:string;column?:string};
+        console.error('[billing] INTERNAL_OPERATION_FAILED',{route:req.path,code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
+      }
       res.status(err instanceof BillingError?err.status:500).json({ok:false,error:err instanceof BillingError?err.message:'BILLING_UNAVAILABLE'});
     }
   };
