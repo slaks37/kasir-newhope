@@ -1957,12 +1957,12 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
     "/api/admin/overview",
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (_req, res, db) => {
-      const [sectors, totals, daily] = await Promise.all([
+      const [sectors2, totals, daily] = await Promise.all([
         sectorSummary(db),
         platformTotals(db),
         dailyRevenue(db, 30)
       ]);
-      res.json({ ok: true, sectors, totals, daily, sectorLabels: SECTOR_LABEL });
+      res.json({ ok: true, sectors: sectors2, totals, daily, sectorLabels: SECTOR_LABEL });
     })
   );
   app.get(
@@ -2682,6 +2682,45 @@ var ORDER_OPERATION_FIELDS = [
   "onlineChannel"
 ];
 
+// src/lib/sync/operationalScope.ts
+var operationalKinds = /* @__PURE__ */ new Set([
+  "categories",
+  "products",
+  "tables",
+  "customers",
+  "order_operations",
+  "held_orders",
+  "inventory_logs",
+  "promo_codes",
+  "stock_items",
+  "bundles",
+  "attendance_logs",
+  "kds_tickets",
+  "carwash_queue",
+  "bookings",
+  "commission_rules",
+  "payroll_slips",
+  "sent_lifecycle_hooks",
+  "store_settings",
+  "users",
+  "staff_members"
+]);
+var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
+var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
+function operationalScopeIssue(owner, sector, kind, id, value) {
+  if (!operationalKinds.has(kind) || kind === "users" || kind === "staff_members") return null;
+  const row = value && typeof value === "object" ? value : {};
+  for (const field of ["businessSector", "sector"]) {
+    if (typeof row[field] === "string" && sectors.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
+  }
+  if (typeof row.businessId === "string" && /_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/.test(row.businessId) && row.businessId !== `${owner}_${sector}`)
+    return "WRONG_BUSINESS:" + row.businessId;
+  const ref = kind === "products" ? id : typeof row.productId === "string" ? row.productId : "";
+  const match = /^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
+  if (match && presets[match[1]] !== sector) return `WRONG_SECTOR:${presets[match[1]]}`;
+  return null;
+}
+
 // services/pos/sharedState.ts
 var SECTOR_SET = new Set(SECTORS2);
 var GLOBAL_KINDS = /* @__PURE__ */ new Set(["users", "staff_members"]);
@@ -2744,7 +2783,15 @@ function validOperations(value) {
     }
     if (r.deleted && r.value !== null) return null;
     if (JSON.stringify(r.value).length > 64e3) return null;
-    operations.push({ kind: r.kind, recordId: r.recordId, baseRevision: Number(r.baseRevision), value: r.value, deleted: r.deleted });
+    operations.push({
+      kind: r.kind,
+      recordId: r.recordId,
+      baseRevision: Number(r.baseRevision),
+      value: r.value,
+      deleted: r.deleted,
+      owner: typeof r.owner === "string" ? r.owner : void 0,
+      sector: typeof r.sector === "string" ? r.sector : void 0
+    });
   }
   return operations;
 }
@@ -2752,14 +2799,14 @@ async function scopeFor2(db, subject, sector) {
   const tenantId = await tenantForPrincipal(db, { subject });
   if (!tenantId) return null;
   const { rows } = await db.query(
-    `SELECT m.id AS merchant_id, t.is_active
+    `SELECT m.id AS merchant_id,m.name AS business_name,t.is_active
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE t.id=$1 AND t.owner_user_ref=$2 AND m.business_sector=$3
     ORDER BY (m.external_ref=$4) DESC NULLS LAST, m.created_at, m.id LIMIT 1`,
     [tenantId, subject, sector, `${subject}_${sector}`]
   );
   if (!rows.length || !rows[0].is_active) return null;
-  return { tenantId, merchantId: rows[0].merchant_id };
+  return { tenantId, merchantId: rows[0].merchant_id, businessName: rows[0].business_name };
 }
 function registerSharedStateRoutes(app, db) {
   app.get("/api/v1/sync/state", async (req, res) => {
@@ -2775,19 +2822,20 @@ function registerSharedStateRoutes(app, db) {
           "SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId, scope.merchantId]
         );
-        return c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at
+        return c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
           ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=$2 AND merchant_id=$3))
-          ORDER BY scope,kind,record_id LIMIT 10000`, [scope.tenantId, sector, scope.merchantId]);
+          ORDER BY scope,kind,record_id LIMIT 10001`, [scope.tenantId, sector, scope.merchantId]);
       });
-      return res.json({ ok: true, ready: true, records: rows.map((r) => ({
+      return res.json({ ok: true, ready: true, business: { name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
         scope: r.scope,
         kind: r.kind,
         recordId: r.record_id,
         value: r.value,
         revision: Number(r.revision),
         deleted: r.deleted,
-        updatedAt: r.updated_at
+        updatedAt: r.updated_at,
+        ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
       })) });
     } catch {
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
@@ -2812,131 +2860,174 @@ function registerSharedStateRoutes(app, db) {
         );
         const free = await freePlanState(c, scope.tenantId);
         assertFreeScope(free, sector, []);
-        if (free.free && operations.some((op) => op.kind === "users" || op.kind === "staff_members"))
-          throw new FreePlanAccessError("FREE_OWNER_ONLY");
         const result = [];
+        const changed = /* @__PURE__ */ new Set();
+        const conflicts = [];
+        const rejected = [];
         let productOutlet = null;
         if (operations.some((op) => op.kind === "products")) {
           const outlet = await c.query(
             `SELECT id FROM internal.outlets WHERE tenant_id=$1 AND merchant_id=$2
             AND is_active AND ($3::uuid IS NULL OR id=$3::uuid) ORDER BY created_at,id LIMIT 1`,
-            [scope.tenantId, scope.merchantId, requestedOutletId]
+            [scope.tenantId, scope.merchantId, free.free ? free.selection?.branchId : requestedOutletId]
           );
-          if (!outlet.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
-          productOutlet = outlet.rows[0].id;
+          productOutlet = outlet.rows[0]?.id || null;
         }
         for (const op of operations) {
-          if (op.kind === "products" && !op.deleted) assertFreeScope(free, sector, [op.recordId]);
-          const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : sector;
-          const merchantId = docScope === "GLOBAL" ? null : scope.merchantId;
-          const r = await c.query(`INSERT INTO pos.shared_state_records
+          const issue = op.owner && op.owner !== principal.subject ? "WRONG_OWNER" : op.sector && op.sector !== sector ? "WRONG_SECTOR" : operationalScopeIssue(principal.subject, sector, op.kind, op.recordId, op.value);
+          if (issue) {
+            rejected.push({ kind: op.kind, recordId: op.recordId, error: "WRONG_SCOPE", detail: issue });
+            continue;
+          }
+          await c.exec("SAVEPOINT operational_record");
+          try {
+            if (free.free && (op.kind === "users" || op.kind === "staff_members")) throw new FreePlanAccessError("FREE_OWNER_ONLY");
+            if (op.kind === "products" && !productOutlet) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
+            if (op.kind === "products" && !op.deleted) assertFreeScope(free, sector, [op.recordId]);
+            if (op.kind === "products" && free.free) {
+              if (requestedOutletId && requestedOutletId !== productOutlet) throw new FreePlanAccessError("FREE_BRANCH_MISMATCH");
+              const existing = await c.query(`SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3 AND NOT sync_quarantined`, [scope.tenantId, scope.merchantId, op.recordId]);
+              if (existing.rows.some((r2) => r2.outlet_id !== productOutlet)) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+            }
+            const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : sector;
+            const merchantId = docScope === "GLOBAL" ? null : scope.merchantId;
+            const r = await c.query(`INSERT INTO pos.shared_state_records
             (tenant_id,merchant_id,scope,kind,record_id,value,revision,deleted)
             VALUES($1,$2,$3,$4,$5,$6::jsonb,1,$7)
             ON CONFLICT(tenant_id,scope,kind,record_id) DO UPDATE SET
-              value=EXCLUDED.value,deleted=EXCLUDED.deleted,
+              value=EXCLUDED.value,deleted=EXCLUDED.deleted,quarantine_reason=NULL,
               revision=pos.shared_state_records.revision+1,updated_at=now()
             WHERE pos.shared_state_records.revision=$8
               AND pos.shared_state_records.merchant_id IS NOT DISTINCT FROM EXCLUDED.merchant_id
             RETURNING revision`, [
-            scope.tenantId,
-            merchantId,
-            docScope,
-            op.kind,
-            op.recordId,
-            op.deleted ? null : JSON.stringify(op.value),
-            op.deleted,
-            op.baseRevision
-          ]);
-          if (!r.rows.length || op.baseRevision !== 0 && Number(r.rows[0].revision) === 1)
-            throw new StateConflict(op.kind, op.recordId);
-          if (op.kind === "customers" && op.deleted) {
-            await c.query(
-              "UPDATE pos.customers SET archived_at=now(),updated_at=now() WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3",
-              [scope.tenantId, scope.merchantId, op.recordId]
-            );
-          }
-          if (op.kind === "customers" && !op.deleted) {
-            const customer = op.value;
-            if (typeof customer.name !== "string" || !customer.name.trim()) throw new Error("INVALID_CUSTOMER");
-            const saved = await c.query(
-              `INSERT INTO pos.customers
+              scope.tenantId,
+              merchantId,
+              docScope,
+              op.kind,
+              op.recordId,
+              op.deleted ? null : JSON.stringify(op.value),
+              op.deleted,
+              op.baseRevision
+            ]);
+            let replayed = false;
+            if (!r.rows.length) {
+              replayed = true;
+              r.rows = (await c.query(
+                `SELECT revision FROM pos.shared_state_records WHERE tenant_id=$1 AND scope=$2
+              AND kind=$3 AND record_id=$4 AND merchant_id IS NOT DISTINCT FROM $5::uuid
+              AND value IS NOT DISTINCT FROM $6::jsonb AND deleted=$7 AND quarantine_reason IS NULL`,
+                [scope.tenantId, docScope, op.kind, op.recordId, merchantId, op.deleted ? null : JSON.stringify(op.value), op.deleted]
+              )).rows;
+            }
+            if (!r.rows.length || !replayed && op.baseRevision !== 0 && Number(r.rows[0].revision) === 1)
+              throw new StateConflict(op.kind, op.recordId);
+            if (replayed) {
+              result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
+              await c.exec("RELEASE SAVEPOINT operational_record");
+              continue;
+            }
+            if (op.kind === "customers" && op.deleted) {
+              await c.query(
+                "UPDATE pos.customers SET archived_at=now(),updated_at=now() WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3",
+                [scope.tenantId, scope.merchantId, op.recordId]
+              );
+            }
+            if (op.kind === "customers" && !op.deleted) {
+              const customer = op.value;
+              if (typeof customer.name !== "string" || !customer.name.trim()) throw new Error("INVALID_CUSTOMER");
+              const saved = await c.query(
+                `INSERT INTO pos.customers
               (tenant_id,merchant_id,external_ref,name,phone,email,address,notes)
               VALUES($1,$2,$3,$4,$5,$6,$7,$8)
               ON CONFLICT(tenant_id,external_ref) DO UPDATE SET
                 name=EXCLUDED.name,phone=EXCLUDED.phone,email=EXCLUDED.email,
                 address=EXCLUDED.address,notes=EXCLUDED.notes,archived_at=null,updated_at=now()
               WHERE pos.customers.merchant_id=EXCLUDED.merchant_id RETURNING id`,
-              [
-                scope.tenantId,
-                scope.merchantId,
-                op.recordId,
-                customer.name.trim().slice(0, 120),
-                String(customer.phone || "").slice(0, 32) || null,
-                String(customer.email || "").slice(0, 120) || null,
-                String(customer.address || "").slice(0, 255) || null,
-                String(customer.notes || "").slice(0, 500) || null
-              ]
-            );
-            if (!saved.rows.length) throw new StateConflict(op.kind, op.recordId);
-          }
-          if (op.kind === "products") {
-            if (op.deleted) {
-              await c.query(
-                `UPDATE pos.products SET is_available=false,catalog_synced_at=now()
-                WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3`,
-                [scope.tenantId, scope.merchantId, op.recordId]
-              );
-            } else {
-              const p = op.value;
-              const saved = await c.query(
-                `INSERT INTO pos.products
-                (id,tenant_id,merchant_id,outlet_id,name,sku,price,cost_price,is_available,
-                 business_sector,business_id,category_name,description,unit,external_ref,catalog_synced_at)
-                VALUES(uuidv7(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
-                ON CONFLICT(tenant_id,external_ref) WHERE external_ref IS NOT NULL DO UPDATE SET
-                  name=EXCLUDED.name,sku=EXCLUDED.sku,price=EXCLUDED.price,
-                  cost_price=EXCLUDED.cost_price,is_available=EXCLUDED.is_available,
-                  category_name=EXCLUDED.category_name,description=EXCLUDED.description,
-                  unit=EXCLUDED.unit,catalog_synced_at=now()
-                WHERE pos.products.merchant_id=EXCLUDED.merchant_id RETURNING id`,
                 [
                   scope.tenantId,
                   scope.merchantId,
-                  productOutlet,
-                  String(p.name).trim(),
-                  String(p.sku || op.recordId).slice(0, 50),
-                  Number(p.price),
-                  Number(p.costPrice),
-                  p.isAvailable !== false,
-                  sector,
-                  `${principal.subject}_${sector}`,
-                  String(p.categoryName || "Lainnya").slice(0, 100),
-                  String(p.description || "").slice(0, 300),
-                  String(p.unit || "pcs").slice(0, 20),
-                  op.recordId
+                  op.recordId,
+                  customer.name.trim().slice(0, 120),
+                  String(customer.phone || "").slice(0, 32) || null,
+                  String(customer.email || "").slice(0, 120) || null,
+                  String(customer.address || "").slice(0, 255) || null,
+                  String(customer.notes || "").slice(0, 500) || null
                 ]
               );
               if (!saved.rows.length) throw new StateConflict(op.kind, op.recordId);
             }
+            if (op.kind === "products") {
+              if (op.deleted) {
+                await c.query(
+                  `UPDATE pos.products SET is_available=false,catalog_synced_at=now()
+                WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3`,
+                  [scope.tenantId, scope.merchantId, op.recordId]
+                );
+              } else {
+                const p = op.value;
+                const saved = await c.query(
+                  `INSERT INTO pos.products
+                (id,tenant_id,merchant_id,outlet_id,name,sku,price,cost_price,is_available,
+                 business_sector,business_id,category_name,description,unit,external_ref,catalog_synced_at)
+                VALUES(uuidv7(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
+                ON CONFLICT(tenant_id,merchant_id,external_ref) WHERE external_ref IS NOT NULL AND NOT sync_quarantined DO UPDATE SET
+                  name=EXCLUDED.name,sku=EXCLUDED.sku,price=EXCLUDED.price,
+                  cost_price=EXCLUDED.cost_price,is_available=EXCLUDED.is_available,
+                  category_name=EXCLUDED.category_name,description=EXCLUDED.description,
+                  unit=EXCLUDED.unit,catalog_synced_at=now()
+                WHERE pos.products.business_sector=EXCLUDED.business_sector RETURNING id`,
+                  [
+                    scope.tenantId,
+                    scope.merchantId,
+                    productOutlet,
+                    String(p.name).trim(),
+                    String(p.sku || op.recordId).slice(0, 50),
+                    Number(p.price),
+                    Number(p.costPrice),
+                    p.isAvailable !== false,
+                    sector,
+                    `${principal.subject}_${sector}`,
+                    String(p.categoryName || "Lainnya").slice(0, 100),
+                    String(p.description || "").slice(0, 300),
+                    String(p.unit || "pcs").slice(0, 20),
+                    op.recordId
+                  ]
+                );
+                if (!saved.rows.length) throw new StateConflict(op.kind, op.recordId);
+              }
+            }
+            result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
+            changed.add(op.kind + "\0" + op.recordId);
+            await c.exec("RELEASE SAVEPOINT operational_record");
+          } catch (error) {
+            await c.exec("ROLLBACK TO SAVEPOINT operational_record");
+            await c.exec("RELEASE SAVEPOINT operational_record");
+            if (error instanceof StateConflict) conflicts.push({ kind: op.kind, recordId: op.recordId, error: "STATE_CONFLICT" });
+            else if (error instanceof BillingError || error instanceof FreePlanAccessError)
+              rejected.push({ kind: op.kind, recordId: op.recordId, error: error.message });
+            else if (["23505", "23514", "22001", "22P02"].includes(String(error?.code)))
+              rejected.push({ kind: op.kind, recordId: op.recordId, error: "INVALID_OPERATION" });
+            else throw error;
           }
-          result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
         }
-        const kinds = [...new Set(operations.map((op) => op.kind))];
-        await writeActivity(c, {
-          merchantId: scope.merchantId,
-          tenantId: scope.tenantId,
-          businessSector: sector,
-          businessId: `${principal.subject}_${sector}`,
-          appModule: "SYNC",
-          eventType: "SHARED_STATE_CHANGED",
-          actorUserId: principal.subject,
-          actorName: principal.email || null,
-          summary: `${operations.length} perubahan data operasional`,
-          detail: { kinds, records: operations.map((op) => ({ kind: op.kind, id: op.recordId, deleted: op.deleted })) }
-        });
-        return result;
+        const accepted = operations.filter((op) => changed.has(op.kind + "\0" + op.recordId));
+        const kinds = [...new Set(accepted.map((op) => op.kind))];
+        if (accepted.length)
+          await writeActivity(c, {
+            merchantId: scope.merchantId,
+            tenantId: scope.tenantId,
+            businessSector: sector,
+            businessId: `${principal.subject}_${sector}`,
+            appModule: "SYNC",
+            eventType: "SHARED_STATE_CHANGED",
+            actorUserId: principal.subject,
+            actorName: principal.email || null,
+            summary: `${accepted.length} perubahan data operasional`,
+            detail: { kinds, records: accepted.map((op) => ({ kind: op.kind, id: op.recordId, deleted: op.deleted })) }
+          });
+        return { versions: result, conflicts, rejected };
       });
-      return res.json({ ok: true, versions });
+      return res.json({ ok: true, ...versions });
     } catch (error) {
       if (error instanceof StateConflict) return res.status(409).json({ ok: false, error: "STATE_CONFLICT", kind: error.kind, recordId: error.recordId });
       if (error instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: error.message });
@@ -3623,9 +3714,9 @@ function registerSyncRoutes(app, db) {
           if (!key) return null;
           if (productCache.has(key)) return productCache.get(key);
           const found = await c.query(
-            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1
-              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) LIMIT 1`,
-            [tenantId, i.productRef ?? null, i.productName, !!freeScope]
+            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1 AND merchant_id=$5 AND business_sector=$6 AND NOT sync_quarantined
+              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) ORDER BY (external_ref=$2) DESC NULLS LAST,id LIMIT 1`,
+            [tenantId, i.productRef ?? null, i.productName, !!freeScope, merchantId, sector]
           );
           if (freeScope && found.rows[0] && found.rows[0].outlet_id !== outletId) {
             throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
@@ -3911,133 +4002,8 @@ function registerSyncRoutes(app, db) {
     }
   });
   app.post("/api/v1/sync/catalog", async (req, res) => {
-    const b = req.body ?? {};
-    const businessId = str(b.businessId, 96);
-    const sector = str(b.sector, 16);
-    const storeName = str(b.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const products = Array.isArray(b.products) ? b.products : [];
-    const requestedOutletId = outletRef(b.outletId);
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({ ok: false, error: "BAD_REQUEST" });
-    }
-    if (b.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
-    if (products.length > 2e3) {
-      return res.status(413).json({ ok: false, error: "CATALOG_TOO_LARGE" });
-    }
-    const desiredProductRefs = new Set(
-      products.map((p) => str(p?.id, 96)).filter((ref) => !!ref)
-    );
-    try {
-      const out = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        let outletId;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          outletId = freeScope.outlet_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-           VALUES (uuidv7(), $1, $2, $3)
-           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
-           RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-           VALUES (uuidv7(), $1, $2, $3, $4)
-           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
-           RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-          const productLimit = await productLimitForTenant(c, tenantId);
-          if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
-            throw new ProductLimitError("PRODUCT_LIMIT_EXCEEDED");
-          }
-          const outq = await c.query(
-            `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
-             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
-            [merchantId, requestedOutletId]
-          );
-          if (!outq.rows.length) throw new BillingError(409, "OUTLET_SETUP_REQUIRED");
-          outletId = outq.rows[0].id;
-        }
-        assertFreeScope(await freePlanState(c, tenantId), sector, [...desiredProductRefs]);
-        if (freeScope) {
-          const misplaced = await c.query(
-            `SELECT id FROM pos.products WHERE tenant_id=$1
-            AND external_ref=ANY($2::text[]) AND outlet_id IS DISTINCT FROM $3::uuid LIMIT 1`,
-            [tenantId, [...desiredProductRefs], outletId]
-          );
-          if (misplaced.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
-        }
-        let upserted = 0;
-        for (const p of products) {
-          const ref = str(p.id, 96);
-          const name = str(p.name, 100);
-          if (!ref || !name) continue;
-          await c.query(
-            `INSERT INTO pos.products
-               (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price, is_available,
-                business_sector, business_id, category_name, description,
-                unit, external_ref, catalog_synced_at)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                     $13, $14, CURRENT_TIMESTAMP)
-             ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET
-               name              = EXCLUDED.name,
-               sku               = EXCLUDED.sku,
-               price             = EXCLUDED.price,
-               cost_price        = EXCLUDED.cost_price,
-               is_available      = EXCLUDED.is_available,
-               category_name     = EXCLUDED.category_name,
-               description       = EXCLUDED.description,
-               unit              = EXCLUDED.unit,
-               catalog_synced_at = CURRENT_TIMESTAMP`,
-            [
-              tenantId,
-              merchantId,
-              outletId,
-              name,
-              str(p.sku, 50) ?? ref,
-              num(p.price),
-              num(p.costPrice),
-              p.isAvailable !== false,
-              sector,
-              businessId,
-              str(p.categoryName, 100),
-              str(p.description, 300),
-              str(p.unit, 20),
-              ref
-            ]
-          );
-          upserted++;
-        }
-        return { tenantId, upserted, retired: 0 };
-      });
-      res.json({ ok: true, ...out });
-    } catch (err) {
-      if (err instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: err.message });
-      if (err instanceof BillingError) return res.status(err.status).json({ ok: false, error: err.message });
-      console.error("[sync] katalog gagal:", err.message);
-      if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: "FORBIDDEN" });
-      if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: "PRODUCT_LIMIT_EXCEEDED" });
-      res.status(500).json({ ok: false, error: "CATALOG_SYNC_FAILED" });
-    }
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_CATALOG_SYNC_REQUIRED" });
   });
   app.post("/api/v1/sync/activity", async (req, res) => {
     const b = req.body ?? {};
@@ -4110,8 +4076,8 @@ function registerSyncRoutes(app, db) {
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
-          WHERE m.external_ref = $1 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
-        [businessId, ownerRef, `tenant_${businessId}`]
+          WHERE m.external_ref = $1 AND m.business_sector=$4 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
+        [businessId, ownerRef, `tenant_${businessId}`, sector]
       );
       if (!tenantRes.rows.length) {
         return res.json({ ok: true, products: [], categories: [] });
@@ -4122,7 +4088,7 @@ function registerSyncRoutes(app, db) {
         `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
                   p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
-            WHERE p.tenant_id = $1 AND p.merchant_id = $2
+            WHERE p.tenant_id = $1 AND p.merchant_id = $2 AND NOT p.sync_quarantined
             ORDER BY p.name ASC`,
         [tenantId, merchantId]
       );

@@ -3,14 +3,13 @@ import { Building2, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePOS } from '../../context/POSContext';
 import { prepareOutletBusiness } from '../../lib/sync/outlets';
-import { LegacyRecoveryPanel } from '../sync/LegacyRecoveryPanel';
 
 type OutletRow = { id: string; name: string; business_sector: string; is_active: boolean };
 
 /** An outlet is counted only when the owner explicitly activates it. */
 export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) {
   const { user, configured } = useAuth();
-  const { settings, syncStatus, cloudReady, cloudError } = usePOS();
+  const { settings, syncStatus, cloudReady, cloudError, openSyncCenter } = usePOS();
   const sector = settings.businessSector || 'FNB';
   const [rows, setRows] = useState<OutletRow[]>([]);
   const [limit, setLimit] = useState(2);
@@ -64,7 +63,7 @@ export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) 
       <p role={error||cloudError?'alert':undefined} className="text-sm text-slate-700">{error || cloudError || (loaded ? 'Menyiapkan outlet aktif di perangkat ini…' : 'Memeriksa outlet aktif dan kapasitas paket…')}</p>
       {(error || loaded) && <button type="button" onClick={()=>{void refresh();window.dispatchEvent(new Event('outlets-updated'));}} className="rounded-xl bg-amber-500 px-4 py-2 font-bold">Coba lagi</button>}
       <p className="text-xs text-slate-600">Kasir belum dibuka agar transaksi tidak hanya tersimpan di perangkat saat status cloud belum terverifikasi.</p>
-      <LegacyRecoveryPanel />
+      <button onClick={openSyncCenter} className="rounded-xl border border-amber-300 px-4 py-2 text-sm font-bold">Buka Sync Center</button>
     </div>
   </div>;
 

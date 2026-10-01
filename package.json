@@ -17,7 +17,7 @@
     "env:set": "node scripts/dev/import-env.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
     "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
-    "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-sync-boundary.ts",
+    "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-operational-repair.ts && node --import tsx scripts/dev/test-sync-boundary.ts",
     "test:financial-cloud": "node --import tsx scripts/dev/test-pool-config.ts && node --import tsx scripts/dev/test-financial-cloud.ts && node --import tsx scripts/dev/test-admin-reporting.ts && node --import tsx scripts/dev/test-legacy-financial-migration.ts",
     "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts",
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",

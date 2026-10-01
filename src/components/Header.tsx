@@ -59,9 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
     setSearchQuery,
     setActiveTab,
     currentUser,
-    syncStatus,
-    operationalSyncStatus,
-    forceSync,
+    syncCenter,
+    openSyncCenter,
     customers,
     orders,
     bookings,
@@ -94,24 +93,11 @@ export const Header: React.FC<HeaderProps> = ({
   ]);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const syncNeedsOutlet = syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED') || syncStatus.lastError === 'LEGACY_OUTLET_MAPPING_REQUIRED';
-  const syncFailed = Boolean(syncStatus.lastError || syncStatus.failures > 0 || operationalSyncStatus.error);
-  const syncConflict = Boolean(operationalSyncStatus.conflict);
-  const syncLabel = syncConflict ? 'Konflik perubahan' : syncFailed ? 'Sync failed' : syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu`
-    : operationalSyncStatus.pending ? `${operationalSyncStatus.pending} perubahan menunggu`
-    : syncStatus.inFlight||!operationalSyncStatus.ready ? 'Menghubungkan cloud…' : syncStatus.lastSyncedAt ? 'Cloud Synced' : 'Cloud belum diverifikasi';
-  const lastSync = syncStatus.lastSyncedAt && Number.isFinite(Date.parse(syncStatus.lastSyncedAt))
-    ? `Terakhir sinkron ${new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(syncStatus.lastSyncedAt))}`
+  const syncFailed=syncCenter.phase==='error';
+  const syncReview=syncCenter.phase==='review';
+  const lastSync=syncCenter.lastConfirmedAt
+    ? 'Terakhir konfirmasi '+new Intl.DateTimeFormat('id-ID',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(syncCenter.lastConfirmedAt))
     : 'Belum ada konfirmasi cloud';
-  const syncHelp = syncNeedsOutlet
-    ? `${syncStatus.pending} transaksi menunggu. Outlet asal belum terhubung atau belum aktif; selesaikan pengaturan outlet untuk melanjutkan.`
-    : syncStatus.lastError === 'LEGACY_FINANCIAL_REVIEW_REQUIRED'
-    ? 'Salinan data keuangan lama berbeda dan ditahan untuk peninjauan. Buka panel pemulihan; mencoba ulang tidak akan memilih versi secara otomatis.'
-    : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
-    ? 'Antrean perangkat tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
-    : syncConflict ? `${operationalSyncStatus.pending} perubahan operasional menunggu peninjauan. Data lokal tetap disimpan; pilih penyelesaian pada panel konflik.`
-    : syncFailed ? `${syncStatus.pending} transaksi menunggu. ${syncStatus.lastError || operationalSyncStatus.error || 'Gagal menghubungi cloud'}. Klik untuk mencoba lagi.`
-    : `${syncLabel}. ${lastSync}.`;
 
   return (
     <header className="nh-workspace-header bg-white border-b border-slate-200 text-slate-900 flex items-center justify-between sticky top-0 z-30">
@@ -170,16 +156,14 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
           <button
-            className={`nh-header-sync ${syncFailed ? 'has-error' : ''}`}
-            onClick={syncNeedsOutlet ? undefined : forceSync}
-            disabled={syncNeedsOutlet || syncStatus.inFlight}
-            title={syncHelp}
-            aria-label={`${syncLabel}. ${syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu. ` : ''}${lastSync}`}
+            className={`nh-header-sync ${syncFailed?'has-error':syncReview?'needs-review':''}`}
+            onClick={openSyncCenter} title={syncCenter.detail+'. Buka Sync Center'}
+            aria-label={syncCenter.label+'. '+syncCenter.detail+'. Buka Sync Center'} aria-haspopup="dialog"
           >
-            {syncFailed ? <CloudAlert size={17} /> : syncStatus.pending === 0 && syncStatus.lastSyncedAt ? <CloudCheck size={17} /> : <CloudUpload size={17} />}
+            {syncFailed||syncReview ? <CloudAlert size={17}/> : syncCenter.phase==='synced' ? <CloudCheck size={17}/> : <CloudUpload size={17}/>}
             <span className="flex flex-col items-start text-left" aria-live="polite">
-              <strong>{syncLabel}</strong>
-              {syncFailed && syncStatus.pending > 0 && <span>{syncStatus.pending} transaksi menunggu</span>}
+              <strong>{syncCenter.label}</strong>
+              {(syncCenter.financialPending>0||syncCenter.operationalPending>0)&&<span>{syncCenter.detail}</span>}
               <span className="text-[9px]">{lastSync}</span>
             </span>
           </button>

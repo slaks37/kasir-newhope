@@ -375,9 +375,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (productCache.has(key)) return productCache.get(key)!;
 
           const found = await c.query(
-            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1
-              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) LIMIT 1`,
-            [tenantId, i.productRef ?? null, i.productName, !!freeScope]
+            `SELECT id, outlet_id FROM pos.products WHERE tenant_id = $1 AND merchant_id=$5 AND business_sector=$6 AND NOT sync_quarantined
+              AND (external_ref = $2 OR (NOT $4::boolean AND name = $3)) ORDER BY (external_ref=$2) DESC NULLS LAST,id LIMIT 1`,
+            [tenantId, i.productRef ?? null, i.productName, !!freeScope,merchantId,sector]
           );
           if (freeScope && found.rows[0] && found.rows[0].outlet_id !== outletId) {
             throw new FreePlanAccessError('FREE_PRODUCT_BRANCH_MISMATCH');
@@ -735,157 +735,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
    * Produk yang HILANG dari kiriman ditandai tidak tersedia, bukan dihapus.
    * Menghapusnya akan memutus baris struk yang menunjuk produk itu.
    */
-  app.post('/api/v1/sync/catalog', async (req, res) => {
-    const b = req.body ?? {};
-    const businessId = str(b.businessId, 96);
-    const sector = str(b.sector, 16);
-    const storeName = str(b.storeName, 100) ?? 'Tanpa Nama';
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
-    const ownerRef = principal.subject;
-    const products: any[] = Array.isArray(b.products) ? b.products : [];
-    const requestedOutletId = outletRef(b.outletId);
-
-    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
-      return res.status(400).json({ ok: false, error: 'BAD_REQUEST' });
-    }
-    if (b.outletId && !requestedOutletId) return res.status(400).json({ok:false,error:'INVALID_OUTLET_ID'});
-    if (products.length > 2000) {
-      return res.status(413).json({ ok: false, error: 'CATALOG_TOO_LARGE' });
-    }
-
-    const desiredProductRefs = new Set(
-      products.map((p) => str(p?.id, 96)).filter((ref): ref is string => !!ref)
-    );
-
-    try {
-      const out = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId: string;
-        let merchantId: string;
-        let outletId: string;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          outletId = freeScope.outlet_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-        const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-        const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-        const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-          `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-           VALUES (uuidv7(), $1, $2, $3)
-           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
-           RETURNING id`,
-          [storeName, tenantExternalRef, ownerRef]
-        );
-        tenantId = t.rows[0].id;
-        await assertTenantWritable(c,tenantId);
-
-        const m = await c.query(
-          `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-           VALUES (uuidv7(), $1, $2, $3, $4)
-           ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
-           RETURNING id`,
-          [tenantId, storeName, sector, businessId]
-        );
-        merchantId = m.rows[0].id;
-
-        const productLimit = await productLimitForTenant(c, tenantId);
-        if (productLimit >= 0 && desiredProductRefs.size > productLimit) {
-          throw new ProductLimitError('PRODUCT_LIMIT_EXCEEDED');
-        }
-
-        const outq = await c.query(
-          `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
-             AND ($2::uuid IS NULL OR id = $2::uuid) ORDER BY created_at ASC LIMIT 1`,
-          [merchantId, requestedOutletId]
-        );
-        if (!outq.rows.length) throw new BillingError(409, 'OUTLET_SETUP_REQUIRED');
-        outletId = outq.rows[0].id;
-        }
-        assertFreeScope(await freePlanState(c,tenantId),sector,[...desiredProductRefs]);
-        if (freeScope) {
-          const misplaced = await c.query(`SELECT id FROM pos.products WHERE tenant_id=$1
-            AND external_ref=ANY($2::text[]) AND outlet_id IS DISTINCT FROM $3::uuid LIMIT 1`,
-          [tenantId,[...desiredProductRefs],outletId]);
-          if (misplaced.rows.length) throw new FreePlanAccessError('FREE_PRODUCT_BRANCH_MISMATCH');
-        }
-        let upserted = 0;
-
-        for (const p of products) {
-          const ref = str(p.id, 96);
-          const name = str(p.name, 100);
-          if (!ref || !name) continue;
-
-          /*
-           * CATALOG SYNC: hanya metadata produk.
-           *
-           * Kolom `stock` dan `min_stock_alert` sudah di-DROP dari pos.products
-           * oleh migrasi 0023 dan dipindahkan ke pos.inventory_balances. Stok
-           * dimutasi secara atomik melalui pos.inventory_transactions ledger
-           * (di endpoint /api/v1/sync/transactions), bukan melalui snapshot
-           * overwrite dari klien.
-           */
-          await c.query(
-            `INSERT INTO pos.products
-               (id, tenant_id, merchant_id, outlet_id, name, sku, price, cost_price, is_available,
-                business_sector, business_id, category_name, description,
-                unit, external_ref, catalog_synced_at)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                     $13, $14, CURRENT_TIMESTAMP)
-             ON CONFLICT (tenant_id, external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET
-               name              = EXCLUDED.name,
-               sku               = EXCLUDED.sku,
-               price             = EXCLUDED.price,
-               cost_price        = EXCLUDED.cost_price,
-               is_available      = EXCLUDED.is_available,
-               category_name     = EXCLUDED.category_name,
-               description       = EXCLUDED.description,
-               unit              = EXCLUDED.unit,
-               catalog_synced_at = CURRENT_TIMESTAMP`,
-            [
-              tenantId,
-              merchantId,
-              outletId,
-              name,
-              str(p.sku, 50) ?? ref,
-              num(p.price),
-              num(p.costPrice),
-              p.isAvailable !== false,
-              sector,
-              businessId,
-              str(p.categoryName, 100),
-              str(p.description, 300),
-              str(p.unit, 20),
-              ref,
-            ]
-          );
-          upserted++;
-        }
-
-        // Older clients still send whole catalog snapshots. Never interpret an
-        // omitted row as a deletion: an offline/stale device could hide live
-        // products. Versioned shared-state tombstones perform explicit deletion.
-        return { tenantId, upserted, retired: 0 };
-      });
-
-      res.json({ ok: true, ...out });
-    } catch (err) {
-      if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});
-      if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
-      console.error('[sync] katalog gagal:', (err as Error).message);
-      if (err instanceof SyncAccessError) return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
-      if (err instanceof ProductLimitError) return res.status(409).json({ ok: false, error: 'PRODUCT_LIMIT_EXCEEDED' });
-      res.status(500).json({ ok: false, error: 'CATALOG_SYNC_FAILED' });
-    }
+  app.post('/api/v1/sync/catalog', async (req,res)=>{
+    if(!trustedPrincipal(req))return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
+    return res.status(409).json({ok:false,error:'VERSIONED_CATALOG_SYNC_REQUIRED'});
   });
-
-  /** Kejadian non-penjualan dari aplikasi kasir. */
   app.post('/api/v1/sync/activity', async (req, res) => {
     const b = req.body ?? {};
     const businessId = str(b.businessId, 96);
@@ -982,8 +835,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
-          WHERE m.external_ref = $1 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
-        [businessId, ownerRef, `tenant_${businessId}`]
+          WHERE m.external_ref = $1 AND m.business_sector=$4 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
+        [businessId, ownerRef, `tenant_${businessId}`,sector]
       );
       if (!tenantRes.rows.length) {
         return res.json({ ok: true, products: [], categories: [] });
@@ -994,7 +847,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
                   p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
-            WHERE p.tenant_id = $1 AND p.merchant_id = $2
+            WHERE p.tenant_id = $1 AND p.merchant_id = $2 AND NOT p.sync_quarantined
             ORDER BY p.name ASC`,
           [tenantId, merchantId]
       );

@@ -713,6 +713,7 @@
   background: #fff1f2;
   color: #a42239;
 }
+.nh-header-sync.needs-review { background: #fffbeb; color: #92400e; border-color: #fcd34d; }
 .nh-toolbar-more {
   position: relative;
 }

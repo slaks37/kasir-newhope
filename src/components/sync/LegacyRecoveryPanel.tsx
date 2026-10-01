@@ -2,13 +2,13 @@ import React,{useState} from 'react';
 import {usePOS} from '../../context/POSContext';
 
 export function LegacyRecoveryPanel(){
-  const {legacyMigrationStatus:status,settings,mapLegacyOutlet,forceSync}=usePOS();
+  const {legacyMigrationStatus:status,settings,mapLegacyOutlet}=usePOS();
   const [error,setError]=useState('');
   if(!status||status.complete)return null;
   const branches=(settings.branches||[]).filter(branch=>branch.isActive&&branch.businessSector===settings.businessSector);
   return <details className="m-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
     <summary className="cursor-pointer font-bold">Pemulihan data perangkat: {status.queued+status.deferredCashMovements} catatan menunggu cloud</summary>
-    <p className="mt-2">{status.acknowledged} transaksi dikonfirmasi server. Salinan data asli tetap disimpan di perangkat ini; jangan hapus data browser sebelum pemulihan selesai.</p>
+    <p className="mt-2">{status.acknowledged} salinan pemulihan ini dikonfirmasi server (bukan total transaksi cloud). Salinan asli tetap disimpan di perangkat ini.</p>
     {status.unmappedOutletRefs.map(ref=><label key={ref} className="mt-3 block">Outlet asal: {ref==='__unassigned__'?'belum tercatat':ref}
       <select defaultValue="" aria-label={`Hubungkan outlet asal ${ref}`} className="ml-2 rounded-lg border border-amber-300 bg-white p-2" onChange={event=>{
         if(!event.target.value)return;
@@ -28,6 +28,5 @@ export function LegacyRecoveryPanel(){
     </details>}
     {status.unassignedSourceKeys.length>0&&<p className="mt-2">{status.unassignedSourceKeys.length} sumber lama belum jelas pemiliknya; tidak diimpor otomatis ke akun ini.</p>}
     {(status.error||error)&&<p className="mt-2" role="alert">{status.error||error}</p>}
-    <button onClick={forceSync} className="mt-3 rounded-lg border border-amber-400 bg-white px-3 py-2 font-semibold">Coba sinkronisasi lagi</button>
   </details>;
 }

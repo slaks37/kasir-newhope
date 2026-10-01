@@ -41,9 +41,10 @@ export async function testFreeSync(db:Db,url:string) {
   const send=(path:string,body:unknown)=>fetch(syncUrl+'/api/v1/sync/'+path,{method:'POST',headers:{authorization:'Bearer free-fixture','x-auth-sub':'forged-owner','content-type':'application/json'},body:JSON.stringify(body)});
   const target={businessId:owner+'_FNB',sector:'FNB',storeName:'Free fixture'};
   const catalog={...target,products:ids.map(id=>({id,name:id,price:100,costPrice:40,unit:'pcs'}))};
-  const accepted=await send('catalog',catalog);
+  const versionedCatalog=(data:typeof catalog)=>({sector:data.sector,operations:data.products.map(p=>({kind:'products',recordId:p.id,baseRevision:0,deleted:false,value:p}))});
+  const accepted=await send('state',versionedCatalog(catalog));
   assert.equal(accepted.status,200,await accepted.clone().text());
-  assert.equal((await accepted.json()).retired,0);
+  assert.equal((await accepted.json()).versions.length,10);
   const select=(body:unknown)=>fetch(url+'/api/v1/subscription/free-plan',{method:'POST',headers:{'x-auth-sub':owner,'content-type':'application/json'},body:JSON.stringify(body)});
   assert.equal((await select(selection)).status,200);
   assert.equal((await select({...selection,productIds:[...ids,'eleven']})).status,400);
@@ -53,7 +54,8 @@ export async function testFreeSync(db:Db,url:string) {
   assert.equal((await db.query('SELECT count(*)::int AS n FROM internal.outlets WHERE tenant_id=$1',[tenant])).rows[0].n,2);
   assert.equal((await db.query("SELECT is_available FROM pos.products WHERE tenant_id=$1 AND external_ref='retained'",[tenant])).rows[0].is_available,true);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM pos.products WHERE tenant_id=$1 AND external_ref LIKE 'free-product-%' AND outlet_id=$2",[tenant,branch])).rows[0].n,10);
-  assert.equal((await send('catalog',{...catalog,products:[...catalog.products,{id:'eleven',name:'Eleven'}]})).status,403);
+  const eleven=await (await send('state',versionedCatalog({...catalog,products:[...catalog.products,{id:'eleven',name:'Eleven',price:100,costPrice:40,unit:'pcs'}]}))).json();
+  assert.equal(eleven.rejected[0].error,'FREE_PRODUCT_LOCKED');
   const transaction={clientTxnId:randomUUID(),cashierRef:owner,subtotal:100,totalAmount:100,paymentMethod:'CASH',paymentStatus:'PAID',items:[{productRef:ids[0],productName:ids[0],unitPrice:100,unitCost:40,quantity:1}]};
   const sale={...target,idempotencyKey:randomUUID(),transactions:[transaction]};
   const first=await send('transactions',sale);
@@ -68,12 +70,12 @@ export async function testFreeSync(db:Db,url:string) {
   assert.equal((await send('transactions',{...sale,idempotencyKey:randomUUID(),transactions:[{...transaction,clientTxnId:randomUUID(),items:[{...transaction.items[0],productRef:'retained'}]}]})).status,403);
   // Selecting another branch must not move stock or overwrite its product mapping.
   await db.query('UPDATE billing.subscriptions SET free_selection=$2 WHERE tenant_id=$1',[tenant,JSON.stringify({...selection,branchId:otherBranch})]);
-  assert.equal((await send('catalog',catalog)).status,403);
+  assert.equal((await (await send('state',versionedCatalog(catalog))).json()).rejected[0].error,'FREE_PRODUCT_BRANCH_MISMATCH');
   assert.equal((await send('transactions',{...sale,idempotencyKey:randomUUID(),transactions:[{...transaction,clientTxnId:randomUUID()}]})).status,403);
   assert.equal((await db.query('SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND external_ref=$2',[tenant,ids[0]])).rows[0].outlet_id,branch);
   await db.query('UPDATE billing.subscriptions SET free_selection=$2 WHERE tenant_id=$1',[tenant,JSON.stringify(selection)]);
   await db.query('UPDATE internal.outlets SET is_active=false WHERE id=$1',[branch]);
-  assert.equal((await send('catalog',catalog)).status,403);
+  assert.equal((await (await send('state',versionedCatalog(catalog))).json()).rejected[0].error,'OUTLET_SETUP_REQUIRED');
   await db.query('UPDATE internal.outlets SET is_active=true WHERE id=$1',[branch]);
   await db.query("UPDATE billing.subscriptions SET plan_id='plan-plus-monthly',status='ACTIVE',current_period_end=now()+interval '30 days' WHERE tenant_id=$1",[tenant]);
   assert.equal(await resolveFreeSyncScope(db,owner,'FNB'),undefined);

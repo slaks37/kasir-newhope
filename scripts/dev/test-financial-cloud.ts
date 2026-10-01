@@ -33,6 +33,23 @@ const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  const tableOp={kind:'tables',recordId:'conflict',baseRevision:0,deleted:false,value:{id:'conflict',name:'Server table'}};
+  assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[tableOp]})).status,200);
+  const batch=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...tableOp,value:{...tableOp.value,name:'Stale table'}},
+    ...Array.from({length:60},(_,i)=>({kind:'tables',recordId:'batch-'+i,baseRevision:0,deleted:false,value:{id:'batch-'+i,name:'Table '+i}}))]});
+  assert.equal(batch.status,200,JSON.stringify(batch));assert.equal(batch.data.versions.length,60);assert.equal(batch.data.conflicts.length,1);
+  const laundryMerchant=randomUUID(),laundryOutlet=randomUUID();
+  await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Laundry','LAUNDRY',$3)",[laundryMerchant,tenant,owner+'_LAUNDRY']);
+  await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,'Laundry',true)",[laundryOutlet,tenant,laundryMerchant]);
+  const productOp={kind:'products',recordId:'generic-product',baseRevision:0,deleted:false,value:{id:'generic-product',name:'Same name',price:100,costPrice:30}};
+  for(const sector of ['FNB','LAUNDRY'])assert.equal((await post('/api/v1/sync/state',{sector,operations:[productOp]})).data.versions.length,1);
+  const identities=(await db.query("SELECT id,merchant_id FROM pos.products WHERE tenant_id=$1 AND external_ref='generic-product'",[tenant])).rows;
+  assert.equal(identities.length,2);assert.notEqual(identities[0].id,identities[1].id);
+  const replay=await post('/api/v1/sync/state',{sector:'FNB',operations:[productOp]});assert.equal(replay.data.versions[0].revision,1,'Lost ACK does not create a new revision');
+  const wrong=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...productOp,recordId:'prod-ld-12',value:{...productOp.value,id:'prod-ld-12',name:'Cleaning & Sanitasi Helm Fullface'}}]});
+  assert.equal(wrong.status,200);assert.equal(wrong.data.rejected[0].error,'WRONG_SCOPE');
+  assert.equal((await db.query("SELECT COUNT(*)::int n FROM pos.shared_state_records WHERE tenant_id=$1 AND scope='FNB' AND record_id='prod-ld-12'",[tenant])).rows[0].n,0);
+  assert.equal((await post('/api/v1/sync/catalog',{businessId:owner+'_FNB',sector:'FNB',products:[]})).status,409,'Projection cannot independently own state');
   const sectorBeforeSale=(await sectorSummary(db)).find((row:any)=>row.business_sector==='FNB');
   assert.equal(sectorBeforeSale.business_unit_count,1,'Registered businesses exist before their first sale');
   assert.equal(sectorBeforeSale.active_outlet_count,1,'Active outlet count is independent of sales; deferred outlets excluded');
@@ -45,7 +62,7 @@ try{
   assert.equal(customerMirror.name,'Cloud customer');assert.equal(Number(customerMirror.total_spent),0);
   assert.equal(customerMirror.orders_count,0,'Client CRM statistics cannot become financial totals');
   const staleCustomer=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[{...customerOperation,value:{...customerOperation.value,name:'Stale device'}}]});
-  assert.equal(staleCustomer.status,409);
+  assert.equal(staleCustomer.status,200);assert.equal(staleCustomer.data.conflicts.length,1);
   assert.equal((await db.query('SELECT name FROM pos.customers WHERE tenant_id=$1 AND external_ref=$2',[tenant,'cloud-customer'])).rows[0].name,'Cloud customer');
   const legacyCustomer=await post('/api/v1/sync/customers',{businessId:owner+'_FNB',sector:'FNB',customers:[{id:'cloud-customer',name:'Stale snapshot',totalSpent:999999}]});
   assert.equal(legacyCustomer.status,409,'Unversioned snapshots must not overwrite cloud CRM');
@@ -160,5 +177,26 @@ try{
   assert.equal((await get('/api/v1/finance/shift?sector=FNB&outletId='+outlet)).data.shift.expectedCash,23750,'Original-method split refunds reverse only the cash share');
   const allTime=await get('/api/v1/reports/summary?sector=FNB&outletId='+outlet);
   assert.equal(allTime.status,200,JSON.stringify(allTime));assert.ok(allTime.data.financialSummary.totalNetRevenue>0);
+  // Reproduce an older version's wrong FNB projection, with a real historical
+  // sale referring to its primary ID. Repair must never rewrite the ledger.
+  const oldProduct=randomUUID();
+  await db.query(`INSERT INTO pos.products(id,tenant_id,merchant_id,outlet_id,name,sku,price,cost_price,external_ref,business_sector)
+    VALUES($1,$2,$3,$4,'Cleaning & Sanitasi Helm Fullface','OLD-LD-12',100,30,'prod-ld-12','FNB')`,[oldProduct,tenant,merchant,outlet]);
+  await db.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision,deleted)
+    VALUES($1,$2,'FNB','products','prod-ld-12',$3,1,false)`,[tenant,merchant,JSON.stringify({id:'prod-ld-12',name:'Cleaning & Sanitasi Helm Fullface',price:100,costPrice:30})]);
+  const oldSale={...tx,clientTxnId:'historical-wrong-product',items:[{...tx.items[0],productRef:'prod-ld-12',productName:'Cleaning & Sanitasi Helm Fullface'}]};
+  assert.equal((await post('/api/v1/sync/transactions',{...body,transactions:[oldSale]})).status,200);
+  const financialBytes=async()=>JSON.stringify((await db.query(`SELECT * FROM (SELECT 'transactions' kind,to_jsonb(t) value FROM pos.transactions t WHERE tenant_id=$1
+    UNION ALL SELECT 'cash',to_jsonb(c) FROM pos.cash_ledger c WHERE tenant_id=$1
+    UNION ALL SELECT 'items',to_jsonb(i) FROM pos.transaction_items i WHERE tenant_id=$1) financial ORDER BY kind,value::text`,[tenant])).rows);
+  const beforeRepair=await financialBytes();await pg.exec(fs.readFileSync('migrations/0046_operational_scope_repair.sql','utf8'));
+  assert.equal(await financialBytes(),beforeRepair,'Every financial row remains byte-equivalent across operational repair');
+  const repaired=(await db.query('SELECT id,sync_quarantined,sync_recovery_snapshot FROM pos.products WHERE id=$1',[oldProduct])).rows[0];
+  assert.equal(repaired.sync_quarantined,true);assert.equal(repaired.sync_recovery_snapshot.id,oldProduct);
+  assert.ok((await db.query('SELECT product_id FROM pos.transaction_items WHERE product_id=$1',[oldProduct])).rows.length,'Historical financial references remain intact');
+  const recovered=(await get('/api/v1/sync/state?sector=FNB')).data.records.find((r:any)=>r.recordId==='prod-ld-12');
+  assert.equal(recovered.deleted,true);assert.equal(recovered.recoveryValue.name,'Cleaning & Sanitasi Helm Fullface');
+  assert.equal((await get('/api/v1/sync/catalog?businessId='+owner+'_FNB&sector=FNB')).data.products.some((p:any)=>p.id==='prod-ld-12'),false);
+  console.log('PASS: 60/61 partial commit, merchant-scoped identities, exact replay, server-side wrong-scope backups and byte-equivalent financial ledger');
   console.log('PASS: Device A → PostgreSQL → Device B → Admin equality; retry, immutable cash, refund, void, SETTLED split tender, tenant/outlet isolation and timezone');
 }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}

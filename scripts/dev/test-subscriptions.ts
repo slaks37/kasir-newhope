@@ -162,7 +162,7 @@ async function main(){
   await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Fresh Merchant','owner-three')",[signupTenant]);
   const outletRequest=(body:Record<string,unknown>)=>fetch(url+'/api/v1/subscription/outlets',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessSector:'FNB',...body})});
   const noOutlet=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[]})});
-  assert.equal(noOutlet.status,409);assert.equal((await noOutlet.json()).error,'OUTLET_SETUP_REQUIRED');
+  assert.equal(noOutlet.status,409);assert.equal((await noOutlet.json()).error,'VERSIONED_CATALOG_SYNC_REQUIRED');
   const prepare=await fetch(url+'/api/v1/sync/business',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({sector:'FNB',storeName:'Fresh Merchant'})});
   assert.equal(prepare.status,200,await prepare.clone().text());
   const firstOutletResponse=await outletRequest({name:'Outlet 1'});
@@ -185,7 +185,7 @@ async function main(){
   assert.equal(firstState.status,200,await firstState.clone().text());
   assert.equal((await firstState.json()).versions[0].revision,1);
   const staleState=await stateRequest('owner-three',[stateOperation]);
-  assert.equal(staleState.status,409,'A stale device may not overwrite a newer table');
+  assert.equal(staleState.status,200,'An identical lost-ACK replay is acknowledged without a write');
   const secondState=await stateRequest('owner-three',[{...stateOperation,baseRevision:1,value:{...stateOperation.value,status:'OCCUPIED'}}]);
   assert.equal(secondState.status,200,await secondState.clone().text());
   const stateRead=await (await fetch(url+'/api/v1/sync/state?sector=FNB',{headers:{'x-auth-sub':'owner-three'}})).json();
@@ -205,7 +205,7 @@ async function main(){
   assert.equal(productCreate.status,200,await productCreate.clone().text());
   assert.equal((await db.query("SELECT name,price,is_available FROM pos.products WHERE tenant_id=$1 AND external_ref='shared-product'",
     [signupTenant])).rows[0].name,'Produk bersama');
-  assert.equal((await stateRequest('owner-three',[sharedProduct])).status,409,'Stale catalog update must conflict');
+  assert.equal((await stateRequest('owner-three',[sharedProduct])).status,200,'Identical catalog replay must ACK');
   const productDelete=await stateRequest('owner-three',[{...sharedProduct,baseRevision:1,deleted:true,value:null}]);
   assert.equal(productDelete.status,200,await productDelete.clone().text());
   assert.equal((await db.query("SELECT is_available FROM pos.products WHERE tenant_id=$1 AND external_ref='shared-product'",
@@ -213,11 +213,11 @@ async function main(){
   const deletedState=await (await fetch(url+'/api/v1/sync/state?sector=FNB',{headers:{'x-auth-sub':'owner-three'}})).json();
   assert.equal(deletedState.records.find((r:any)=>r.kind==='products'&&r.recordId==='shared-product').deleted,true);
   console.log('PASS: shared state rejects stale/foreign changes, restricts privileged fields and audits accepted writes');
-  const sync=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',storeName:'Fresh Merchant',products:[{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}]})});
+  const sync=await stateRequest('owner-three',[{kind:'products',recordId:'product-test',baseRevision:0,deleted:false,value:{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}}]);
   assert.equal(sync.status,200,'real catalog sync: '+await sync.text());
   const product=(await db.query("SELECT id,tenant_id,merchant_id,outlet_id FROM pos.products WHERE external_ref='product-test'")).rows[0];
   const catalogHeaders={'x-auth-sub':'owner-three','content-type':'application/json'};
-  const secondDevice=await fetch(url+'/api/v1/sync/catalog',{method:'POST',headers:catalogHeaders,body:JSON.stringify({businessId:'owner-three_FNB',sector:'FNB',products:[{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000}]})});
+  const secondDevice=await stateRequest('owner-three',[{kind:'products',recordId:'device-b-product',baseRevision:0,deleted:false,value:{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000,costPrice:0}}]);
   assert.equal(secondDevice.status,200,await secondDevice.clone().text());
   assert.equal((await db.query('SELECT is_available FROM pos.products WHERE id=$1',[product.id])).rows[0].is_available,true,
     'An old-device snapshot omitting a product may not retire it');
