@@ -57,7 +57,6 @@ import {
   orderToPayload,
   getPendingTransactions,
   markCloudRead,
-  pushCustomers,
   pushAttendance,
   pushPayroll,
   pullCatalog,
@@ -1271,37 +1270,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem(getScopedKey('sent_lifecycle_hooks', uId, sec), JSON.stringify(sentLifecycleHookIds));
   }, [sentLifecycleHookIds, storeOwnerId, settings.businessSector]);
 
-  /*
-   * SINKRONISASI DATA PELANGGAN (CRM) KE POSTGRESQL.
-   *
-   * Seperti katalog, data pelanggan dikirim berkala saat ada perubahan agar
-   * CRM terintegrasi ke database pusat dan profil merchant di admin backoffice.
-   */
-  useEffect(() => {
-    if (customers.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushCustomers(
-        {
-          businessId: makeBusinessId(storeOwnerId, activeSector),
-          sector: activeSector,
-          storeName: settings.storeName,
-          ownerRef: storeOwnerId,
-        },
-        customers.map((c) => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-          email: c.email,
-          totalSpent: c.totalSpent,
-          ordersCount: c.visitCount,
-          lastVisitAt: c.lastVisit,
-        }))
-      );
-    }, 10_000);
-
-    return () => window.clearTimeout(timer);
-  }, [customers, storeOwnerId, activeSector, settings.storeName]);
+  // CRM writes use the versioned shared outbox above. The server mirrors accepted
+  // metadata into normalized customers in the same transaction for admin reads.
 
   /*
    * SINKRONISASI PRESENSI / CLOCK-IN STAF KE POSTGRESQL.

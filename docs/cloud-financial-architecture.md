@@ -32,7 +32,15 @@ HPP support three decimal places (e.g. laundry kg).
 - Header distinguishes cloud readiness, pending commands, failure and last
   successful read/write. Server read failures are not displayed as a zero sale.
 - Automatic refresh and focus/online/financial-update events fetch server data;
-  propagation is polling-based, not an instantaneous push guarantee.
+propagation is polling-based, not an instantaneous push guarantee.
+
+CRM changes are accepted by the versioned operational outbox and mirrored into
+normalized customer metadata in the same database transaction for admin reads.
+Migration 0045 repairs missing columns on previously-created customer tables and
+backfills acknowledged cloud contacts. Deletion archives the contact; neither
+device spend counters nor unversioned customer snapshots can overwrite financial
+data. JSONB object-key order is ignored when comparing records; verified equal
+cloud values acknowledge replayed outbox entries without overriding real conflicts.
 
 ## One-time legacy recovery
 

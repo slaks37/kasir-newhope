@@ -41,7 +41,7 @@ export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) 
       setLoaded(true);
       setError('');
     } catch {
-      // Cashier can still run offline; queued sales remain visible in the sync badge.
+      // Keep the cashier gated; any existing offline queue remains recoverable.
       setError('Belum dapat memeriksa kapasitas outlet. Sambungkan internet lalu coba lagi.');
     }
   };

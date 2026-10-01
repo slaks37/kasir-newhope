@@ -250,9 +250,9 @@ export async function merchantDetail(db: Db, merchantId: string) {
       [merchantId]
     ),
     db.query(
-      `SELECT COUNT(*)::int AS customer_count, COALESCE(SUM(total_spent), 0) AS total_customer_spent
+      `SELECT COUNT(*)::int AS customer_count
          FROM pos.customers
-        WHERE merchant_id = $1`,
+        WHERE merchant_id = $1 AND archived_at IS NULL`,
       [merchantId]
     ).catch(() => ({ rows: [{ customer_count: 0, total_customer_spent: 0 }] })),
   ]);

@@ -33,6 +33,24 @@ const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  const customerOperation={kind:'customers',recordId:'cloud-customer',baseRevision:0,deleted:false,
+    value:{id:'cloud-customer',name:'Cloud customer',totalSpent:999999999,visitCount:999}};
+  const customerSync=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[customerOperation]});
+  assert.equal(customerSync.status,200,JSON.stringify(customerSync));
+  const customerMirror=(await db.query('SELECT name,total_spent,orders_count FROM pos.customers WHERE tenant_id=$1 AND external_ref=$2',[tenant,'cloud-customer'])).rows[0];
+  assert.equal(customerMirror.name,'Cloud customer');assert.equal(Number(customerMirror.total_spent),0);
+  assert.equal(customerMirror.orders_count,0,'Client CRM statistics cannot become financial totals');
+  const staleCustomer=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[{...customerOperation,value:{...customerOperation.value,name:'Stale device'}}]});
+  assert.equal(staleCustomer.status,409);
+  assert.equal((await db.query('SELECT name FROM pos.customers WHERE tenant_id=$1 AND external_ref=$2',[tenant,'cloud-customer'])).rows[0].name,'Cloud customer');
+  const legacyCustomer=await post('/api/v1/sync/customers',{businessId:owner+'_FNB',sector:'FNB',customers:[{id:'cloud-customer',name:'Stale snapshot',totalSpent:999999}]});
+  assert.equal(legacyCustomer.status,409,'Unversioned snapshots must not overwrite cloud CRM');
+  const archivedCustomer=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[{...customerOperation,baseRevision:1,deleted:true,value:null}]});
+  assert.equal(archivedCustomer.status,200);
+  assert.ok((await db.query('SELECT archived_at FROM pos.customers WHERE tenant_id=$1 AND external_ref=$2',[tenant,'cloud-customer'])).rows[0].archived_at);
+  const restoredCustomer=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[{...customerOperation,baseRevision:2}]});
+  assert.equal(restoredCustomer.status,200);
+  assert.equal((await db.query('SELECT archived_at FROM pos.customers WHERE tenant_id=$1 AND external_ref=$2',[tenant,'cloud-customer'])).rows[0].archived_at,null);
   const sale=await post('/api/v1/sync/transactions',body);assert.equal(sale.status,200,JSON.stringify(sale));assert.equal(sale.data.accepted,1);
   const deviceA=await get('/api/v1/reports/summary?'+query),deviceB=await get('/api/v1/reports/summary?'+query);
   assert.equal(deviceA.status,200,JSON.stringify(deviceA));assert.equal(deviceB.status,200,JSON.stringify(deviceB));

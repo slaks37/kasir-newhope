@@ -888,6 +888,36 @@ function registerSharedStateRoutes(app, db) {
           ]);
           if (!r.rows.length || op.baseRevision !== 0 && Number(r.rows[0].revision) === 1)
             throw new StateConflict(op.kind, op.recordId);
+          if (op.kind === "customers" && op.deleted) {
+            await c.query(
+              "UPDATE pos.customers SET archived_at=now(),updated_at=now() WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3",
+              [scope.tenantId, scope.merchantId, op.recordId]
+            );
+          }
+          if (op.kind === "customers" && !op.deleted) {
+            const customer = op.value;
+            if (typeof customer.name !== "string" || !customer.name.trim()) throw new Error("INVALID_CUSTOMER");
+            const saved = await c.query(
+              `INSERT INTO pos.customers
+              (tenant_id,merchant_id,external_ref,name,phone,email,address,notes)
+              VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+              ON CONFLICT(tenant_id,external_ref) DO UPDATE SET
+                name=EXCLUDED.name,phone=EXCLUDED.phone,email=EXCLUDED.email,
+                address=EXCLUDED.address,notes=EXCLUDED.notes,archived_at=null,updated_at=now()
+              WHERE pos.customers.merchant_id=EXCLUDED.merchant_id RETURNING id`,
+              [
+                scope.tenantId,
+                scope.merchantId,
+                op.recordId,
+                customer.name.trim().slice(0, 120),
+                String(customer.phone || "").slice(0, 32) || null,
+                String(customer.email || "").slice(0, 120) || null,
+                String(customer.address || "").slice(0, 255) || null,
+                String(customer.notes || "").slice(0, 500) || null
+              ]
+            );
+            if (!saved.rows.length) throw new StateConflict(op.kind, op.recordId);
+          }
           if (op.kind === "products") {
             if (op.deleted) {
               await c.query(
@@ -2102,97 +2132,8 @@ function registerSyncRoutes(app, db) {
     res.json({ ok: true, synced: true, ...rows[0] });
   });
   app.post("/api/v1/sync/customers", async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const customers = Array.isArray(body.customers) ? body.customers : [];
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({
-        ok: false,
-        error: "BAD_REQUEST",
-        detail: "businessId dan sector wajib"
-      });
-    }
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-        let upserted = 0;
-        for (const cust of customers) {
-          const extRef = str(cust.id || cust.external_ref, 96);
-          const name = str(cust.name, 120);
-          if (!extRef || !name) continue;
-          await c.query(
-            `INSERT INTO pos.customers (
-               tenant_id, merchant_id, external_ref, name, phone, email, address, notes,
-               total_spent, orders_count, last_visit_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-             ON CONFLICT (tenant_id, external_ref)
-               DO UPDATE SET
-                 name = EXCLUDED.name,
-                 phone = COALESCE(EXCLUDED.phone, pos.customers.phone),
-                 email = COALESCE(EXCLUDED.email, pos.customers.email),
-                 address = COALESCE(EXCLUDED.address, pos.customers.address),
-                 notes = COALESCE(EXCLUDED.notes, pos.customers.notes),
-                 total_spent = EXCLUDED.total_spent,
-                 orders_count = EXCLUDED.orders_count,
-                 last_visit_at = COALESCE(EXCLUDED.last_visit_at, pos.customers.last_visit_at),
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              extRef,
-              name,
-              str(cust.phone, 32),
-              str(cust.email, 120),
-              str(cust.address, 255),
-              str(cust.notes, 500),
-              num(cust.totalSpent || cust.total_spent),
-              num(cust.ordersCount || cust.orders_count),
-              cust.lastVisitAt ? new Date(cust.lastVisitAt) : null
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "CUSTOMER_SYNC_FAILED" });
-    }
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_CUSTOMER_SYNC_REQUIRED" });
   });
   app.get("/api/v1/sync/catalog", async (req, res) => {
     const businessId = str(req.query.businessId, 96);

@@ -145,6 +145,28 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
               op.deleted?null:JSON.stringify(op.value),op.deleted,op.baseRevision]);
           if(!r.rows.length || (op.baseRevision!==0 && Number(r.rows[0].revision)===1))
             throw new StateConflict(op.kind,op.recordId);
+          if(op.kind==='customers' && op.deleted){
+            // Keep contact/history recoverable; admin excludes archived contacts.
+            await c.query('UPDATE pos.customers SET archived_at=now(),updated_at=now() WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3',
+              [scope.tenantId,scope.merchantId,op.recordId]);
+          }
+          if(op.kind==='customers' && !op.deleted){
+            const customer=op.value as Record<string,unknown>;
+            if(typeof customer.name!=='string'||!customer.name.trim())throw new Error('INVALID_CUSTOMER');
+            // Mirror only acknowledged metadata for admin CRM. Device loyalty
+            // statistics are not authoritative sales or financial totals.
+            const saved=await c.query(`INSERT INTO pos.customers
+              (tenant_id,merchant_id,external_ref,name,phone,email,address,notes)
+              VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+              ON CONFLICT(tenant_id,external_ref) DO UPDATE SET
+                name=EXCLUDED.name,phone=EXCLUDED.phone,email=EXCLUDED.email,
+                address=EXCLUDED.address,notes=EXCLUDED.notes,archived_at=null,updated_at=now()
+              WHERE pos.customers.merchant_id=EXCLUDED.merchant_id RETURNING id`,
+              [scope.tenantId,scope.merchantId,op.recordId,customer.name.trim().slice(0,120),
+                String(customer.phone||'').slice(0,32)||null,String(customer.email||'').slice(0,120)||null,
+                String(customer.address||'').slice(0,255)||null,String(customer.notes||'').slice(0,500)||null]);
+            if(!saved.rows.length)throw new StateConflict(op.kind,op.recordId);
+          }
           if(op.kind==='products'){
             if(op.deleted){
               await c.query(`UPDATE pos.products SET is_available=false,catalog_synced_at=now()

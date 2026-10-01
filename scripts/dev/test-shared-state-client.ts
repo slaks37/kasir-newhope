@@ -48,6 +48,21 @@ assert.equal(statusB.pending,1,'Conflicting change stays in the durable outbox')
 assert.match(statusB.error,/Konflik data/);
 assert.equal(record?.value.name,'Meja A','Server did not accept stale device B state');
 a.stop();b.stop();
+// JSONB key order and a lost acknowledgment must not create conflicts or writes.
+disk=new Map();
+record={revision:40,value:{customer:{tier:'BRONZE',name:'Same'},name:'Same table',id:'table-1'}};
+let statusD:any;
+const d=new SharedStateSync('replay-owner','FNB',()=>{},value=>{statusD=value;});
+d.prime('tables',[]);
+d.track('tables',[{id:'table-1',name:'Same table',customer:{name:'Same',tier:'BRONZE'}}]);
+const replayPosts=postCalls;
+await d.refresh(true);
+assert.equal(statusD.pending,0,'Verified equal server value acknowledges the retained outbox');
+assert.equal(postCalls,replayPosts,'Already-confirmed value is not rewritten');
+d.prime('tables',[record.value]);
+d.track('tables',[{id:'table-1',name:'Same table',customer:{name:'Same',tier:'BRONZE'}}]);
+assert.equal(statusD.pending,0,'Nested object key order must not create a hydration edit');
+d.stop();
 record=undefined;
 outletBlocked=true;
 let statusC:any;

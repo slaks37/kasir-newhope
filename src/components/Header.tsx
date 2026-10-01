@@ -96,7 +96,8 @@ export const Header: React.FC<HeaderProps> = ({
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const syncNeedsOutlet = syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED') || syncStatus.lastError === 'LEGACY_OUTLET_MAPPING_REQUIRED';
   const syncFailed = Boolean(syncStatus.lastError || syncStatus.failures > 0 || operationalSyncStatus.error);
-  const syncLabel = syncFailed ? 'Sync failed' : syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu`
+  const syncConflict = Boolean(operationalSyncStatus.conflict);
+  const syncLabel = syncConflict ? 'Konflik perubahan' : syncFailed ? 'Sync failed' : syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu`
     : operationalSyncStatus.pending ? `${operationalSyncStatus.pending} perubahan menunggu`
     : syncStatus.inFlight||!operationalSyncStatus.ready ? 'Menghubungkan cloud…' : syncStatus.lastSyncedAt ? 'Cloud Synced' : 'Cloud belum diverifikasi';
   const lastSync = syncStatus.lastSyncedAt && Number.isFinite(Date.parse(syncStatus.lastSyncedAt))
@@ -106,7 +107,8 @@ export const Header: React.FC<HeaderProps> = ({
     ? `${syncStatus.pending} transaksi menunggu. Outlet asal belum terhubung atau belum aktif; selesaikan pengaturan outlet untuk melanjutkan.`
     : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
     ? 'Antrean perangkat tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
-    : syncFailed ? `${syncStatus.pending} transaksi menunggu. ${syncStatus.lastError || 'Gagal menghubungi cloud'}. Klik untuk mencoba lagi.`
+    : syncConflict ? `${operationalSyncStatus.pending} perubahan operasional menunggu peninjauan. Data lokal tetap disimpan; pilih penyelesaian pada panel konflik.`
+    : syncFailed ? `${syncStatus.pending} transaksi menunggu. ${syncStatus.lastError || operationalSyncStatus.error || 'Gagal menghubungi cloud'}. Klik untuk mencoba lagi.`
     : `${syncLabel}. ${lastSync}.`;
 
   return (

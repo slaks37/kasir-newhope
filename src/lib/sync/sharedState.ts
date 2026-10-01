@@ -8,6 +8,11 @@ export type SharedSyncStatus = { ready:boolean; pending:number; error:string|nul
 const keyFor=(kind:string,id:string)=>`${kind}\x00${id}`;
 const outboxKey=(owner:string,sector:string)=>`newhope_shared_outbox_${owner}_${sector}`;
 const financialKinds=new Set(['orders','cash_movements','shift','shift_history']);
+// PostgreSQL JSONB reorders object keys. Hydration must not manufacture edits
+// just because serialization order differs (including nested customer fields).
+const recordJson=(value:unknown):string=>JSON.stringify(value,(_key,item)=>
+  item && typeof item==='object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])) : item);
 export const recordIdOf=(kind:string,row:object):string=>{
   const value=row as {id?:unknown;code?:unknown;staffId?:unknown};
   return String(kind==='promo_codes'?value.code:kind==='commission_rules'?value.staffId:value.id);
@@ -64,10 +69,20 @@ export class SharedStateSync {
       if(!data.ok || !Array.isArray(data.records)) throw Error('STATE_INVALID_RESPONSE');
       if(!data.ready){this.error='Unit usaha belum disiapkan untuk sinkronisasi';this.emit();return;}
       const incoming=data.records as SharedRecord[];
+      let acknowledged=false;
       for(const row of incoming){
         const key=keyFor(row.kind,row.recordId),old=this.remote.get(key);
         if(!old || row.revision>=old.revision)this.remote.set(key,row);
+        const pending=this.pending.get(key);
+        // A lost POST acknowledgment/replayed migration can leave an already
+        // confirmed value in the outbox. Only reconcile exact semantic equality;
+        // genuinely different edits remain pending for an explicit owner choice.
+        if(pending && row.revision>pending.baseRevision && row.deleted===pending.deleted &&
+          recordJson(row.value)===recordJson(pending.value)){
+          this.pending.delete(key);acknowledged=true;
+        }
       }
+      if(acknowledged)this.persist();
       if(this.conflict){
         const key=keyFor(this.conflict.kind,this.conflict.recordId);
         if(!this.pending.has(key))this.conflict=undefined;
@@ -86,12 +101,12 @@ export class SharedStateSync {
   }
   /** Called after remote hydration, before the matching React state effects run. */
   prime<T extends object>(kind:string,rows:T[]){
-    this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),JSON.stringify(row)])));
+    this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),recordJson(row)])));
   }
   track<T extends object>(kind:string,rows:T[],prune=true){
     if(this.stopped) return;
     const next=new Map(rows.filter(row=>recordIdOf(kind,row)!=='undefined')
-      .map(row=>[recordIdOf(kind,row),JSON.stringify(row)]));
+      .map(row=>[recordIdOf(kind,row),recordJson(row)]));
     const before=this.previous.get(kind);
     if(!before){this.previous.set(kind,next);return;}
     for(const [id,json] of next){
