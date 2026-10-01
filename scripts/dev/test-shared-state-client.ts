@@ -82,4 +82,16 @@ outletBlocked=false;
 await c.resumeAfterOutletUpdate();
 assert.equal(statusC.pending,0,'Pending product is retried after outlet activation');
 c.stop();
+// The outgoing sector may have a slow GET still in flight when switched.
+const originalFetch=globalThis.fetch;
+let finishOldRead:(value:any)=>void=()=>{};
+let oldHydrations=0;
+Object.defineProperty(globalThis,'fetch',{value:()=>new Promise(resolve=>{finishOldRead=resolve;}),configurable:true});
+const outgoing=new SharedStateSync('switch-owner','LAUNDRY',()=>{oldHydrations++;},()=>{});
+const staleRead=outgoing.refresh(true);
+outgoing.stop();
+finishOldRead({ok:true,json:async()=>({ok:true,ready:true,records:[{scope:'LAUNDRY',kind:'products',recordId:'laundry-only',revision:1,value:{id:'laundry-only',name:'Laundry'},deleted:false}]})});
+await staleRead;
+assert.equal(oldHydrations,0,'Late outgoing-sector response cannot hydrate the new workspace');
+Object.defineProperty(globalThis,'fetch',{value:originalFetch,configurable:true});
 console.log('PASS: operational edits persist locally, acknowledge per record and retain conflicts without overwriting');

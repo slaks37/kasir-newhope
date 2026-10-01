@@ -715,6 +715,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     getSyncStatus(makeBusinessId(storeOwnerId, activeSector))
   );
+  const activeSyncBusinessId=React.useRef(tenant.businessId);
+  activeSyncBusinessId.current=tenant.businessId;
 
   /**
    * Menjalankan pengiriman lalu menyegarkan status di layar.
@@ -729,15 +731,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const mappingKey='newhope_legacy_outlet_mappings_'+target.businessId;
         let mappings:Record<string,string>={};try{mappings=JSON.parse(localStorage.getItem(mappingKey)||'{}');}catch{}
         const migration=migrateLegacyFinancialData(target,{outletMappings:mappings});
-        setLegacyMigrationStatus(migration);
-        setSyncStatus(financialStatus(target.businessId,true));
+        if(activeSyncBusinessId.current===target.businessId){
+          setLegacyMigrationStatus(migration);
+          setSyncStatus(financialStatus(target.businessId,true));
+        }
         const after = await flushSync(target, force);
         const cash=await flushCashQueue(target,force);
-        setLegacyMigrationStatus(migrateLegacyFinancialData(target,{outletMappings:mappings}));
-        setSyncStatus(combineFinancialSyncStatus(after,cash));
+        const recovered=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        if(activeSyncBusinessId.current===target.businessId){
+          setLegacyMigrationStatus(recovered);
+          setSyncStatus(combineFinancialSyncStatus(after,cash));
+        }
         window.dispatchEvent(new Event('financial-updated'));
       } catch {
-        setSyncStatus(financialStatus(target.businessId));
+        if(activeSyncBusinessId.current===target.businessId)setSyncStatus(financialStatus(target.businessId));
       }
     },
     []
@@ -928,6 +935,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if(!authUser?.id) return;
     remoteOrderOperations.current=new Map();
     const store=new SharedStateSync(authUser.id,activeSector,(records,initial)=>{
+      if(sharedSync.current!==store)return;
       const grouped=new Map<string,SharedRecord[]>();
       for(const record of records){
         const group=grouped.get(record.kind)||[];group.push(record);grouped.set(record.kind,group);
@@ -3026,6 +3034,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const uId = storeOwnerId;
     const currentSec = settings.businessSector || 'FNB';
+    if(sector!==currentSec){
+      // Cancel outgoing hydration before state changes, not just at effect cleanup.
+      sharedSync.current?.stop();sharedSync.current=null;
+      setSharedSyncStatus({ready:false,pending:0,error:null});
+    }
 
     // 1. Save current sector state to its own scoped storage before switching
     localStorage.setItem(getScopedKey('categories', uId, currentSec), JSON.stringify(categories));

@@ -66,6 +66,9 @@ export class SharedStateSync {
       const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}`,{cache:'no-store'});
       if(!response.ok) throw Error(`HTTP_${response.status}`);
       const data=await response.json();
+      // A previous sector/account request can finish after React has switched
+      // scopes. Never hydrate its records into the new workspace.
+      if(this.stopped)return;
       if(!data.ok || !Array.isArray(data.records)) throw Error('STATE_INVALID_RESPONSE');
       if(!data.ready){this.error='Unit usaha belum disiapkan untuk sinkronisasi';this.emit();return;}
       const incoming=data.records as SharedRecord[];
@@ -97,7 +100,7 @@ export class SharedStateSync {
       this.emit();
       this.onRecords([...visible.values()],firstReady);
       if(this.pending.size && !this.outletBlocked) await this.flush();
-    } catch(error){this.error=error instanceof Error?error.message:'STATE_UNAVAILABLE';this.emit();}
+    } catch(error){if(this.stopped)return;this.error=error instanceof Error?error.message:'STATE_UNAVAILABLE';this.emit();}
   }
   /** Called after remote hydration, before the matching React state effects run. */
   prime<T extends object>(kind:string,rows:T[]){
