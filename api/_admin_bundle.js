@@ -1241,16 +1241,19 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
     if (rows.length > 1e4) return res.status(503).json({ ok: false, error: "SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION" });
     const all = rows.map((r) => {
       const end = r.current_period_end || new Date(Date.parse(r.created_at) + TRIAL_DAYS * DAY_MS);
-      const access = subscriptionAccess({ status: r.is_active ? r.status || "TRIAL" : "EXPIRED", currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: r.grace_period_end ? new Date(r.grace_period_end).toISOString() : void 0 });
+      const access = subscriptionAccess({ status: r.is_active ? r.status || "TRIAL" : "EXPIRED", planId: r.is_active ? r.plan_id : void 0, currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: r.grace_period_end ? new Date(r.grace_period_end).toISOString() : void 0 });
+      const effectivePlanId = access.status === "FREE" ? FREE_PLAN_ID : r.plan_id;
       const day = Math.max(1, Math.floor((Date.now() - Date.parse(r.trial_started_at || r.created_at)) / DAY_MS) + 1);
       return {
         ...r,
+        plan_id: effectivePlanId,
+        extra_outlets: access.status === "FREE" ? 0 : r.extra_outlets,
         status: access.status,
         accessMode: access.accessMode,
         daysLeft: access.daysLeft,
         trialDay: day,
         lifecycleStage: r.converted ? "CONVERTED" : lifecycleStage(day),
-        maxOutlets: (SAAS_PLANS.find((p) => p.id === r.plan_id)?.maxOutlets ?? 2) + Number(r.extra_outlets || 0)
+        maxOutlets: access.status === "FREE" ? 1 : (SAAS_PLANS.find((p) => p.id === effectivePlanId)?.maxOutlets ?? 2) + Number(r.extra_outlets || 0)
       };
     });
     const eligible = all.filter((r) => r.trial_started_at || r.plan_id === TRIAL_PLAN_ID || !r.subscription_id);

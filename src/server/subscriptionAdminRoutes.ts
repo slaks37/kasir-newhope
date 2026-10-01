@@ -5,6 +5,7 @@ import { BillingError } from '../../services/billing/engine';
 import { ensureSubscription, outletUsage, serializeSubscription } from '../../services/billing/engine';
 import { manualTierChange, lifecycleStage, subscriptionAccess } from '../config/subscriptionPolicy';
 import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID, TRIAL_DAYS } from '../config/saasPlans';
+import { FREE_PLAN_ID } from '../config/freePlanPolicy';
 
 export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Promise<Db>,guard:any,wrap:any) {
   app.get('/api/admin/tenants/:tenantId/subscription-detail',guard('VIEW_MERCHANT_DETAIL'),wrap(async(req:any,res:any,db:Db)=>{
@@ -24,10 +25,11 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
     if(rows.length>10000) return res.status(503).json({ok:false,error:'SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION'});
     const all=rows.map(r=>{
       const end=r.current_period_end || new Date(Date.parse(r.created_at)+TRIAL_DAYS*DAY_MS);
-      const access=subscriptionAccess({status:r.is_active?(r.status || 'TRIAL'):'EXPIRED',currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:r.grace_period_end?new Date(r.grace_period_end).toISOString():undefined});
+      const access=subscriptionAccess({status:r.is_active?(r.status || 'TRIAL'):'EXPIRED',planId:r.is_active?r.plan_id:undefined,currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:r.grace_period_end?new Date(r.grace_period_end).toISOString():undefined});
+      const effectivePlanId=access.status==='FREE'?FREE_PLAN_ID:r.plan_id;
       const day=Math.max(1,Math.floor((Date.now()-Date.parse(r.trial_started_at || r.created_at))/DAY_MS)+1);
-      return {...r,status:access.status,accessMode:access.accessMode,daysLeft:access.daysLeft,trialDay:day,
-        lifecycleStage:r.converted?'CONVERTED':lifecycleStage(day),maxOutlets:(SAAS_PLANS.find(p=>p.id===r.plan_id)?.maxOutlets ?? 2)+Number(r.extra_outlets || 0)};
+      return {...r,plan_id:effectivePlanId,extra_outlets:access.status==='FREE'?0:r.extra_outlets,status:access.status,accessMode:access.accessMode,daysLeft:access.daysLeft,trialDay:day,
+        lifecycleStage:r.converted?'CONVERTED':lifecycleStage(day),maxOutlets:access.status==='FREE'?1:(SAAS_PLANS.find(p=>p.id===effectivePlanId)?.maxOutlets ?? 2)+Number(r.extra_outlets || 0)};
     });
     const eligible=all.filter(r=>r.trial_started_at || r.plan_id===TRIAL_PLAN_ID || !r.subscription_id);
     const converted=eligible.filter(r=>r.converted).length;

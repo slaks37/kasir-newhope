@@ -136,6 +136,14 @@ async function main(){
    assert.equal(response.status,200,path+': '+await response.text());
   }
   const report=await fetch(url+'/api/admin/subscriptions',{headers:{authorization:'Bearer test-admin'}});assert.equal(report.status,200);assert.equal((await report.json()).summary.active,1);
+  const expiredTrial=randomUUID();
+  await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Expired trial','expired-trial-owner')",[expiredTrial]);
+  const expiredSubscription=await ensureSubscription(db,expiredTrial);
+  await db.query("UPDATE billing.subscriptions SET current_period_end=now()-interval '1 day',extra_outlets=3 WHERE id=$1",[expiredSubscription.id]);
+  const expiredReport=await (await fetch(url+'/api/admin/subscriptions',{headers:{authorization:'Bearer test-admin'}})).json();
+  const expiredRow=expiredReport.rows.find((r:any)=>r.id===expiredTrial);
+  assert.equal(expiredRow.status,'FREE');assert.equal(expiredRow.plan_id,'plan-free-lifetime');
+  assert.equal(expiredRow.maxOutlets,1);assert.equal(expiredRow.extra_outlets,0);
   const detailUrl=url+'/api/admin/tenants/'+tenant+'/subscription-detail';
   assert.equal((await fetch(detailUrl,{headers:{authorization:'Bearer no-mfa'}})).status,403);
   assert.equal((await fetch(detailUrl,{headers:{authorization:'Bearer merchant'}})).status,403);
