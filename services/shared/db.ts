@@ -107,6 +107,10 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
   await withRetry(async () => {
     const probe = await pool.connect();
     probe.release();
+  }).catch(async error=>{
+    // A rejected cached runtime must not leave its old pool alive on each retry.
+    await pool.end().catch(()=>{});
+    throw error;
   });
 
   const wrap = (runner: { query: (s: string, p?: unknown[]) => Promise<any> }): Db => ({
@@ -160,5 +164,7 @@ async function withRetry(fn: () => Promise<void>, attempts = 15): Promise<void> 
       await new Promise((r) => setTimeout(r, wait));
     }
   }
-  throw new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan: ${lastErr?.message}`);
+  const failure=new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
+  (failure as Error & {cause:unknown}).cause=lastErr;
+  throw failure;
 }

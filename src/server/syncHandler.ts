@@ -54,7 +54,11 @@ export function createSyncHandler(
         return app;
       }).catch(error=>{runtime=undefined;throw error;});
       (await runtime)(req,res);
-    } catch { return res.status(503).json({ok:false,error:'SYNC_UNAVAILABLE'}); }
+    } catch(error) {
+      const diagnostic=error as {name?:string;code?:string;cause?:{code?:string};stack?:string};
+      console.error('[sync] runtime unavailable',{name:diagnostic.name,code:diagnostic.code||diagnostic.cause?.code,frames:diagnostic.stack?.split('\n').slice(1,4)});
+      return res.status(503).json({ok:false,error:'SYNC_UNAVAILABLE'});
+    }
   };
 }
 

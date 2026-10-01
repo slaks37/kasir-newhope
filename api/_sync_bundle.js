@@ -115,6 +115,10 @@ async function connectDb(opts) {
   await withRetry(async () => {
     const probe = await pool.connect();
     probe.release();
+  }).catch(async (error) => {
+    await pool.end().catch(() => {
+    });
+    throw error;
   });
   const wrap = (runner) => ({
     async query(sql, params) {
@@ -158,7 +162,9 @@ async function withRetry(fn, attempts = 15) {
       await new Promise((r) => setTimeout(r, wait));
     }
   }
-  throw new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan: ${lastErr?.message}`);
+  const failure = new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
+  failure.cause = lastErr;
+  throw failure;
 }
 
 // services/pos/sync.ts
@@ -2507,7 +2513,9 @@ function createSyncHandler(authenticate = authenticateBearer, connect = () => co
         throw error;
       });
       (await runtime)(req, res);
-    } catch {
+    } catch (error) {
+      const diagnostic = error;
+      console.error("[sync] runtime unavailable", { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });
       return res.status(503).json({ ok: false, error: "SYNC_UNAVAILABLE" });
     }
   };
