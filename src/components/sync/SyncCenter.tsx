@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {usePOS} from '../../context/POSContext';
 import {LegacyRecoveryPanel} from './LegacyRecoveryPanel';
-import {operationalRecovery} from '../../lib/sync/operationalRecovery';
+import {operationalRecovery,recoveryGroups} from '../../lib/sync/operationalRecovery';
 
 /** The only user-facing recovery surface. Header only opens this center. */
 export function SyncCenter(){
@@ -12,6 +12,7 @@ export function SyncCenter(){
     return()=>{document.removeEventListener('keydown',key);previous?.focus();};},[closeSyncCenter]);
   let backups:ReturnType<typeof operationalRecovery>=[];
   try{backups=operationalRecovery(syncCenter.businessId.replace(/_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/,''),settings.businessSector||'FNB');}catch{}
+  const protectedRecords=recoveryGroups(backups);
   const resolve=async(kind:string,recordId:string,choice:'server'|'local')=>{
     setBusy(kind+recordId);try{await resolveOperationalConflict(kind,recordId,choice);}finally{setBusy('');}
   };
@@ -23,10 +24,10 @@ export function SyncCenter(){
       else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
     }}}>
     <section className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-xl">
-      <div className="flex items-center justify-between gap-3"><h2 id="sync-center-title" className="text-xl font-bold">Sync Center</h2>
+      <div className="flex items-center justify-between gap-3"><h2 id="sync-center-title" className="text-xl font-bold">Kesehatan data & pemulihan</h2>
         <button ref={close} onClick={closeSyncCenter} className="rounded-lg border px-3 py-2">Tutup</button></div>
       <p className="mt-2 font-semibold">{settings.businessSector} · {syncCenter.label}</p>
-      <p className="text-sm text-slate-600">{syncCenter.detail}. Cadangan tidak dihitung sebagai antrean aktif.</p>
+      <p className="text-sm text-slate-600">Data disimpan otomatis. Tidak perlu menekan tombol untuk mengirim perubahan. Halaman ini hanya untuk pemeriksaan dan pemulihan data lama.</p>
       {syncCenter.lastConfirmedAt&&<p className="text-xs text-slate-500">Terakhir konfirmasi cloud: {new Date(syncCenter.lastConfirmedAt).toLocaleString('id-ID')}</p>}
       {syncCenter.error&&<p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-rose-800">{syncCenter.error}</p>}
       <section className="mt-4 rounded-xl border p-3"><h3 className="font-bold">Keuangan · {syncCenter.financialPending} menunggu</h3>
@@ -45,13 +46,18 @@ export function SyncCenter(){
           </div>
         </article>)}
       </section>
-      {backups.length>0&&<details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer font-bold">Cadangan operasional / karantina ({backups.length})</summary>
-        <p className="mt-2 text-sm">Data salah sektor dikeluarkan dari antrean aktif, bukan dipindah atau ditimpa ke sektor lain. Data asli tetap ada dalam cadangan pada perangkat ini.</p>
-        <ul className="mt-2 space-y-2 text-xs">{backups.map((b,index)=><li key={index}>{b.capturedAt} · {b.sourceKey}
-          <ul>{b.records.map((r,i)=><li key={i}>{r.kind}/{r.recordId} · {r.name} · {r.reason}</li>)}</ul></li>)}</ul>
+      {backups.length>0&&<details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer font-bold">Data lama diamankan · {protectedRecords.length} catatan</summary>
+        <p className="mt-2 text-sm">Salinan yang salah sektor atau sudah digantikan disimpan terpisah dan tidak dikirim ulang. Ini bukan transaksi yang menunggu. Seluruh {backups.length} snapshot asli tetap tersimpan.</p>
+        <ul className="mt-2 space-y-2 text-sm">{protectedRecords.map(r=><li key={r.kind+'_'+r.recordId} className="rounded-lg bg-slate-50 p-2">
+          <p className="font-semibold">{r.name||({'store_settings':'Pengaturan toko','inventory_logs':'Catatan stok','customers':'Pelanggan','products':'Produk'} as Record<string,string>)[r.kind]||'Catatan operasional'}</p>
+          <p className="text-slate-600">{r.reasons.some(reason=>/SECTOR|SCOPE|STORE_MODE/.test(reason))?'Salinan tidak sesuai unit usaha ini; sudah diamankan.':'Versi sebelumnya tetap disimpan sebagai cadangan.'}</p>
+          <details className="text-xs text-slate-500"><summary className="cursor-pointer">Detail teknis · {r.sources.length} sumber</summary><p>{r.kind}/{r.recordId}</p><p>{r.reasons.join(' · ')}</p><p className="break-all">{r.sources.join(' · ')}</p></details>
+        </li>)}</ul>
       </details>}
-      <button onClick={forceSync} disabled={syncCenter.financial.inFlight||syncCenter.operational.inFlight} className="mt-4 rounded-lg bg-amber-400 px-4 py-2 font-bold disabled:opacity-50">Periksa & sinkronkan lagi</button>
-      <p className="mt-2 text-xs text-slate-500">Retry tidak memilih outlet atau versi keuangan secara otomatis. Jangan hapus data browser selama pemulihan belum selesai.</p>
+      <details className="mt-4 text-sm"><summary className="cursor-pointer text-slate-500">Pemeriksaan lanjutan</summary>
+        <button onClick={forceSync} disabled={syncCenter.financial.inFlight||syncCenter.operational.inFlight} className="mt-2 rounded-lg border px-4 py-2 disabled:opacity-50">Periksa koneksi sekarang</button>
+        <p className="mt-2 text-xs text-slate-500">Percobaan ulang juga berjalan otomatis. Sistem tidak menebak outlet atau versi transaksi lama. Jangan hapus data browser selama pemulihan belum selesai.</p>
+      </details>
     </section>
   </div>;
 }

@@ -731,6 +731,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
   const activeSyncBusinessId=React.useRef(tenant.businessId);
   activeSyncBusinessId.current=tenant.businessId;
+  const runningFinancialSync=React.useRef(new Set<string>());
 
   /**
    * Menjalankan pengiriman lalu menyegarkan status di layar.
@@ -741,6 +742,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    */
   const runSync = React.useCallback(
     async (target: SyncTarget, force = false) => {
+      if(runningFinancialSync.current.has(target.businessId))return;
+      runningFinancialSync.current.add(target.businessId);
       try {
         const mappingKey='newhope_legacy_outlet_mappings_'+target.businessId;
         let mappings:Record<string,string>={};try{mappings=JSON.parse(localStorage.getItem(mappingKey)||'{}');}catch{}
@@ -764,7 +767,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         window.dispatchEvent(new Event('financial-updated'));
       } catch {
         if(activeSyncBusinessId.current===target.businessId)setSyncStatus(financialStatus(target.businessId));
-      }
+      } finally {runningFinancialSync.current.delete(target.businessId);}
     },
     []
   );
@@ -793,14 +796,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const onOutletsUpdated = () => void runSync(target, true);
     window.addEventListener('online', onOnline);
     window.addEventListener('outlets-updated', onOutletsUpdated);
+    window.addEventListener('focus', onOnline);
+    const onVisible=()=>{if(document.visibilityState==='visible')onOnline();};
+    document.addEventListener('visibilitychange',onVisible);
 
     // 3. Denyut berkala sebagai jaring pengaman. Event 'online' tidak selalu
     //    menyala di semua perangkat, dan server bisa saja yang tadi mati.
-    const timer = window.setInterval(() => void runSync(target), 60_000);
+    const timer = window.setInterval(() => {if(navigator.onLine)void runSync(target);}, 10_000);
 
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('outlets-updated', onOutletsUpdated);
+      window.removeEventListener('focus',onOnline);
+      document.removeEventListener('visibilitychange',onVisible);
       window.clearInterval(timer);
     };
   }, [bizId, activeSector, storeNameForSync, storeOwnerId, settings.activeBranchId, runSync]);
@@ -1008,11 +1016,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const lifecycle=(grouped.get('sent_lifecycle_hooks')||[]).filter(row=>!row.deleted).map(row=>row.recordId);
       store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
       if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
-      const fallbackName=grouped.get('store_settings')?.some(r=>r.quarantineReason)?BUSINESS_PRESETS[activeSector].defaultStoreName:store.businessName;
+      const settingsQuarantined=grouped.get('store_settings')?.some(r=>r.quarantineReason);
+      const fallbackName=settingsQuarantined?BUSINESS_PRESETS[activeSector].defaultStoreName:store.businessName;
       const remoteSettings=grouped.get('store_settings')?.find(row=>!row.deleted&&row.recordId==='main')?.value
         || (fallbackName?{...sharedSettings,storeName:fallbackName,storeMode:BUSINESS_PRESETS[activeSector].storeMode,
           receiptHeader:`*** ${fallbackName} ***`,receiptFooter:`Terima kasih telah bertransaksi di ${fallbackName}`}:undefined);
       store.prime('store_settings',remoteSettings?[remoteSettings]:[]);
+      if(settingsQuarantined&&remoteSettings&&!grouped.get('store_settings')?.some(r=>!r.deleted&&r.recordId==='main')){
+        // A structural sector repair has a safe preset; persist it automatically,
+        // against the tombstone revision, instead of repeatedly falling back to stale metadata.
+        store.prime('store_settings',[]);store.track('store_settings',[remoteSettings]);
+      }
       if(remoteSettings){
         const {id: _id,businessId:_businessId,...safe}=remoteSettings;
         setSettings(prev=>({...prev,...safe,subscription:prev.subscription,branches:prev.branches,
@@ -3065,7 +3079,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateSettings = (newSettings: StoreSettings) => {
-    setSettings(newSettings);
+    // A stale settings form may not switch the active business or its financial entitlement.
+    setSettings(prev=>({...newSettings,businessSector:prev.businessSector,
+      storeMode:BUSINESS_PRESETS[prev.businessSector||'FNB'].storeMode,
+      subscription:prev.subscription,branches:prev.branches,activeBranchId:prev.activeBranchId}));
   };
 
   const activateBusinessSector = (sector: BusinessSector, customStoreName?: string) => {

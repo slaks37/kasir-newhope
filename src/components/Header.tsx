@@ -19,9 +19,7 @@ import {
   UserCog,
   Briefcase,
   Globe,
-  CloudUpload,
   CloudAlert,
-  CloudCheck,
   LogOut,
   MessageSquare,
 } from "lucide-react";
@@ -95,9 +93,6 @@ export const Header: React.FC<HeaderProps> = ({
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const syncFailed=syncCenter.phase==='error';
   const syncReview=syncCenter.phase==='review';
-  const lastSync=syncCenter.lastConfirmedAt
-    ? 'Terakhir konfirmasi '+new Intl.DateTimeFormat('id-ID',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(syncCenter.lastConfirmedAt))
-    : 'Belum ada konfirmasi cloud';
 
   return (
     <header className="nh-workspace-header bg-white border-b border-slate-200 text-slate-900 flex items-center justify-between sticky top-0 z-30">
@@ -155,18 +150,16 @@ export const Header: React.FC<HeaderProps> = ({
             <span>{t('header.heldOrdersCount', { count: heldOrders.length })}</span>
           </button>
         )}
-          <button
+          {(syncFailed||syncReview||syncCenter.phase==='offline')&&<button
             className={`nh-header-sync ${syncFailed?'has-error':syncReview?'needs-review':''}`}
-            onClick={openSyncCenter} title={syncCenter.detail+'. Buka Sync Center'}
-            aria-label={syncCenter.label+'. '+syncCenter.detail+'. Buka Sync Center'} aria-haspopup="dialog"
+            onClick={openSyncCenter} title="Periksa data yang memerlukan perhatian"
+            aria-label="Periksa data yang memerlukan perhatian" aria-haspopup="dialog"
           >
-            {syncFailed||syncReview ? <CloudAlert size={17}/> : syncCenter.phase==='synced' ? <CloudCheck size={17}/> : <CloudUpload size={17}/>}
+            <CloudAlert size={17}/>
             <span className="flex flex-col items-start text-left" aria-live="polite">
-              <strong>{syncCenter.label}</strong>
-              {(syncCenter.financialPending>0||syncCenter.operationalPending>0)&&<span>{syncCenter.detail}</span>}
-              <span className="text-[9px]">{lastSync}</span>
+              <strong>{syncReview?'Data lama perlu ditinjau':syncCenter.phase==='offline'?'Offline · data tersimpan':'Koneksi data perlu diperiksa'}</strong>
             </span>
-          </button>
+          </button>}
         <details
           className="nh-toolbar-more"
           onKeyDown={(e) => {
@@ -187,6 +180,7 @@ export const Header: React.FC<HeaderProps> = ({
             }}
           >
             <span className="nh-sidebar-caption">{t('header.toolsMenu')}</span>
+            <button onClick={openSyncCenter}><CloudAlert size={17}/> Kesehatan data & pemulihan</button>
             <button onClick={() => onOpenRecentTransactions?.()}>
               <History size={17} /> {t('header.recentTransactions')}
             </button>

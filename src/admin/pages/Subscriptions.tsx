@@ -1,7 +1,7 @@
 import React,{useState,useEffect} from 'react';
 import SubscriptionDetail from './SubscriptionDetail';
 import {api,rupiah,tanggal} from '../api';
-import {PAID_SAAS_PLANS} from '../../config/saasPlans';
+import {PAID_SAAS_PLANS,findSaaSPlan} from '../../config/saasPlans';
 import {Card,Table,Th,Td,Loading,ErrorBox,Pagination,SearchBox} from '../ui';
 
 export default function Subscriptions(){
@@ -34,7 +34,7 @@ export default function Subscriptions(){
    <div className="p-4 flex flex-wrap gap-3"><SearchBox value={search} onChange={v=>{setSearch(v);setOffset(0);}} placeholder="Cari tenant..."/>
     <select aria-label="Status langganan" value={status} onChange={e=>{setStatus(e.target.value);setOffset(0);}} className="border rounded p-2">{['','TRIAL','ACTIVE','PAST_DUE','EXPIRED'].map(v=><option key={v} value={v}>{v || 'Semua status'}</option>)}</select></div>
    {loading?<Loading/>:data&&<><div className="overflow-x-auto"><Table><thead><tr><Th>Tenant</Th><Th>Paket / periode</Th><Th>Status</Th><Th>Outlet</Th><Th>Lifecycle</Th><Th>Aksi</Th></tr></thead><tbody>
-   {data.rows.map((r:any)=><tr key={r.id}><Td><div>{r.name}</div><small>{tanggal(r.created_at)}</small></Td><Td>{r.plan_id || 'Trial'}<br/>{r.billing_cycle || '45 hari'}</Td><Td>{r.status}<br/><small>{r.daysLeft} hari • {r.accessMode}</small></Td><Td>{r.outlet_count} / {r.maxOutlets}<br/><small>add-on: {r.extra_outlets || 0}</small></Td><Td>{r.lifecycleStage}<br/><small>Aktivitas: {r.last_transaction_at?tanggal(r.last_transaction_at):'belum ada'}</small></Td><Td><div className="flex flex-col gap-2">
+   {data.rows.map((r:any)=><tr key={r.id}><Td><div>{r.name}</div><small>{tanggal(r.created_at)}</small></Td><Td>{findSaaSPlan(r.plan_id)?.name || 'Free Trial 45 Hari'}<br/>{r.status==='TRIAL'?'45 hari':r.status==='FREE'?'Tanpa batas waktu':r.billing_cycle==='YEARLY'?'Tahunan':'Bulanan'}</Td><Td>{r.status}<br/><small>{r.daysLeft} hari • {r.accessMode}</small></Td><Td>{r.outlet_count} / {r.maxOutlets}<br/><small>add-on: {r.extra_outlets || 0}</small></Td><Td>{r.lifecycleStage}<br/><small>Aktivitas: {r.last_transaction_at?tanggal(r.last_transaction_at):'belum ada'}</small></Td><Td><div className="flex flex-col gap-2">
     {data.canSupport&&<button className="underline" onClick={()=>setDetail({id:r.id,name:r.name})}>Detail langganan</button>}
     {data.canManage&&<button className="underline" onClick={()=>choose(r,'GRANT_PLAN')}>Ubah tier manual</button>}
     {data.canSupport&&<button className="underline" onClick={()=>choose(r)}>Support</button>}</div></Td></tr>)}

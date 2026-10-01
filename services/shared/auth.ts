@@ -119,7 +119,7 @@ export async function canAccessBusiness(db: Db, principal: AuthPrincipal, busine
 
 export async function tenantForPrincipal(db: Db, principal: AuthPrincipal): Promise<string | null> {
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
      ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
     [principal.subject]
   );

@@ -175,7 +175,7 @@ async function canAccessBusiness(db, principal, businessId) {
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
      ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
     [principal.subject]
   );
@@ -358,8 +358,9 @@ function assertFreeScope(state, sector, productRefs) {
   if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
 }
 async function resolveFreeSyncScope(db, ownerId, sector) {
-  const { rows } = await db.query(`SELECT * FROM contract.free_plan_entitlements
-    WHERE owner_user_ref=$1 ORDER BY tenant_id LIMIT 1`, [ownerId]);
+  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
+    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
+    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
   const entitlement = rows[0];
   if (!entitlement) return void 0;
   if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
@@ -1236,7 +1237,7 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
       (SELECT max(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS last_transaction_at,
       EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted
-      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id ORDER BY t.created_at DESC LIMIT 10001`);
+      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`);
     if (rows.length > 1e4) return res.status(503).json({ ok: false, error: "SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION" });
     const all = rows.map((r) => {
       const end = r.current_period_end || new Date(Date.parse(r.created_at) + TRIAL_DAYS * DAY_MS);
@@ -2942,6 +2943,13 @@ function registerSharedStateRoutes(app, db) {
               result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
               await c.exec("RELEASE SAVEPOINT operational_record");
               continue;
+            }
+            const settingsName = op.value?.storeName;
+            if (op.kind === "store_settings" && !op.deleted && typeof settingsName === "string" && settingsName.trim()) {
+              await c.query(
+                "UPDATE internal.merchants SET name=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                [scope.tenantId, scope.merchantId, settingsName.trim().slice(0, 100)]
+              );
             }
             if (op.kind === "customers" && op.deleted) {
               await c.query(

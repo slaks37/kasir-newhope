@@ -56,7 +56,7 @@ async function keUuid(db: Db, merchantId: string, businessId?: string): Promise<
   const wallets = await db.query(
     `SELECT t.id, w.merchant_id AS wallet_id FROM internal.tenants t
        LEFT JOIN ai.merchant_ai_credits w ON w.merchant_id=t.id
-       WHERE t.owner_user_ref=$1 ORDER BY t.created_at,t.id`, [merchantId]);
+       WHERE t.owner_user_ref=$1 AND t.merged_into IS NULL ORDER BY t.created_at,t.id`, [merchantId]);
   const existing = wallets.rows.filter((row: any) => row.wallet_id);
   // Preserve every historical balance; ambiguous legacy wallets need reconciliation.
   if (existing.length > 1) throw new Error('AI_MEMBER_WALLET_MERGE_REQUIRED');

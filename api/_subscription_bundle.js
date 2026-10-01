@@ -208,7 +208,7 @@ function trustedPrincipal(req) {
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
      ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
     [principal.subject]
   );
@@ -545,7 +545,7 @@ async function ownedSubscription(req, res, selectFree = false) {
     c = await pool.connect();
     await c.query("BEGIN");
     const { rows } = await c.query(`SELECT s.*,t.is_active FROM billing.subscriptions s
-      JOIN internal.tenants t ON t.id=s.tenant_id WHERE t.owner_user_ref=$1
+      JOIN internal.tenants t ON t.id=s.tenant_id WHERE t.owner_user_ref=$1 AND t.merged_into IS NULL
       ORDER BY t.created_at,t.id LIMIT 1 FOR UPDATE OF s`, [principal.subject]);
     const s = rows[0];
     if (!s) {

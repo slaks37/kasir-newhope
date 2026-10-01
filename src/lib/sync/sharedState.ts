@@ -19,7 +19,7 @@ export class SharedStateSync {
   private conflicts=new Map<string,{kind:string;recordId:string;error?:string}>();
   private previous=new Map<string,Map<string,string>>();private ready=false;private error:string|null=null;
   private stopped=false;private inFlight=false;private outletBlocked=false;private timer:ReturnType<typeof setTimeout>|undefined;
-  private poll:ReturnType<typeof setInterval>|undefined;private lastSyncedAt:string|null=null;private outletId:string|undefined;
+  private poll:ReturnType<typeof setTimeout>|undefined;private lastSyncedAt:string|null=null;private outletId:string|undefined;
   private readGeneration=0;
   private quarantinedKeys=new Set<string>();
   private legacyCheckedKeys=new Set<string>();
@@ -60,18 +60,24 @@ export class SharedStateSync {
     const scopeUnchecked=[...this.pending].some(([key,op])=>op.origin==='legacy'&&!globals.has(op.kind)&&!this.legacyCheckedKeys.has(key));
     this.onStatus({ready:this.ready&&!scopeUnchecked,pending:this.pending.size,error:this.error,conflicts,conflict:conflicts[0],quarantined,inFlight:this.inFlight,lastSyncedAt:this.lastSyncedAt});}
   private persist(){localStorage.setItem(outboxKey(this.owner,this.sector),JSON.stringify({version:2,owner:this.owner,sector:this.sector,operations:[...this.pending.values()],conflicts:[...this.conflicts.values()],lastSyncedAt:this.lastSyncedAt}));this.emit();}
-  stop(){this.stopped=true;clearTimeout(this.timer);clearInterval(this.poll);}
+  stop(){this.stopped=true;clearTimeout(this.timer);clearTimeout(this.poll);}
   private retryScopeBlocks(){for(const [key,c]of this.conflicts)if(c.error&&/^(OUTLET_SETUP_REQUIRED|FREE_)/.test(c.error))this.conflicts.delete(key);}
   setOutletId(value:string|undefined){if(this.outletId!==value){this.outletId=value;this.outletBlocked=false;this.retryScopeBlocks();}}
   async resumeAfterOutletUpdate(){this.outletBlocked=false;this.retryScopeBlocks();await this.refresh(false);await this.flush();}
-  start(){void this.refresh(true);this.poll=setInterval(()=>void this.refresh(false),6000);}
+  start(){
+    const tick=async(initial=false)=>{try{if(navigator.onLine)await this.refresh(initial);}finally{
+      // Schedule after completion: slow networks cannot continually invalidate hydration.
+      if(!this.stopped)this.poll=setTimeout(()=>void tick(),6000);
+    }};
+    void tick(true);
+  }
   private visible():SharedRecord[]{const rows=new Map(this.remote);for(const [key,op] of this.pending)rows.set(key,{scope:globals.has(op.kind)?'GLOBAL':this.sector,...op,revision:op.baseRevision});return [...rows.values()];}
   async refresh(_initial:boolean){
     if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
     const generation=++this.readGeneration;
     try{
       const candidates=[...this.pending.values()].filter(op=>op.origin==='legacy'&&!this.legacyCheckedKeys.has(keyFor(op.kind,op.recordId))).slice(0,100).map(op=>({kind:op.kind,recordId:op.recordId}));
-      const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`,{cache:'no-store'});
+      const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
       if(!response.ok)throw Error(`HTTP_${response.status}`);const data=await response.json();if(this.stopped||generation!==this.readGeneration)return;
       if(!data.ok||!Array.isArray(data.records)||data.truncated)throw Error('STATE_INVALID_RESPONSE');
       if(!data.ready){this.error='Unit usaha belum disiapkan untuk sinkronisasi';this.emit();return;}
@@ -129,7 +135,7 @@ export class SharedStateSync {
     if(this.inFlight||this.stopped||this.outletBlocked||!navigator.onLine||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
     const operations=[...this.pending].filter(([key,op])=>!this.conflicts.has(key)&&(op.origin!=='legacy'||this.legacyCheckedKeys.has(key))).map(([,op])=>op).slice(0,100);if(!operations.length)return;
     this.inFlight=true;this.emit();
-    try{const response=await fetch('/api/v1/sync/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,outletId:this.outletId,operations})}),data=await response.json();
+    try{const response=await fetch('/api/v1/sync/state',{method:'POST',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,outletId:this.outletId,operations})}),data=await response.json();
       if(this.stopped)return;
       if(!response.ok||!data.ok){if(data.error==='STATE_CONFLICT'){this.conflicts.set(keyFor(data.kind,data.recordId),{kind:data.kind,recordId:data.recordId});this.persist();await this.refresh(false);return;}
         if(data.error==='OUTLET_SETUP_REQUIRED')this.outletBlocked=true;throw Error(data.error||`HTTP_${response.status}`);}

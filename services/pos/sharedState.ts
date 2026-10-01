@@ -181,6 +181,12 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
           if(!r.rows.length || (!replayed && op.baseRevision!==0 && Number(r.rows[0].revision)===1))
             throw new StateConflict(op.kind,op.recordId);
           if(replayed){result.push({kind:op.kind,recordId:op.recordId,revision:Number(r.rows[0].revision)});await c.exec('RELEASE SAVEPOINT operational_record');continue;}
+          const settingsName=(op.value as Record<string,unknown>|null)?.storeName;
+          if(op.kind==='store_settings'&&!op.deleted&&typeof settingsName==='string'&&settingsName.trim()){
+            // Acknowledged settings own the display projection, not account-wide device metadata.
+            await c.query('UPDATE internal.merchants SET name=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2',
+              [scope.tenantId,scope.merchantId,settingsName.trim().slice(0,100)]);
+          }
           if(op.kind==='customers' && op.deleted){
             // Keep contact/history recoverable; admin excludes archived contacts.
             await c.query('UPDATE pos.customers SET archived_at=now(),updated_at=now() WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3',

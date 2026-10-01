@@ -49,6 +49,12 @@ try{
   const wrong=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...productOp,recordId:'prod-ld-12',value:{...productOp.value,id:'prod-ld-12',name:'Cleaning & Sanitasi Helm Fullface'}}]});
   assert.equal(wrong.status,200);assert.equal(wrong.data.rejected[0].error,'WRONG_SCOPE');
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM pos.shared_state_records WHERE tenant_id=$1 AND scope='FNB' AND record_id='prod-ld-12'",[tenant])).rows[0].n,0);
+  const settingsOp={kind:'store_settings',recordId:'main',baseRevision:0,deleted:false,value:{id:'main',storeName:'Cloud FNB identity',storeMode:'FNB',businessSector:'FNB'}};
+  assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[settingsOp]})).data.versions.length,1);
+  assert.equal((await db.query('SELECT name FROM internal.merchants WHERE id=$1',[merchant])).rows[0].name,'Cloud FNB identity','Acknowledged settings own the merchant display projection');
+  const wrongMode=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...settingsOp,baseRevision:1,value:{...settingsOp.value,storeMode:'SERVICE'}}]});
+  assert.equal(wrongMode.data.rejected[0].error,'WRONG_SCOPE');
+  await assert.rejects(()=>db.query("UPDATE pos.shared_state_records SET value=jsonb_set(value,'{storeMode}','\"SERVICE\"') WHERE tenant_id=$1 AND scope='FNB' AND kind='store_settings'",[tenant]),/shared_settings_sector_mode/,'Older writers cannot recreate cross-sector settings');
   assert.equal((await post('/api/v1/sync/catalog',{businessId:owner+'_FNB',sector:'FNB',products:[]})).status,409,'Projection cannot independently own state');
   const scopedCustomer={kind:'customers',recordId:'same-customer',baseRevision:0,deleted:false,value:{id:'same-customer',name:'Same customer'}};
   assert.equal((await post('/api/v1/sync/state',{sector:'LAUNDRY',operations:[scopedCustomer]})).data.versions.length,1);

@@ -64,7 +64,7 @@ async function canAccessBusiness(db, principal, businessId) {
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE owner_user_ref = $1 OR external_ref = $1
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
      ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
     [principal.subject]
   );
@@ -342,8 +342,9 @@ function assertFreeScope(state, sector, productRefs) {
   if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
 }
 async function resolveFreeSyncScope(db, ownerId, sector) {
-  const { rows } = await db.query(`SELECT * FROM contract.free_plan_entitlements
-    WHERE owner_user_ref=$1 ORDER BY tenant_id LIMIT 1`, [ownerId]);
+  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
+    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
+    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
   const entitlement = rows[0];
   if (!entitlement) return void 0;
   if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
@@ -981,6 +982,13 @@ function registerSharedStateRoutes(app, db) {
               result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
               await c.exec("RELEASE SAVEPOINT operational_record");
               continue;
+            }
+            const settingsName = op.value?.storeName;
+            if (op.kind === "store_settings" && !op.deleted && typeof settingsName === "string" && settingsName.trim()) {
+              await c.query(
+                "UPDATE internal.merchants SET name=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                [scope.tenantId, scope.merchantId, settingsName.trim().slice(0, 100)]
+              );
             }
             if (op.kind === "customers" && op.deleted) {
               await c.query(

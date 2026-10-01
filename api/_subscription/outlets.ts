@@ -10,7 +10,7 @@ export default async function handler(req:any,res:any) {
   try {
     const {rows}=await pool.query(`SELECT o.*,m.business_sector FROM internal.outlets o
       JOIN internal.tenants t ON t.id=o.tenant_id JOIN internal.merchants m ON m.id=o.merchant_id
-      WHERE t.owner_user_ref=$1 ORDER BY o.created_at`,[principal.subject]);
+      WHERE t.owner_user_ref=$1 AND t.merged_into IS NULL ORDER BY o.created_at`,[principal.subject]);
     return res.status(200).json({ok:true,rows});
   } catch { return res.status(503).json({ok:false,error:'OUTLETS_UNAVAILABLE'}); }
   finally {await pool.end();}

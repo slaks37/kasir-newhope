@@ -111,7 +111,7 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
       if (!UUID.test(command.body.outletId)) continue;
       if (command.body.sector !== target.sector) throw new Error('CASH_SCOPE_MISMATCH');
       const response = await fetch(`/api/v1/finance/${command.action === 'reverse' ? 'cash/reverse' : command.action}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command.body),
+        method: 'POST', signal:AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command.body),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.ok) throw new Error(data?.error ? `${data.error} (HTTP ${response.status})` : `HTTP ${response.status}`);

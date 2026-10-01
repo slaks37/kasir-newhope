@@ -1,5 +1,18 @@
 import { operationalKinds,operationalScopeIssue } from './operationalScope';
 export type OperationalRecovery={sourceKey:string;raw:string;capturedAt:string;records:Array<{kind:string;recordId:string;reason:string;name?:string}>};
+/** Presentation only: preserve every snapshot, show each protected record once. */
+export function recoveryGroups(rows:OperationalRecovery[]){
+  const groups=new Map<string,{kind:string;recordId:string;name?:string;reasons:string[];sources:string[]}>();
+  for(const row of rows)for(const r of row.records){
+    const key=r.kind+'\x00'+r.recordId;
+    const group=groups.get(key)||{kind:r.kind,recordId:r.recordId,name:r.name,reasons:[],sources:[]};
+    if(r.name)group.name=r.name;
+    if(!group.reasons.includes(r.reason))group.reasons.push(r.reason);
+    if(!group.sources.includes(row.sourceKey))group.sources.push(row.sourceKey);
+    groups.set(key,group);
+  }
+  return [...groups.values()];
+}
 const key=(owner:string,sector:string)=>`newhope_operational_recovery_v2_${owner}_${sector}`;
 const blockedSources=new Set<string>();
 export const operationalCacheBlocked=(sourceKey:string)=>blockedSources.has(sourceKey);

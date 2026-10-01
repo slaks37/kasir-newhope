@@ -19,7 +19,7 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
       (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
       (SELECT max(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS last_transaction_at,
       EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted
-      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id ORDER BY t.created_at DESC LIMIT 10001`);
+      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`);
     // Bound response work; do not silently report partial platform totals.
     if(rows.length>10000) return res.status(503).json({ok:false,error:'SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION'});
     const all=rows.map(r=>{

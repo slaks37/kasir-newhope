@@ -19,7 +19,7 @@ export async function ownedSubscription(req: any, res: any, selectFree = false) 
     c = await pool.connect();
     await c.query('BEGIN');
     const {rows} = await c.query(`SELECT s.*,t.is_active FROM billing.subscriptions s
-      JOIN internal.tenants t ON t.id=s.tenant_id WHERE t.owner_user_ref=$1
+      JOIN internal.tenants t ON t.id=s.tenant_id WHERE t.owner_user_ref=$1 AND t.merged_into IS NULL
       ORDER BY t.created_at,t.id LIMIT 1 FOR UPDATE OF s`, [principal.subject]);
     const s=rows[0];
     if (!s) { await c.query('ROLLBACK'); return res.status(404).json({ok:false,error:'SUBSCRIPTION_NOT_FOUND'}); }

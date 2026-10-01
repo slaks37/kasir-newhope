@@ -33,8 +33,9 @@ export function assertFreeScope(state:{free:boolean;selection?:FreeSelection},se
 
 /** Resolve only the saved Free outlet; never create a tenant, merchant or outlet here. */
 export async function resolveFreeSyncScope(db:Pick<Db,'query'>,ownerId:string,sector:string) {
-  const {rows}=await db.query(`SELECT * FROM contract.free_plan_entitlements
-    WHERE owner_user_ref=$1 ORDER BY tenant_id LIMIT 1`,[ownerId]);
+  const {rows}=await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
+    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
+    ORDER BY e.tenant_id LIMIT 1`,[ownerId]);
   const entitlement=rows[0];
   if(!entitlement) return undefined;
   if(!entitlement.is_active) throw new FreePlanAccessError('TENANT_INACTIVE');

@@ -44,8 +44,11 @@ export default async function handler(req: any, res: any) {
     c = await pool.connect();
     await c.query('BEGIN');
 
-    // 1. Ensure tenant exists
-    const tRes = await c.query(
+    // Serialize owner provisioning and reuse signup's tenant, including legacy null external_ref.
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",['tenant:'+principal.subject]);
+    const existing=await c.query(`SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND merged_into IS NULL
+      ORDER BY created_at,id LIMIT 1`,[principal.subject]);
+    const tRes = existing.rows.length?existing:await c.query(
       `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Utama', $1, $1, true)
        ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL

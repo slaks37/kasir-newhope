@@ -527,6 +527,7 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
 
   try {
     const res = await fetch('/api/v1/sync/transactions', {
+      signal:AbortSignal.timeout(15000),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -66,6 +66,7 @@ async function handler(req, res) {
               MAX(tx.created_at) as last_txn_at
          FROM internal.tenants t
          LEFT JOIN pos.transactions tx ON tx.tenant_id = t.id AND tx.created_at >= NOW() - INTERVAL '30 days'
+        WHERE t.merged_into IS NULL
         GROUP BY t.id, t.name`
     );
     let logged = 0;
