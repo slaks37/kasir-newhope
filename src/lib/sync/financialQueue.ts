@@ -1,5 +1,6 @@
 import type { BusinessSector, CashMovement } from '../../types';
 import type { SyncStatus, SyncTarget } from './queue';
+import { legacyFinancialHolds } from './legacyHold';
 
 const PREFIX = 'newhope_cash_outbox_';
 const META = 'newhope_cash_sync_meta_';
@@ -94,14 +95,19 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
   const businessId = target.businessId;
   if (flushing.has(businessId)) return getCashSyncStatus(businessId);
   let rows: CashCommand[];
-  try { rows = read(businessId); } catch { return getCashSyncStatus(businessId); }
+  let held:Set<string>;
+  try { rows = read(businessId); held=new Set(legacyFinancialHolds(businessId).cash_movements); }
+  catch(error) {
+    writeMeta(businessId,{lastError:error instanceof Error?error.message:'LOCAL_CASH_QUEUE_READ_FAILED',failures:1,lastErrorAt:new Date().toISOString()});
+    return getCashSyncStatus(businessId);
+  }
   if (!rows.length) return getCashSyncStatus(businessId);
   const state = meta(businessId);
   if (!force && state.lastError?.startsWith('OUTLET_SETUP_REQUIRED')) return getCashSyncStatus(businessId);
   if (!force && state.failures && state.lastErrorAt && Date.now() - Date.parse(state.lastErrorAt) < Math.min(300_000, 5_000 * 3 ** Math.min(state.failures - 1, 4))) return getCashSyncStatus(businessId);
   flushing.add(businessId);
   try {
-    for (const command of rows.slice(0, 100)) {
+    for (const command of rows.filter(command=>!command.legacyMigration||!held.has(command.body.clientEventId)).slice(0, 100)) {
       if (!UUID.test(command.body.outletId)) continue;
       if (command.body.sector !== target.sector) throw new Error('CASH_SCOPE_MISMATCH');
       const response = await fetch(`/api/v1/finance/${command.action === 'reverse' ? 'cash/reverse' : command.action}`, {
@@ -122,7 +128,9 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
       writeMeta(businessId, { lastSyncedAt: new Date().toISOString(), lastError: null, lastErrorAt: null, failures: 0 });
     }
     const pending = read(businessId);
-    if (pending.some(command => !UUID.test(command.body.outletId))) {
+    if(pending.some(command=>command.legacyMigration&&held.has(command.body.clientEventId))){
+      writeMeta(businessId,{lastError:'LEGACY_FINANCIAL_REVIEW_REQUIRED',failures:1,lastErrorAt:new Date().toISOString()});
+    } else if (pending.some(command => !UUID.test(command.body.outletId))) {
       writeMeta(businessId, { lastError: 'LEGACY_OUTLET_MAPPING_REQUIRED', failures: 1, lastErrorAt: new Date().toISOString() });
     }
   } catch (error) {

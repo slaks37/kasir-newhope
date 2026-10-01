@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {migrateLegacyFinancialData} from '../../src/lib/sync/legacyMigration';
-import {flush,getPendingTransactions,orderToPayload,type SyncTarget} from '../../src/lib/sync/queue';
+import {flush,getPendingTransactions,orderToPayload,enqueue,type SyncTarget} from '../../src/lib/sync/queue';
 import {flushCashQueue,enqueueCashCommand,pendingRefund,refundAcknowledgment} from '../../src/lib/sync/financialQueue';
 import {orderOperations,mergeOrderOperations} from '../../src/lib/sync/orderOperations';
 import type {Order} from '../../src/types';
@@ -50,4 +50,39 @@ disk.set('newhope_retired_financial_outbox_'+recoveredOwner+'_FNB',retiredRaw);
 assert.equal(migrateLegacyFinancialData(recoveredTarget).queued,1,'Recover financial outbox rows absent from the old receipt cache');
 assert.equal(getPendingTransactions(recoveredTarget.businessId)[0].clientTxnId,'retired-only');
 assert.equal(disk.get('newhope_retired_financial_outbox_'+recoveredOwner+'_FNB'),retiredRaw);
+// Competing financial copies cannot silently send the original version, even
+// when that version was already queued by an earlier migration pass.
+const heldOwner=randomUUID(),heldTarget={...target,ownerRef:heldOwner,businessId:heldOwner+'_FNB'};
+const heldSale={...sale,id:'held-sale',branchId:outlet,userId:heldOwner};
+const heldSource='newhope_data_'+heldTarget.businessId+'_orders';
+const heldRaw=JSON.stringify([heldSale]);disk.set(heldSource,heldRaw);
+const heldCashSource='newhope_data_'+heldTarget.businessId+'_cash_movements';
+const heldCash={id:'held-cash',branchId:outlet,amount:5000,type:'CASH_OUT',category:'OPERASIONAL',description:'Old expense',timestamp:'2026-09-29T10:00:00Z',cashierName:'Owner'};
+disk.set(heldCashSource,JSON.stringify([heldCash]));
+assert.equal(migrateLegacyFinancialData(heldTarget).queued,1);
+disk.set('newhope_retired_financial_outbox_'+heldOwner+'_FNB',JSON.stringify([
+  {kind:'orders',deleted:false,value:{...heldSale,total:heldSale.total+1000}},
+  {kind:'cash_movements',deleted:false,value:{...heldCash,amount:6000}},
+]));
+const heldMigration=migrateLegacyFinancialData(heldTarget);
+assert.equal(heldMigration.conflicts,2);assert.equal(heldMigration.queued,0);
+assert.equal(heldMigration.reviewRecords.length,2);
+const beforeHeldFlush=calls.length;
+assert.equal((await flush(heldTarget,true)).lastError,'LEGACY_FINANCIAL_REVIEW_REQUIRED');
+assert.equal((await flushCashQueue(heldTarget,true)).lastError,'LEGACY_FINANCIAL_REVIEW_REQUIRED');
+assert.equal(calls.length,beforeHeldFlush,'Held migration copies must never reach the API');
+assert.equal(getPendingTransactions(heldTarget.businessId).length,1,'Held queued command is retained');
+assert.equal(disk.get(heldSource),heldRaw,'Original source bytes remain untouched');
+enqueue(heldTarget.businessId,orderToPayload({...heldSale,id:'new-live-sale'}));
+await flush(heldTarget,true);
+assert.equal(calls.length,beforeHeldFlush+1,'A held legacy ID does not block unrelated new sales');
+assert.equal(calls.at(-1).transactions[0].clientTxnId,'new-live-sale');
+const equalOwner=randomUUID(),equalTarget={...target,ownerRef:equalOwner,businessId:equalOwner+'_FNB'};
+const equalSale={...sale,id:'same-financial-copy',branchId:outlet,userId:equalOwner};
+disk.set('newhope_data_'+equalTarget.businessId+'_orders',JSON.stringify([equalSale]));
+disk.set('newhope_retired_financial_outbox_'+equalOwner+'_FNB',JSON.stringify([
+  {kind:'orders',deleted:false,value:{laundryStage:'SETRIKA',...equalSale}},
+]));
+assert.equal(migrateLegacyFinancialData(equalTarget).conflicts,0,'Operational metadata must not create a false financial conflict');
+assert.equal(getPendingTransactions(equalTarget.businessId).length,1);
 console.log('PASS: one-time owner-scoped migration, explicit outlet mapping, durable ACK/reload, original-byte retention, refund outbox and non-financial overlays');

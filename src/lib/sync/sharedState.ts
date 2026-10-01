@@ -4,7 +4,9 @@ export type SharedRecord = {
   revision: number; deleted: boolean;
 };
 type Operation = { kind:string; recordId:string; baseRevision:number; value:Record<string,unknown>|null; deleted:boolean };
-export type SharedSyncStatus = { ready:boolean; pending:number; error:string|null; conflict?:{kind:string;recordId:string} };
+export type SharedSyncStatus = { ready:boolean; pending:number; error:string|null; conflict?:{
+  kind:string;recordId:string;localLabel?:string;serverLabel?:string;localRevision?:number;serverRevision?:number;serverChecked?:boolean;
+} };
 const keyFor=(kind:string,id:string)=>`${kind}\x00${id}`;
 const outboxKey=(owner:string,sector:string)=>`newhope_shared_outbox_${owner}_${sector}`;
 const financialKinds=new Set(['orders','cash_movements','shift','shift_history']);
@@ -25,6 +27,7 @@ export class SharedStateSync {
   private ready=false;
   private error:string|null=null;
   private conflict:{kind:string;recordId:string}|undefined;
+  private conflictServerChecked=false;
   private stopped=false;
   private inFlight=false;
   private outletBlocked=false;
@@ -48,7 +51,20 @@ export class SharedStateSync {
     } catch { this.error='Antrean data lokal tidak dapat dibaca'; }
     this.emit();
   }
-  private emit(){if(!this.stopped)this.onStatus({ready:this.ready,pending:this.pending.size,error:this.error,conflict:this.conflict});}
+  private emit(){
+    if(this.stopped)return;
+    let conflict:SharedSyncStatus['conflict'];
+    if(this.conflict){
+      const key=keyFor(this.conflict.kind,this.conflict.recordId),local=this.pending.get(key),server=this.remote.get(key);
+      const label=(value:Record<string,unknown>|null|undefined)=>{
+        const text=value?.name??value?.storeName??value?.title;
+        return typeof text==='string'?text:undefined;
+      };
+      conflict={...this.conflict,localLabel:label(local?.value),serverLabel:label(server?.value),
+        localRevision:local?.baseRevision,serverRevision:server?.revision,serverChecked:this.conflictServerChecked};
+    }
+    this.onStatus({ready:this.ready,pending:this.pending.size,error:this.error,conflict});
+  }
   private persist(){
     try {localStorage.setItem(outboxKey(this.owner,this.sector),JSON.stringify([...this.pending.values()]));}
     catch {this.error='Penyimpanan lokal penuh. Perubahan baru berisiko tidak tersimpan.';}
@@ -87,6 +103,7 @@ export class SharedStateSync {
       }
       if(acknowledged)this.persist();
       if(this.conflict){
+        this.conflictServerChecked=true;
         const key=keyFor(this.conflict.kind,this.conflict.recordId);
         if(!this.pending.has(key))this.conflict=undefined;
       }
@@ -157,14 +174,20 @@ export class SharedStateSync {
         body:JSON.stringify({sector:this.sector,outletId:this.outletId,operations})});
       const data=await response.json();
       if(!response.ok || !data.ok){
-        if(data.error==='STATE_CONFLICT')this.conflict={kind:data.kind,recordId:data.recordId};
+        if(data.error==='STATE_CONFLICT'){
+          this.conflict={kind:data.kind,recordId:data.recordId};this.conflictServerChecked=false;
+        }
         if(data.error==='OUTLET_SETUP_REQUIRED')this.outletBlocked=true;
         this.error=data.error==='STATE_CONFLICT'
           ? `Konflik data ${data.kind}/${data.recordId}. Perubahan lokal disimpan; perlu ditinjau sebelum digabung.`
           : data.error==='OUTLET_SETUP_REQUIRED'
           ? 'Outlet belum aktif. Perubahan tetap tersimpan dan akan dikirim setelah outlet dibuka.'
           : data.error||`HTTP_${response.status}`;
-        this.emit();return;
+        this.emit();
+        // Refresh the compared cloud value, rather than presenting a stale
+        // pre-edit cache as the server version. Conflict prevents another POST.
+        if(this.conflict)await this.refresh(false);
+        return;
       }
       for(const version of data.versions as Array<{kind:string;recordId:string;revision:number}>){
         const key=keyFor(version.kind,version.recordId),sent=operations.find(op=>keyFor(op.kind,op.recordId)===key);

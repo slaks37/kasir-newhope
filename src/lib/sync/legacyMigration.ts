@@ -1,6 +1,7 @@
 import type { Order, CashMovement } from '../../types';
 import { cashMovementToCommand, legacyCashAcknowledged, enqueueLegacyCashCommand } from './financialQueue';
 import { makeBusinessId, partitionKey } from '../../context/TenantContext';
+import { holdLegacyFinancialId } from './legacyHold';
 import {
   enqueueLegacyTransaction, financialPayloadFingerprint, isLegacyTransactionAcknowledged,
   orderToPayload, type SyncTarget,
@@ -37,6 +38,7 @@ export interface LegacyMigrationResult {
   /** Discovered only; these keys are never assigned to the current owner. */
   unassignedSourceKeys: string[];
   unmappedOutletRefs: string[];
+  reviewRecords: Array<{kind:string;id:string;invoice?:string;date?:string;amount?:number;reason:string}>;
 }
 
 export interface LegacyMigrationOptions {
@@ -61,7 +63,7 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
   const result: LegacyMigrationResult = {
     captured: false, queued: 0, acknowledged: 0, skippedUnpaid: 0, deferredRefunds: 0,
     deferredCashMovements: 0, needsOutletMapping: 0, conflicts: 0, invalid: 0,
-    complete: false, error: null, unassignedSourceKeys: [],unmappedOutletRefs:[],
+    complete: false, error: null, unassignedSourceKeys: [],unmappedOutletRefs:[],reviewRecords:[],
   };
   if (!target.ownerRef || target.businessId !== makeBusinessId(target.ownerRef, target.sector)) {
     result.error = 'LEGACY_OWNER_SCOPE_MISMATCH';
@@ -108,17 +110,37 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
     // Capture those bytes, import missing rows, and flag competing versions:
     // a deletion operation must never erase a historical financial event.
     const retired=parseRows(snapshot.retiredOutboxRaw??null);
-    const recover=(kind:string,raw:string|null):unknown[]=>{
+    const conflicts=new Set<string>();
+    const review=(kind:string,row:any,reason:string)=>{
+      if(result.reviewRecords.length<200)result.reviewRecords.push({kind,id:String(row?.id||'tidak tercatat'),
+        invoice:row?.invoiceNumber,date:row?.date||row?.timestamp,
+        amount:kind==='orders'?row?.total:row?.amount,reason});
+    };
+    const conflict=(kind:'orders'|'cash_movements',row:any,reason:string)=>{
+      if(typeof row?.id!=='string'||!row.id)throw new Error('LEGACY_CONFLICT_ID_INVALID');
+      holdLegacyFinancialId(target.businessId,kind,row.id);
+      const key=kind+'\x00'+row.id;
+      if(!conflicts.has(key)){conflicts.add(key);result.conflicts++;review(kind,row,reason);}
+    };
+    const financialCopy=(kind:string,row:any):string|null=>{
+      try {return kind==='orders'?financialPayloadFingerprint(orderToPayload(row as Order))
+        :JSON.stringify(cashMovementToCommand(target.sector,row as CashMovement,row?.branchId||''));}
+      catch {return null;}
+    };
+    const recover=(kind:'orders'|'cash_movements',raw:string|null):unknown[]=>{
       const rows=parseRows(raw),byId=new Map(rows.map(row=>[(row as any)?.id,row]));
       for(const operation of retired as any[]){
         if(operation?.kind!==kind||operation.deleted||!operation.value)continue;
         const candidate=operation.value,previous=byId.get(candidate.id);
-        if(previous&&JSON.stringify(previous)!==JSON.stringify(candidate)){
-          result.conflicts++;continue;
+        const previousFinancial=previous?financialCopy(kind,previous):null;
+        if(previous&&(previousFinancial===null||previousFinancial!==financialCopy(kind,candidate))){
+          conflict(kind,previous,'Dua salinan memiliki rincian keuangan berbeda; perlu dibandingkan sebelum dikirim.');continue;
         }
         if(!previous){rows.push(candidate);byId.set(candidate.id,candidate);}
       }
-      return rows;
+      // Quarantine both versions, including an earlier migration copy already
+      // in the durable queue. Display-only changes must not create false holds.
+      return rows.filter(row=>!conflicts.has(kind+'\x00'+(row as any)?.id));
     };
     for(const raw of recover('cash_movements',snapshot.cashMovementsRaw)){
       const movement=raw as CashMovement;
@@ -128,7 +150,8 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
       }
       const original=movement.branchId||'__unassigned__';
       const outlet=options.outletMappings?.[original]||movement.branchId||'';
-      if(!UUID.test(outlet)){result.deferredCashMovements++;result.needsOutletMapping++;result.unmappedOutletRefs.push(original);continue;}
+      if(!UUID.test(outlet)){result.deferredCashMovements++;result.needsOutletMapping++;result.unmappedOutletRefs.push(original);
+        review('cash_movements',movement,'Outlet asal belum dikonfirmasi.');continue;}
       const command=cashMovementToCommand(target.sector,movement,outlet);
       if(legacyCashAcknowledged(target.businessId,cashSourceKey,command))continue;
       enqueueLegacyCashCommand(target.businessId,cashSourceKey,command,original);
@@ -163,7 +186,7 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
       }
       if (seen.has(order.id)) { result.invalid++; continue; }
       seen.add(order.id);
-      if (snapshot.blockedIds.includes(order.id)) { result.conflicts++; continue; }
+      if (snapshot.blockedIds.includes(order.id)) { conflict('orders',order,'Versi snapshot berbeda dari antrean keuangan yang sudah ada.'); continue; }
       const payload = orderToPayload(order);
       const originalBranchRef = order.branchId || '__unassigned__';
       const mappedBranch = options.outletMappings?.[originalBranchRef];
@@ -180,10 +203,11 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
       if (queued === 'conflict') {
         snapshot.blockedIds.push(order.id);
         localStorage.setItem(snapshotKey, JSON.stringify(snapshot));
-        result.conflicts++; continue;
+        conflict('orders',order,'Versi snapshot berbeda dari antrean keuangan yang sudah ada.'); continue;
       }
       result.queued++;
-      if (!UUID.test(payload.branchId || '')) {result.needsOutletMapping++;result.unmappedOutletRefs.push(originalBranchRef);}
+      if (!UUID.test(payload.branchId || '')) {result.needsOutletMapping++;result.unmappedOutletRefs.push(originalBranchRef);
+        review('orders',order,'Outlet asal belum dikonfirmasi.');}
     }
     const transactionImportFinished = result.queued === 0 && result.invalid === 0 && result.conflicts === 0 && result.deferredRefunds === 0;
     if (transactionImportFinished && !snapshot.transactionsAcknowledgedAt) {

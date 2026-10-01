@@ -735,6 +735,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLegacyMigrationStatus(migration);
           setSyncStatus(financialStatus(target.businessId,true));
         }
+        if(migration.error){
+          if(activeSyncBusinessId.current===target.businessId)setSyncStatus(previous=>({...previous,
+            inFlight:false,lastError:migration.error,failures:Math.max(1,previous.failures)}));
+          return;
+        }
         const after = await flushSync(target, force);
         const cash=await flushCashQueue(target,force);
         const recovered=migrateLegacyFinancialData(target,{outletMappings:mappings});
@@ -3505,14 +3510,19 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             : `${sharedSyncStatus.pending} perubahan operasional menunggu sinkronisasi.`}
           {sharedSyncStatus.error && !sharedSyncStatus.error.startsWith('Konflik data') &&
             <span className="block text-xs">{sharedSyncStatus.error}</span>}
-          {sharedSyncStatus.conflict && <div className="mt-2 flex gap-2">
+          {sharedSyncStatus.conflict && <>
+            <p className="mt-2 text-xs">Unit usaha: {settings.businessSector}. Versi lokal: {sharedSyncStatus.conflict.localLabel||sharedSyncStatus.conflict.recordId}
+              {' '} (berdasarkan revisi {sharedSyncStatus.conflict.localRevision??0}). Versi cloud: {!sharedSyncStatus.conflict.serverChecked?'belum diverifikasi ulang':sharedSyncStatus.conflict.serverRevision===undefined
+                ? 'belum tercatat pada unit usaha ini' : `${sharedSyncStatus.conflict.serverLabel||sharedSyncStatus.conflict.recordId} (revisi ${sharedSyncStatus.conflict.serverRevision})`}.
+              {' '}Periksa unit usaha dan rincian sebelum memilih; data keuangan tidak diubah oleh pilihan ini.</p>
+            <div className="mt-2 flex gap-2">
             <button className="rounded-lg border border-amber-700 px-2 py-1" onClick={()=>void sharedSync.current?.resolveConflict('server')}>
               Pakai data server
             </button>
             <button className="rounded-lg bg-amber-800 px-2 py-1 text-white" onClick={()=>void sharedSync.current?.resolveConflict('local')}>
               Pakai perubahan saya
             </button>
-          </div>}
+          </div></>}
         </div>
       )}
     </POSContext.Provider>

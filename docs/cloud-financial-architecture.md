@@ -48,6 +48,13 @@ Before replacing the receipt cache, capture exact original owner/sector-scoped
 orders, cash movements and retired financial outbox bytes. Import through the
 same durable API outbox; persist ACK checkpoints. Never erase original snapshots.
 Competing/malformed versions remain visible for recovery, not guessed or dropped.
+Compare normalized financial payloads, not operational metadata or JSON key order.
+Different financial copies get a durable owner/business-scoped review hold: both
+original byte snapshots and queued commands remain intact, but held migration
+IDs cannot reach either sales or cash APIs, including on forced retry. Unrelated
+live commands continue syncing. A corrupt hold registry fails closed.
+The recovery panel lists held IDs and unmapped invoices/date/amount for review;
+operational conflicts show local/cloud labels and revisions in the current sector.
 Legacy non-UUID outlet references require the owner to confirm their actual
 origin; the currently selected outlet is never silently substituted.
 

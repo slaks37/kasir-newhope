@@ -25,6 +25,7 @@
  */
 
 import type { Order, BusinessSector } from '../../types';
+import { legacyFinancialHolds } from './legacyHold';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
@@ -491,8 +492,12 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
   if (flushing.has(businessId)) return getStatus(businessId, true);
 
   let all: SyncPayloadTxn[];
-  try { all = readQueue(businessId); }
-  catch { return getStatus(businessId); }
+  let held:Set<string>;
+  try { all = readQueue(businessId); held=new Set(legacyFinancialHolds(businessId).orders); }
+  catch(error) {
+    writeMeta(businessId,{lastError:error instanceof Error?error.message:'LOCAL_QUEUE_READ_FAILED',failures:1,lastErrorAt:new Date().toISOString()});
+    return getStatus(businessId);
+  }
   if (all.length === 0) return getStatus(businessId);
 
   const meta = readMeta(businessId);
@@ -509,9 +514,11 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     if (Number.isFinite(since) && since >= 0 && since < wait) return getStatus(businessId);
   }
 
-  const ready = all.filter(txn => !txn.legacyMigration || /^[0-9a-f-]{36}$/i.test(txn.branchId || ''));
+  const ready = all.filter(txn => !txn.legacyMigration ||
+    (!held.has(txn.clientTxnId) && /^[0-9a-f-]{36}$/i.test(txn.branchId || '')));
   if (!ready.length) {
-    writeMeta(businessId, { lastError: 'LEGACY_OUTLET_MAPPING_REQUIRED', failures: Math.max(1, meta.failures), lastErrorAt: new Date().toISOString() });
+    writeMeta(businessId, { lastError: all.some(txn=>txn.legacyMigration&&held.has(txn.clientTxnId))
+      ? 'LEGACY_FINANCIAL_REVIEW_REQUIRED' : 'LEGACY_OUTLET_MAPPING_REQUIRED', failures: Math.max(1, meta.failures), lastErrorAt: new Date().toISOString() });
     return getStatus(businessId);
   }
   flushing.add(businessId);

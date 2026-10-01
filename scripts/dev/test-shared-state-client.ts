@@ -46,6 +46,9 @@ b.track('tables',[{id:'table-1',name:'Meja B'}]);
 await b.flush();
 assert.equal(statusB.pending,1,'Conflicting change stays in the durable outbox');
 assert.match(statusB.error,/Konflik data/);
+assert.equal(statusB.conflict.localLabel,'Meja B');
+assert.equal(statusB.conflict.serverLabel,'Meja A');
+assert.equal(statusB.conflict.localRevision,0);assert.equal(statusB.conflict.serverRevision,1);
 assert.equal(record?.value.name,'Meja A','Server did not accept stale device B state');
 a.stop();b.stop();
 // JSONB key order and a lost acknowledgment must not create conflicts or writes.

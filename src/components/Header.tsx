@@ -105,6 +105,8 @@ export const Header: React.FC<HeaderProps> = ({
     : 'Belum ada konfirmasi cloud';
   const syncHelp = syncNeedsOutlet
     ? `${syncStatus.pending} transaksi menunggu. Outlet asal belum terhubung atau belum aktif; selesaikan pengaturan outlet untuk melanjutkan.`
+    : syncStatus.lastError === 'LEGACY_FINANCIAL_REVIEW_REQUIRED'
+    ? 'Salinan data keuangan lama berbeda dan ditahan untuk peninjauan. Buka panel pemulihan; mencoba ulang tidak akan memilih versi secara otomatis.'
     : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
     ? 'Antrean perangkat tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
     : syncConflict ? `${operationalSyncStatus.pending} perubahan operasional menunggu peninjauan. Data lokal tetap disimpan; pilih penyelesaian pada panel konflik.`
