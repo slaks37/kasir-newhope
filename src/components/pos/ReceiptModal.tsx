@@ -34,13 +34,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
   }, [settings.autoPrintReceipt, handlePrint]);
 
   const handleShareWhatsApp = () => {
-    const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nFaktur: ${order.id}\nTanggal: ${formatDateTime(
+    const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nFaktur: ${order.invoiceNumber||order.id}\nTanggal: ${formatDateTime(
       order.date
     )}\n--------------------------\n${order.items
       .map((i) => `${i.quantity}x ${i.name} (${formatRupiah(i.totalPrice)})`)
       .join('\n')}\n--------------------------\nSubtotal: ${formatRupiah(
       order.subtotal
-    )}\nTOTAL BAYAR: ${formatRupiah(order.total)}\nStatus: LUNAS (${order.paymentMethod})\n\nTerima Kasih!`;
+    )}\nTOTAL TAGIHAN: ${formatRupiah(order.total)}\nStatus: ${order.paymentStatus==='PENDING'?'BELUM LUNAS':'LUNAS'} (${order.paymentMethod})\n\nTerima Kasih!`;
 
     const url = `https://wa.me/${
       order.customer?.phone || ''
@@ -158,7 +158,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             <div className="space-y-0.5 text-[10px] text-slate-700 py-1 border-b border-dashed border-slate-300">
               <div className="flex justify-between">
                 <span>{t('receipt.invoiceNo')}:</span>
-                <span className="font-bold">{order.id}</span>
+                <span className="font-bold">{order.invoiceNumber||order.id}</span>
               </div>
               <div className="flex justify-between">
                 <span>{t('receipt.date')}:</span>

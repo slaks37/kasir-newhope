@@ -1,3 +1,4 @@
+import { useServerReport,calendarDate } from '../../lib/reports/client';
 import React, { useState, useMemo } from 'react';
 import { FirstSaleGuide } from './FirstSaleGuide';
 import { BusinessBrief } from '../ai/BusinessBrief';
@@ -64,7 +65,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     categories,
     tables,
     customers,
-    orders,
+    syncStatus,forceSync,
     shift,
     settings,
     currentUser,
@@ -80,131 +81,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [timeFilter, setTimeFilter] = useState<'TODAY' | '7DAYS' | '30DAYS'>('TODAY');
 
-  // Filtered Orders based on Time Range
-  const filteredOrders = useMemo(() => {
-    const now = new Date();
-    return orders.filter((o) => {
-      if (o.status !== 'COMPLETED') return false;
-      const oDate = new Date(o.date);
-      if (timeFilter === 'TODAY') {
-        return oDate.toDateString() === now.toDateString();
-      }
-      if (timeFilter === '7DAYS') {
-        const past7 = new Date();
-        past7.setDate(past7.getDate() - 7);
-        return oDate >= past7;
-      }
-      if (timeFilter === '30DAYS') {
-        const past30 = new Date();
-        past30.setDate(past30.getDate() - 30);
-        return oDate >= past30;
-      }
-      return true;
-    });
-  }, [orders, timeFilter]);
+  const report=useServerReport({outletId:settings.activeBranchId,sector:activeSector,
+    from:calendarDate('Asia/Jakarta',timeFilter==='7DAYS'?-6:timeFilter==='30DAYS'?-29:0),to:calendarDate()});
+  const trend=useServerReport({outletId:settings.activeBranchId,sector:activeSector,from:calendarDate('Asia/Jakarta',-6),to:calendarDate()},false);
+  const orders=report.transactions;
+  const financialMetrics=report.summary?.overview;
 
   const timeFilterLabel = useMemo(() => {
     if (timeFilter === 'TODAY') return 'Hari Ini';
     if (timeFilter === '7DAYS') return '7 Hari Terakhir';
     return '30 Hari Terakhir';
   }, [timeFilter]);
-
-  // Comprehensive Financial & Unit Economics Calculations
-  const financialMetrics = useMemo(() => {
-    let grossSales = 0;
-    let discountTotal = 0;
-    let taxTotal = 0;
-    let serviceChargeTotal = 0;
-    let netRevenue = 0;
-    let totalCOGS = 0; // Modal Bahan Baku / HPP
-    let itemsSold = 0;
-    let cashSales = 0;
-    let cashCount = 0;
-    let cashlessSales = 0;
-    let cashlessCount = 0;
-
-    const methodMap: Record<string, { name: string; count: number; total: number }> = {
-      QRIS: { name: 'QRIS', count: 0, total: 0 },
-      CASH: { name: 'Tunai', count: 0, total: 0 },
-      DEBIT: { name: 'Kartu Debit', count: 0, total: 0 },
-      TRANSFER: { name: 'Transfer Bank', count: 0, total: 0 },
-      SHOPEEPAY: { name: 'ShopeePay', count: 0, total: 0 },
-      GOPAY: { name: 'GoPay', count: 0, total: 0 },
-      OVO: { name: 'OVO', count: 0, total: 0 },
-    };
-
-    filteredOrders.forEach((o) => {
-      netRevenue += o.total || 0;
-      grossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
-      discountTotal += o.discountTotal || 0;
-      taxTotal += o.taxTotal || 0;
-      serviceChargeTotal += o.serviceChargeTotal || 0;
-
-      const m = o.paymentMethod || 'CASH';
-      if (!methodMap[m]) {
-        methodMap[m] = { name: m, count: 0, total: 0 };
-      }
-      methodMap[m].count += 1;
-      methodMap[m].total += o.total;
-
-      if (m === 'CASH') {
-        cashSales += o.total;
-        cashCount += 1;
-      } else {
-        cashlessSales += o.total;
-        cashlessCount += 1;
-      }
-
-      o.items.forEach((item) => {
-        itemsSold += item.quantity;
-        const prod = products.find((p) => p.id === item.productId);
-        const unitCost = prod ? prod.costPrice : item.unitPrice * 0.45;
-        totalCOGS += unitCost * item.quantity;
-      });
-    });
-
-    const grossProfit = Math.max(0, netRevenue - totalCOGS - taxTotal);
-    const netProfitMargin = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
-    const averageOrderValue = filteredOrders.length > 0 ? Math.round(netRevenue / filteredOrders.length) : 0;
-
-    const cashPercent = netRevenue > 0 ? Math.round((cashSales / netRevenue) * 100) : 0;
-    const cashlessPercent = netRevenue > 0 ? Math.round((cashlessSales / netRevenue) * 100) : 0;
-
-    const sortedMethods = Object.entries(methodMap)
-      .filter(([_, data]) => data.count > 0)
-      .map(([key, data]) => ({
-        key,
-        name: data.name,
-        count: data.count,
-        total: data.total,
-        percentage: netRevenue > 0 ? Math.round((data.total / netRevenue) * 100) : 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-
-    const mostUsedMethod = sortedMethods.length > 0 ? sortedMethods[0] : null;
-
-    return {
-      grossSales,
-      discountTotal,
-      taxTotal,
-      serviceChargeTotal,
-      netRevenue,
-      totalCOGS,
-      grossProfit,
-      netProfitMargin: Math.round(netProfitMargin * 10) / 10,
-      averageOrderValue,
-      itemsSold,
-      cashSales,
-      cashCount,
-      cashPercent,
-      cashlessSales,
-      cashlessCount,
-      cashlessPercent,
-      sortedMethods,
-      mostUsedMethod,
-      orderCount: filteredOrders.length,
-    };
-  }, [filteredOrders, products]);
 
   const lowStockProducts = useMemo(
     () => products.filter((p) => p.stock <= p.minStockAlert),
@@ -216,68 +103,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     [tables]
   );
 
-  // 7-day Sales Trend Calculation
-  const last7DaysData = useMemo(() => {
-    const days: { label: string; date: string; sales: number; profit: number; count: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateKey = d.toISOString().split('T')[0];
-      const dayLabel = d.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric' });
-
-      const dayOrders = orders.filter(
-        (o) => o.date.startsWith(dateKey) && o.status === 'COMPLETED'
-      );
-      const daySales = dayOrders.reduce((sum, o) => sum + o.total, 0);
-
-      let dayCost = 0;
-      dayOrders.forEach((o) => {
-        o.items.forEach((item) => {
-          const prod = products.find((p) => p.id === item.productId);
-          dayCost += (prod ? prod.costPrice : item.unitPrice * 0.45) * item.quantity;
-        });
-      });
-
-      days.push({
-        label: dayLabel,
-        date: dateKey,
-        sales: daySales,
-        profit: Math.max(0, daySales - dayCost),
-        count: dayOrders.length,
-      });
-    }
-    return days;
-  }, [orders, products]);
+  const last7DaysData=(trend.summary?.dailySales||[]).map(row=>({label:row.date,date:row.date,sales:row.revenue,profit:row.profit,count:row.orders}));
 
   const maxDailySales = useMemo(
     () => Math.max(...last7DaysData.map((d) => d.sales), 100000),
     [last7DaysData]
   );
 
-  // Top Selling Products with Margin
-  const topProducts = useMemo(() => {
-    const map: Record<string, { product: (typeof products)[0]; qty: number; revenue: number; profit: number }> = {};
-    filteredOrders.forEach((o) => {
-      o.items.forEach((item) => {
-        if (!map[item.productId]) {
-          const found = products.find((p) => p.id === item.productId);
-          if (found) {
-            map[item.productId] = { product: found, qty: 0, revenue: 0, profit: 0 };
-          }
-        }
-        if (map[item.productId]) {
-          const unitCost = map[item.productId].product.costPrice || map[item.productId].product.price * 0.45;
-          map[item.productId].qty += item.quantity;
-          map[item.productId].revenue += item.totalPrice;
-          map[item.productId].profit += item.totalPrice - unitCost * item.quantity;
-        }
-      });
-    });
-
-    return Object.values(map)
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 4);
-  }, [filteredOrders, products]);
+  const topProducts=(report.summary?.topProductsBarData||[]).map(row=>({
+    product:products.find(product=>product.id===row.productId)||{id:row.productId,name:row.name,image:'',price:0,costPrice:0},
+    qty:row.qty,revenue:row.revenue,profit:row.profit,
+  }));
 
   const handleSwitchSector = (sec: BusinessSector) => {
     activateBusinessSector(sec);
@@ -296,6 +132,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
 
   const activeCashierName = currentUser?.name || shift.cashierName || 'Kasir';
 
+  if(!financialMetrics)return <div className="p-8 space-y-4" role={report.error?'alert':'status'}>
+    <h1 className="text-2xl font-black">Ringkasan Usaha</h1><p>{report.error||'Memuat data cloud…'}</p>
+    <button onClick={forceSync} className="rounded-xl bg-amber-400 p-3 font-bold">Muat ulang</button>
+  </div>;
   return (
     <div className="nh-overview flex-1 min-w-0 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">
       <BusinessBrief/>

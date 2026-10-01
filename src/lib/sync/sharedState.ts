@@ -7,6 +7,7 @@ type Operation = { kind:string; recordId:string; baseRevision:number; value:Reco
 export type SharedSyncStatus = { ready:boolean; pending:number; error:string|null; conflict?:{kind:string;recordId:string} };
 const keyFor=(kind:string,id:string)=>`${kind}\x00${id}`;
 const outboxKey=(owner:string,sector:string)=>`newhope_shared_outbox_${owner}_${sector}`;
+const financialKinds=new Set(['orders','cash_movements','shift','shift_history']);
 export const recordIdOf=(kind:string,row:object):string=>{
   const value=row as {id?:unknown;code?:unknown;staffId?:unknown};
   return String(kind==='promo_codes'?value.code:kind==='commission_rules'?value.staffId:value.id);
@@ -33,8 +34,12 @@ export class SharedStateSync {
     try {
       const raw=localStorage.getItem(outboxKey(owner,sector));
       const saved=raw?JSON.parse(raw):[];
-      if(Array.isArray(saved)) for(const op of saved) if(op?.kind && op?.recordId)
+      if(Array.isArray(saved)){
+        const retired=saved.filter(op=>financialKinds.has(op?.kind));
+        if(retired.length)localStorage.setItem('newhope_retired_financial_outbox_'+owner+'_'+sector,JSON.stringify(retired));
+        for(const op of saved.filter(op=>!financialKinds.has(op?.kind))) if(op?.kind && op?.recordId)
         this.pending.set(keyFor(op.kind,op.recordId),op);
+      }
     } catch { this.error='Antrean data lokal tidak dapat dibaca'; }
     this.emit();
   }
@@ -83,7 +88,7 @@ export class SharedStateSync {
   prime<T extends object>(kind:string,rows:T[]){
     this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),JSON.stringify(row)])));
   }
-  track<T extends object>(kind:string,rows:T[]){
+  track<T extends object>(kind:string,rows:T[],prune=true){
     if(this.stopped) return;
     const next=new Map(rows.filter(row=>recordIdOf(kind,row)!=='undefined')
       .map(row=>[recordIdOf(kind,row),JSON.stringify(row)]));
@@ -94,7 +99,7 @@ export class SharedStateSync {
       const key=keyFor(kind,id),old=this.pending.get(key),base=old?.baseRevision??this.remote.get(key)?.revision??0;
       this.pending.set(key,{kind,recordId:id,baseRevision:base,value:JSON.parse(json),deleted:false});
     }
-    for(const id of before.keys()) if(!next.has(id)){
+    for(const id of before.keys()) if(prune&&!next.has(id)){
       const key=keyFor(kind,id),old=this.pending.get(key),base=old?.baseRevision??this.remote.get(key)?.revision??0;
       this.pending.set(key,{kind,recordId:id,baseRevision:base,value:null,deleted:true});
     }

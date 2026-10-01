@@ -21,9 +21,12 @@ import { randomBytes } from 'node:crypto';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessError } from '../billing/freePlan';
 import type { Db } from '../shared/db';
+import { applyTenders } from './tenders';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
 import { registerSharedStateRoutes } from './sharedState';
+import { registerReportRoutes } from './reports';
+import { registerFinanceRoutes, applyRefund, FinanceError, type RefundCommand } from './finance';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const MAX_BATCH = 500;
@@ -68,6 +71,7 @@ async function productLimitForTenant(db: Db, tenantId: string): Promise<number> 
 }
 
 interface SyncItem {
+  clientItemId?: string;
   productRef?: string;
   productName: string;
   productDescription?: string;
@@ -79,6 +83,8 @@ interface SyncItem {
 }
 
 interface SyncTxn {
+  tenders?: import('./tenders').TenderCommand[];
+  refunds?: RefundCommand[];
   clientTxnId: string;
   invoiceNumber?: string;
   cashierRef?: string;
@@ -117,6 +123,8 @@ const outletRef = (value: unknown): string | null => typeof value === 'string' &
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerSharedStateRoutes(app,db);
+  registerReportRoutes(app,db);
+  registerFinanceRoutes(app,db);
   // Explicit owner onboarding; provisioning stays inside the existing POS role.
   // No outlet is opened here: billing separately enforces the active-outlet cap.
   app.post('/api/v1/sync/business', async (req, res) => {
@@ -229,6 +237,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         detail: `Maksimal ${MAX_BATCH} transaksi per kiriman. Pecah antriannya.`,
       });
     }
+    if(!txns.length || txns.some(x=>!x || !str(x.clientTxnId,64) || !Array.isArray(x.items) || !x.items.length ||
+      !Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal<0 || x.totalAmount<0 ||
+      Math.abs(x.totalAmount-(x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0)))>0.02 ||
+      x.items.some(i=>!i || typeof i.productName!=='string' || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice<0 || !Number.isFinite(i.quantity) || i.quantity<=0 || i.quantity>999999999 || Math.abs(i.quantity*1000-Math.round(i.quantity*1000))>0.001)))
+      return res.status(400).json({ok:false,error:'INVALID_TRANSACTIONS'});
 
     try {
       const out = await db.tx(async (c) => {
@@ -296,6 +309,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         outletId = outq.rows[0].id;
         }
         const defaultInventoryLocationId=await ensureInventoryLocation(c,tenantId,merchantId,outletId);
+        await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tenantId,merchantId]);
+        const financialScope={tenantId,merchantId,outletId,sector:sector as Sector,actorRef:ownerRef};
 
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
@@ -334,33 +349,21 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (!key) return null;
           if (cashierCache.has(key)) return cashierCache.get(key)!;
 
-          const found = await c.query(
-            `SELECT id FROM internal.memberships WHERE tenant_id = $1 AND (external_ref = $2 OR role = $3) LIMIT 1`,
-            [tenantId, ref, role]
-          );
-          // Wait, resolving cashier is currently difficult because internal.users isn't easily created with dummy emails.
-          // For now, return a placeholder or handle cashier matching via external_ref.
-          // In the new architecture, POS transactions just link to internal.users via cashier_user_id.
-          // We will use a fallback logic here that assumes user is created elsewhere, or we create a dummy internal user.
-          // Actually, internal.users doesn't need to be populated in offline sync if they aren't registered. 
-          // We'll insert a dummy user if not found just to satisfy the foreign key.
-          
-          let userId: string;
-          const userCheck = await c.query(
-            `SELECT id FROM internal.users WHERE email = $1 LIMIT 1`,
-            [`${ref || 'kasir'}@pos.local`]
-          );
-          
-          if (userCheck.rows.length) {
-            userId = userCheck.rows[0].id;
-          } else {
-            const insUser = await c.query(
-              `INSERT INTO internal.users (id, email, full_name) VALUES (uuidv7(), $1, $2) RETURNING id`,
-              [`${ref || 'kasir'}_${Date.now()}@pos.local`, name || 'Kasir']
-            );
-            userId = insUser.rows[0].id;
+          // Never fabricate global identities from a client cashier name/ref.
+          // The legacy FK targets pos.users; a verified owner may be mirrored
+          // with the same ID, while unresolved historical staff remain nullable.
+          if (ref === ownerRef) {
+            await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref)
+              SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1
+              ON CONFLICT(id) DO NOTHING`,[tenantId]);
+            await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
+              SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
+              FROM internal.users u WHERE u.id::text=$2 AND u.is_active
+              ON CONFLICT(id) DO NOTHING`,[tenantId,ownerRef,randomBytes(32).toString('hex')]);
           }
-
+          const verified = await c.query(`SELECT id FROM pos.users
+            WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`,[tenantId,ref]);
+          const userId = verified.rows[0]?.id ?? null;
           cashierCache.set(key, userId);
           return userId;
         };
@@ -469,9 +472,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               businessId,
               appModule,
               str(x.orderType, 16),
-              str(x.invoiceNumber, 64),
+              str(x.invoiceNumber, 32),
               clientId,
-              str(x.shiftId, 36) ?? null,
+              outletRef(x.shiftId),
               str(x.businessDate, 10) ?? (x.createdAt ? x.createdAt.split('T')[0] : null),
               x.completedAt ?? (orderStatus === 'COMPLETED' ? x.createdAt : null),
               x.cancelledAt ?? (isVoid ? x.createdAt : null),
@@ -484,6 +487,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           // menyelamatkan omzet, bukan kasus tepi.
           if (!ins.rows.length) {
             duplicates++;
+            const original=(await c.query(`SELECT * FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2 FOR UPDATE`,[tenantId,clientId])).rows[0];
+            if(!original || original.merchant_id!==merchantId || (paymentStatus!=='CANCELLED'&&original.outlet_id!==outletId) ||
+              Number(original.total_amount)!==total || Number(original.subtotal)!==subtotal)
+              throw new FinanceError(409,'TRANSACTION_ID_CONFLICT');
 
             /*
              * KECUALI kalau kiriman ini adalah PEMBATALAN transaksi yang sudah
@@ -505,12 +512,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                     SET order_status = 'VOIDED',
                         voided_at = COALESCE($3::timestamptz, CURRENT_TIMESTAMP)
                   WHERE tenant_id = $1 AND client_txn_id = $2 AND merchant_id = $4
-                    AND order_status <> 'VOIDED'
+                    AND order_status NOT IN ('VOIDED','CANCELLED')
                 RETURNING id`,
                 [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null,merchantId]
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
+                const cashBalance=Number((await c.query('SELECT COALESCE(SUM(amount),0) AS amount FROM pos.cash_ledger WHERE transaction_id=$1 AND tenant_id=$2',[voidedTxnId,tenantId])).rows[0].amount);
+                if(cashBalance!==0)await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,occurred_at)
+                  VALUES($1,$2,$3,$4,'VOID',$5,$6,'Pembatalan transaksi',$7) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
+                  [tenantId,merchantId,original.outlet_id,'void:'+voidedTxnId,-cashBalance,voidedTxnId,x.voidedAt||new Date().toISOString()]);
                 await c.query(
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
                   [voidedTxnId]
@@ -528,7 +539,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                  * menghasilkan baris RETURNING, jadi blok ini tidak dimasuki.
                  */
                 const voidedItems = await c.query(
-                  `SELECT ti.product_id, ti.quantity,
+                  `SELECT ti.product_id, GREATEST(COALESCE(ti.quantity_exact,ti.quantity)-COALESCE((SELECT SUM(ri.quantity) FROM pos.transaction_refund_items ri WHERE ri.transaction_item_id=ti.id),0),0) AS quantity,
                           p.inventory_item_id, p.merchant_id, tx.outlet_id
                      FROM pos.transaction_items ti
                      JOIN pos.products p ON p.id = ti.product_id
@@ -574,24 +585,34 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 });
               }
             }
+            if(status!=='CANCELLED'&&x.tenders)await applyTenders(c,financialScope,original.id,x.tenders);
+            if(status!=='CANCELLED')for(const refund of x.refunds||[])await applyRefund(c,financialScope,original.id,refund);
             continue;
           }
 
           const txnId: string = ins.rows[0].id;
+          await c.query('UPDATE pos.transactions SET client_shift_id=$2 WHERE id=$1',[txnId,str(x.shiftId,128)]);
 
           const pStatus = isVoid ? 'REFUNDED' : (paymentStatus === 'PENDING' ? 'PENDING' : 'PAID');
+          if(x.tenders){if(isVoid)throw new FinanceError(400,'VOID_TENDER_IMPORT_REQUIRES_REVIEW');await applyTenders(c,financialScope,txnId,x.tenders);}
+          else
           await c.query(
             `INSERT INTO pos.payments
                (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
-             ON CONFLICT DO NOTHING`,
+             ON CONFLICT DO NOTHING RETURNING id`,
             [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
-          );
+          ).then(async payment=>{
+            if(payment.rows.length && pStatus==='PAID' && paymentMethod==='CASH')
+              await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,actor_ref,occurred_at)
+                VALUES($1,$2,$3,$4,'SALE',$5,$6,'Pembayaran tunai',$7,COALESCE($8::timestamptz,now())) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
+                [tenantId,merchantId,outletId,'payment:'+payment.rows[0].id,total,txnId,ownerRef,x.createdAt||null]);
+          });
 
           for (const i of x.items) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
-            const qty = Math.max(1, Math.trunc(num(i.quantity, 1)));
+            const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
             const unitCost = Math.max(0, num(i.unitCost));
             const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
@@ -599,8 +620,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
                   quantity, total_price, business_sector, category_name, unit_cost,
-                  product_description)
-               VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                  product_description,client_item_id,quantity_exact)
+               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6)`,
               [
                 txnId,
                 tenantId,
@@ -613,6 +634,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 str(i.categoryName, 100),
                 unitCost,
                 str(i.productDescription, 300),
+                str(i.clientItemId,128),
               ]
             );
 
@@ -655,6 +677,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               );
             }
           }
+          for(const refund of x.refunds||[])await applyRefund(c,financialScope,txnId,refund);
           accepted++;
         }
 
@@ -687,6 +710,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
+      if(err instanceof FinanceError) return res.status(err.status).json({ok:false,error:err.message});
       if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});
       if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] gagal:', (err as Error).message);

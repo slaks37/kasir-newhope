@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { usePOS } from '../../context/POSContext';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
-import { exportOrdersToExcel, exportOrdersToPDF } from '../../utils/reportExporter';
+import { exportCloudReport } from '../../utils/cloudReportExporter';
+import { useServerReport, calendarDate } from '../../lib/reports/client';
 import { CashMovementType, CashMovementCategory, CashMovement } from '../../types';
 import {
   BarChart3,
@@ -62,14 +63,13 @@ import {
 
 export const ReportsDashboard: React.FC = () => {
   const {
-    orders,
+    syncStatus, forceSync, cloudError,
     products,
     shift,
     shiftHistory,
     endShift,
     settings,
     currentUser,
-    cashMovements,
     addCashMovement,
     deleteCashMovement,
     setInitialCash,
@@ -106,116 +106,14 @@ export const ReportsDashboard: React.FC = () => {
   const [actualCashInput, setActualCashInput] = useState<string>(String(shift.expectedCash || 0));
   const [shiftSummary, setShiftSummary] = useState<any>(null);
 
-  // 1. TODAY'S SPECIAL METRICS (Real-time Live Omzet & Cash Flow)
-  const todayMetrics = useMemo(() => {
-    const now = new Date();
-    const todayOrders = orders.filter((o) => {
-      if (o.status !== 'COMPLETED') return false;
-      return new Date(o.date).toDateString() === now.toDateString();
-    });
-
-    let todayGrossSales = 0;
-    let todayDiscount = 0;
-    let todayTax = 0;
-    let todayNetRevenue = 0;
-    let todayCashSales = 0;
-    let todayQrisSales = 0;
-    let todayCardSales = 0;
-    let todayEWalletSales = 0;
-
-    todayOrders.forEach((o) => {
-      todayNetRevenue += o.total || 0;
-      todayGrossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
-      todayDiscount += o.discountTotal || 0;
-      todayTax += o.taxTotal || 0;
-
-      if (o.paymentMethod === 'CASH') todayCashSales += o.total;
-      else if (o.paymentMethod === 'QRIS') todayQrisSales += o.total;
-      else if (o.paymentMethod === 'DEBIT' || o.paymentMethod === 'CREDIT') todayCardSales += o.total;
-      else todayEWalletSales += o.total;
-    });
-
-    // Today's Cash Movements
-    const todayMovements = cashMovements.filter((m) => {
-      return new Date(m.timestamp).toDateString() === now.toDateString();
-    });
-
-    let todayCashIn = 0;
-    let todayCashOut = 0;
-    let todayExpenseBahan = 0;
-    let todayExpenseOperasional = 0;
-    let todayExpenseKasbon = 0;
-
-    todayMovements.forEach((m) => {
-      if (m.category === 'MODAL_AWAL') return;
-      if (m.type === 'CASH_IN') {
-        todayCashIn += m.amount;
-      } else if (m.type === 'CASH_OUT') {
-        todayCashOut += m.amount;
-        if (m.category === 'BELANJA_BAHAN') todayExpenseBahan += m.amount;
-        else if (m.category === 'OPERASIONAL') todayExpenseOperasional += m.amount;
-        else if (m.category === 'KASBON') todayExpenseKasbon += m.amount;
-      }
-    });
-
-    const expectedCashInDrawer = Math.max(0, (shift.initialCash || 0) + todayCashSales + todayCashIn - todayCashOut);
-    const avgOrderValue = todayOrders.length > 0 ? Math.round(todayNetRevenue / todayOrders.length) : 0;
-
-    return {
-      totalOrders: todayOrders.length,
-      todayGrossSales,
-      todayDiscount,
-      todayTax,
-      todayNetRevenue,
-      todayCashSales,
-      todayQrisSales,
-      todayCardSales,
-      todayEWalletSales,
-      todayCashIn,
-      todayCashOut,
-      todayExpenseBahan,
-      todayExpenseOperasional,
-      todayExpenseKasbon,
-      initialCash: shift.initialCash || 0,
-      expectedCashInDrawer,
-      avgOrderValue,
-    };
-  }, [orders, cashMovements, shift.initialCash]);
-
-  // 2. Filtered orders based on selected period and query
-  const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
-      if (o.status !== 'COMPLETED') return false;
-      const orderDate = new Date(o.date);
-      const now = new Date();
-
-      if (dateFilter === 'today') {
-        if (orderDate.toDateString() !== now.toDateString()) return false;
-      } else if (dateFilter === 'week') {
-        const past7 = new Date();
-        past7.setDate(past7.getDate() - 7);
-        if (orderDate < past7) return false;
-      } else if (dateFilter === 'month') {
-        const past30 = new Date();
-        past30.setDate(past30.getDate() - 30);
-        if (orderDate < past30) return false;
-      }
-
-      if (selectedPaymentMethod !== 'ALL' && o.paymentMethod !== selectedPaymentMethod) {
-        return false;
-      }
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchId = o.id.toLowerCase().includes(q);
-        const matchCustomer = o.customer?.name?.toLowerCase().includes(q);
-        const matchCashier = o.cashierName?.toLowerCase().includes(q);
-        if (!matchId && !matchCustomer && !matchCashier) return false;
-      }
-
-      return true;
-    });
-  }, [orders, dateFilter, selectedPaymentMethod, searchQuery]);
+  const today=calendarDate();
+  const report=useServerReport({sector:settings.businessSector||'FNB',outletId:settings.activeBranchId,
+    ...(dateFilter==='all'?{}:{from:calendarDate('Asia/Jakarta',dateFilter==='week'?-6:dateFilter==='month'?-29:0),to:today}),
+    paymentMethod:selectedPaymentMethod,search:searchQuery});
+  const summary=report.summary;
+  const todayMetrics=summary?.todayMetrics;
+  const cashMovements=summary?.cashMovements||[];
+  const filteredOrders=report.transactions.filter(row=>row.recognizedRevenue!==null);
 
   const dateFilterLabel = useMemo(() => {
     if (dateFilter === 'today') return 'Hari Ini';
@@ -227,20 +125,7 @@ export const ReportsDashboard: React.FC = () => {
   // 3. Filtered Cash Movements for Ledger
   const filteredCashMovements = useMemo(() => {
     return cashMovements.filter((m) => {
-      const movementDate = new Date(m.timestamp);
-      const now = new Date();
-
-      if (dateFilter === 'today') {
-        if (movementDate.toDateString() !== now.toDateString()) return false;
-      } else if (dateFilter === 'week') {
-        const past7 = new Date();
-        past7.setDate(past7.getDate() - 7);
-        if (movementDate < past7) return false;
-      } else if (dateFilter === 'month') {
-        const past30 = new Date();
-        past30.setDate(past30.getDate() - 30);
-        if (movementDate < past30) return false;
-      }
+      // Calendar/timezone filtering was already performed by the server.
 
       if (ledgerTypeFilter !== 'ALL' && m.type !== ledgerTypeFilter) {
         return false;
@@ -262,55 +147,8 @@ export const ReportsDashboard: React.FC = () => {
     });
   }, [cashMovements, dateFilter, ledgerTypeFilter, ledgerCategoryFilter, ledgerSearch]);
 
-  // Aggregated Financial Summary for Filtered Range
-  const financialSummary = useMemo(() => {
-    let totalGrossSales = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
-    let totalServiceCharge = 0;
-    let totalNetRevenue = 0;
-    let totalCOGS = 0;
-
-    filteredOrders.forEach((o) => {
-      totalNetRevenue += o.total || 0;
-      totalGrossSales += (o.subtotal || o.total) + (o.discountTotal || 0);
-      totalDiscount += o.discountTotal || 0;
-      totalTax += o.taxTotal || 0;
-      totalServiceCharge += o.serviceChargeTotal || 0;
-
-      o.items.forEach((item) => {
-        const prod = products.find((p) => p.id === item.productId);
-        const cost = prod ? prod.costPrice : item.unitPrice * 0.45;
-        totalCOGS += cost * item.quantity;
-      });
-    });
-
-    const grossProfit = Math.max(0, totalNetRevenue - totalCOGS - totalTax);
-    const netProfitMargin = totalNetRevenue > 0 ? (grossProfit / totalNetRevenue) * 100 : 0;
-    const avgOrderValue = filteredOrders.length > 0 ? Math.round(totalNetRevenue / filteredOrders.length) : 0;
-
-    return {
-      totalGrossSales,
-      totalDiscount,
-      totalTax,
-      totalServiceCharge,
-      totalNetRevenue,
-      totalCOGS,
-      grossProfit,
-      netProfitMargin: Math.round(netProfitMargin * 10) / 10,
-      avgOrderValue,
-      totalOrders: filteredOrders.length,
-    };
-  }, [filteredOrders, products]);
-
-  // Payment Breakdown
-  const paymentBreakdown = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredOrders.forEach((o) => {
-      map[o.paymentMethod] = (map[o.paymentMethod] || 0) + o.total;
-    });
-    return map;
-  }, [filteredOrders]);
+  const financialSummary=summary?.financialSummary;
+  const paymentBreakdown=summary?.paymentBreakdown||{};
 
   const pieChartData = useMemo(() => {
     return Object.keys(paymentBreakdown).map((method) => ({
@@ -321,68 +159,10 @@ export const ReportsDashboard: React.FC = () => {
 
   const PIE_COLORS = ['#10b981', '#f59e0b', '#6366f1', '#ec4899', '#8b5cf6', '#06b6d4'];
 
-  // Top 5 Selling Products Data
-  const topProductsBarData = useMemo(() => {
-    const productSalesCount: Record<string, { name: string; qty: number; revenue: number }> = {};
-    filteredOrders.forEach((o) => {
-      o.items.forEach((item) => {
-        if (!productSalesCount[item.name]) {
-          productSalesCount[item.name] = { name: item.name, qty: 0, revenue: 0 };
-        }
-        productSalesCount[item.name].qty += item.quantity;
-        productSalesCount[item.name].revenue += item.totalPrice;
-      });
-    });
-
-    return Object.values(productSalesCount)
-      .sort((a, b) => b.qty - a.qty)
-      .slice(0, 5);
-  }, [filteredOrders]);
-
-  // Hourly Sales Trend Data
-  const TREND_START_HOUR = 8;
-  const TREND_END_HOUR = 22;
-  const areaChartData = useMemo(() => {
-    const hourlyTrendMap: Record<string, number> = {};
-    for (let h = TREND_START_HOUR; h <= TREND_END_HOUR; h++) {
-      hourlyTrendMap[`${String(h).padStart(2, '0')}:00`] = 0;
-    }
-
-    filteredOrders.forEach((o) => {
-      const hour = `${String(new Date(o.date).getHours()).padStart(2, '0')}:00`;
-      if (hourlyTrendMap[hour] !== undefined) {
-        hourlyTrendMap[hour] += o.total;
-      }
-    });
-
-    return Object.keys(hourlyTrendMap)
-      .sort()
-      .map((time) => ({
-        time,
-        Omset: hourlyTrendMap[time],
-      }));
-  }, [filteredOrders]);
-
-  // Export handlers
-  const handleExportExcel = () => {
-    exportOrdersToExcel({
-      orders: filteredOrders,
-      products,
-      settings,
-      periodLabel: dateFilterLabel,
-      userName: currentUser?.name || 'Kasir / Admin',
-    });
-  };
-
-  const handleExportPDF = () => {
-    exportOrdersToPDF({
-      orders: filteredOrders,
-      products,
-      settings,
-      periodLabel: dateFilterLabel,
-      userName: currentUser?.name || 'Kasir / Admin',
-    });
-  };
+  const topProductsBarData=summary?.topProductsBarData||[];
+  const areaChartData=summary?.areaChartData||[];
+  const handleExportExcel=()=>{if(summary)exportCloudReport(summary,report.transactions,settings.storeName,'csv');};
+  const handleExportPDF=()=>{if(summary)exportCloudReport(summary,report.transactions,settings.storeName,'pdf');};
 
   // Cash Movement Submission Handler
   const handleSaveCashMovement = (e: React.FormEvent) => {
@@ -413,11 +193,10 @@ export const ReportsDashboard: React.FC = () => {
   };
 
   // Confirm End Shift Handler
-  const handleConfirmEndShift = (e: React.FormEvent) => {
+  const handleConfirmEndShift = async (e: React.FormEvent) => {
     e.preventDefault();
     const actual = Number(actualCashInput) || 0;
-    const summary = endShift(actual);
-    setShiftSummary(summary);
+    try {const summary = await endShift(actual);setShiftSummary(summary);}catch(error){alert(error instanceof Error?error.message:'Shift belum ditutup');}
   };
 
   // Helpers for category badge labels and styling
@@ -440,8 +219,19 @@ export const ReportsDashboard: React.FC = () => {
     }
   };
 
+  if(!summary||!todayMetrics||!financialSummary)return <div className="p-8 space-y-4" role={report.error?'alert':'status'}>
+    <h1 className="text-2xl font-black">Laporan Cloud</h1>
+    <p>{report.error||cloudError||'Memuat laporan dari cloud…'}</p>
+    <p className="text-sm text-slate-600">Data transaksi dan kas menunggu konfirmasi cloud.</p>
+    <button onClick={()=>{setDateFilter('today');setSearchQuery('');setSelectedPaymentMethod('ALL');forceSync();}} className="rounded-xl bg-amber-400 p-3 font-bold">Muat ulang</button>
+  </div>;
+
   return (
     <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-4 lg:p-8 overflow-y-auto space-y-6 animate-fade-in">
+      <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+        {syncStatus.pending?`${syncStatus.pending} transaksi atau mutasi kas menunggu sinkronisasi. `:''}
+        Data cloud · Terakhir dibaca {formatDateTime(summary.generatedAt)} · {summary.scope.timezone}
+      </p>
       {/* Header with Title, Range Selector & Action Buttons */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -511,7 +301,7 @@ export const ReportsDashboard: React.FC = () => {
           <button
             onClick={handleExportExcel}
             className="bg-slate-800 hover:bg-slate-700 text-white font-black px-3.5 py-2.5 rounded-2xl flex items-center space-x-1.5 text-xs transition-all shadow-sm active:scale-95 cursor-pointer"
-            title="Download Laporan Format Excel (.xls)"
+            title="Download laporan server CSV (bisa dibuka di Excel)"
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
             <span>Excel</span>
@@ -967,12 +757,7 @@ export const ReportsDashboard: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {filteredOrders.length > 0 ? (
                     filteredOrders.map((o) => {
-                      let orderCOGS = 0;
-                      o.items.forEach((item) => {
-                        const prod = products.find((p) => p.id === item.productId);
-                        const cost = prod ? prod.costPrice : item.unitPrice * 0.45;
-                        orderCOGS += cost * item.quantity;
-                      });
+                      const orderCOGS=o.recognizedCOGS||0;
 
                       return (
                         <tr key={o.id} className="hover:bg-slate-50">
@@ -987,7 +772,7 @@ export const ReportsDashboard: React.FC = () => {
                           </td>
                           <td className="py-3 px-3 text-rose-700 font-mono">{formatRupiah(orderCOGS)}</td>
                           <td className="py-3 px-3 text-sky-700 font-mono">{formatRupiah(o.taxTotal || 0)}</td>
-                          <td className="py-3 px-3 font-black text-slate-900 font-mono">{formatRupiah(o.total)}</td>
+                          <td className="py-3 px-3 font-black text-slate-900 font-mono">{formatRupiah(o.recognizedRevenue||0)}</td>
                           <td className="py-3 px-3 text-right">
                             <span className="bg-emerald-100 text-emerald-800 font-extrabold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200">
                               LUNAS

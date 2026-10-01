@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { orderOperations,mergeOrderOperations } from '../lib/sync/orderOperations';
 import {
   Category,
   Product,
@@ -54,6 +55,8 @@ import {
   flush as flushSync,
   getStatus as getSyncStatus,
   orderToPayload,
+  getPendingTransactions,
+  markCloudRead,
   pushCustomers,
   pushAttendance,
   pushPayroll,
@@ -95,6 +98,9 @@ import {
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
+import { migrateLegacyFinancialData, type LegacyMigrationResult } from '../lib/sync/legacyMigration';
+import { enqueueCashCommand, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
+import { fetchRecentServerTransactions, fetchReportSummary, reportParams } from '../lib/reports/client';
 
 interface POSContextType {
   /**
@@ -255,6 +261,7 @@ interface POSContextType {
       splitBillIndex?: number;
       parentOrderId?: string;
       splitAmount?: number;
+      paymentTender?: {clientPaymentId:string;method:PaymentMethod;amount:number;createdAt:string};
       splitItems?: CartItem[];
       skipClearCart?: boolean;
     }
@@ -264,9 +271,14 @@ interface POSContextType {
     orderId: string,
     refundItems: { cartItemId: string; quantity: number; reason: string }[],
     refundMethod?: 'CASH' | 'ORIGINAL_METHOD'
-  ) => OrderRefund | null;
+  ) => Promise<OrderRefund | null>;
   /** Berapa transaksi yang masih menunggu terkirim, dan kapan terakhir berhasil. */
   syncStatus: SyncStatus;
+  operationalSyncStatus: SharedSyncStatus;
+  cloudReady: boolean;
+  cloudError: string | null;
+  legacyMigrationStatus: LegacyMigrationResult | null;
+  mapLegacyOutlet: (originalBranchRef: string, outletId: string) => void;
   /** Memaksa pengiriman sekarang. Dipakai tombol "coba lagi". */
   forceSync: () => void;
   holdOrder: (
@@ -338,8 +350,8 @@ interface POSContextType {
   deleteTable: (tableId: string) => void;
   updateSettings: (newSettings: StoreSettings) => void;
   activateBusinessSector: (sector: BusinessSector, customStoreName?: string) => void;
-  startShift: (cashierName: string, initialCash: number) => Shift;
-  endShift: (actualCash: number, notes?: string) => Shift;
+  startShift: (cashierName: string, initialCash: number) => Promise<Shift>;
+  endShift: (actualCash: number, notes?: string) => Promise<Shift>;
   
   // Cash Movements & Petty Cash Management
   cashMovements: CashMovement[];
@@ -412,41 +424,7 @@ const seedPromosFor = (_sector: BusinessSector): PromoCode[] => [];
 /** Attendance seed follows the staff member's own sector. */
 const seedAttendanceFor = (_sector: BusinessSector): AttendanceRecord[] => [];
 
-// Immediate cleanup of legacy dummy keys across browser storage
-const purgeLegacyMockData = () => {
-  try {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      // Do not touch credentials, local registered users or active auth sessions
-      if (
-        key.includes('supabase.auth') ||
-        key === 'nhpos_local_auth_users' ||
-        key === 'nhpos_local_session'
-      ) {
-        continue;
-      }
-      // Purge legacy fallback keys and mock user items
-      if (
-        key.startsWith('mokamajoo_') ||
-        key === 'newhope_shift' ||
-        key === 'newhope_settings' ||
-        key === 'newhope_orders' ||
-        key.includes('usr-1') ||
-        key.includes('usr-2') ||
-        key.includes('usr-3') ||
-        key.includes('shift-001')
-      ) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
-  } catch (e) {
-    console.error('Failed to purge legacy mock data:', e);
-  }
-};
-purgeLegacyMockData();
+// Financial recovery must preserve every legacy source byte until server acknowledgment.
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user: authUser, session: authSession } = useAuth();
@@ -713,6 +691,28 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ownerRef: storeOwnerId,
   };
 
+  const [cloudState,setCloudState]=useState<{scope:string;ready:boolean;error:string|null}>({scope:'',ready:false,error:null});
+  const financialScopeKey=tenant.businessId+':'+(syncTarget.outletId||'');
+  const cloudReady=cloudState.scope===financialScopeKey&&cloudState.ready;
+  const cloudError=cloudState.scope===financialScopeKey?cloudState.error:null;
+  const [legacyMigrationStatus,setLegacyMigrationStatus]=useState<LegacyMigrationResult|null>(null);
+  const legacyMappings=React.useRef<Record<string,string>>({});
+  const financialStatus=(businessId:string,inFlight=false)=>combineFinancialSyncStatus(getSyncStatus(businessId,inFlight),getCashSyncStatus(businessId));
+  function requireFinancialWritable<T extends (...args:any[])=>any>(fn:T):T{
+    return requireWritable(((...args:Parameters<T>)=>{
+      if(!cloudReady||!sharedSyncStatus.ready||!syncTarget.outletId)throw new Error('CLOUD_OUTLET_NOT_READY');
+      return fn(...args);
+    }) as T);
+  }
+  const mapLegacyOutlet=(originalBranchRef:string,outletId:string)=>{
+    if(!settings.branches?.some(branch=>branch.id===outletId&&branch.isActive&&branch.businessSector===activeSector))
+      throw new Error('OUTLET_NOT_ACTIVE');
+    const key='newhope_legacy_outlet_mappings_'+tenant.businessId;
+    let saved:Record<string,string>={};try{saved=JSON.parse(localStorage.getItem(key)||'{}');}catch{}
+    saved[originalBranchRef]=outletId;localStorage.setItem(key,JSON.stringify(saved));
+    legacyMappings.current=saved;void runSync(syncTarget,true);
+  };
+
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     getSyncStatus(makeBusinessId(storeOwnerId, activeSector))
   );
@@ -727,11 +727,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const runSync = React.useCallback(
     async (target: SyncTarget, force = false) => {
       try {
-        setSyncStatus(getSyncStatus(target.businessId, true));
+        const mappingKey='newhope_legacy_outlet_mappings_'+target.businessId;
+        let mappings:Record<string,string>={};try{mappings=JSON.parse(localStorage.getItem(mappingKey)||'{}');}catch{}
+        const migration=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        setLegacyMigrationStatus(migration);
+        setSyncStatus(financialStatus(target.businessId,true));
         const after = await flushSync(target, force);
-        setSyncStatus(after);
+        const cash=await flushCashQueue(target,force);
+        setLegacyMigrationStatus(migrateLegacyFinancialData(target,{outletMappings:mappings}));
+        setSyncStatus(combineFinancialSyncStatus(after,cash));
+        window.dispatchEvent(new Event('financial-updated'));
       } catch {
-        setSyncStatus(getSyncStatus(target.businessId));
+        setSyncStatus(financialStatus(target.businessId));
       }
     },
     []
@@ -836,60 +843,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loaded;
   });
 
-  // Reconcile shift sales strictly against active shift's completed orders
-  // and cash movements (cash in, cash out/belanja, modal awal).
-  useEffect(() => {
-    if (shift.status === 'OPEN') {
-      const shiftOrders = orders.filter((o) => o.shiftId === shift.id && o.status === 'COMPLETED');
-      let cSales = 0;
-      let qSales = 0;
-      let cardSales = 0;
-      let eSales = 0;
-
-      shiftOrders.forEach((o) => {
-        if (o.paymentMethod === 'CASH') cSales += o.total;
-        else if (o.paymentMethod === 'QRIS') qSales += o.total;
-        else if (o.paymentMethod === 'DEBIT' || o.paymentMethod === 'CREDIT') cardSales += o.total;
-        else eSales += o.total;
-      });
-
-      const shiftMovements = cashMovements.filter((m) => m.shiftId === shift.id);
-      let totalCashIn = 0;
-      let totalCashOut = 0;
-
-      shiftMovements.forEach((m) => {
-        if (m.category === 'MODAL_AWAL') return;
-        if (m.type === 'CASH_IN') totalCashIn += m.amount;
-        else if (m.type === 'CASH_OUT') totalCashOut += m.amount;
-      });
-
-      const computedTotal = cSales + qSales + cardSales + eSales;
-      const expected = Math.max(0, (shift.initialCash || 0) + cSales + totalCashIn - totalCashOut);
-
-      if (
-        shift.totalSales !== computedTotal ||
-        shift.cashSales !== cSales ||
-        shift.qrisSales !== qSales ||
-        shift.cardSales !== cardSales ||
-        shift.eWalletSales !== eSales ||
-        shift.totalCashIn !== totalCashIn ||
-        shift.totalCashOut !== totalCashOut ||
-        shift.expectedCash !== expected
-      ) {
-        setShift((prev) => ({
-          ...prev,
-          cashSales: cSales,
-          qrisSales: qSales,
-          cardSales: cardSales,
-          eWalletSales: eSales,
-          totalSales: computedTotal,
-          totalCashIn,
-          totalCashOut,
-          expectedCash: expected,
-        }));
-      }
-    }
-  }, [orders, cashMovements, shift.id, shift.status, shift.initialCash]);
+  // Shift totals are hydrated from the authoritative cash and sales ledgers.
 
   const [shiftHistory, setShiftHistory] = useState<Shift[]>(() => {
     return loadScopedData('shift_history', storeOwnerId, activeSector, []);
@@ -960,6 +914,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [sharedSyncStatus, setSharedSyncStatus] = useState<SharedSyncStatus>({ready:false,pending:0,error:null});
   const sharedSync = React.useRef<SharedStateSync | null>(null);
+  const remoteOrderOperations=React.useRef(new Map<string,Record<string,unknown>>());
   const sharedSettings = React.useMemo(() => {
     const { subscription: _subscription, branches: _branches, activeBranchId: _activeBranchId,
       logoUrl: _logoUrl, registeredTerminalId: _registeredTerminalId,
@@ -972,6 +927,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // a durable, versioned outbox. Normalized transactions still use the ledger.
   useEffect(() => {
     if(!authUser?.id) return;
+    remoteOrderOperations.current=new Map();
     const store=new SharedStateSync(authUser.id,activeSector,(records,initial)=>{
       const grouped=new Map<string,SharedRecord[]>();
       for(const record of records){
@@ -995,11 +951,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       apply('products',products,setProducts);
       apply('tables',tables,setTables);
       apply('customers',customers,setCustomers);
-      apply('orders',orders,setOrders);
+      const operationRows=(grouped.get('order_operations')||[]).filter(row=>!row.deleted&&row.value);
+      remoteOrderOperations.current=new Map(operationRows.map(row=>[row.recordId,row.value!]));
+      store.prime('order_operations',operationRows.map(row=>row.value!));
+      setOrders(previous=>previous.map(row=>mergeOrderOperations(row,remoteOrderOperations.current.get(row.id))));
+
       apply('held_orders',heldOrders,setHeldOrders);
       apply('inventory_logs',inventoryLogs,setInventoryLogs);
-      apply('cash_movements',cashMovements,setCashMovements);
-      apply('shift_history',shiftHistory,setShiftHistory);
+
+
       apply('promo_codes',promoCodes,setPromoCodes);
       apply('stock_items',stockItems,setStockItems);
       apply('bundles',bundles,setBundles);
@@ -1013,9 +973,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const lifecycle=(grouped.get('sent_lifecycle_hooks')||[]).filter(row=>!row.deleted).map(row=>row.recordId);
       store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
       if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
-      const remoteShift=grouped.get('shift')?.find(row=>!row.deleted&&row.recordId==='main')?.value?.data as Shift|undefined;
-      store.prime('shift',remoteShift?[{id:'main',data:remoteShift}]:[]);
-      if(remoteShift && JSON.stringify(remoteShift)!==JSON.stringify(shift))setShift(remoteShift);
       const remoteSettings=grouped.get('store_settings')?.find(row=>!row.deleted&&row.recordId==='main')?.value;
       store.prime('store_settings',remoteSettings?[remoteSettings]:[]);
       if(remoteSettings){
@@ -1058,13 +1015,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     prime('categories',categories);prime('products',products.map(product=>({
       ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
     })));prime('tables',tables);prime('customers',customers);
-    prime('orders',orders);prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
-    prime('cash_movements',cashMovements);prime('shift_history',shiftHistory);
+    prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
+    prime('order_operations',orders.map(orderOperations));
+
     prime('promo_codes',promoCodes);prime('stock_items',stockItems);prime('bundles',bundles);
     prime('attendance_logs',attendanceLogs);prime('kds_tickets',kdsTickets);
     prime('carwash_queue',carwashQueue);prime('bookings',bookings);
     prime('commission_rules',commissionRules);prime('payroll_slips',payrollSlips);
-    prime('staff_members',staffMembers);prime('shift',[{id:'main',data:shift}]);
+    prime('staff_members',staffMembers);
     prime('store_settings',[sharedSettings]);
     store.start();
     const onOnline=()=>void store.refresh(false);
@@ -1097,15 +1055,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     store.track('categories',categories);store.track('products',products.map(product=>({
       ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
     })));store.track('tables',tables);
-    store.track('customers',customers);store.track('orders',orders);
+    store.track('customers',customers);
     store.track('held_orders',heldOrders);store.track('inventory_logs',inventoryLogs);
-    store.track('cash_movements',cashMovements);store.track('shift_history',shiftHistory);
+    store.track('order_operations',orders.map(orderOperations),false);
+
     store.track('promo_codes',promoCodes);store.track('stock_items',stockItems);
     store.track('bundles',bundles);store.track('attendance_logs',attendanceLogs);
     store.track('kds_tickets',kdsTickets);store.track('carwash_queue',carwashQueue);
     store.track('bookings',bookings);store.track('commission_rules',commissionRules);
     store.track('payroll_slips',payrollSlips);store.track('staff_members',staffMembers);
-    store.track('shift',[{id:'main',data:shift}]);
+
     store.track('store_settings',[sharedSettings]);
     store.track('sent_lifecycle_hooks',sentLifecycleHookIds.map(id=>({id})));
     store.track('users',users.filter(user=>user.id!==authUser?.id&&user.pin.startsWith('sha256$')));
@@ -1113,6 +1072,61 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     shiftHistory,promoCodes,stockItems,bundles,attendanceLogs,kdsTickets,
     carwashQueue,bookings,commissionRules,payrollSlips,staffMembers,shift,
     sharedSettings,sentLifecycleHookIds,users,authUser?.id]);
+
+  // Financial reads replace confirmed cache; pending commands remain recoverable.
+  useEffect(()=>{
+    if(!authUser?.id||!syncTarget.outletId){setCloudState({scope:financialScopeKey,ready:false,error:null});return;}
+    const controller=new AbortController();let running=false;
+    setCloudState({scope:financialScopeKey,ready:false,error:null});
+    const target={...syncTarget};
+    const refresh=async()=>{
+      if(running||controller.signal.aborted)return;running=true;
+      try{
+        // Capture original laptop data before any cloud replacement.
+        const mappings=JSON.parse(localStorage.getItem('newhope_legacy_outlet_mappings_'+target.businessId)||'{}');
+        const migration=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        setLegacyMigrationStatus(migration);
+        if(migration.error)throw new Error(migration.error);
+        const query={outletId:target.outletId,sector:target.sector};
+        const [remote,summary]=await Promise.all([fetchRecentServerTransactions(query,controller.signal),fetchReportSummary(query,controller.signal)]);
+        let shiftResponse=await fetch('/api/v1/finance/shift?'+reportParams(query),{signal:controller.signal,cache:'no-store'});
+        let shiftData=await shiftResponse.json();
+        if(!shiftResponse.ok||!shiftData.ok)throw new Error(shiftData.error||'SHIFT_UNAVAILABLE');
+        if(!shiftData.shift&&!shiftData.history?.length){
+          shiftResponse=await fetch('/api/v1/finance/shift/open',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
+          const opened=await shiftResponse.json();if(!shiftResponse.ok||!opened.ok)throw new Error(opened.error||'SHIFT_OPEN_FAILED');
+          shiftData={...shiftData,shift:opened.shift};
+        }
+        if(controller.signal.aborted)return;
+        const pendingIds=new Set(getPendingTransactions(target.businessId).map(row=>row.clientTxnId));
+        setOrders(previous=>{
+          const pending=previous.filter(row=>pendingIds.has(row.id));
+          const previousOperations=new Map(previous.map(row=>[row.id,orderOperations(row)]));
+          const byId=new Map(remote.filter(row=>!pendingIds.has(row.id)).map(row=>[row.id,
+            mergeOrderOperations(row,remoteOrderOperations.current.get(row.id)||previousOperations.get(row.id))]));
+          for(const row of pending)byId.set(row.id,row);
+          for(const row of previous.filter(row=>row.status==='HOLD'))if(!byId.has(row.id))byId.set(row.id,row);
+          return [...byId.values()].sort((a,b)=>b.date.localeCompare(a.date));
+        });
+        setCashMovements(summary.cashMovements);
+        if(shiftData.shift)setShift(shiftData.shift);
+        else if(shiftData.history?.[0])setShift(shiftData.history[0]);
+        setShiftHistory(shiftData.history||[]);
+        markCloudRead(target.businessId,summary.generatedAt);
+        setSyncStatus(financialStatus(target.businessId));
+        setCloudState({scope:financialScopeKey,ready:true,error:null});
+      }catch(error){if(!controller.signal.aborted){
+        const message=error instanceof Error?error.message:'CLOUD_UNAVAILABLE';
+        setCloudState(previous=>({...previous,scope:financialScopeKey,error:message}));
+        setSyncStatus(previous=>({...previous,lastError:message,failures:Math.max(1,previous.failures)}));
+      }}finally{running=false;}
+    };
+    void refresh();const timer=window.setInterval(refresh,10000);
+    const updated=()=>void refresh();
+    window.addEventListener('focus',updated);window.addEventListener('online',updated);window.addEventListener('financial-updated',updated);
+    return()=>{controller.abort();window.clearInterval(timer);window.removeEventListener('focus',updated);window.removeEventListener('online',updated);window.removeEventListener('financial-updated',updated);};
+  },[authUser?.id,financialScopeKey]);
 
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
@@ -1160,6 +1174,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const uId = storeOwnerId;
     const sec = settings.businessSector || 'FNB';
+    // Never truncate/replace the old cache if its recovery snapshot failed.
+    let mappings:Record<string,string>={};
+    try{mappings=JSON.parse(localStorage.getItem('newhope_legacy_outlet_mappings_'+tenant.businessId)||'{}');}catch{return;}
+    if(migrateLegacyFinancialData(syncTarget,{outletMappings:mappings}).error)return;
     localStorage.setItem(getScopedKey('orders', uId, sec), JSON.stringify(orders.slice(0, 50)));
   }, [orders, storeOwnerId, settings.businessSector]);
 
@@ -1683,16 +1701,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setInventoryLogs((prev) => [...newLogs, ...prev]);
     }
 
-    // Deduct cash from drawer if paid from cashier drawer
-    if (payload.paidFromCashDrawer && totalCost > 0) {
-      setShift((prevShift) => {
-        const newExpected = Math.max(0, prevShift.expectedCash - totalCost);
-        return {
-          ...prevShift,
-          expectedCash: newExpected,
-        };
-      });
-    }
+    if(payload.paidFromCashDrawer&&totalCost>0)
+      addCashMovement('CASH_OUT','BELANJA_BAHAN',totalCost,'Pembelian bahan baku',payload.supplierName);
 
     if (soundEnabled) playPOSSound('payment_success');
 
@@ -1985,11 +1995,27 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       splitBillIndex?: number;
       parentOrderId?: string;
       splitAmount?: number;
+      paymentTender?: {clientPaymentId:string;method:PaymentMethod;amount:number;createdAt:string};
       splitItems?: CartItem[];
       skipClearCart?: boolean;
     }
   ): Order | null => {
     if (cart.length === 0) return null;
+    const priorSplit=extraOptions?.paymentTender&&extraOptions.parentOrderId?orders.find(order=>order.id===extraOptions.parentOrderId):null;
+    if(priorSplit&&extraOptions?.paymentTender){
+      const tender=extraOptions.paymentTender;
+      if(priorSplit.paymentTenders?.some(payment=>payment.clientPaymentId===tender.clientPaymentId))return priorSplit;
+      const paymentTenders=[...(priorSplit.paymentTenders||[]),tender];
+      const collected=paymentTenders.reduce((sum,payment)=>sum+payment.amount,0);
+      if(collected>priorSplit.total+0.01)throw new Error('TENDER_EXCEEDS_BALANCE');
+      const updated:Order={...priorSplit,paymentTenders,paymentStatus:collected>=priorSplit.total-0.01?'PAID':'PENDING'};
+      enqueueSync(tenant.businessId,orderToPayload(updated,currentUser.role));
+      setOrders(previous=>previous.map(order=>order.id===updated.id?updated:order));
+      setSyncStatus(financialStatus(tenant.businessId));void runSync(syncTarget);
+      if(!extraOptions.skipClearCart)clearCart();
+      return updated;
+    }
+    if(extraOptions?.paymentTender&&extraOptions.parentOrderId&&!priorSplit)throw new Error('SPLIT_ORDER_NOT_LOADED');
 
     const isSplit = !!extraOptions?.isSplitBill;
     const splitAmount = extraOptions?.splitAmount;
@@ -2001,7 +2027,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const subtotal = effectiveItems.reduce((sum, item) => sum + item.totalPrice, 0);
     const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
     const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-    const grandTotal = splitAmount !== undefined ? splitAmount : (subtotal + taxTotal + serviceChargeTotal);
+    const grandTotal = splitAmount !== undefined && !extraOptions?.paymentTender ? splitAmount : (subtotal + taxTotal + serviceChargeTotal);
 
     let changeAmount = 0;
     if (paymentMethod === 'CASH' && cashReceived) {
@@ -2024,7 +2050,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const laundryDefaultCompletion = isLaundry ? 'Besok, 16:00 WIB' : undefined;
 
     const newOrder: Order = {
-      id: invoiceNum,
+      id: newId('sale'),
+      invoiceNumber: invoiceNum,
       orderNumber: orders.length + 1,
       branchId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
       date: new Date().toISOString(),
@@ -2036,13 +2063,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       customer: selectedCustomer || undefined,
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
-      subtotal,
+      subtotal: subtotal + effectiveItems.reduce((sum,item)=>sum+item.discountAmount,0),
       discountTotal: effectiveItems.reduce((sum, i) => sum + i.discountAmount, 0),
       taxTotal,
       serviceChargeTotal,
       total: grandTotal,
       paymentMethod,
-      paymentStatus: 'PAID',
+      paymentStatus: extraOptions?.paymentTender&&extraOptions.paymentTender.amount<grandTotal?'PENDING':'PAID',
+      ...(extraOptions?.paymentTender?{paymentTenders:[extraOptions.paymentTender]}:{}),
       cashReceived,
       changeAmount,
       qrisRef: paymentMethod === 'QRIS' ? `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}` : undefined,
@@ -2135,7 +2163,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Everything is computed up-front so the state updaters below stay pure
     // (React may invoke an updater more than once — side effects inside them
     // would duplicate the logs and double-deduct raw material stock).
-    const shouldDeductStock = !isSplit || (splitItems && splitItems.length > 0) || (extraOptions?.splitBillIndex === 1);
+    const shouldDeductStock = !isSplit || !!extraOptions?.paymentTender || (splitItems && splitItems.length > 0) || (extraOptions?.splitBillIndex === 1);
     const itemsForStock = splitItems && splitItems.length > 0 ? splitItems : cart;
 
     const soldQtyByProduct = new Map<string, number>();
@@ -2275,30 +2303,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         prevTables.map((t) => (t.id === selectedTable.id ? { ...t, status: 'AVAILABLE', currentOrderId: undefined } : t))
       );
     }
-
-    // 4. Update Shift Sales Summary
-    setShift((prevShift) => {
-      let cashSales = prevShift.cashSales;
-      let qrisSales = prevShift.qrisSales;
-      let cardSales = prevShift.cardSales;
-      let eWalletSales = prevShift.eWalletSales;
-
-      if (paymentMethod === 'CASH') cashSales += grandTotal;
-      else if (paymentMethod === 'QRIS') qrisSales += grandTotal;
-      else if (paymentMethod === 'DEBIT' || paymentMethod === 'CREDIT') cardSales += grandTotal;
-      else eWalletSales += grandTotal;
-
-      const totalSales = cashSales + qrisSales + cardSales + eWalletSales;
-      return {
-        ...prevShift,
-        cashSales,
-        qrisSales,
-        cardSales,
-        eWalletSales,
-        totalSales,
-        expectedCash: prevShift.initialCash + cashSales,
-      };
-    });
 
     // 5. Add Order to list
     setOrders((prevOrders) => [newOrder, ...prevOrders]);
@@ -2460,46 +2464,24 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setInventoryLogs((logs) => [...refundLogs, ...logs]);
     }
 
-    // 3. Deduct from Shift Sales Summary if completed
-    if (targetOrder.status === 'COMPLETED') {
-      setShift((prevShift) => {
-        let cashSales = prevShift.cashSales;
-        let qrisSales = prevShift.qrisSales;
-        let cardSales = prevShift.cardSales;
-        let eWalletSales = prevShift.eWalletSales;
-
-        if (targetOrder.paymentMethod === 'CASH') cashSales = Math.max(0, cashSales - targetOrder.total);
-        else if (targetOrder.paymentMethod === 'QRIS') qrisSales = Math.max(0, qrisSales - targetOrder.total);
-        else if (targetOrder.paymentMethod === 'DEBIT' || targetOrder.paymentMethod === 'CREDIT') cardSales = Math.max(0, cardSales - targetOrder.total);
-        else eWalletSales = Math.max(0, eWalletSales - targetOrder.total);
-
-        const totalSales = Math.max(0, cashSales + qrisSales + cardSales + eWalletSales);
-        return {
-          ...prevShift,
-          cashSales,
-          qrisSales,
-          cardSales,
-          eWalletSales,
-          totalSales,
-          expectedCash: Math.max(0, prevShift.initialCash + cashSales),
-        };
-      });
-    }
-
     if (soundEnabled) playPOSSound('delete');
   };
 
   // Retur / Refund Item Parsial
-  const refundOrderItems = (
+  const refundOrderItems = async (
     orderId: string,
     refundItems: { cartItemId: string; quantity: number; reason: string }[],
     refundMethod: 'CASH' | 'ORIGINAL_METHOD' = 'CASH'
-  ): OrderRefund | null => {
+  ): Promise<OrderRefund | null> => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'VOID' || refundItems.length === 0) return null;
+    if(pendingRefund(tenant.businessId,orderId)){
+      void runSync(syncTarget,true);
+      throw new Error('Refund sebelumnya masih menunggu konfirmasi cloud. Tunggu sinkronisasi sebelum membuat refund baru.');
+    }
 
     const refundTimestamp = new Date().toISOString();
-    const refundId = `RFD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
+    const refundId = newId('refund');
 
     let subtotalRefund = 0;
     const orderRefundItems: OrderRefundItem[] = [];
@@ -2543,7 +2525,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const ratio = subtotalOriginal > 0 ? subtotalRefund / subtotalOriginal : 0;
     const taxRefund = targetOrder.taxTotal > 0 ? Math.round(targetOrder.taxTotal * ratio) : 0;
     const serviceRefund = targetOrder.serviceChargeTotal > 0 ? Math.round(targetOrder.serviceChargeTotal * ratio) : 0;
-    const totalRefund = subtotalRefund + taxRefund + serviceRefund;
+    const command={clientRefundId:refundId,occurredAt:refundTimestamp,refundMethod,
+      reason:refundItems.map(item=>item.reason).filter(Boolean).join(', ')||'Retur item',
+      items:orderRefundItems.map(item=>({clientItemId:item.cartItemId,quantity:item.quantity}))};
+    enqueueCashCommand(tenant.businessId,{action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
+      clientEventId:refundId,clientTxnId:targetOrder.id,refund:command}});
+    await runSync(syncTarget,true);
+    const acknowledged=refundAcknowledgment(tenant.businessId,refundId);
+    if(!acknowledged)throw new Error('Refund menunggu konfirmasi cloud; perintah tersimpan dan akan dicoba kembali dengan ID yang sama.');
+    subtotalRefund=Number(acknowledged.subtotal);
+    const authoritativeTax=Number(acknowledged.tax),authoritativeService=Number(acknowledged.service);
+    const totalRefund=Number(acknowledged.amount);
+    window.dispatchEvent(new Event('financial-updated'));
 
     const newRefund: OrderRefund = {
       id: refundId,
@@ -2552,8 +2545,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       timestamp: refundTimestamp,
       items: orderRefundItems,
       subtotalRefund,
-      taxRefund,
-      serviceRefund,
+      taxRefund:authoritativeTax,
+      serviceRefund:authoritativeService,
       totalRefund,
       refundMethod,
       reason: refundItems.map((r) => r.reason).filter(Boolean).join(', ') || 'Retur Parsial Item',
@@ -2570,12 +2563,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (!rfItem) return it;
             return {
               ...it,
-              refundedQuantity: (it.refundedQuantity || 0) + rfItem.quantity,
+              refundedQuantity: Math.max(it.refundedQuantity||0,(targetOrder.items.find(line=>line.id===it.id)?.refundedQuantity||0)+rfItem.quantity),
             };
           });
 
           const currentRefunds = o.refunds || [];
-          const newRefundTotal = (o.refundTotal || 0) + totalRefund;
+          const newRefundTotal = Math.max(o.refundTotal||0,(targetOrder.refundTotal||0)+totalRefund);
 
           // Check if all items in order are now 100% refunded
           const allRefunded = updatedItems.every(
@@ -2585,9 +2578,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return {
             ...o,
             items: updatedItems,
-            refunds: [newRefund, ...currentRefunds],
+            refunds: currentRefunds.some(refund=>refund.id===newRefund.id)?currentRefunds:[newRefund, ...currentRefunds],
             refundTotal: newRefundTotal,
-            status: allRefunded ? 'VOID' : o.status,
+            status: o.status,
             voidReason: allRefunded ? `Semua item diretur (${newRefund.reason})` : o.voidReason,
           };
         }
@@ -2691,20 +2684,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setInventoryLogs((logs) => [...refundLogs, ...logs]);
     }
 
-    // 3. Deduct from Shift Sales if CASH refund
-    if (refundMethod === 'CASH') {
-      setShift((prevShift) => {
-        const cashSales = Math.max(0, prevShift.cashSales - totalRefund);
-        const totalSales = Math.max(0, prevShift.totalSales - totalRefund);
-        return {
-          ...prevShift,
-          cashSales,
-          totalSales,
-          expectedCash: Math.max(0, prevShift.initialCash + cashSales),
-        };
-      });
-    }
-
     if (soundEnabled) playPOSSound('delete');
 
     return newRefund;
@@ -2729,7 +2708,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const discountTotal = cart.reduce((s, i) => s + i.discountAmount, 0);
     const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
     const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
-    const grandTotal = Math.max(0, subtotal + taxTotal + serviceChargeTotal - discountTotal);
+    const grandTotal = Math.max(0, subtotal + taxTotal + serviceChargeTotal);
 
     const isLaundry = settings.businessSector === 'LAUNDRY';
     const isCarwash = settings.businessSector === 'CARWASH';
@@ -2745,7 +2724,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const laundryDefaultCompletion = isLaundry ? 'Besok, 16:00 WIB' : undefined;
 
     const held: Order = {
-      id: invoiceNum,
+      id: newId('hold'),
+      invoiceNumber: invoiceNum,
       orderNumber: orders.length + heldOrders.length + 1,
       date: new Date().toISOString(),
       items: [...cart],
@@ -2755,7 +2735,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       customer: selectedCustomer || undefined,
       servedByStaffId: selectedStaff?.id,
       servedByStaffName: selectedStaff?.name || shift.cashierName,
-      subtotal,
+      subtotal: subtotal + discountTotal,
       discountTotal,
       taxTotal,
       serviceChargeTotal,
@@ -2893,7 +2873,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const targetOrder = orders.find((o) => o.id === orderId) || heldOrders.find((o) => o.id === orderId);
     if (!targetOrder) return null;
 
-    const changeAmount = Math.max(0, (cashReceived || 0) - targetOrder.total);
+    if(targetOrder.paymentStatus==='PAID'||targetOrder.status==='VOID')return null;
+    const paidSoFar=(targetOrder.paymentTenders||[]).reduce((sum,tender)=>sum+tender.amount,0);
+    const remaining=Math.max(0,targetOrder.total-paidSoFar);
+    const changeAmount = Math.max(0, (cashReceived || 0) - remaining);
 
     const updatedOrder: Order = {
       ...targetOrder,
@@ -2902,6 +2885,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'COMPLETED',
       cashReceived,
       changeAmount,
+      ...(targetOrder.paymentTenders?.length?{paymentTenders:[...targetOrder.paymentTenders,{
+        clientPaymentId:newId(),method:paymentMethod,amount:remaining,createdAt:new Date().toISOString(),
+      }]}:{}),
       qrisRef: paymentMethod === 'QRIS' ? (qrisRef || `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}`) : undefined,
     };
 
@@ -2936,29 +2922,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         )
       );
     }
-
-    // Update Shift Sales
-    setShift((prev) => {
-      const isCash = paymentMethod === 'CASH';
-      const isQris = paymentMethod === 'QRIS';
-      const isCard = paymentMethod === 'DEBIT';
-      const isEWallet = paymentMethod === 'SHOPEEPAY';
-
-      const cashSales = isCash ? prev.cashSales + updatedOrder.total : prev.cashSales;
-      const qrisSales = isQris ? prev.qrisSales + updatedOrder.total : prev.qrisSales;
-      const cardSales = isCard ? prev.cardSales + updatedOrder.total : prev.cardSales;
-      const eWalletSales = isEWallet ? prev.eWalletSales + updatedOrder.total : prev.eWalletSales;
-
-      return {
-        ...prev,
-        cashSales,
-        qrisSales,
-        cardSales,
-        eWalletSales,
-        totalSales: prev.totalSales + updatedOrder.total,
-        expectedCash: prev.expectedCash + (isCash ? updatedOrder.total : 0),
-      };
-    });
 
     // Telemetry
     posthogTelemetry.trackTransactionCompleted({
@@ -3176,122 +3139,41 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (soundEnabled) playPOSSound('payment_success');
   };
 
-  const startShift = (cashierName: string, initialCash: number): Shift => {
-    const sId = newId('shift');
-    const newShift: Shift = {
-      id: sId,
-      cashierName,
-      startTime: new Date().toISOString(),
-      initialCash,
-      cashSales: 0,
-      qrisSales: 0,
-      cardSales: 0,
-      eWalletSales: 0,
-      totalSales: 0,
-      totalCashIn: 0,
-      totalCashOut: 0,
-      expectedCash: initialCash,
-      totalOrders: 0,
-      status: 'OPEN',
-    };
-    setShift(newShift);
-
-    if (initialCash > 0) {
-      const initialLog: CashMovement = {
-        id: newId('csh'),
-        type: 'CASH_IN',
-        category: 'MODAL_AWAL',
-        amount: initialCash,
-        description: `Modal Awal Kasir Shift (${cashierName})`,
-        timestamp: new Date().toISOString(),
-        cashierName,
-        shiftId: sId,
-        businessSector: activeSector,
-        userId: storeOwnerId,
-      };
-      setCashMovements((prev) => [initialLog, ...prev]);
-    }
-
-    return newShift;
+  const startShift = async (cashierName:string,initialCash:number):Promise<Shift> => {
+    const response=await fetch('/api/v1/finance/shift/open',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sector:activeSector,outletId:syncTarget.outletId,clientShiftId:newId('shift'),cashierName,initialCash})});
+    const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'SHIFT_OPEN_FAILED');
+    setShift(data.shift);window.dispatchEvent(new Event('financial-updated'));return data.shift;
   };
-
-  const endShift = (actualCash: number, notes?: string): Shift => {
-    const shiftOrdersCount = orders.filter(
-      (o) => o.shiftId === shift.id && o.status === 'COMPLETED'
-    ).length;
-
-    const shiftMovements = cashMovements.filter((m) => m.shiftId === shift.id);
-    let totalCashIn = 0;
-    let totalCashOut = 0;
-
-    shiftMovements.forEach((m) => {
-      if (m.category === 'MODAL_AWAL') return;
-      if (m.type === 'CASH_IN') totalCashIn += m.amount;
-      else if (m.type === 'CASH_OUT') totalCashOut += m.amount;
-    });
-
-    const endedShift: Shift = {
-      ...shift,
-      endTime: new Date().toISOString(),
-      actualCash,
-      totalCashIn,
-      totalCashOut,
-      difference: actualCash - shift.expectedCash,
-      totalOrders: shiftOrdersCount,
-      notes: notes || shift.notes,
-      status: 'CLOSED',
-    };
-    setShift(endedShift);
-    setShiftHistory((prev) => [endedShift, ...prev]);
-    return endedShift;
+  const endShift = async (actualCash:number,notes?:string):Promise<Shift> => {
+    await runSync(syncTarget,true);
+    const status=financialStatus(tenant.businessId);
+    if(status.pending||status.lastError)throw new Error('PENDING_FINANCIAL_SYNC');
+    const response=await fetch('/api/v1/finance/shift/close',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sector:activeSector,outletId:syncTarget.outletId,clientShiftId:shift.id,actualCash,notes})});
+    const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'SHIFT_CLOSE_FAILED');
+    setShift(data.shift);setShiftHistory(previous=>[data.shift,...previous.filter(row=>row.id!==data.shift.id)]);
+    window.dispatchEvent(new Event('financial-updated'));return data.shift;
   };
-
-  const addCashMovement = (
-    type: CashMovementType,
-    category: CashMovementCategory,
-    amount: number,
-    description: string,
-    recipientOrSource?: string
-  ): CashMovement => {
-    const activeCashier = authUser?.user_metadata?.full_name || currentUser.name || 'Kasir';
-    const movement: CashMovement = {
-      id: newId('csh'),
-      type,
-      category,
-      amount: Math.abs(amount),
-      description: description.trim(),
-      timestamp: new Date().toISOString(),
-      cashierName: activeCashier,
-      shiftId: shift.id,
-      businessSector: activeSector,
-      userId: storeOwnerId,
-      recipientOrSource: recipientOrSource?.trim(),
-    };
-
-    setCashMovements((prev) => [movement, ...prev]);
-
-    if (category === 'MODAL_AWAL') {
-      setShift((prev) => ({
-        ...prev,
-        initialCash: Math.abs(amount),
-      }));
-    }
-
-    if (soundEnabled) playPOSSound('click');
-    return movement;
+  const addCashMovement = (type:CashMovementType,category:CashMovementCategory,amount:number,description:string,recipientOrSource?:string):CashMovement=>{
+    if(!Number.isFinite(amount)||amount<=0)throw new Error('INVALID_CASH_AMOUNT');
+    const movement:CashMovement={id:newId('cash'),type,category,amount:Math.abs(amount),description:description.trim(),
+      timestamp:new Date().toISOString(),cashierName:currentUser.name,shiftId:shift.id,businessSector:activeSector,userId:storeOwnerId,
+      branchId:syncTarget.outletId,recipientOrSource:recipientOrSource?.trim()};
+    enqueueCashCommand(tenant.businessId,cashMovementToCommand(activeSector,movement,syncTarget.outletId!));
+    setCashMovements(previous=>[movement,...previous]);setSyncStatus(financialStatus(tenant.businessId));
+    void runSync(syncTarget);return movement;
   };
-
-  const deleteCashMovement = (id: string) => {
-    setCashMovements((prev) => prev.filter((m) => m.id !== id));
-    if (soundEnabled) playPOSSound('delete');
+  const deleteCashMovement = (id:string)=>{
+    enqueueCashCommand(tenant.businessId,{action:'reverse',body:{sector:activeSector,outletId:syncTarget.outletId!,
+      clientEventId:'reverse:'+id,originalEventId:id,reason:'Koreksi mutasi kas oleh owner'}});
+    setSyncStatus(financialStatus(tenant.businessId));void runSync(syncTarget);
   };
-
-  const setInitialCash = (amount: number) => {
-    const val = Math.max(0, amount);
-    setShift((prev) => ({
-      ...prev,
-      initialCash: val,
-    }));
+  const setInitialCash = (amount:number)=>{
+    if(!Number.isFinite(amount)||amount<0)throw new Error('INVALID_CASH_AMOUNT');
+    // A change to opening cash is an explicit signed correction, preserving history.
+    const delta=amount-shift.initialCash;
+    if(delta!==0)addCashMovement(delta>0?'CASH_IN':'CASH_OUT','MODAL_AWAL',Math.abs(delta),'Koreksi modal awal shift');
   };
 
   const updateOrderLaundryStatus = (
@@ -3578,15 +3460,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         applyCartItemDiscount,
         removeFromCart,
         clearCart,
-        processPayment: requireWritable(processPayment),
-        voidOrder: requireWritable(voidOrder),
-        refundOrderItems: requireWritable(refundOrderItems),
+        processPayment: requireFinancialWritable(processPayment),
+        voidOrder: requireFinancialWritable(voidOrder),
+        refundOrderItems: requireFinancialWritable(refundOrderItems),
         syncStatus,
+        cloudReady:cloudReady&&sharedSyncStatus.ready,cloudError,legacyMigrationStatus,mapLegacyOutlet,operationalSyncStatus:sharedSyncStatus,
         forceSync: () => { void runSync(syncTarget, true); void sharedSync.current?.refresh(false); void sharedSync.current?.flush(); },
         holdOrder: requireWritable(holdOrder),
         recallHoldOrder: requireWritable(recallHoldOrder),
         cancelHoldOrder: requireWritable(cancelHoldOrder),
-        payPendingOrder: requireWritable(payPendingOrder),
+        payPendingOrder: requireFinancialWritable(payPendingOrder),
         updateOrderLaundryStatus: requireWritable(updateOrderLaundryStatus),
         updateLaundryStage: requireWritable(updateLaundryStage),
         sendLaundryWaNotification: requireWritable(sendLaundryWaNotification),
@@ -3622,12 +3505,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteTable: requireWritable(deleteTable),
         updateSettings,
         activateBusinessSector,
-        startShift: requireWritable(startShift),
-        endShift: requireWritable(endShift),
+        startShift: requireFinancialWritable(startShift),
+        endShift: requireFinancialWritable(endShift),
         cashMovements,
-        addCashMovement: requireWritable(addCashMovement),
-        deleteCashMovement: requireWritable(deleteCashMovement),
-        setInitialCash: requireWritable(setInitialCash),
+        addCashMovement: requireFinancialWritable(addCashMovement),
+        deleteCashMovement: requireFinancialWritable(deleteCashMovement),
+        setInitialCash: requireFinancialWritable(setInitialCash),
       }}
     >
       {/* Anything below can read the active business unit via useTenant(). */}

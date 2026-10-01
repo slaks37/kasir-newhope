@@ -47,23 +47,23 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
   const isShiftOpen = shift.status === 'OPEN';
 
   // Calculate current orders count for active shift
-  const activeShiftOrdersCount = orders.filter(
-    (o) => o.shiftId === shift.id && o.status === 'COMPLETED'
-  ).length;
+  const activeShiftOrdersCount = shift.totalOrders || 0;
 
   const actualCashNum = parseFloat(actualCashInput) || 0;
   const differenceNum = actualCashNum - shift.expectedCash;
 
-  const handleStartShiftSubmit = (e: React.FormEvent) => {
+  const handleStartShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCashierName.trim()) return;
-    startShift(newCashierName.trim(), newInitialCash || 0);
+    try { await startShift(newCashierName.trim(), newInitialCash || 0); } catch(error) { alert(error instanceof Error?error.message:'Shift belum dapat dibuka'); }
   };
 
-  const handleEndShiftSubmit = (e: React.FormEvent) => {
+  const handleEndShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const closed = endShift(actualCashNum, shiftNotes);
+    try {
+    const closed = await endShift(actualCashNum, shiftNotes);
     setClosingSuccessShift(closed);
+    } catch(error) { alert(error instanceof Error?error.message:'Shift belum dapat ditutup'); }
   };
 
   return (

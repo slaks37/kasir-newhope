@@ -44,6 +44,7 @@ try {
   await db.query("INSERT INTO pos.products(id,tenant_id,merchant_id,name,sku,price,cost_price,business_sector) VALUES($1,$2,$3,'Synthetic product','TEST',10000,4000,'FNB')",[product,tenant,merchant]);
   await db.query("INSERT INTO pos.transactions(id,tenant_id,merchant_id,cashier_user_id,business_sector,subtotal,total_amount,payment_method,payment_status,order_status,created_at) VALUES($1,$2,$3,$4,'FNB',10000,10000,'CASH','PAID','COMPLETED',now()-interval '1 hour')",[sale,tenant,merchant,cashier]);
   await db.query("INSERT INTO pos.transaction_items(id,transaction_id,tenant_id,product_id,business_sector,product_name,unit_price,unit_cost,quantity,total_price) VALUES($1,$2,$3,$4,'FNB','Synthetic product',10000,4000,1,10000)",[randomUUID(),sale,tenant,product]);
+  await db.query("INSERT INTO pos.payments(id,tenant_id,merchant_id,transaction_id,payment_method,payment_status,amount) VALUES($1,$2,$3,$4,'CASH','PAID',10000)",[randomUUID(),tenant,merchant,sale]);
   const populated=await loadMerchantSnapshot(db,{subject:'brain-owner'},'brain-test');
   assert.equal(populated.products[0].id,product);
   const populatedReport=reportAggregates(populated,{period:'LAST_30'});

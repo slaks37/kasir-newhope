@@ -38,6 +38,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   // Equal Split State
   const [paxCount, setPaxCount] = useState<number>(2);
   const [paidPax, setPaidPax] = useState<number[]>([]);
+  const [equalOrderId,setEqualOrderId]=useState<string>();
   const [activePayingPax, setActivePayingPax] = useState<number | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
 
@@ -79,6 +80,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   };
 
   const handlePayEqualPax = (paxIndex: number) => {
+    if(paidPax.includes(paxIndex))return;
     const nextPaid = [...paidPax, paxIndex];
     const isFinished = nextPaid.length >= paxCount;
 
@@ -87,6 +89,9 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       isSplitBill: true,
       splitBillIndex: paxIndex,
       splitAmount: perPaxAmount,
+      parentOrderId:equalOrderId,
+      paymentTender:{clientPaymentId:crypto.randomUUID(),method:paymentMethod,
+        amount:Math.floor(grandTotal/paxCount)+(paxIndex<=grandTotal%paxCount?1:0),createdAt:new Date().toISOString()},
       skipClearCart: !isFinished,
     };
 
@@ -102,11 +107,13 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
     );
 
     if (createdOrder) {
+      setEqualOrderId(createdOrder.id);
       setPaidOrders((prev) => ({ ...prev, [paxIndex]: createdOrder }));
       // Langsung munculkan nota untuk pemesan yang baru bayar
       setSelectedReceiptOrder(createdOrder);
     }
 
+    if(!createdOrder)return;
     setPaidPax(nextPaid);
     setActivePayingPax(null);
 

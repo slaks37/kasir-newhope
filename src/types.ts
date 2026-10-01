@@ -262,6 +262,8 @@ export interface Customer {
 }
 
 export interface Order {
+  paymentTenders?: Array<{clientPaymentId:string;method:PaymentMethod;amount:number;createdAt:string}>;
+  invoiceNumber?: string;
   id: string; // INV-20260810-001
   orderNumber: number;
   branchId?: string;
@@ -520,6 +522,7 @@ export type CashMovementCategory =
   | 'PENGELUARAN_LAIN'; // Pengeluaran Lain-lain
 
 export interface CashMovement {
+  branchId?: string;
   id: string;
   type: CashMovementType;
   category: CashMovementCategory;

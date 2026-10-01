@@ -96,8 +96,9 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
     const finalReason = customReason.trim() || selectedReason;
     setIsProcessing(true);
 
-    setTimeout(() => {
-      const result = refundOrderItems(order.id, itemsToRefund, refundMethod);
+    setTimeout(async () => {
+      try {
+      const result = await refundOrderItems(order.id, itemsToRefund, refundMethod);
       setIsProcessing(false);
       if (result) {
         setCompletedRefund(result);
@@ -105,6 +106,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
       } else {
         alert(t('common.error'));
       }
+      } catch(error) { setIsProcessing(false); alert(error instanceof Error?error.message:t('common.error')); }
     }, 400);
   };
 

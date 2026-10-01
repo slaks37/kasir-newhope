@@ -21,6 +21,7 @@ import {
   Globe,
   CloudUpload,
   CloudAlert,
+  CloudCheck,
   LogOut,
   MessageSquare,
 } from "lucide-react";
@@ -59,6 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
     setActiveTab,
     currentUser,
     syncStatus,
+    operationalSyncStatus,
     forceSync,
     customers,
     orders,
@@ -92,6 +94,20 @@ export const Header: React.FC<HeaderProps> = ({
   ]);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const syncNeedsOutlet = syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED') || syncStatus.lastError === 'LEGACY_OUTLET_MAPPING_REQUIRED';
+  const syncFailed = Boolean(syncStatus.lastError || syncStatus.failures > 0 || operationalSyncStatus.error);
+  const syncLabel = syncFailed ? 'Sync failed' : syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu`
+    : operationalSyncStatus.pending ? `${operationalSyncStatus.pending} perubahan menunggu`
+    : syncStatus.inFlight||!operationalSyncStatus.ready ? 'Menghubungkan cloud…' : syncStatus.lastSyncedAt ? 'Cloud Synced' : 'Cloud belum diverifikasi';
+  const lastSync = syncStatus.lastSyncedAt && Number.isFinite(Date.parse(syncStatus.lastSyncedAt))
+    ? `Terakhir sinkron ${new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(syncStatus.lastSyncedAt))}`
+    : 'Belum ada konfirmasi cloud';
+  const syncHelp = syncNeedsOutlet
+    ? `${syncStatus.pending} transaksi menunggu. Outlet asal belum terhubung atau belum aktif; selesaikan pengaturan outlet untuk melanjutkan.`
+    : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
+    ? 'Antrean perangkat tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
+    : syncFailed ? `${syncStatus.pending} transaksi menunggu. ${syncStatus.lastError || 'Gagal menghubungi cloud'}. Klik untuk mencoba lagi.`
+    : `${syncLabel}. ${lastSync}.`;
 
   return (
     <header className="nh-workspace-header bg-white border-b border-slate-200 text-slate-900 flex items-center justify-between sticky top-0 z-30">
@@ -149,33 +165,20 @@ export const Header: React.FC<HeaderProps> = ({
             <span>{t('header.heldOrdersCount', { count: heldOrders.length })}</span>
           </button>
         )}
-        {(syncStatus.pending > 0 || syncStatus.failures > 0) && (
           <button
-            className={`nh-header-sync ${syncStatus.failures > 0 ? "has-error" : ""} ${syncStatus.failures >= 3 ? "is-critical text-red-600 font-bold animate-pulse" : ""}`}
-            onClick={syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED') ? undefined : forceSync}
-            disabled={syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED')}
-            title={
-              syncStatus.lastError?.startsWith('OUTLET_SETUP_REQUIRED')
-                ? `${syncStatus.pending} transaksi menunggu. Outlet belum aktif; aktifkan slot atau tingkatkan paket agar pengiriman dapat dilanjutkan.`
-                : syncStatus.lastError === 'LOCAL_QUEUE_CORRUPT' || syncStatus.lastError === 'LOCAL_QUEUE_READ_FAILED'
-                ? 'Antrean transaksi lokal tidak dapat dibaca. Jangan hapus data browser; hubungi admin untuk pemulihan.'
-                : syncStatus.lastError === 'LOCAL_QUEUE_WRITE_FAILED'
-                ? 'Penyimpanan browser gagal. Transaksi baru tidak dapat diselesaikan sampai masalah ini diperbaiki.'
-                : syncStatus.failures >= 3
-                ? `PERINGATAN: ${syncStatus.failures}x gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Cek koneksi & klik untuk coba lagi.`
-                : syncStatus.failures > 0
-                ? `Gagal mengirim (${syncStatus.lastError ?? "tidak diketahui"}). ${syncStatus.pending} transaksi menunggu. Klik untuk mencoba lagi.`
-                : `${syncStatus.pending} transaksi sedang dikirim ke pusat.`
-            }
+            className={`nh-header-sync ${syncFailed ? 'has-error' : ''}`}
+            onClick={syncNeedsOutlet ? undefined : forceSync}
+            disabled={syncNeedsOutlet || syncStatus.inFlight}
+            title={syncHelp}
+            aria-label={`${syncLabel}. ${syncStatus.pending > 0 ? `${syncStatus.pending} transaksi menunggu. ` : ''}${lastSync}`}
           >
-            {syncStatus.failures > 0 ? (
-              <CloudAlert size={17} className={syncStatus.failures >= 3 ? "text-red-500" : ""} />
-            ) : (
-              <CloudUpload size={17} />
-            )}
-            <span>{syncStatus.pending}</span>
+            {syncFailed ? <CloudAlert size={17} /> : syncStatus.pending === 0 && syncStatus.lastSyncedAt ? <CloudCheck size={17} /> : <CloudUpload size={17} />}
+            <span className="flex flex-col items-start text-left" aria-live="polite">
+              <strong>{syncLabel}</strong>
+              {syncFailed && syncStatus.pending > 0 && <span>{syncStatus.pending} transaksi menunggu</span>}
+              <span className="text-[9px]">{lastSync}</span>
+            </span>
           </button>
-        )}
         <details
           className="nh-toolbar-more"
           onKeyDown={(e) => {

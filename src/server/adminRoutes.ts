@@ -293,7 +293,12 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     '/api/admin/transactions',
     guard('VIEW_TRANSACTION_LOG'),
     wrap(async (req, res, db) => {
-      res.json({ ok: true, ...(await repo.transactionLog(db, req.query as repo.ListFilter)) });
+      try {
+        res.json({ ok: true, ...(await repo.transactionLog(db, req.query as repo.ListFilter)) });
+      } catch (err) {
+        if (err instanceof repo.TransactionFilterError) return res.status(400).json({ ok: false, error: err.message });
+        throw err;
+      }
     })
   );
 

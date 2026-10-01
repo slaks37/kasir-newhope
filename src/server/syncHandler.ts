@@ -14,6 +14,14 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/payroll': ['POST'],
   '/api/v1/sync/state': ['GET','POST'],
   '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
+  '/api/v1/reports/summary': ['GET'],
+  '/api/v1/reports/transactions': ['GET'],
+  '/api/v1/finance/refund': ['POST'],
+  '/api/v1/finance/cash': ['POST'],
+  '/api/v1/finance/cash/reverse': ['POST'],
+  '/api/v1/finance/shift': ['GET'],
+  '/api/v1/finance/shift/open': ['POST'],
+  '/api/v1/finance/shift/close': ['POST'],
 };
 
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */

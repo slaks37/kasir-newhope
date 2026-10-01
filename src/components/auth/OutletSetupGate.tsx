@@ -3,13 +3,14 @@ import { Building2, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePOS } from '../../context/POSContext';
 import { prepareOutletBusiness } from '../../lib/sync/outlets';
+import { LegacyRecoveryPanel } from '../sync/LegacyRecoveryPanel';
 
 type OutletRow = { id: string; name: string; business_sector: string; is_active: boolean };
 
 /** An outlet is counted only when the owner explicitly activates it. */
 export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) {
   const { user, configured } = useAuth();
-  const { settings, syncStatus } = usePOS();
+  const { settings, syncStatus, cloudReady, cloudError } = usePOS();
   const sector = settings.businessSector || 'FNB';
   const [rows, setRows] = useState<OutletRow[]>([]);
   const [limit, setLimit] = useState(2);
@@ -55,14 +56,15 @@ export function OutletSetupGate({ onManagePlan }: { onManagePlan: () => void }) 
   const active = rows.filter(row => row.is_active);
   const current = active.filter(row => row.business_sector === sector);
   const selectedIsActive = current.some(row => row.id === settings.activeBranchId);
-  if (!user?.id || !configured || (loaded && selectedIsActive && !error)) return null;
+  if (!user?.id || !configured || (loaded && selectedIsActive && cloudReady && !error)) return null;
 
   if (!loaded || current.length) return <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-labelledby="outlet-check-title">
     <div className="w-full max-w-md rounded-3xl bg-white p-6 text-slate-900 shadow-2xl space-y-4">
       <h2 id="outlet-check-title" className="text-xl font-black">Verifikasi outlet cloud</h2>
-      <p role={error?'alert':undefined} className="text-sm text-slate-700">{error || (loaded ? 'Menyiapkan outlet aktif di perangkat ini…' : 'Memeriksa outlet aktif dan kapasitas paket…')}</p>
+      <p role={error||cloudError?'alert':undefined} className="text-sm text-slate-700">{error || cloudError || (loaded ? 'Menyiapkan outlet aktif di perangkat ini…' : 'Memeriksa outlet aktif dan kapasitas paket…')}</p>
       {(error || loaded) && <button type="button" onClick={()=>{void refresh();window.dispatchEvent(new Event('outlets-updated'));}} className="rounded-xl bg-amber-500 px-4 py-2 font-bold">Coba lagi</button>}
       <p className="text-xs text-slate-600">Kasir belum dibuka agar transaksi tidak hanya tersimpan di perangkat saat status cloud belum terverifikasi.</p>
+      <LegacyRecoveryPanel />
     </div>
   </div>;
 

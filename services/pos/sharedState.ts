@@ -4,12 +4,13 @@ import { trustedPrincipal, tenantForPrincipal } from '../shared/auth';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { assertFreeScope, freePlanState, FreePlanAccessError } from '../billing/freePlan';
 import { writeActivity, SECTORS } from './activity';
+import { ORDER_OPERATION_FIELDS } from '../../src/lib/sync/orderOperations';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const GLOBAL_KINDS = new Set(['users', 'staff_members']);
 const SECTOR_KINDS = new Set([
-  'categories', 'products', 'tables', 'customers', 'orders', 'held_orders', 'inventory_logs',
-  'cash_movements', 'shift', 'shift_history', 'promo_codes', 'stock_items',
+  'categories', 'products', 'tables', 'customers', 'order_operations', 'held_orders', 'inventory_logs',
+  'promo_codes', 'stock_items',
   'bundles', 'attendance_logs', 'kds_tickets', 'carwash_queue', 'bookings',
   'commission_rules', 'payroll_slips', 'sent_lifecycle_hooks', 'store_settings',
 ]);
@@ -52,6 +53,11 @@ function validOperations(value: unknown): Operation[] | null {
       const settings = r.value as Record<string, unknown>;
       if ('subscription' in settings || 'branches' in settings || 'activeBranchId' in settings ||
         'logoUrl' in settings || 'registeredTerminalId' in settings) return null;
+    }
+    if(r.kind==='order_operations'&&!r.deleted){
+      const allowed=new Set<string>(ORDER_OPERATION_FIELDS);
+      if(Object.keys(r.value as object).some(key=>!allowed.has(key)))return null;
+      if((r.value as Record<string,unknown>).id!==r.recordId)return null;
     }
     if (r.deleted && r.value !== null) return null;
     if (JSON.stringify(r.value).length > 64000) return null;

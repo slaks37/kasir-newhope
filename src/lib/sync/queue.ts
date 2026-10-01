@@ -1,11 +1,11 @@
 /**
- * Antrian sinkronisasi transaksi — offline-first.
+ * Durable financial outbox. The server ledger is authoritative; these records
+ * are only pending commands and must never be counted as server revenue.
  *
  * PRINSIP YANG MENENTUKAN SELURUH FILE INI
  *
- * 1. KASIR TIDAK PERNAH MENUNGGU. Transaksi masuk antrian dan selesai. Tidak
- *    ada pengiriman yang memblokir layar bayar; internet mati tidak boleh
- *    membuat pelanggan berdiri menunggu.
+ * 1. SERVER ACKNOWLEDGMENT determines whether a transaction is cloud-synced.
+ *    A local write alone means pending, not successfully recorded revenue.
  *
  * 2. ANTRIAN BERTAHAN DI DISK. Disimpan di localStorage sebelum apa pun
  *    dikirim. Tab ditutup, laptop mati, browser crash — transaksinya tetap ada
@@ -28,6 +28,7 @@ import type { Order, BusinessSector } from '../../types';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
 const META_PREFIX = 'newhope_sync_meta_';
+const MIGRATION_ACK_PREFIX = 'newhope_legacy_financial_ack_';
 
 /** Maksimum transaksi per kiriman. Server menolak di atas 500. */
 const BATCH_SIZE = 200;
@@ -36,6 +37,7 @@ const BATCH_SIZE = 200;
 const BACKOFF_MS = [5_000, 15_000, 45_000, 120_000, 300_000];
 
 export interface SyncPayloadItem {
+  clientItemId?: string;
   productRef: string;
   productName: string;
   productDescription?: string;
@@ -47,6 +49,8 @@ export interface SyncPayloadItem {
 }
 
 export interface SyncPayloadTxn {
+  tenders?: Array<{clientPaymentId:string;method:string;amount:number;createdAt:string}>;
+  shiftId?: string;
   clientTxnId: string;
   branchId?: string;
   invoiceNumber?: string;
@@ -64,6 +68,15 @@ export interface SyncPayloadTxn {
   appModule?: string;
   createdAt?: string;
   items: SyncPayloadItem[];
+  refunds?: Array<{
+    clientRefundId: string;
+    occurredAt: string;
+    refundMethod: 'CASH' | 'ORIGINAL_METHOD';
+    reason: string;
+    items: Array<{ clientItemId: string; quantity: number }>;
+  }>;
+  /** Local migration provenance; never sent as financial data to the API. */
+  legacyMigration?: { sourceKey: string; fingerprint: string; originalBranchRef?: string };
 }
 
 export interface SyncStatus {
@@ -99,6 +112,7 @@ function readQueue(businessId: string): SyncPayloadTxn[] {
   } catch { /* Preserve the original bytes for manual recovery. */ }
   throw new Error('LOCAL_QUEUE_CORRUPT');
 }
+export const getPendingTransactions = (businessId:string):SyncPayloadTxn[] => readQueue(businessId);
 
 function writeQueue(businessId: string, rows: SyncPayloadTxn[]): void {
   try {
@@ -132,6 +146,47 @@ function writeMeta(businessId: string, m: Partial<SyncMeta>): void {
   }
 }
 
+/** Canonical encoding also detects an update made while an older revision is in flight. */
+export function financialPayloadFingerprint(txn: SyncPayloadTxn): string {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') return Object.fromEntries(
+      Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, v]) => [key, canonical(v)]));
+    return value;
+  };
+  const { legacyMigration: _provenance, ...payload } = txn;
+  return JSON.stringify(canonical(payload));
+}
+
+export function isLegacyTransactionAcknowledged(businessId: string, sourceKey: string, id: string, fingerprint: string): boolean {
+  try {
+    const ack = JSON.parse(localStorage.getItem(`${MIGRATION_ACK_PREFIX}${businessId}`) || '{}');
+    return ack[sourceKey]?.[id] === fingerprint;
+  } catch { return false; }
+}
+
+function acknowledgeLegacyTransactions(businessId: string, batch: SyncPayloadTxn[]): void {
+  const migrated = batch.filter(txn => txn.legacyMigration);
+  if (!migrated.length) return;
+  const key = `${MIGRATION_ACK_PREFIX}${businessId}`;
+  let ack: Record<string, Record<string, string>>;
+  try { ack = JSON.parse(localStorage.getItem(key) || '{}'); }
+  catch { throw new Error('LOCAL_MIGRATION_CHECKPOINT_CORRUPT'); }
+  for (const txn of migrated) {
+    const source = txn.legacyMigration!;
+    ack[source.sourceKey] = { ...ack[source.sourceKey], [txn.clientTxnId]: source.fingerprint };
+  }
+  try { localStorage.setItem(key, JSON.stringify(ack)); }
+  catch { throw new Error('LOCAL_MIGRATION_CHECKPOINT_WRITE_FAILED'); }
+}
+
+/** Call only after a successful, authenticated financial read from this business. */
+export function markCloudRead(businessId: string, readAt = new Date().toISOString()): SyncStatus {
+  writeMeta(businessId, { lastSyncedAt: readAt });
+  return getStatus(businessId);
+}
+
 /**
  * Kunci idempotensi yang stabil untuk satu kumpulan transaksi.
  *
@@ -146,41 +201,43 @@ function writeMeta(businessId: string, m: Partial<SyncMeta>): void {
  * dan pembatalannya hilang tanpa jejak: antrian kosong, tidak ada error, tapi
  * uang yang sudah dikembalikan ke pelanggan tetap terhitung sebagai omzet.
  */
-function batchKey(businessId: string, txns: SyncPayloadTxn[]): string {
+async function batchKey(businessId: string, txns: SyncPayloadTxn[]): Promise<string> {
   const parts = txns
-    .map((t) => `${t.clientTxnId}|${t.paymentStatus}|${t.totalAmount}`)
+    .map(financialPayloadFingerprint)
     .sort();
-  // FNV-1a 32-bit. Cukup untuk membedakan batch; bukan fungsi kriptografis dan
-  // tidak dipakai untuk keamanan apa pun.
-  let h = 0x811c9dc5;
-  for (const s of parts) {
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 0x01000193) >>> 0;
-    }
-  }
-  return `${businessId}:${parts.length}:${h.toString(16)}`;
+  const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({businessId,parts})));
+  return `sync:${Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('')}`;
 }
 
 /** Mengubah Order aplikasi menjadi bentuk yang diterima server. */
 export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadTxn {
+  // Historical clients stored net subtotal. Normalize only that known layout;
+  // preserve the actual amount paid, never recalculate from today's catalogue.
+  const expected = order.subtotal-order.discountTotal+order.taxTotal+(order.serviceChargeTotal||0);
+  const subtotal = Math.abs(expected-order.total)>0.02 &&
+    Math.abs(order.subtotal+order.taxTotal+(order.serviceChargeTotal||0)-order.total)<=0.02
+    ? order.subtotal+order.discountTotal : order.subtotal;
   return {
     clientTxnId: order.id,
     branchId: order.branchId,
-    invoiceNumber: order.id,
+    invoiceNumber: order.invoiceNumber || order.id,
     cashierName: order.cashierName,
+    cashierRef: order.userId,
     cashierRole,
-    subtotal: order.subtotal,
+    subtotal,
     discountAmount: order.discountTotal,
     taxAmount: order.taxTotal,
     serviceChargeAmount: order.serviceChargeTotal || 0,
     totalAmount: order.total,
     paymentMethod: order.paymentMethod,
-    paymentStatus: order.status === 'VOID' ? 'CANCELLED' : 'COMPLETED',
+    ...(order.paymentTenders?.length?{tenders:order.paymentTenders}:{}),
+    paymentStatus: order.paymentStatus==='CANCELLED' ? 'CANCELLED' : order.refunds?.length ? 'COMPLETED' : order.status === 'VOID' ? 'CANCELLED' : order.paymentStatus === 'PENDING' ? 'PENDING' : 'COMPLETED',
     orderType: order.orderType,
     appModule: order.tableId ? 'TABLES' : 'POS',
     createdAt: order.date,
+    shiftId: order.shiftId,
     items: order.items.map((i) => ({
+      clientItemId: i.id,
       productRef: i.productId,
       productName: i.variantName ? `${i.name} (${i.variantName})` : i.name,
       unitPrice: i.unitPrice,
@@ -192,6 +249,13 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
       quantity: i.quantity,
       totalPrice: i.totalPrice,
     })),
+    ...(order.refunds?.length ? { refunds: order.refunds.map(refund => ({
+      clientRefundId: refund.id,
+      occurredAt: refund.timestamp,
+      refundMethod: refund.refundMethod,
+      reason: refund.reason,
+      items: refund.items.map(item => ({ clientItemId: item.cartItemId, quantity: item.quantity })),
+    })) } : {}),
   };
 }
 
@@ -387,9 +451,27 @@ export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
   // masuk untuk transaksi yang masih mengantri, tidak boleh menghasilkan dua
   // baris — yang terakhir menang karena statusnya lebih baru.
   const existing = q.findIndex((t) => t.clientTxnId === txn.clientTxnId);
-  if (existing >= 0) q[existing] = txn;
+  if (existing >= 0) q[existing] = { ...txn, legacyMigration: txn.legacyMigration || q[existing].legacyMigration };
   else q.push(txn);
   writeQueue(businessId, q);
+}
+
+/** A historical snapshot must never overwrite a newer pending void or payment. */
+export function enqueueLegacyTransaction(businessId: string, txn: SyncPayloadTxn): 'queued' | 'conflict' {
+  const q = readQueue(businessId);
+  const existing = q.findIndex(row => row.clientTxnId === txn.clientTxnId);
+  if (existing >= 0 && financialPayloadFingerprint(q[existing]) !== financialPayloadFingerprint(txn)) {
+    const previous = q[existing];
+    const explicitOutletResolution = previous.legacyMigration?.sourceKey === txn.legacyMigration?.sourceKey &&
+      previous.legacyMigration?.originalBranchRef === txn.legacyMigration?.originalBranchRef &&
+      financialPayloadFingerprint({ ...previous, branchId: undefined }) === financialPayloadFingerprint({ ...txn, branchId: undefined });
+    if (!explicitOutletResolution) return 'conflict';
+    q[existing] = txn;
+  }
+  if (existing >= 0) q[existing] = { ...q[existing], legacyMigration: txn.legacyMigration };
+  else q.push(txn);
+  writeQueue(businessId, q);
+  return 'queued';
 }
 
 let flushing = new Set<string>();
@@ -408,7 +490,9 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
   // sama-sama membaca antrian yang sama lalu saling menimpa saat memangkasnya.
   if (flushing.has(businessId)) return getStatus(businessId, true);
 
-  const all = readQueue(businessId);
+  let all: SyncPayloadTxn[];
+  try { all = readQueue(businessId); }
+  catch { return getStatus(businessId); }
   if (all.length === 0) return getStatus(businessId);
 
   const meta = readMeta(businessId);
@@ -425,22 +509,27 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     if (Number.isFinite(since) && since >= 0 && since < wait) return getStatus(businessId);
   }
 
+  const ready = all.filter(txn => !txn.legacyMigration || /^[0-9a-f-]{36}$/i.test(txn.branchId || ''));
+  if (!ready.length) {
+    writeMeta(businessId, { lastError: 'LEGACY_OUTLET_MAPPING_REQUIRED', failures: Math.max(1, meta.failures), lastErrorAt: new Date().toISOString() });
+    return getStatus(businessId);
+  }
   flushing.add(businessId);
-  const firstOutlet = all[0]?.branchId || target.outletId;
-  const batch = all.filter(txn => (txn.branchId || target.outletId) === firstOutlet).slice(0, BATCH_SIZE);
+  const firstOutlet = ready[0]?.branchId || target.outletId;
+  const batch = ready.filter(txn => (txn.branchId || target.outletId) === firstOutlet).slice(0, BATCH_SIZE);
 
   try {
     const res = await fetch('/api/v1/sync/transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        idempotencyKey: batchKey(`${businessId}:${firstOutlet || 'legacy'}`, batch),
+        idempotencyKey: await batchKey(`${businessId}:${firstOutlet || 'legacy'}`, batch),
         businessId,
         outletId: firstOutlet,
         sector: target.sector,
         storeName: target.storeName,
         ownerRef: target.ownerRef,
-        transactions: batch,
+        transactions: batch.map(({ legacyMigration: _provenance, ...txn }) => txn),
       }),
     });
 
@@ -455,15 +544,17 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     // Transaksi yang masuk antrian SELAMA pengiriman berlangsung harus tetap
     // tinggal, jadi antrian dibaca ulang, bukan memakai `all` yang sudah basi.
     const current = readQueue(businessId);
-    const sent = new Set(batch.map((t) => t.clientTxnId));
+    acknowledgeLegacyTransactions(businessId, batch);
+    const sent = new Map(batch.map((t) => [t.clientTxnId, financialPayloadFingerprint(t)]));
     writeQueue(
       businessId,
-      current.filter((t) => !sent.has(t.clientTxnId))
+      current.filter((t) => sent.get(t.clientTxnId) !== financialPayloadFingerprint(t))
     );
 
     writeMeta(businessId, {
       lastSyncedAt: new Date().toISOString(),
       lastError: null,
+      lastErrorAt: null,
       failures: 0,
     });
   } catch (err) {

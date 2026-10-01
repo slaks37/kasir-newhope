@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { Receipt, X, Filter, Calendar, Building2, Store } from 'lucide-react';
-import { api, angka, rupiah, waktu, SECTOR_LABEL, type Sector } from '../api';
+import { Receipt, X } from 'lucide-react';
+import { api, angka, rupiah, waktu } from '../api';
 import {
   Card,
-  Chip,
   Empty,
   ErrorBox,
   Loading,
@@ -19,6 +18,21 @@ import {
 } from '../ui';
 
 const MODULES = ['POS', 'TABLES', 'INVENTORY', 'CUSTOMERS', 'SYNC'].map((m) => ({ value: m, label: m }));
+const TIMEZONES = [
+  { value: 'Asia/Jakarta', label: 'WIB · Asia/Jakarta' },
+  { value: 'Asia/Makassar', label: 'WITA · Asia/Makassar' },
+  { value: 'Asia/Jayapura', label: 'WIT · Asia/Jayapura' },
+];
+
+function TransactionStatus({ transaction }: { transaction: any }) {
+  return <div className="text-[11px] leading-5">
+    <span className={transaction.included_in_revenue ? 'font-bold text-emerald-700' : 'font-bold text-slate-600'}>
+      {transaction.order_status || '—'}
+    </span>
+    <span className="block text-slate-500">{transaction.payment_status || '—'}</span>
+    {Number(transaction.refund_amount) > 0 && <span className="block text-rose-700">Refund {rupiah(transaction.refund_amount)}</span>}
+  </div>;
+}
 
 function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const { data, loading, error } = useAsync(() => api.transaction(id), [id]);
@@ -77,6 +91,14 @@ function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
                   {data.transaction.payment_method}
                 </span>
               </div>
+              <div className="pt-2 border-t border-slate-200">
+                <p className="text-[11px] font-bold text-slate-500 uppercase">Status Audit</p>
+                <TransactionStatus transaction={data.transaction} />
+              </div>
+              <div className="pt-2 border-t border-slate-200">
+                <p className="text-[11px] font-bold text-slate-500 uppercase">Outlet</p>
+                <p className="font-bold text-slate-900 mt-0.5">{data.transaction.outlet_name || '—'}</p>
+              </div>
             </div>
 
             {/* Line items table */}
@@ -126,9 +148,14 @@ function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
                 </div>
               )}
               <div className="flex justify-between border-t border-slate-200 pt-2 font-black text-sm text-slate-900">
-                <span>Total Transaksi:</span>
+                <span>Nilai Struk Asli:</span>
                 <span className="font-mono text-amber-600 text-base">{rupiah(data.transaction.total_amount)}</span>
               </div>
+              <div className="flex justify-between font-black text-sm text-emerald-800">
+                <span>Omzet Valid:</span>
+                <span className="font-mono">{rupiah(data.transaction.revenue_amount)}</span>
+              </div>
+              <p className="text-[11px] text-slate-500">Omzet memakai definisi server yang sama dengan laporan merchant, setelah refund. Struk void/batal tetap tersimpan untuk audit.</p>
             </div>
           </div>
         )}
@@ -142,13 +169,14 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
   const [mod, setMod] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [timezone, setTimezone] = useState('Asia/Jakarta');
   const [offset, setOffset] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
 
   const reset = () => setOffset(0);
   const { data, loading, error } = useAsync(
-    () => api.transactions({ sector, search, module: mod, from, to, offset, limit: 50 }),
-    [sector, search, mod, from, to, offset]
+    () => api.transactions({ sector, search, module: mod, from, to, timezone, offset, limit: 50 }),
+    [sector, search, mod, from, to, timezone, offset]
   );
 
   const dateInput =
@@ -185,6 +213,7 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
             <input type="date" aria-label="Tanggal awal transaksi" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className={dateInput} />
             <span className="text-xs font-bold text-slate-500">s/d</span>
             <input type="date" aria-label="Tanggal akhir transaksi" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className={dateInput} />
+            <Select value={timezone} onChange={(v) => { setTimezone(v); reset(); }} options={TIMEZONES} placeholder="Zona waktu laporan" />
             {(mod || from || to) && (
               <button
                 onClick={() => { setMod(''); setFrom(''); setTo(''); reset(); }}
@@ -199,22 +228,23 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
         {loading && <Loading label="Memuat log transaksi platform..." />}
         {error && <ErrorBox error={error} />}
 
-        {data && (data.rows.length === 0 ? (
-          <Empty label="Tidak ada transaksi yang cocok dengan filter" />
-        ) : (
+        {data && !loading && !error && (
           <>
             <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-100/80 px-5 py-3 text-xs font-bold text-slate-700 border-b border-slate-200">
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
                 <span>
-                  Total Ditemukan: <b className="text-slate-950 font-mono text-sm">{angka(data.total)}</b> transaksi
+                  Semua Transaksi: <b className="text-slate-950 font-mono text-sm">{angka(data.total)}</b>
                 </span>
                 <span>
-                  Total Nilai: <b className="text-slate-950 font-mono text-sm">{rupiah(data.sumAmount)}</b>
+                  Omzet Valid: <b className="text-emerald-800 font-mono text-sm">{rupiah(data.revenueAmount)}</b>
                 </span>
+                <span>Void/Batal: <b className="font-mono">{rupiah(data.voidCancelledAmount)}</b></span>
+                <span>Refund: <b className="font-mono">{rupiah(data.refundAmount)}</b></span>
               </div>
-              <span className="text-slate-500 text-[11px]">Menampilkan {data.rows.length} baris per halaman</span>
+              <span className="text-slate-500 text-[11px]">Selesai {angka(data.counts.completed)} · Void {angka(data.counts.voided)} · Batal {angka(data.counts.cancelled)} · Dengan refund {angka(data.counts.refunded)} · {data.timezone}</span>
             </div>
-
+            <p className="px-5 py-3 text-xs text-slate-500 border-b border-slate-100">Omzet berasal dari laporan server yang sama dengan merchant. Nilai struk mencakup seluruh status audit; transaksi dengan refund dapat juga termasuk hitungan selesai.</p>
+            {data.rows.length === 0 ? <Empty label="Tidak ada transaksi yang cocok dengan filter" /> : <>
             <Table>
               <thead>
                 <tr>
@@ -223,9 +253,11 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
                   <Th>Merchant / Toko</Th>
                   <Th>Sektor</Th>
                   <Th>Metode Bayar</Th>
+                  <Th>Status</Th>
                   <Th>Kasir</Th>
                   <Th align="right">Item</Th>
-                  <Th align="right">Total Omzet</Th>
+                  <Th align="right">Nilai Struk</Th>
+                  <Th align="right">Omzet Valid</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
@@ -237,18 +269,20 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
                   >
                     <Td className="text-xs font-medium text-slate-600">{waktu(x.created_at)}</Td>
                     <Td className="font-mono text-xs font-bold text-slate-950">{x.invoice_number ?? '—'}</Td>
-                    <Td className="font-black text-slate-950">{x.merchant_name}</Td>
+                    <Td className="font-black text-slate-950">{x.merchant_name}<span className="block text-[11px] font-medium text-slate-500">{x.outlet_name || '—'}</span></Td>
                     <Td><SectorChip sector={x.business_sector} /></Td>
                     <Td>
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200">
                         {x.payment_method}
                       </span>
                     </Td>
+                    <Td><TransactionStatus transaction={x} /></Td>
                     <Td className="font-medium text-slate-700">{x.cashier_name ?? 'Kasir'}</Td>
                     <Td align="right" className="font-bold">{angka(x.item_count)} item</Td>
                     <Td align="right" className="font-mono font-black text-slate-950 text-sm">
                       {rupiah(x.total_amount)}
                     </Td>
+                    <Td align="right" className="font-mono font-black text-emerald-800 text-sm">{rupiah(x.revenue_amount)}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -259,8 +293,9 @@ export default function Transactions({ sector, onSector }: { sector: string; onS
               onNext={() => setOffset(data.offset + data.limit)}
               onPrev={() => setOffset(Math.max(0, data.offset - data.limit))}
             />
+            </>}
           </>
-        ))}
+        )}
       </Card>
     </>
   );

@@ -275,9 +275,14 @@ async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE_
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE m.external_ref=$1 AND t.owner_user_ref=$2`, [businessId, principal.subject])).rows[0];
   if (!merchant) throw new Error("BUSINESS_NOT_OWNED");
-  const rows = (await db.query(`SELECT * FROM contract.transaction_log WHERE merchant_id=$1 AND created_at <= $2 ORDER BY created_at DESC LIMIT 50001`, [merchant.id, now.toISOString()])).rows;
+  const rows = (await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,
+    r.service_charge_amount-COALESCE(f.service,0) AS net_service
+    FROM contract.merchant_revenue r LEFT JOIN contract.refund_totals f ON f.transaction_id=r.id AND f.tenant_id=r.tenant_id
+    WHERE r.tenant_id=$3 AND r.merchant_id=$1 AND r.created_at <= $2 ORDER BY r.created_at DESC LIMIT 50001`, [merchant.id, now.toISOString(), merchant.tenant_id])).rows;
   if (rows.length > 5e4) throw new Error("ANALYTICS_HISTORY_TOO_LARGE");
-  const items = (await db.query(`SELECT item_id AS id,transaction_id,product_id,product_name,unit_price,unit_cost,quantity,discount_amount,total_price FROM contract.transaction_items_detailed WHERE merchant_id=$1 AND transaction_at <= $2`, [merchant.id, now.toISOString()])).rows;
+  const items = (await db.query(`SELECT item_id AS id,transaction_id,product_id,product_name,unit_price,unit_cost,
+    quantity_remaining AS quantity,discount_amount,remaining_total_price AS total_price
+    FROM contract.transaction_items_detailed WHERE tenant_id=$3 AND merchant_id=$1 AND transaction_at <= $2`, [merchant.id, now.toISOString(), merchant.tenant_id])).rows;
   const catalog = (await db.query(`SELECT * FROM contract.intelligence_catalog WHERE merchant_id=$1 ORDER BY id`, [merchant.id])).rows;
   const targets = (await db.query(`SELECT monthly_revenue_target FROM contract.business_targets WHERE merchant_id=$1 AND outlet_id IS NULL AND target_type='MONTHLY_REVENUE' ORDER BY updated_at DESC LIMIT 1`, [merchant.id])).rows;
   const byOrder = /* @__PURE__ */ new Map();
@@ -292,16 +297,16 @@ async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE_
     date: new Date(r.created_at).toISOString(),
     items: (byOrder.get(r.id) || []).map((i) => ({ id: i.id, productId: i.product_id, name: i.product_name, selectedModifiers: [], unitPrice: Number(i.unit_price), unitCost: i.unit_cost == null ? void 0 : Number(i.unit_cost), quantity: Number(i.quantity), discountPercent: 0, discountAmount: Number(i.discount_amount || 0), totalPrice: Number(i.total_price) })),
     orderType: r.order_type || "TAKEAWAY",
-    subtotal: Number(r.subtotal),
-    discountTotal: Number(r.discount_amount || 0),
-    taxTotal: Number(r.tax_amount || 0),
-    serviceChargeTotal: Number(r.service_charge_amount || 0),
+    subtotal: Number(r.net_subtotal),
+    discountTotal: Number(r.net_discount_amount || 0),
+    taxTotal: Number(r.net_tax_amount || 0),
+    serviceChargeTotal: Number(r.net_service || 0),
     total: Number(r.total_amount),
     paymentMethod: r.payment_method || "CASH",
-    paymentStatus: r.payment_status || "PENDING",
+    paymentStatus: "PAID",
     cashierName: r.cashier_name,
     shiftId: r.shift_id || "",
-    status: r.order_status === "COMPLETED" && r.payment_status === "PAID" ? "COMPLETED" : ["VOID", "CANCELLED"].includes(r.order_status) ? "VOID" : "HOLD"
+    status: "COMPLETED"
   }));
   const products = catalog.map((p) => ({ id: p.id, sku: p.sku || "", name: p.name, categoryId: p.category_name || "other", price: Number(p.price), costPrice: Number(p.cost_price), stock: Number(p.stock || 0), minStockAlert: Number(p.min_stock_alert || 0), unit: p.unit || "pcs", isAvailable: p.is_available, businessSector: merchant.business_sector }));
   return {

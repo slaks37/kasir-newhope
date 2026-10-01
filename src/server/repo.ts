@@ -45,7 +45,10 @@ function pick<T extends string>(allowed: readonly T[], v: unknown): T | null {
 
 export interface ListFilter {
   sector?: unknown;
+  tenantId?: unknown;
   merchantId?: unknown;
+  outletId?: unknown;
+  timezone?: unknown;
   module?: unknown;
   severity?: unknown;
   search?: unknown;
@@ -155,7 +158,7 @@ export async function platformTotals(db: Db) {
       (SELECT COUNT(*) FROM contract.merchant_directory WHERE is_active)::int AS merchants_active,
       (SELECT COUNT(*) FROM contract.merchant_revenue)::int                  AS transactions,
       (SELECT COALESCE(SUM(total_amount), 0) FROM contract.merchant_revenue) AS gross_revenue,
-      (SELECT COALESCE(SUM(gross_profit),0) FROM contract.admin_product_sales) AS gross_profit,
+      (SELECT COALESCE(SUM(total_amount-net_tax_amount-cogs_amount),0) FROM contract.merchant_revenue) AS gross_profit,
       (SELECT COUNT(*) FROM contract.admin_activity_log)::int                      AS activity_events,
       (SELECT COUNT(*) FROM contract.admin_activity_log
         WHERE severity IN ('WARNING','CRITICAL'))::int                       AS activity_problems,
@@ -191,7 +194,7 @@ export async function merchantDirectory(db: Db, f: ListFilter = {}, financialDet
     `SELECT d.*, h.churn_risk_score, h.days_since_last_txn,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
        r.transaction_count,r.gross_revenue,r.last_transaction_at,
        (SELECT count(*)::int FROM internal.outlets WHERE merchant_id=d.merchant_id AND is_active) AS outlet_count,
-       (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit
+       (SELECT COALESCE(sum(total_amount-net_tax_amount-cogs_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id AND tenant_id=d.tenant_id) AS gross_profit
        FROM contract.merchant_directory d
        LEFT JOIN contract.merchant_health_latest h ON h.merchant_id = d.merchant_id
        LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id
@@ -218,10 +221,10 @@ export async function merchantDetail(db: Db, merchantId: string) {
 
   const [profile, bySector, health, topProducts, customerStats] = await Promise.all([
     db.query(`SELECT d.*,s.status AS raw_status,s.plan_id,s.current_period_end,s.grace_period_end,
-      (SELECT COALESCE(sum(cogs),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS cogs,
-      (SELECT COALESCE(sum(gross_profit),0) FROM contract.admin_product_sales WHERE merchant_id=d.merchant_id) AS gross_profit,
-      (SELECT COALESCE(sum(discount_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS discount_amount,
-      (SELECT COALESCE(sum(tax_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS tax_amount
+      (SELECT COALESCE(sum(cogs_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS cogs,
+      (SELECT COALESCE(sum(total_amount-net_tax_amount-cogs_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS gross_profit,
+      (SELECT COALESCE(sum(net_discount_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS discount_amount,
+      (SELECT COALESCE(sum(net_tax_amount),0) FROM contract.merchant_revenue WHERE merchant_id=d.merchant_id) AS tax_amount
       FROM contract.merchant_directory d LEFT JOIN billing.subscriptions s ON s.tenant_id=d.tenant_id WHERE d.merchant_id = $1`, [merchantId]),
     // Satu merchant bisa menjalankan lebih dari satu sektor.
     db.query(
@@ -239,7 +242,7 @@ export async function merchantDetail(db: Db, merchantId: string) {
     db.query(`SELECT * FROM contract.merchant_health_latest WHERE merchant_id = $1`, [merchantId]),
     db.query(
       `SELECT business_sector, product_name, category_name,
-              units_sold::int, revenue, gross_profit, last_sold_at
+              units_sold_exact AS units_sold, revenue, gross_profit, last_sold_at
          FROM contract.admin_product_sales
         WHERE merchant_id = $1
         ORDER BY revenue DESC
@@ -272,43 +275,100 @@ export async function merchantDetail(db: Db, merchantId: string) {
 /* TRANSAKSI                                                                   */
 /* -------------------------------------------------------------------------- */
 
+export class TransactionFilterError extends Error {}
+
+function transactionFilter(f: ListFilter) {
+  for (const field of ['tenantId', 'merchantId', 'outletId'] as const) {
+    const value = f[field];
+    if (value !== undefined && value !== '' && (typeof value !== 'string' || !UUID_RE.test(value))) {
+      throw new TransactionFilterError('INVALID_ID');
+    }
+  }
+  for (const field of ['from', 'to'] as const) {
+    const value = f[field];
+    if (value === undefined || value === '') continue;
+    if (typeof value !== 'string' || !DATE_RE.test(value)
+      || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) {
+      throw new TransactionFilterError('INVALID_DATE');
+    }
+  }
+  if (f.from && f.to && String(f.from) > String(f.to)) throw new TransactionFilterError('INVALID_DATE_RANGE');
+  if (f.timezone !== undefined && f.timezone !== '') {
+    if (typeof f.timezone !== 'string' || f.timezone.length > 80) throw new TransactionFilterError('INVALID_TIMEZONE');
+    try { new Intl.DateTimeFormat('en', { timeZone: f.timezone }).format(); }
+    catch { throw new TransactionFilterError('INVALID_TIMEZONE'); }
+  }
+  return cleanFilter(f);
+}
+
 export async function transactionLog(db: Db, f: ListFilter = {}) {
-  const c = cleanFilter(f);
+  const c = transactionFilter(f);
+  let timezone = typeof f.timezone === 'string' && f.timezone ? f.timezone : 'Asia/Jakarta';
+  if (!f.timezone && c.merchantId) {
+    const settings = await db.query('SELECT timezone FROM internal.merchant_settings WHERE merchant_id=$1', [c.merchantId]);
+    timezone = settings.rows[0]?.timezone || timezone;
+  }
   const w = new Where();
-  // Penyaringan CANCELLED sudah dilakukan contract.merchant_revenue — tidak
-  // boleh diulang di sini. Satu definisi omzet, satu tempat.
+  // Audit keeps every status. Only the canonical revenue view supplies money
+  // counted as revenue; the same filtered rows drive both the list and cards.
   w.add((p) => `x.business_sector = ${p}`, c.sector);
-  w.add((p) => `(x.merchant_id = ${p}::uuid OR x.tenant_id = ${p}::uuid)`, c.merchantId);
+  w.add((p) => `x.tenant_id = ${p}::uuid`, f.tenantId || null);
+  w.add((p) => `x.merchant_id = ${p}::uuid`, c.merchantId);
+  w.add((p) => `x.outlet_id = ${p}::uuid`, f.outletId || null);
   w.add((p) => `x.app_module = ${p}`, c.module);
-  w.add((p) => `x.created_at >= ${p}::date`, c.from);
-  // `to` inklusif: pengguna yang mengetik 31 Agustus bermaksud memasukkan
-  // seluruh tanggal 31, bukan berhenti pada 00:00.
-  w.add((p) => `x.created_at < (${p}::date + 1)`, c.to);
+  // Convert calendar boundaries, not the indexed created_at column. `to` is
+  // inclusive in the selected timezone, even when the server runs in UTC.
+  const zoneParam = w.next();
+  w.params.push(timezone);
+  w.add((p) => `x.created_at >= (${p}::date::timestamp AT TIME ZONE ${zoneParam})`, c.from);
+  w.add((p) => `x.created_at < ((${p}::date + 1)::timestamp AT TIME ZONE ${zoneParam})`, c.to);
   w.add((p) => `(x.invoice_number ILIKE ${p} OR x.merchant_name ILIKE ${p})`, c.search ? `%${c.search}%` : null);
 
-  const { rows } = await db.query(
-    `SELECT x.id, x.invoice_number, x.business_sector, x.business_id, x.app_module,
-            x.order_type, x.payment_method, x.payment_status,
-            x.subtotal, x.discount_amount, x.tax_amount, x.service_charge_amount,
-            x.total_amount, x.created_at, x.merchant_name, x.cashier_name,
-            x.item_count::int AS item_count
-       FROM contract.transaction_log x
-       ${w.sql()}
-      ORDER BY x.created_at DESC
-      LIMIT ${w.next()} OFFSET $${w.params.length + 2}`,
+  const { rows: result } = await db.query(
+    `WITH filtered AS (
+       SELECT x.*, COALESCE(r.total_amount,0) AS revenue_amount,
+              COALESCE(r.refund_amount,rf.amount,0) AS refund_amount,
+              (r.id IS NOT NULL) AS included_in_revenue
+         FROM contract.transaction_log x
+         LEFT JOIN contract.merchant_revenue r ON r.id=x.id AND r.tenant_id=x.tenant_id
+         LEFT JOIN contract.refund_totals rf ON rf.transaction_id=x.id AND rf.tenant_id=x.tenant_id
+         ${w.sql()}
+     ), page AS (
+       SELECT * FROM filtered ORDER BY created_at DESC,id DESC
+       LIMIT ${w.next()} OFFSET $${w.params.length + 2}
+     )
+     SELECT COUNT(*)::int AS total,
+            COALESCE(SUM(total_amount),0) AS audit_amount,
+            COALESCE(SUM(revenue_amount),0) AS revenue_amount,
+            COUNT(*) FILTER (WHERE included_in_revenue)::int AS revenue_count,
+            COUNT(*) FILTER (WHERE order_status IN ('COMPLETED','SETTLED'))::int AS completed_count,
+            COUNT(*) FILTER (WHERE order_status IN ('VOID','VOIDED'))::int AS voided_count,
+            COUNT(*) FILTER (WHERE order_status IN ('CANCELLED','CANCELED'))::int AS cancelled_count,
+            COUNT(*) FILTER (WHERE refund_amount>0 OR order_status='REFUNDED' OR payment_status='REFUNDED')::int AS refunded_count,
+            COALESCE(SUM(refund_amount),0) AS refund_amount,
+            COALESCE(SUM(total_amount) FILTER (WHERE order_status IN ('VOID','VOIDED','CANCELLED','CANCELED')),0) AS void_cancelled_amount,
+            COALESCE((SELECT json_agg(page) FROM page),'[]'::json) AS rows,
+            ${zoneParam}::text AS timezone
+       FROM filtered`,
     [...w.params, c.limit, c.offset]
   );
-
-  const { rows: agg } = await db.query(
-    `SELECT COUNT(*)::int AS total, COALESCE(SUM(x.total_amount), 0) AS sum_amount
-       FROM contract.transaction_log x ${w.sql()}`,
-    w.params
-  );
+  const agg = result[0];
 
   return {
-    rows,
-    total: agg[0]?.total ?? 0,
-    sumAmount: agg[0]?.sum_amount ?? 0,
+    rows: agg.rows,
+    total: Number(agg.total),
+    // Backwards-compatible alias now means valid revenue, never all audit rows.
+    sumAmount: Number(agg.revenue_amount),
+    revenueAmount: Number(agg.revenue_amount),
+    auditAmount: Number(agg.audit_amount),
+    refundAmount: Number(agg.refund_amount),
+    voidCancelledAmount: Number(agg.void_cancelled_amount),
+    counts: {
+      revenue: Number(agg.revenue_count), completed: Number(agg.completed_count),
+      voided: Number(agg.voided_count), cancelled: Number(agg.cancelled_count), refunded: Number(agg.refunded_count),
+    },
+    timezone,
+    source: 'contract.merchant_revenue',
     limit: c.limit,
     offset: c.offset,
   };
@@ -317,15 +377,20 @@ export async function transactionLog(db: Db, f: ListFilter = {}) {
 export async function transactionDetail(db: Db, id: string, merchantId:string|null=null) {
   if (!UUID_RE.test(id)) return null;
   const head = await db.query(
-    `SELECT * FROM contract.transaction_log WHERE id = $1 AND ($2::uuid IS NULL OR merchant_id=$2 OR tenant_id=$2)`,
+    `SELECT x.*,COALESCE(r.total_amount,0) AS revenue_amount,COALESCE(r.refund_amount,0) AS refund_amount,
+            (r.id IS NOT NULL) AS included_in_revenue
+       FROM contract.transaction_log x
+       LEFT JOIN contract.merchant_revenue r ON r.id=x.id AND r.tenant_id=x.tenant_id
+      WHERE x.id = $1 AND ($2::uuid IS NULL OR x.merchant_id=$2)`,
     [id,merchantId]
   );
   if (!head.rows.length) return null;
 
   const items = await db.query(
-    `SELECT product_name, variant_name, modifier_snapshot, category_name, business_sector, quantity::int,
-            unit_price, unit_cost, total_price, gross_profit
-       FROM contract.transaction_items_detailed WHERE transaction_id = $1 ORDER BY product_name`,
+    `SELECT v.product_name,v.variant_name,v.modifier_snapshot,v.category_name,v.business_sector,v.quantity_exact AS quantity,
+            v.unit_price,v.unit_cost,v.total_price,v.gross_profit
+       FROM contract.transaction_items_detailed v
+       WHERE v.transaction_id = $1 ORDER BY v.product_name`,
     [id]
   );
   return { transaction: head.rows[0], items: items.rows };
@@ -349,7 +414,7 @@ export async function productSales(db: Db, f: ListFilter = {}) {
 
   const { rows } = await db.query(
     `SELECT v.business_sector, v.merchant_id, v.merchant_name, v.product_name,
-            v.product_description, v.category_name, v.units_sold::int, v.revenue,
+            v.product_description, v.category_name, v.units_sold_exact AS units_sold, v.revenue,
             v.cogs, v.gross_profit, v.appeared_in_transactions::int, v.last_sold_at
        FROM contract.admin_product_sales v
        ${w.sql()}

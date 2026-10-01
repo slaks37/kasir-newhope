@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState } from 'react';
 import { POSProvider, usePOS } from './context/POSContext';
 import { useAuth } from './context/AuthContext';
 import { Header } from './components/Header';
+import { LegacyRecoveryPanel } from './components/sync/LegacyRecoveryPanel';
 import { Sidebar } from './components/Sidebar';
 import { MobileNavBar } from './components/MobileNavBar';
 import { ProductGrid } from './components/pos/ProductGrid';
@@ -408,7 +409,8 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
       )}
 
       {free && (!settings.subscription?.freeSelection || settings.subscription.freeSelection.sector!==settings.businessSector || editFreeSelection) && <FreePlanSelection onClose={settings.subscription?.freeSelection?.sector===settings.businessSector?()=>setEditFreeSelection(false):undefined}/>}
-      {!isPaymentRequired && !free && activeTab !== 'payment' && <OutletSetupGate onManagePlan={() => setActiveTab('payment')} />}
+      <LegacyRecoveryPanel />
+      {!isPaymentRequired && activeTab !== 'payment' && <OutletSetupGate onManagePlan={() => setActiveTab('payment')} />}
       {!free && activeTab !== 'payment' && (() => {
         const sub = settings.subscription;
         if (!sub) return null;
