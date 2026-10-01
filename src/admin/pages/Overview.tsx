@@ -159,7 +159,7 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
             <tr>
               <Th>Sektor Usaha</Th>
               <Th align="right">Merchant Terdaftar</Th>
-              <Th align="right">Unit Usaha</Th>
+              <Th align="right">Outlet Aktif</Th>
               <Th align="right">Total Transaksi</Th>
               <Th align="right">Total Omzet</Th>
               <Th align="right">Rata-Rata / Struk (AOV)</Th>
@@ -185,7 +185,7 @@ export default function Overview({ onOpenSector, onNavigateMerchants }: { onOpen
                     </div>
                   </Td>
                   <Td align="right" className="font-bold">{angka(s.registered_merchants)}</Td>
-                  <Td align="right">{angka(s.business_unit_count)}</Td>
+                  <Td align="right">{angka(s.active_outlet_count)}</Td>
                   <Td align="right" className="font-mono font-bold text-slate-900">{angka(s.transaction_count)}</Td>
                   <Td align="right" className="font-mono font-black text-slate-950">
                     {rupiah(rev)}

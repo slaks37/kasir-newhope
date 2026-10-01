@@ -131,7 +131,8 @@ export async function sectorSummary(db: Db) {
     `
     SELECT s.sector                                   AS business_sector,
            COALESCE(v.merchant_count, 0)::int         AS merchant_count,
-           COALESCE(v.business_unit_count, 0)::int    AS business_unit_count,
+           COALESCE(m.registered_merchants, 0)::int   AS business_unit_count,
+           COALESCE(m.active_outlet_count, 0)::int    AS active_outlet_count,
            COALESCE(v.transaction_count, 0)::int      AS transaction_count,
            COALESCE(v.gross_revenue, 0)               AS gross_revenue,
            COALESCE(v.avg_basket, 0)                  AS avg_basket,
@@ -141,7 +142,8 @@ export async function sectorSummary(db: Db) {
       FROM unnest($1::text[]) AS s(sector)
       LEFT JOIN contract.admin_sector_summary v ON v.business_sector = s.sector
       LEFT JOIN (
-            SELECT business_sector, COUNT(*) AS registered_merchants
+            SELECT business_sector, COUNT(*) AS registered_merchants,
+                   COALESCE(SUM(outlet_count),0) AS active_outlet_count
               FROM contract.merchant_directory GROUP BY business_sector
            ) m ON m.business_sector = s.sector
      ORDER BY COALESCE(v.gross_revenue, 0) DESC, s.sector

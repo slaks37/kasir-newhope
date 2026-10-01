@@ -9,7 +9,7 @@ import { createSyncHandler } from '../../src/server/syncHandler';
 import { ensureSubscription } from '../../services/billing/engine';
 import { pastikanPaket } from '../../services/billing/store';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
-import { transactionLog } from '../../src/server/repo';
+import { transactionLog, sectorSummary } from '../../src/server/repo';
 
 const pg=new PGlite();
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows||0};},exec:async sql=>{await runner.exec(sql);},tx:async fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
@@ -33,6 +33,10 @@ const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  const sectorBeforeSale=(await sectorSummary(db)).find((row:any)=>row.business_sector==='FNB');
+  assert.equal(sectorBeforeSale.business_unit_count,1,'Registered businesses exist before their first sale');
+  assert.equal(sectorBeforeSale.active_outlet_count,1,'Active outlet count is independent of sales; deferred outlets excluded');
+  assert.equal(sectorBeforeSale.transaction_count,0);
   const customerOperation={kind:'customers',recordId:'cloud-customer',baseRevision:0,deleted:false,
     value:{id:'cloud-customer',name:'Cloud customer',totalSpent:999999999,visitCount:999}};
   const customerSync=await post('/api/v1/sync/state',{sector:'FNB',outletId:outlet,operations:[customerOperation]});
