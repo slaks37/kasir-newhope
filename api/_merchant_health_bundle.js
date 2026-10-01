@@ -9,14 +9,35 @@ function isCronJobEnabled(job) {
   return configured.split(",").map((value) => value.trim()).filter(Boolean).includes(job);
 }
 
+// services/shared/poolConfig.ts
+function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (vercel !== "1") return connectionString;
+  try {
+    const url = new URL(connectionString);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
+    url.port = "6543";
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  return {
+    // Each warm function owns a pool; keep the per-instance budget small.
+    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
+    connectionTimeoutMillis: 1e4
+  };
+}
+
 // src/server/merchantHealthHandler.ts
 var pool = null;
 function getPool() {
   if (!pool) {
     pool = new pg.Pool({
-      connectionString: process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL,
+      connectionString: serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || ""),
       ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false },
-      max: 3
+      ...databasePoolLimits(3)
     });
   }
   return pool;

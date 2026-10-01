@@ -11,6 +11,29 @@ function isCronJobEnabled(job) {
 // services/shared/db.ts
 import fs from "node:fs";
 import pg from "pg";
+
+// services/shared/poolConfig.ts
+function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (vercel !== "1") return connectionString;
+  try {
+    const url = new URL(connectionString);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
+    url.port = "6543";
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  return {
+    // Each warm function owns a pool; keep the per-instance budget small.
+    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
+    connectionTimeoutMillis: 1e4
+  };
+}
+
+// services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
@@ -23,16 +46,16 @@ function konfigurasiSsl(connectionString) {
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
-  const connectionString = opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres";
+  const connectionString = serverlessConnectionString(
+    opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
+  );
   const pool = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.
-    max: opts.max ?? Number(process.env.PGPOOL_MAX || 4),
-    idleTimeoutMillis: 3e4,
-    connectionTimeoutMillis: 1e4
+    ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
   pool.on("error", (err) => {

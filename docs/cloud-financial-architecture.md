@@ -60,6 +60,15 @@ does not expand billing permissions.
 Apply migration 0044 before deploying the new API/client. Bundles are generated
 with `npm run build` and tracked according to this repository's existing layout.
 
+Vercel HTTP handlers normalize an existing Supabase shared session-pooler URL
+from port 5432 to transaction port 6543, preserving its host, credentials, role,
+database and TLS options. Other providers, direct database endpoints and local
+processes are not rewritten. Pools are cached per runtime, capped at two
+connections and release idle connections after five seconds. Transactions keep
+their RLS settings transaction-local; queries do not use named prepared statements.
+This avoids the observed production `EMAXCONNSESSION` limit of 15 session clients
+without increasing database permissions or compute capacity.
+
 ## Verification
 
 `npm run test:financial-cloud` runs an isolated PostgreSQL engine and real local

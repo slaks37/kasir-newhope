@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import pg from 'pg';
+import { databasePoolLimits, serverlessConnectionString } from './poolConfig';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
 // skor risiko kita memang mau angka, dan nilainya jauh di bawah batas aman
@@ -64,8 +65,8 @@ function konfigurasiSsl(connectionString: string) {
 }
 
 export async function connectDb(opts: DbOptions): Promise<Db> {
-  const connectionString =
-    opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
+  const connectionString = serverlessConnectionString(
+    opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
 
   const pool = new pg.Pool({
     connectionString,
@@ -73,9 +74,7 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.
-    max: opts.max ?? Number(process.env.PGPOOL_MAX || 4),
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
+    ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4)),
   });
 
   /*

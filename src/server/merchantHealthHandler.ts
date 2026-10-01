@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { isCronJobEnabled } from '../../services/shared/cron';
+import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -9,9 +10,9 @@ let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
     pool = new pg.Pool({
-      connectionString: process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL,
+      connectionString: serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || ''),
       ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
-      max: 3,
+      ...databasePoolLimits(3),
     });
   }
   return pool;

@@ -35,6 +35,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
 
 export type QueryResult<T = any> = { rows: T[]; rowCount: number };
 
@@ -71,16 +72,20 @@ async function createPgDb(connectionString: string): Promise<Db> {
   pg.types.setTypeParser(20, (v: string) => (v === null ? null : Number(v))); // int8
 
   const pool = new pg.Pool({
-    connectionString,
-    max: Number(process.env.PGPOOL_MAX || 10),
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
+    connectionString: serverlessConnectionString(connectionString),
+    ...databasePoolLimits(Number(process.env.PGPOOL_MAX || 10)),
   });
 
   // Gagal cepat dan berisik kalau URL-nya salah, bukan diam-diam saat request
   // pertama masuk.
-  const probe = await pool.connect();
-  probe.release();
+  try {
+    const probe = await pool.connect();
+    probe.release();
+  } catch (error) {
+    await pool.end().catch(() => {});
+    throw error;
+  }
+  pool.on('error', error => console.error('[db] idle connection failed', { code: (error as any).code }));
 
   const wrap = (runner: { query: (s: string, p?: unknown[]) => Promise<any> }): Db => ({
     driver: 'pg',

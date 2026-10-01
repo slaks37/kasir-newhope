@@ -136,5 +136,7 @@ try{
     refund:{...refund,clientRefundId:'shift-refund',occurredAt:new Date().toISOString(),refundMethod:'ORIGINAL_METHOD'}});
   assert.equal(splitRefund.status,200,JSON.stringify(splitRefund));
   assert.equal((await get('/api/v1/finance/shift?sector=FNB&outletId='+outlet)).data.shift.expectedCash,23750,'Original-method split refunds reverse only the cash share');
+  const allTime=await get('/api/v1/reports/summary?sector=FNB&outletId='+outlet);
+  assert.equal(allTime.status,200,JSON.stringify(allTime));assert.ok(allTime.data.financialSummary.totalNetRevenue>0);
   console.log('PASS: Device A → PostgreSQL → Device B → Admin equality; retry, immutable cash, refund, void, SETTLED split tender, tenant/outlet isolation and timezone');
 }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
