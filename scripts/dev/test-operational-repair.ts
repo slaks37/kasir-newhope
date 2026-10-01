@@ -14,7 +14,7 @@ disk.set(cache,JSON.stringify([right.value,wrong.value]));
 let status:any,visible:any[]=[];
 let posts=0,cloud:any[]=[];
 Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,options?:any)=>{
-  if(!options?.body)return {ok:true,json:async()=>({ok:true,ready:true,records:cloud})};
+  if(!options?.body)return {ok:true,json:async()=>({ok:true,ready:true,scopeProof:true,records:cloud})};
   posts++;const sent=JSON.parse(options.body).operations;
   const conflicts=sent.filter((o:any)=>o.recordId==='conflict').map((o:any)=>({kind:o.kind,recordId:o.recordId,error:'STATE_CONFLICT'}));
   const versions=sent.filter((o:any)=>o.recordId!=='conflict').map((o:any)=>{cloud.push({scope:'FNB',...o,revision:1});return {kind:o.kind,recordId:o.recordId,revision:1};});
@@ -55,4 +55,14 @@ const bytes=JSON.stringify([wrong]);disk.set('newhope_shared_outbox_quota_FNB',b
 const quota=new SharedStateSync('quota','FNB',()=>{throw Error('must not hydrate');},v=>{status=v;});
 await quota.refresh(true);await quota.flush();assert.match(status.error,/OPERATIONAL_QUEUE_REPAIR_FAILED/);
 assert.equal(disk.get('newhope_shared_outbox_quota_FNB'),bytes);quota.stop();failBackup=false;
-console.log('PASS: Laundry-in-FNB quarantine+backup, old arrays, latest edit/reload, 60/61 ACK, mixed lanes, lost ACK, no zombies, backup failure preserves originals');
+const oldCustomer={kind:'customers',recordId:'cust-11111111-2222-3333-4444-555555555555',baseRevision:0,deleted:false,value:{id:'cust-11111111-2222-3333-4444-555555555555',name:'Old customer'}};
+disk.set(key,JSON.stringify([oldCustomer]));disk.set('newhope_data_owner_FNB_customers',JSON.stringify([oldCustomer.value]));
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,ready:true,scopeProof:true,records:[],
+  foreignRecords:[{...oldCustomer,scope:'LAUNDRY',value:{...oldCustomer.value,visitCount:5}}]})})});
+const contaminated=new SharedStateSync('owner','FNB',()=>{},v=>{status=v;});await contaminated.refresh(true);
+assert.equal(status.pending,0);assert.ok(contaminated.legacyQuarantined('customers',oldCustomer.recordId));
+contaminated.importLegacy('customers',[oldCustomer.value]);assert.equal(status.pending,0,'A quarantined legacy cache cannot re-import itself');
+assert.ok(operationalRecovery('owner','FNB').some(b=>b.records.some(r=>r.reason==='OTHER_CONFIRMED_SECTOR:LAUNDRY')));
+for(const [k,v]of finance)assert.equal(disk.get(k),v);contaminated.stop();
+assert.deepEqual(repairOperationalCache('owner','FNB','store_settings',{id:'main',storeMode:'SERVICE'}),{},'Incompatible sector mode is backed up before removal');
+console.log('PASS: Laundry-in-FNB quarantine+backup, old arrays, latest edit/reload, 60/61 ACK, mixed lanes, lost ACK, no zombies, backup failure and proven foreign legacy CRM');

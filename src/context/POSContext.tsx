@@ -975,7 +975,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const legacyKey=kind==='staff_members' ? getGlobalUserKey(kind,authUser.id)
           : getScopedKey(kind,authUser.id,activeSector);
         const imported=initial && needsLegacyImport && legacyKeys.current?.has(legacyKey)
-          ? repairOperationalCache(authUser.id,activeSector,kind,current).filter(row=>!known.has(recordIdOf(kind,row))) : [];
+          ? repairOperationalCache(authUser.id,activeSector,kind,current).filter(row=>!known.has(recordIdOf(kind,row))&&!store.legacyQuarantined(kind,recordIdOf(kind,row))) : [];
         const merged=[...fromServer,...imported];
         if(imported.length)store.importLegacy(kind,imported);
         const cloudCategories=(grouped.get('categories')||[]).filter(r=>!r.deleted).map(r=>r.value);
@@ -1008,9 +1008,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const lifecycle=(grouped.get('sent_lifecycle_hooks')||[]).filter(row=>!row.deleted).map(row=>row.recordId);
       store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
       if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
+      const fallbackName=grouped.get('store_settings')?.some(r=>r.quarantineReason)?BUSINESS_PRESETS[activeSector].defaultStoreName:store.businessName;
       const remoteSettings=grouped.get('store_settings')?.find(row=>!row.deleted&&row.recordId==='main')?.value
-        || (initial&&store.businessName?{...sharedSettings,storeName:store.businessName,storeMode:BUSINESS_PRESETS[activeSector].storeMode,
-          receiptHeader:`*** ${store.businessName} ***`,receiptFooter:`Terima kasih telah bertransaksi di ${store.businessName}`}:undefined);
+        || (fallbackName?{...sharedSettings,storeName:fallbackName,storeMode:BUSINESS_PRESETS[activeSector].storeMode,
+          receiptHeader:`*** ${fallbackName} ***`,receiptFooter:`Terima kasih telah bertransaksi di ${fallbackName}`}:undefined);
       store.prime('store_settings',remoteSettings?[remoteSettings]:[]);
       if(remoteSettings){
         const {id: _id,businessId:_businessId,...safe}=remoteSettings;

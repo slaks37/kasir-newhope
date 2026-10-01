@@ -64,3 +64,19 @@ the observed contamination was in the device's operational cache/outbox.
 Financial reviews are not automatically resolved: unknown outlet origins,
 competing historical struk values, and uncertain owner sources remain preserved
 for explicit review, independently of operational quarantine.
+
+## Follow-up found during live verification
+
+The original 61 operations reduced to one legacy CRM conflict. The same old
+tenant-wide identity also affected normalized customers. 0048 prepares a
+merchant-scoped customer index and backs up structurally incompatible sector
+settings; 0049 releases the old customer arbiter after the API deploys.
+
+Legacy operations now carry an origin flag. Before importing uncertain legacy
+records, the server checks only requested candidate IDs in other businesses
+belonging to the same authenticated owner, using a separate existing RLS merchant
+scope per query. No policies or grants change. A legacy UUID record already
+confirmed in another sector, or an exact duplicated value, is quarantined with
+both its operation and original cache snapshot; it cannot automatically re-import.
+Deliberate new edits remain independent scoped operations. Generic shared IDs
+alone and business names are never used as ownership evidence.

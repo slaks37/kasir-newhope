@@ -1,7 +1,7 @@
 import { operationalScopeIssue } from './operationalScope';
 import { backupOperational,operationalRecovery } from './operationalRecovery';
 export type SharedRecord={scope:string;kind:string;recordId:string;value:Record<string,unknown>|null;revision:number;deleted:boolean;recoveryValue?:Record<string,unknown>;quarantineReason?:string};
-type Operation={kind:string;recordId:string;baseRevision:number;value:Record<string,unknown>|null;deleted:boolean;owner?:string;sector?:string};
+type Operation={kind:string;recordId:string;baseRevision:number;value:Record<string,unknown>|null;deleted:boolean;owner?:string;sector?:string;origin?:'edit'|'legacy'};
 export type OperationalConflict={kind:string;recordId:string;error?:string;localLabel?:string;serverLabel?:string;localRevision?:number;serverRevision?:number;serverChecked?:boolean};
 export type SharedSyncStatus={ready:boolean;pending:number;error:string|null;conflict?:OperationalConflict;conflicts?:OperationalConflict[];quarantined?:number;inFlight?:boolean;lastSyncedAt?:string|null};
 const keyFor=(kind:string,id:string)=>`${kind}\x00${id}`;
@@ -21,8 +21,12 @@ export class SharedStateSync {
   private stopped=false;private inFlight=false;private outletBlocked=false;private timer:ReturnType<typeof setTimeout>|undefined;
   private poll:ReturnType<typeof setInterval>|undefined;private lastSyncedAt:string|null=null;private outletId:string|undefined;
   private readGeneration=0;
+  private quarantinedKeys=new Set<string>();
+  private legacyCheckedKeys=new Set<string>();
+  legacyQuarantined(kind:string,id:string){return this.quarantinedKeys.has(keyFor(kind,id));}
   constructor(readonly owner:string,readonly sector:string,readonly onRecords:(rows:SharedRecord[],initial:boolean)=>void,readonly onStatus:(value:SharedSyncStatus)=>void){
     try{
+      for(const backup of operationalRecovery(owner,sector))for(const r of backup.records)if(r.reason!=='DUPLICATE_SUPERSEDED')this.quarantinedKeys.add(keyFor(r.kind,r.recordId));
       const raw=localStorage.getItem(outboxKey(owner,sector)),saved=raw?JSON.parse(raw):[];
       const rows=Array.isArray(saved)?saved:saved?.version===2?saved.operations:null;
       if(!Array.isArray(rows))throw Error('OPERATIONAL_QUEUE_INVALID');
@@ -36,7 +40,7 @@ export class SharedStateSync {
         if(reason){discarded.push({kind:op.kind,recordId:op.recordId,reason,name:op.value?.name});continue;}
         const key=keyFor(op.kind,op.recordId);
         if(this.pending.has(key))discarded.push({kind:op.kind,recordId:op.recordId,reason:'DUPLICATE_SUPERSEDED'});
-        this.pending.set(key,{...op,owner,sector});
+        this.pending.set(key,{...op,owner,sector,origin:op.origin||'legacy'});
       }
       if(discarded.length)backupOperational(owner,sector,outboxKey(owner,sector),raw!,discarded);
       if(!Array.isArray(saved)){this.lastSyncedAt=saved.lastSyncedAt||null;
@@ -53,7 +57,8 @@ export class SharedStateSync {
     return {...c,localLabel:label(local?.value),serverLabel:label(server?.value),localRevision:local?.baseRevision,serverRevision:server?.revision,serverChecked:this.ready};});}
   private emit(){if(this.stopped)return;const conflicts=this.conflictDetails();let quarantined=0;
     try{quarantined=operationalRecovery(this.owner,this.sector).flatMap(row=>row.records.filter(r=>r.reason!=='DUPLICATE_SUPERSEDED'&&r.reason!=='OWNER_CHOSE_SERVER')).length;}catch{this.error='OPERATIONAL_RECOVERY_INVALID';}
-    this.onStatus({ready:this.ready,pending:this.pending.size,error:this.error,conflicts,conflict:conflicts[0],quarantined,inFlight:this.inFlight,lastSyncedAt:this.lastSyncedAt});}
+    const scopeUnchecked=[...this.pending].some(([key,op])=>op.origin==='legacy'&&!globals.has(op.kind)&&!this.legacyCheckedKeys.has(key));
+    this.onStatus({ready:this.ready&&!scopeUnchecked,pending:this.pending.size,error:this.error,conflicts,conflict:conflicts[0],quarantined,inFlight:this.inFlight,lastSyncedAt:this.lastSyncedAt});}
   private persist(){localStorage.setItem(outboxKey(this.owner,this.sector),JSON.stringify({version:2,owner:this.owner,sector:this.sector,operations:[...this.pending.values()],conflicts:[...this.conflicts.values()],lastSyncedAt:this.lastSyncedAt}));this.emit();}
   stop(){this.stopped=true;clearTimeout(this.timer);clearInterval(this.poll);}
   private retryScopeBlocks(){for(const [key,c]of this.conflicts)if(c.error&&/^(OUTLET_SETUP_REQUIRED|FREE_)/.test(c.error))this.conflicts.delete(key);}
@@ -65,7 +70,8 @@ export class SharedStateSync {
     if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
     const generation=++this.readGeneration;
     try{
-      const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}`,{cache:'no-store'});
+      const candidates=[...this.pending.values()].filter(op=>op.origin==='legacy'&&!this.legacyCheckedKeys.has(keyFor(op.kind,op.recordId))).slice(0,100).map(op=>({kind:op.kind,recordId:op.recordId}));
+      const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`,{cache:'no-store'});
       if(!response.ok)throw Error(`HTTP_${response.status}`);const data=await response.json();if(this.stopped||generation!==this.readGeneration)return;
       if(!data.ok||!Array.isArray(data.records)||data.truncated)throw Error('STATE_INVALID_RESPONSE');
       if(!data.ready){this.error='Unit usaha belum disiapkan untuk sinkronisasi';this.emit();return;}
@@ -78,15 +84,26 @@ export class SharedStateSync {
       }
       // Complete cloud snapshot: don't keep vanished rows as zombie records.
       this.remote=new Map(safe.map(row=>[keyFor(row.kind,row.recordId),row]));
+      for(const foreign of data.foreignRecords||[]){const key=keyFor(foreign.kind,foreign.recordId),op=this.pending.get(key);
+        if(!op||op.origin!=='legacy'||this.remote.has(key)||op.value?.businessId||op.value?.sector||op.value?.businessSector)continue;
+        const uniqueId=/^(?:cust-|product-)?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(op.recordId);
+        if(!uniqueId&&recordJson(op.value)!==recordJson(foreign.value))continue;
+        const review=[{kind:op.kind,recordId:op.recordId,reason:'OTHER_CONFIRMED_SECTOR:'+foreign.scope}];
+        backupOperational(this.owner,this.sector,'legacy-scope-proof',recordJson(op),review);
+        const cache=`newhope_data_${this.owner}_${this.sector}_${op.kind}`,raw=localStorage.getItem(cache);
+        if(raw)backupOperational(this.owner,this.sector,cache,raw,review);
+        this.quarantinedKeys.add(key);this.pending.delete(key);this.conflicts.delete(key);
+      }
+      if(data.scopeProof)for(const candidate of candidates)this.legacyCheckedKeys.add(keyFor(candidate.kind,candidate.recordId));
       for(const [key,op] of this.pending){const row=this.remote.get(key);if(row&&row.revision>op.baseRevision&&row.deleted===op.deleted&&recordJson(row.value)===recordJson(op.value)){this.pending.delete(key);this.conflicts.delete(key);}}
       const first=!this.ready;this.ready=true;this.error=null;this.lastSyncedAt=new Date().toISOString();this.persist();
       this.onRecords(this.visible(),first);if(this.pending.size&&!this.outletBlocked)await this.flush();
     }catch(error){if(!this.stopped&&generation===this.readGeneration){this.error=error instanceof Error?error.message:'STATE_UNAVAILABLE';this.emit();}}
   }
   prime<T extends object>(kind:string,rows:T[]){this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),recordJson(row)])));}
-  importLegacy<T extends object>(kind:string,rows:T[]){if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;for(const row of rows){const id=recordIdOf(kind,row),key=keyFor(kind,id);if(!this.remote.has(key)&&!this.pending.has(key))this.queue(kind,id,row as Record<string,unknown>,false,0);}this.persist();if(this.pending.size)this.schedule();}
-  private queue(kind:string,id:string,value:Record<string,unknown>|null,deleted:boolean,base?:number){
-    const key=keyFor(kind,id),op:Operation={kind,recordId:id,value,deleted,owner:this.owner,sector:this.sector,baseRevision:base??this.pending.get(key)?.baseRevision??this.remote.get(key)?.revision??0};
+  importLegacy<T extends object>(kind:string,rows:T[]){if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;for(const row of rows){const id=recordIdOf(kind,row),key=keyFor(kind,id);if(!this.remote.has(key)&&!this.pending.has(key)&&!this.quarantinedKeys.has(key))this.queue(kind,id,row as Record<string,unknown>,false,0,'legacy');}this.persist();if(this.pending.size)this.schedule();}
+  private queue(kind:string,id:string,value:Record<string,unknown>|null,deleted:boolean,base?:number,origin:'edit'|'legacy'='edit'){
+    const key=keyFor(kind,id),op:Operation={kind,recordId:id,value,deleted,owner:this.owner,sector:this.sector,origin,baseRevision:base??this.pending.get(key)?.baseRevision??this.remote.get(key)?.revision??0};
     const reason=this.scopeIssue(op);if(reason){backupOperational(this.owner,this.sector,'rejected-edit',recordJson(op),[{kind,recordId:id,reason,name:typeof value?.name==='string'?value.name:undefined}]);return;}this.pending.set(key,op);
   }
   track<T extends object>(kind:string,rows:T[],prune=true){
@@ -110,7 +127,7 @@ export class SharedStateSync {
   }
   async flush(){
     if(this.inFlight||this.stopped||this.outletBlocked||!navigator.onLine||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
-    const operations=[...this.pending].filter(([key])=>!this.conflicts.has(key)).map(([,op])=>op).slice(0,100);if(!operations.length)return;
+    const operations=[...this.pending].filter(([key,op])=>!this.conflicts.has(key)&&(op.origin!=='legacy'||this.legacyCheckedKeys.has(key))).map(([,op])=>op).slice(0,100);if(!operations.length)return;
     this.inFlight=true;this.emit();
     try{const response=await fetch('/api/v1/sync/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,outletId:this.outletId,operations})}),data=await response.json();
       if(this.stopped)return;

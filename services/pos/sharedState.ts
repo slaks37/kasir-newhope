@@ -97,7 +97,17 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
           ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=$2 AND merchant_id=$3))
           ORDER BY scope,kind,record_id LIMIT 10001`,[scope.tenantId,sector,scope.merchantId]);
       });
-      return res.json({ok:true,ready:true,business:{name:scope.businessName,sector},truncated:rows.length>10000,records:rows.slice(0,10000).map((r:any)=>({scope:r.scope,kind:r.kind,
+      let candidates:Array<{kind:string;recordId:string}>=[];
+      try{const parsed=JSON.parse(String(req.query.legacyCandidates||'[]'));if(Array.isArray(parsed)&&parsed.length<=100)candidates=parsed.filter(r=>SECTOR_KINDS.has(r?.kind)&&r.kind!=='store_settings'&&typeof r.recordId==='string'&&ID_RE.test(r.recordId));}catch{}
+      const otherMerchants=candidates.length?(await db.query(`SELECT id,business_sector FROM internal.merchants WHERE tenant_id=$1 AND business_sector<>$2`,[scope.tenantId,sector])).rows:[];
+      const foreignRecords=(await Promise.all(otherMerchants.map(async merchant=>(await db.tx(async c=>{
+        // Same authenticated owner, separate per-merchant RLS scope. Never widen policies.
+        await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[scope.tenantId,merchant.id]);
+        return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
+          JOIN jsonb_to_recordset($3::jsonb) AS candidate(kind text,"recordId" text) ON r.kind=candidate.kind AND r.record_id=candidate."recordId"
+          WHERE r.tenant_id=$1 AND r.merchant_id=$2 AND r.scope<>'GLOBAL' AND NOT r.deleted`,[scope.tenantId,merchant.id,JSON.stringify(candidates)]);
+      })).rows))).flat().map((r:any)=>({scope:r.scope,kind:r.kind,recordId:r.record_id,value:r.value}));
+      return res.json({ok:true,ready:true,scopeProof:true,foreignRecords,business:{name:scope.businessName,sector},truncated:rows.length>10000,records:rows.slice(0,10000).map((r:any)=>({scope:r.scope,kind:r.kind,
         recordId:r.record_id,value:r.value,revision:Number(r.revision),deleted:r.deleted,updatedAt:r.updated_at,
         ...(r.recovery_value?{recoveryValue:r.recovery_value,quarantineReason:r.quarantine_reason}:{} )}))});
     } catch { return res.status(503).json({ok:false,error:'STATE_UNAVAILABLE'}); }
@@ -184,7 +194,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
             const saved=await c.query(`INSERT INTO pos.customers
               (tenant_id,merchant_id,external_ref,name,phone,email,address,notes)
               VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-              ON CONFLICT(tenant_id,external_ref) DO UPDATE SET
+              ON CONFLICT(tenant_id,merchant_id,external_ref) DO UPDATE SET
                 name=EXCLUDED.name,phone=EXCLUDED.phone,email=EXCLUDED.email,
                 address=EXCLUDED.address,notes=EXCLUDED.notes,archived_at=null,updated_at=now()
               WHERE pos.customers.merchant_id=EXCLUDED.merchant_id RETURNING id`,

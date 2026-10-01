@@ -50,6 +50,12 @@ try{
   assert.equal(wrong.status,200);assert.equal(wrong.data.rejected[0].error,'WRONG_SCOPE');
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM pos.shared_state_records WHERE tenant_id=$1 AND scope='FNB' AND record_id='prod-ld-12'",[tenant])).rows[0].n,0);
   assert.equal((await post('/api/v1/sync/catalog',{businessId:owner+'_FNB',sector:'FNB',products:[]})).status,409,'Projection cannot independently own state');
+  const scopedCustomer={kind:'customers',recordId:'same-customer',baseRevision:0,deleted:false,value:{id:'same-customer',name:'Same customer'}};
+  assert.equal((await post('/api/v1/sync/state',{sector:'LAUNDRY',operations:[scopedCustomer]})).data.versions.length,1);
+  const proof=(await get('/api/v1/sync/state?sector=FNB&legacyCandidates='+encodeURIComponent(JSON.stringify([{kind:'customers',recordId:'same-customer'}])))).data;
+  assert.equal(proof.scopeProof,true);assert.equal(proof.foreignRecords[0].scope,'LAUNDRY');
+  assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[scopedCustomer]})).data.versions.length,1,'A deliberate new edit has its own merchant projection');
+  assert.equal((await db.query("SELECT COUNT(*)::int n FROM pos.customers WHERE tenant_id=$1 AND external_ref='same-customer'",[tenant])).rows[0].n,2);
   const sectorBeforeSale=(await sectorSummary(db)).find((row:any)=>row.business_sector==='FNB');
   assert.equal(sectorBeforeSale.business_unit_count,1,'Registered businesses exist before their first sale');
   assert.equal(sectorBeforeSale.active_outlet_count,1,'Active outlet count is independent of sales; deferred outlets excluded');

@@ -7,6 +7,10 @@ const presets:Record<string,string>={fnb:'FNB',ld:'LAUNDRY',rt:'RETAIL',cw:'CARW
 export function operationalScopeIssue(owner:string,sector:string,kind:string,id:string,value:unknown):string|null {
   if(!operationalKinds.has(kind)||kind==='users'||kind==='staff_members')return null;
   const row=value&&typeof value==='object'?value as Record<string,unknown>:{};
+  if(kind==='store_settings'&&typeof row.storeMode==='string'){
+    const expected=sector==='FNB'?'FNB':sector==='RETAIL'?'RETAIL':'SERVICE';
+    if(row.storeMode!==expected)return 'WRONG_STORE_MODE:'+row.storeMode;
+  }
   for(const field of ['businessSector','sector']){
     if(typeof row[field]==='string'&&sectors.has(row[field] as string)&&row[field]!==sector)return `WRONG_SECTOR:${row[field]}`;
   }
