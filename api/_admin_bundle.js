@@ -1219,18 +1219,30 @@ function createClientSupportProvider() {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) }
   }) : null;
+  const identity = async (subject) => {
+    if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+    if (!uuid.test(subject)) return null;
+    const { data, error } = await auth.auth.admin.getUserById(subject);
+    if (error) {
+      if (error.status === 404) return null;
+      throw new SupportError(502, "OWNER_LOOKUP_FAILED");
+    }
+    const u = data.user;
+    return u?.id === subject && !u.deleted_at && (!u.banned_until || Date.parse(u.banned_until) <= Date.now()) && u.email ? { email: u.email, verified: !!u.email_confirmed_at } : null;
+  };
   return {
     configured: !!auth,
+    ownerIdentity: identity,
     async ownerEmail(subject) {
+      const u = await identity(subject);
+      return u?.verified ? u.email : null;
+    },
+    async sendConfirmation(email) {
       if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
-      if (!uuid.test(subject)) return null;
-      const { data, error } = await auth.auth.admin.getUserById(subject);
-      if (error) {
-        if (error.status === 404) return null;
-        throw new SupportError(502, "OWNER_LOOKUP_FAILED");
-      }
-      const u = data.user;
-      return u?.id === subject && !u.deleted_at && (!u.banned_until || Date.parse(u.banned_until) <= Date.now()) && u.email_confirmed_at && u.email ? u.email : null;
+      const destination = new URL("/login", process.env.APP_URL || "https://kasir.newhope.space");
+      if (destination.protocol !== "https:") throw new SupportError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
+      const { error } = await auth.auth.resend({ type: "signup", email, options: { emailRedirectTo: destination.href } });
+      if (error) throw new SupportError(error.status === 429 ? 429 : 502, "EMAIL_CONFIRMATION_PROVIDER_REJECTED");
     },
     async sendReset(email) {
       if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
@@ -1295,8 +1307,14 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
     let email = null, authStatus = "NOT_CONFIGURED";
     if (provider.configured) {
       try {
-        email = await provider.ownerEmail(client.owner_user_ref);
-        authStatus = email ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+        if (provider.ownerIdentity) {
+          const owner = await provider.ownerIdentity(client.owner_user_ref);
+          email = owner?.email || null;
+          authStatus = owner ? owner.verified ? "VERIFIED" : "EMAIL_UNCONFIRMED" : "OWNER_NOT_FOUND";
+        } else {
+          email = await provider.ownerEmail(client.owner_user_ref);
+          authStatus = email ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+        }
       } catch {
         authStatus = "UNAVAILABLE";
       }
@@ -1315,7 +1333,8 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
       ok: true,
       client: { ...client, ownerEmail: email, authStatus },
       canEditProfile: req.internal.role === "ROLE_SUPERADMIN",
-      resetAvailable: !!email,
+      resetAvailable: authStatus === "VERIFIED",
+      confirmationAvailable: authStatus === "EMAIL_UNCONFIRMED" && !!provider.sendConfirmation,
       diagnostics: diagnostics.rows[0],
       businesses: businesses.rows.slice(0, 200),
       outlets: outlets.rows.slice(0, 200),
@@ -1327,9 +1346,9 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
     if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
     const action = req.body?.action;
-    if (!["NOTE", "UPDATE_CLIENT_PROFILE", "RESET_PASSWORD"].includes(action)) throw new SupportError(400, "INVALID_SUPPORT_ACTION");
+    if (!["NOTE", "UPDATE_CLIENT_PROFILE", "RESET_PASSWORD", "RESEND_CONFIRMATION"].includes(action)) throw new SupportError(400, "INVALID_SUPPORT_ACTION");
     if (action === "UPDATE_CLIENT_PROFILE" && req.internal.role !== "ROLE_SUPERADMIN") throw new SupportError(403, "CAPABILITY_DENIED");
-    if (action !== "RESET_PASSWORD") {
+    if (!["RESET_PASSWORD", "RESEND_CONFIRMATION"].includes(action)) {
       const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
       if (action === "UPDATE_CLIENT_PROFILE" && (name.length < 2 || name.length > 100)) throw new SupportError(400, "INVALID_CLIENT_NAME");
       await db.tx(async (c) => {
@@ -1342,33 +1361,42 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
     const stepUp = supportStepUpError(req.adminPrincipal);
     if (stepUp) throw new SupportError(403, stepUp);
     if (!provider.configured) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+    const confirmation = action === "RESEND_CONFIRMATION", prefix = confirmation ? "EMAIL_CONFIRMATION" : "PASSWORD_RESET";
+    if (confirmation && (!provider.ownerIdentity || !provider.sendConfirmation)) throw new SupportError(503, "SUPPORT_CONFIRMATION_NOT_CONFIGURED");
     const requestKey = req.body.requestKey;
     if (typeof requestKey !== "string" || !uuid.test(requestKey)) throw new SupportError(400, "INVALID_REQUEST_KEY");
     const prepared = await db.tx(async (c) => {
       const client = await tenant(c, req.params.tenantId, true);
       if (!uuid.test(client.owner_user_ref || "")) throw new SupportError(409, "OWNER_AUTH_NOT_LINKED");
       const old = (await c.query(`SELECT action FROM internal.support_actions WHERE tenant_id=$1
-        AND action IN ('PASSWORD_RESET_REQUESTED','PASSWORD_RESET_SENT','PASSWORD_RESET_FAILED') AND after_state->>'requestKey'=$2 ORDER BY created_at DESC,id DESC`, [client.id, requestKey])).rows;
-      if (old.length) return { client, replay: true, status: old.some((r) => r.action === "PASSWORD_RESET_SENT") ? "SENT" : old.some((r) => r.action === "PASSWORD_RESET_FAILED") ? "FAILED" : "PENDING" };
-      const recent = (await c.query("SELECT 1 FROM internal.support_actions WHERE tenant_id=$1 AND action='PASSWORD_RESET_REQUESTED' AND created_at>now()-interval '2 minutes' LIMIT 1", [client.id])).rows;
+        AND action IN ($3,$4,$5) AND after_state->>'requestKey'=$2 ORDER BY created_at DESC,id DESC`, [client.id, requestKey, prefix + "_REQUESTED", prefix + "_SENT", prefix + "_FAILED"])).rows;
+      if (old.length) return { client, replay: true, status: old.some((r) => r.action === prefix + "_SENT") ? "SENT" : old.some((r) => r.action === prefix + "_FAILED") ? "FAILED" : "PENDING" };
+      const recent = (await c.query("SELECT 1 FROM internal.support_actions WHERE tenant_id=$1 AND action IN ('PASSWORD_RESET_REQUESTED','EMAIL_CONFIRMATION_REQUESTED') AND created_at>now()-interval '2 minutes' LIMIT 1", [client.id])).rows;
       if (recent.length) throw new SupportError(429, "PASSWORD_RESET_COOLDOWN");
-      await audit(c, req, "PASSWORD_RESET_REQUESTED", reason, null, { requestKey, status: "PENDING" });
+      await audit(c, req, prefix + "_REQUESTED", reason, null, { requestKey, status: "PENDING" });
       return { client, replay: false, status: "PENDING" };
     });
     if (prepared.replay) return res.status(prepared.status === "PENDING" ? 202 : 200).json({ ok: true, replayed: true, status: prepared.status, message: "Permintaan ini sudah tercatat; tidak ada email tambahan yang dikirim. Periksa riwayat support." });
     let accepted = false;
     try {
-      const email = await provider.ownerEmail(prepared.client.owner_user_ref);
-      if (!email) throw new SupportError(409, "OWNER_EMAIL_NOT_VERIFIED");
-      await provider.sendReset(email);
+      if (confirmation) {
+        const owner = await provider.ownerIdentity(prepared.client.owner_user_ref);
+        if (!owner) throw new SupportError(409, "OWNER_AUTH_NOT_LINKED");
+        if (owner.verified) throw new SupportError(409, "OWNER_ALREADY_VERIFIED");
+        await provider.sendConfirmation(owner.email);
+      } else {
+        const email = await provider.ownerEmail(prepared.client.owner_user_ref);
+        if (!email) throw new SupportError(409, "OWNER_EMAIL_NOT_VERIFIED");
+        await provider.sendReset(email);
+      }
       accepted = true;
-      await db.tx((c) => audit(c, req, "PASSWORD_RESET_SENT", reason, null, { requestKey, status: "SENT" }));
+      await db.tx((c) => audit(c, req, prefix + "_SENT", reason, null, { requestKey, status: "SENT" }));
     } catch (e) {
       if (accepted) throw new SupportError(503, "PASSWORD_RESET_STATUS_UNKNOWN");
-      await db.tx((c) => audit(c, req, "PASSWORD_RESET_FAILED", reason, null, { requestKey, status: "FAILED" }));
+      await db.tx((c) => audit(c, req, prefix + "_FAILED", reason, null, { requestKey, status: "FAILED" }));
       throw e instanceof SupportError ? e : new SupportError(502, "PASSWORD_RESET_PROVIDER_REJECTED");
     }
-    res.json({ ok: true, status: "SENT", message: "Permintaan email reset diterima oleh layanan Auth. Owner perlu memeriksa inbox/spam dan memilih kata sandi sendiri." });
+    res.json({ ok: true, status: "SENT", message: confirmation ? "Permintaan konfirmasi diterima oleh layanan Auth. Owner perlu membuka link terbaru di inbox/spam, lalu meminta reset password." : "Permintaan email reset diterima oleh layanan Auth. Owner perlu memeriksa inbox/spam dan memilih kata sandi sendiri." });
   }));
 }
 

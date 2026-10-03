@@ -44,11 +44,22 @@ remain authoritative. No parallel identity store or financial sync mechanism.
 
 ## Activation prerequisites / limitations
 
-This change has not been pushed or deployed. Before enabling real email reset:
+The initial support/reset implementation is deployed in production commit
+`ce4cbe7` (3 October 2026). The confirmation-resend follow-up is local and
+tested, not yet deployed. Production inspection on 4 October found custom
+Resend SMTP enabled, but admin detail returns `NOT_CONFIGURED`: the Vercel
+project has frontend Supabase URL/anon variables and no
+`SUPABASE_SERVICE_ROLE_KEY`. SMTP readiness does not configure the application's
+server Auth admin client. Before enabling real email reset:
 
 - Confirm server Supabase URL/service-role credential configuration without
   exposing the credential in the frontend.
 - Allowlist the exact production recovery URL in Supabase Auth redirect URLs.
+- Allowlist `/login` on the production origin for confirmation resends. The
+  follow-up distinguishes unconfirmed/missing/unavailable Auth accounts and
+  uses Supabase `resend(type: signup)` only for the exact unconfirmed owner.
+  It shares MFA, audit-before-send, two-minute cooldown, and replay protection;
+  confirmation never sets `email_confirmed_at` or changes a password.
 - Verify production SMTP/sender configuration and delivery with an approved
   test owner. Default Auth email limitations are not evidence of production
   SMTP readiness.

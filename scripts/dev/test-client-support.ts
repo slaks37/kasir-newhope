@@ -79,6 +79,21 @@ async function main(){
     assert.equal((await call('clients/'+synthetic+'/actions','admin',reset())).status,409);
     unverified=true;assert.equal((await call('clients/'+other+'/actions','admin',reset())).body.error,'OWNER_EMAIL_NOT_VERIFIED');unverified=false;
     configured=false;assert.equal((await call(detail)).body.resetAvailable,false);assert.equal((await call('clients/'+client+'/actions','admin',reset())).status,503);configured=true;
+    // Unconfirmed owner has an audited confirmation path, never a password
+    // override or an automatic verification bypass. Retry cannot resend.
+    const confirmationClient=randomUUID(),confirmationOwner=randomUUID(),confirmationSent:string[]=[];
+    await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Needs confirmation',$2)",[confirmationClient,confirmationOwner]);
+    provider.ownerIdentity=async subject=>subject===confirmationOwner?{email:'unconfirmed-owner@test.invalid',verified:false}:null;
+    provider.sendConfirmation=async email=>{confirmationSent.push(email);};
+    const confirmationDetail=await call('clients/'+confirmationClient+'?justification=Owner%20confirmation%20ticket');
+    assert.equal(confirmationDetail.body.client.authStatus,'EMAIL_UNCONFIRMED');assert.equal(confirmationDetail.body.resetAvailable,false);assert.equal(confirmationDetail.body.confirmationAvailable,true);
+    const confirmIntent=randomUUID(),confirmAction=action('RESEND_CONFIRMATION',{requestKey:confirmIntent,email:'attacker@test.invalid',password:'ignored'});
+    assert.equal((await call('clients/'+confirmationClient+'/actions','noMfa',confirmAction)).status,403);
+    assert.equal((await call('clients/'+confirmationClient+'/actions','admin',confirmAction)).body.status,'SENT');
+    assert.deepEqual(confirmationSent,['unconfirmed-owner@test.invalid']);
+    assert.equal((await call('clients/'+confirmationClient+'/actions','admin',confirmAction)).body.replayed,true);assert.equal(confirmationSent.length,1);
+    assert.equal((await call('clients/'+confirmationClient+'/actions','admin',reset())).status,429);
+    delete provider.ownerIdentity;delete provider.sendConfirmation;
     // Separate fixture clients make cooldown tests independent without mutating
     // immutable logs. Their owner mapping uses the same verified provider.
     const pending=randomUUID(),failed=randomUUID(),pendingOwner=randomUUID(),failedOwner=randomUUID();verifiedOwners.add(pendingOwner);verifiedOwners.add(failedOwner);
@@ -119,11 +134,17 @@ async function providerContract(){
     };
     const actual=createClientSupportProvider();assert.equal(await actual.ownerEmail(owner),'auth-owner@test.invalid');
     user={...user,email_confirmed_at:null};assert.equal(await actual.ownerEmail(owner),null);
+    assert.deepEqual(await actual.ownerIdentity!(owner),{email:'auth-owner@test.invalid',verified:false});
     user={...user,email_confirmed_at:new Date().toISOString(),banned_until:'2099-01-01T00:00:00Z'};assert.equal(await actual.ownerEmail(owner),null);
     user={...user,banned_until:null,id:randomUUID()};assert.equal(await actual.ownerEmail(owner),null);
     await actual.sendReset('auth-owner@test.invalid');assert.equal(calls.length,1);assert.equal(calls[0].body.email,'auth-owner@test.invalid');assert.equal(new URL(calls[0].url).searchParams.get('redirect_to'),'https://pos-fixture.invalid/reset-password');assert.equal('password' in calls[0].body,false);
     resetStatus=429;await assert.rejects(()=>actual.sendReset('auth-owner@test.invalid'),/PASSWORD_RESET_PROVIDER_REJECTED/);
     process.env.APP_URL='http://unsafe-fixture.invalid';await assert.rejects(()=>actual.sendReset('auth-owner@test.invalid'),/SUPPORT_REDIRECT_NOT_CONFIGURED/);assert.equal(calls.length,2);
+    process.env.APP_URL='https://pos-fixture.invalid';resetStatus=200;
+    await actual.sendConfirmation!('auth-owner@test.invalid');const confirmationCall=calls[2];
+    assert.equal(new URL(confirmationCall.url).pathname,'/auth/v1/resend');assert.equal(confirmationCall.body.type,'signup');
+    assert.equal(confirmationCall.body.email,'auth-owner@test.invalid');assert.equal(new URL(confirmationCall.url).searchParams.get('redirect_to'),'https://pos-fixture.invalid/login');
+    assert.equal('password' in confirmationCall.body,false);
     console.log('PASS: actual Supabase SDK provider contract, verified/unbanned exact Auth subject, fixed HTTPS recovery redirect, provider failure redaction; all network responses simulated');
   }finally{globalThis.fetch=original;for(const [k,v] of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;}
 }

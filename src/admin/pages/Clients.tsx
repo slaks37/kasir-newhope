@@ -23,14 +23,16 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
     if(busy||reason.trim().length<10)return;
     setBusy(true);setError('');setMessage('');
     try{
-      if(action==='RESET_PASSWORD')resetKey.current=pendingResetKey(sessionStorage,row.id);
-      const result=await api.clientAction(row.id,{action,reason:reason.trim(),name,requestKey:action==='RESET_PASSWORD'?resetKey.current:undefined});
+      const emailAction=action==='RESET_PASSWORD'||action==='RESEND_CONFIRMATION';
+      const intentScope=action==='RESEND_CONFIRMATION'?row.id+':confirmation':row.id;
+      if(emailAction)resetKey.current=pendingResetKey(sessionStorage,intentScope);
+      const result=await api.clientAction(row.id,{action,reason:reason.trim(),name,requestKey:emailAction?resetKey.current:undefined});
       if(!alive.current)return;
       setMessage(result.message);
       // Keep an uncertain intent key after a lost ACK. A retry checks its
       // recorded outcome, never sends another email with that key.
-      if(action==='RESET_PASSWORD'&&result.status==='SENT'){acknowledgeReset(sessionStorage,row.id);resetKey.current=null;setConfirmed(false);}
-      if(action==='RESET_PASSWORD'&&result.status==='FAILED'){acknowledgeReset(sessionStorage,row.id);resetKey.current=null;setConfirmed(false);setError('Permintaan sebelumnya gagal. Periksa riwayat sebelum mencoba permintaan baru.');}
+      if(emailAction&&result.status==='SENT'){acknowledgeReset(sessionStorage,intentScope);resetKey.current=null;setConfirmed(false);}
+      if(emailAction&&result.status==='FAILED'){acknowledgeReset(sessionStorage,intentScope);resetKey.current=null;setConfirmed(false);setError('Permintaan sebelumnya gagal. Periksa riwayat sebelum mencoba permintaan baru.');}
       onChanged();
       const resultDetail=await api.client(row.id,ticket);
       if(alive.current){setData(resultDetail);setName(resultDetail.client.name);}
@@ -48,7 +50,7 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
     {data&&<fieldset disabled={busy} className="space-y-5">
       <section className="space-y-2"><h3 className="font-bold">Akun owner</h3>
         <p>{data.client.name} · {data.client.is_active?'Aktif':'Nonaktif'}<br/><small className="break-all">ID akun: {row.id}</small></p>
-        <p>Email terverifikasi: {data.client.ownerEmail||'Belum tersedia'}<br/><small>Status Auth: {data.client.authStatus}</small></p>
+        <p>Email akun: {data.client.ownerEmail||'Belum tersedia'}<br/><small>Status Auth: {data.client.authStatus}</small></p>
         {data.canEditProfile&&<form onSubmit={e=>{e.preventDefault();void act('UPDATE_CLIENT_PROFILE');}} className="space-y-2">
           <label className="block">Nama akun SaaS<input className={input} required minLength={2} maxLength={100} value={name} onChange={e=>setName(e.target.value)}/></label>
           <button className={button} disabled={reason.trim().length<10}>Simpan nama akun</button><p className="text-xs text-slate-500">Tidak mengubah email login, nama outlet, atau transaksi.</p>
@@ -56,9 +58,10 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
       </section>
       <section className="space-y-2"><h3 className="font-bold">Reset password</h3>
         <p className="text-sm">Link dikirim hanya ke email owner terverifikasi di atas. Owner memilih password sendiri; admin tidak dapat melihat password. Memerlukan autentikator admin yang baru diverifikasi.</p>
-        {!data.resetAvailable&&<p className="text-amber-800">Reset belum tersedia: akun Auth belum terverifikasi atau layanan Auth server belum siap.</p>}
+        {!data.resetAvailable&&<p className="text-amber-800">{{EMAIL_UNCONFIRMED:'Email owner belum dikonfirmasi. Kirim ulang konfirmasi, lalu minta owner membuka link terbaru. Setelah terverifikasi, muat ulang detail untuk mengirim reset.',NOT_CONFIGURED:'Konfigurasi Auth server belum lengkap: administrator deployment perlu memasang SUPABASE_SERVICE_ROLE_KEY di server Vercel, bukan di browser.',UNAVAILABLE:'Layanan Auth gagal memeriksa akun. Coba muat ulang detail; jangan mengganti email atau password secara paksa.',OWNER_NOT_FOUND:'Akun owner tidak ditemukan atau tidak dapat dipulihkan. Periksa hubungan akun Auth dengan tenant.',OWNER_NOT_VERIFIED:'Akun owner belum terverifikasi.'}[data.client.authStatus as string]||'Reset belum tersedia. Periksa status Auth akun.'}</p>}
         <label className="flex gap-2 items-start"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>Saya telah memverifikasi permintaan bantuan owner dan email tujuan.</label>
         <button type="button" className={button} disabled={!data.resetAvailable||!confirmed||reason.trim().length<10} onClick={()=>void act('RESET_PASSWORD')}>{resetKey.current?'Periksa permintaan reset sebelumnya':'Kirim email reset password'}</button>
+        {data.confirmationAvailable&&<button type="button" className={button} disabled={!confirmed||reason.trim().length<10} onClick={()=>void act('RESEND_CONFIRMATION')}>Kirim ulang konfirmasi email</button>}
       </section>
       <section className="space-y-2"><h3 className="font-bold">Diagnosis cloud</h3>
         <p>{data.diagnostics.ledger_records} catatan transaksi di server<br/>Transaksi terakhir: {waktu(data.diagnostics.last_transaction_at)}</p>
