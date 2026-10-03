@@ -67,9 +67,9 @@ Both builds use the same locally installed Vite 6.4.3/dependencies. Baseline is 
 
 | Main entry static closure | Baseline HEAD | Local refactor |
 | --- | ---: | ---: |
-| JavaScript bytes | 1,180,729 | 500,778 |
-| JavaScript gzip bytes | 317,919 | 146,464 |
-| CSS bytes | 181,271 | 143,042 |
+| JavaScript bytes | 1,180,729 | 504,732 |
+| JavaScript gzip bytes | 317,919 | 148,157 |
+| CSS bytes | 181,271 | 144,947 |
 
 This is approximately 58% fewer static JavaScript bytes, not an 84 kB total application or a measured latency improvement. Login, landing and workspace add their selected lazy roots; chart-heavy Reports is larger. Further startup payload reductions and measurement against the brief's render/interaction targets remain required. Repeat measurements using `node scripts/dev/measure-workspace-bundle.mjs [dist-directory]` after a manifest-enabled build.
 
@@ -105,3 +105,12 @@ Separate Supabase logins for employees still require a server membership/authori
 3. Bound remaining AI adapter history reads; collect controlled baseline/after render, network, storage and production latency evidence with a representative dataset. Do not relocate regions/increase pools without measurement.
 4. Finish browser Add Business/Add Outlet/capacity/add-on and upgrade flows, expired offline metadata, revocation/reconnect, and hardware printing acceptance. Service-worker cold-offline boot is not yet implemented/verified.
 5. Coordinate deployment only after the remaining gates pass; current local passing tests/build are not proof of production readiness.
+
+### Release preparation and compatibility (2026-10-03)
+
+- Saved the tested POS refactor as local commit `f9c3ac9`, then merged remote main `b21e1c0` into local release candidate `872215b`. The newer SEO verification, sitemap and editorial blog changes are preserved. Nothing has been pushed or deployed by this preparation.
+- Re-ran hygiene/TypeScript, workspace/offline, operational sync, financial-cloud and production build after the merge: all passed. Updated static-closure measurements above describe this merged build, not production.
+- Added a transactional namespace migration abort test: the exact old operational row and financial ledger bytes survive rollback. Successful migration and repeat application preserve financial bytes; exact owner-sector clients retain lost-ACK replay compatibility. This proves isolated database compatibility, not production failover.
+- Production read-only preflight found 123 operational records, zero non-global records without a merchant, zero unknown scopes, and zero rows selected for the namespace rewrite. Independent employee Auth memberships are not currently provisioned; local PIN cashier switching must not be presented as a separate authenticated employee account.
+- Verified the live Vercel target is project `prj_pgXrNyqfggZUHT3nFhSFkEzok6HU` (`kasir-newhope`) in team `team_SCDxbr7VMTFUyI60ki7xaNmg`, Vite, production alias `kasir.newhope.space`, live commit `b21e1c0`. The CLI is logged out. A generic deployment was rejected by automatic review because the target/artifact/compatibility were not sufficiently scoped. No alternative production mutation was attempted.
+- Next release step requires authenticated, explicitly targeted preview deployment of the committed candidate; do not push main as a way around the rejected deployment. Validate preview before coordinating database migration and promotion. After new `BUSINESS:<uuid>` writes exist, rollback to sector-only code is not generally safe: retain expanded schema and pause multi-business creation, or use a namespace-aware rollback build. Never collapse independent businesses back into one sector key.

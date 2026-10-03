@@ -308,7 +308,20 @@ try{
   await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value) VALUES($1,$2,'BARBERSHOP','tables','old-table',$3::jsonb)",[tenant,barberA,JSON.stringify({id:'old-table',name:'Original bytes',businessSector:'BARBERSHOP'})]);
   await db.exec('ALTER TABLE pos.shared_state_records ENABLE TRIGGER shared_business_namespace_guard');
   const original=(await db.query("SELECT to_jsonb(r) AS original FROM pos.shared_state_records r WHERE tenant_id=$1 AND scope='BARBERSHOP' AND record_id='old-table'",[tenant])).rows[0].original;
-  for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')))await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+  const namespaceSql=fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort().map(file=>fs.readFileSync('supabase/migrations/'+file,'utf8')).join('\n');
+  const ledgerBeforeNamespace=await financialBytes();
+  await assert.rejects(()=>db.tx(async c=>{
+    await c.exec(namespaceSql);
+    assert.equal((await c.query("SELECT scope FROM pos.shared_state_records WHERE tenant_id=$1 AND record_id='old-table'",[tenant])).rows[0].scope,'BUSINESS:'+barberA);
+    throw new Error('SIMULATED_ROLLOUT_ABORT');
+  }),/SIMULATED_ROLLOUT_ABORT/);
+  assert.deepEqual((await db.query("SELECT to_jsonb(r) AS original FROM pos.shared_state_records r WHERE tenant_id=$1 AND record_id='old-table'",[tenant])).rows[0].original,original,'Aborted namespace migration preserves the exact original operational row');
+  assert.equal(await financialBytes(),ledgerBeforeNamespace,'Aborted migration cannot change financial ledger bytes');
+  await db.tx(c=>c.exec(namespaceSql));
+  await db.tx(c=>c.exec(namespaceSql)); // Deployment retries must be safe.
+  assert.equal(await financialBytes(),ledgerBeforeNamespace,'Successful/retried namespace migration cannot change financial ledger bytes');
+  const legacyReplay=await post('/api/v1/sync/state',{sector:'FNB',operations:[productOp]});
+  assert.equal(legacyReplay.data.versions[0].revision,1,'Exact owner-sector clients retain replay compatibility after migration');
   const namespaceRow=(await db.query("SELECT scope,scope_recovery_snapshot,value FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND record_id='old-table'",[tenant,barberA])).rows[0];
   assert.equal(namespaceRow.scope,'BUSINESS:'+barberA);assert.deepEqual(namespaceRow.scope_recovery_snapshot,original);assert.deepEqual(namespaceRow.value,original.value);
   await assert.rejects(()=>db.query("UPDATE pos.shared_state_records SET scope='BARBERSHOP' WHERE tenant_id=$1 AND merchant_id=$2 AND record_id='old-table'",[tenant,barberA]),/BUSINESS_NAMESPACE_REQUIRED/);
@@ -339,6 +352,6 @@ try{
   assert.equal(canonicalStatus.data.synced_transactions,1,'Sync status counts the selected business, not all tenant sales');
   console.log('PASS: 60/61 partial commit, merchant-scoped identities, exact replay, server-side wrong-scope backups and byte-equivalent financial ledger');
   console.log('PASS: canonical directory and explicit business authorization; same-sector ambiguity and inactive/foreign selections fail closed');
-  console.log('PASS: two same-sector businesses own identical product IDs independently, exact replay, old-namespace recovery snapshot and idempotent creation');
+  console.log('PASS: two same-sector businesses own identical product IDs independently, exact replay, namespace rollback/retry, legacy-client compatibility, recovery snapshot and idempotent creation');
   console.log('PASS: Device A → PostgreSQL → Device B → Admin equality; retry, immutable cash, refund, void, SETTLED split tender, tenant/outlet isolation and timezone');
 }finally{globalThis.fetch=nativeFetch;await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
