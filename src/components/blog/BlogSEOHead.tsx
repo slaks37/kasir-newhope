@@ -47,7 +47,7 @@ export const BlogSEOHead: React.FC<BlogSEOHeadProps> = ({ post, isListPortal = f
       const portalTitle = 'Blog Harapan Baru — Tips Bisnis, Panduan Kasir & FinTech UMKM | New Hope POS';
       const portalDesc = 'Portal edukasi resmi New Hope POS: Panduan membuka kafe, tips bisnis laundry kiloan, tutorial QRIS Dinamis, dan strategi kontrol resep HPP bahan baku.';
       const portalKeywords = 'blog bisnis umkm, tips buka kafe, aplikasi kasir terbaik, qris dinamis pos, resep hpp, harapan baru pos';
-      const canonical = 'https://newhopepos.com/#blog';
+      const canonical = 'https://kasir.newhope.space/#blog';
 
       document.title = portalTitle;
       setMetaTag('name', 'description', portalDesc);
@@ -73,8 +73,8 @@ export const BlogSEOHead: React.FC<BlogSEOHeadProps> = ({ post, isListPortal = f
         publisher: {
           '@type': 'Organization',
           name: 'New Hope POS',
-          url: 'https://newhopepos.com',
-          logo: 'https://newhopepos.com/assets/logo.png',
+          url: 'https://kasir.newhope.space',
+          logo: 'https://kasir.newhope.space/assets/logo.png',
         },
       });
 
@@ -85,7 +85,7 @@ export const BlogSEOHead: React.FC<BlogSEOHeadProps> = ({ post, isListPortal = f
     const pageTitle = `${post.seo?.metaTitle || post.title} | Blog Harapan Baru - New Hope POS`;
     const pageDesc = post.seo?.metaDescription || post.excerpt;
     const pageKeywords = (post.seo?.metaKeywords || post.tags || []).join(', ');
-    const canonical = post.seo?.canonicalUrl || `https://newhopepos.com/#blog/${post.slug}`;
+    const canonical = post.seo?.canonicalUrl || `https://kasir.newhope.space/#blog/${post.slug}`;
     const ogImage = post.seo?.ogImage || post.coverImage;
 
     document.title = pageTitle;
@@ -128,10 +128,10 @@ export const BlogSEOHead: React.FC<BlogSEOHeadProps> = ({ post, isListPortal = f
       publisher: {
         '@type': 'Organization',
         name: 'New Hope POS',
-        url: 'https://newhopepos.com',
+        url: 'https://kasir.newhope.space',
         logo: {
           '@type': 'ImageObject',
-          url: 'https://newhopepos.com/assets/logo.png',
+          url: 'https://kasir.newhope.space/assets/logo.png',
         },
       },
       articleSection: post.category,

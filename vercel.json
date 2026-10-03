@@ -79,7 +79,7 @@
       "destination": "/admin.html"
     },
     {
-      "source": "/((?!api|admin).*)",
+      "source": "/((?!api|admin|google).*)",
       "destination": "/index.html"
     }
   ]
