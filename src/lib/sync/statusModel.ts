@@ -1,7 +1,7 @@
 import type { SyncStatus } from './queue';
 import type { SharedSyncStatus } from './sharedState';
 import type { LegacyMigrationResult } from './legacyMigration';
-export function syncStatusModel(input:{businessId:string;financial:SyncStatus;operational:SharedSyncStatus;
+export function syncStatusModel(input:{businessId:string;owner?:string;operationalNamespace?:string;financial:SyncStatus;operational:SharedSyncStatus;
   recovery:LegacyMigrationResult|null;cloudReady:boolean;cloudError:string|null;online:boolean}){
   const {financial:f,operational:o,recovery:r}=input;
   const financialReview=Boolean(r&&!r.complete&&(r.conflicts||r.needsOutletMapping||r.invalid||r.deferredRefunds||r.unassignedSourceKeys.length));

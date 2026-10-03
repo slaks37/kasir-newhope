@@ -2,6 +2,7 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { isFreePlan } from '../../src/config/freePlanPolicy';
 import { validateFreeBranchSelection, FreePlanAccessError } from './freePlan';
@@ -77,8 +78,11 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     const result=await db.tx(async c=>{
       await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
       await assertTenantWritable(c,tenantId);
-      const merchant=(await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,sector])).rows[0];
-      if(!merchant) throw new BillingError(409,'BUSINESS_SETUP_REQUIRED');
+      let scope;
+      try{scope=await resolveBusinessScope(c,principal.subject,sector,b.businessId);}
+      catch(error){if(error instanceof BusinessScopeError)throw new BillingError(error.status,error.message);throw error;}
+      if(!scope||scope.tenantId!==tenantId) throw new BillingError(409,'BUSINESS_SETUP_REQUIRED');
+      const merchant={id:scope.merchantId};
       const id=/^[0-9a-f-]{36}$/i.test(b.id || '')?b.id:randomUUID();
       const existing=(await c.query('SELECT * FROM internal.outlets WHERE id=$1',[id])).rows[0];
       if(existing && (existing.tenant_id!==tenantId || existing.merchant_id!==merchant.id)) throw new BillingError(403,'OUTLET_NOT_OWNED');

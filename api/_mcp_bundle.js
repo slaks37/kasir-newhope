@@ -361,9 +361,9 @@ function validateArguments(name, args) {
   return a;
 }
 async function authorizedBusiness(db, subject, businessId) {
-  const business = (await db.query(`SELECT m.id,m.tenant_id,m.external_ref AS business_id,m.name,m.business_sector
+  const business = (await db.query(`SELECT m.id,m.tenant_id,COALESCE(m.external_ref,m.id::text) AS business_id,m.name,m.business_sector
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE m.external_ref=$1 AND t.owner_user_ref=$2 AND m.is_active=true`, [businessId, subject])).rows[0];
+    WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active=true`, [businessId, subject])).rows[0];
   if (!business) throw new Error("BUSINESS_ACCESS_DENIED");
   await assertAiAvailable(db, business.tenant_id);
   return business;
@@ -485,7 +485,7 @@ function registerMcpRoutes(app, db, authenticate = authenticateBearer) {
   });
   route("get", "/api/mcp/manage", async (req, res) => {
     const p = await owner(req);
-    const businesses = (await db.query(`SELECT m.external_ref AS business_id,m.name FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE t.owner_user_ref=$1 AND m.is_active=true ORDER BY m.name`, [p.subject])).rows;
+    const businesses = (await db.query(`SELECT COALESCE(m.external_ref,m.id::text) AS business_id,m.name FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE t.owner_user_ref=$1 AND t.is_active AND t.merged_into IS NULL AND m.is_active=true ORDER BY m.name`, [p.subject])).rows;
     const connections = (await db.query(`SELECT id,business_id,client_id,created_at,expires_at,revoked_at FROM mcp_private.connections WHERE owner_ref=$1 ORDER BY created_at DESC LIMIT 100`, [p.subject])).rows;
     const events = (await db.query(`SELECT a.event,a.tool,a.created_at,c.client_id,c.business_id FROM mcp_private.audit a JOIN mcp_private.connections c ON c.id=a.connection_id WHERE c.owner_ref=$1 ORDER BY a.created_at DESC LIMIT 30`, [p.subject])).rows;
     res.json({ endpoint: config.resource, businesses, connections, events });

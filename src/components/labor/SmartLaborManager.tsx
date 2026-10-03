@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import {
   Users,
@@ -63,7 +63,7 @@ export const SmartLaborManager: React.FC = () => {
     clockInStaff,
     clockOutStaff,
     getActiveAttendance,
-  } = usePOS();
+  } = usePOSFields(["staffMembers","attendanceLogs","orders","bookings","commissionRules","saveCommissionRule","payrollSlips","savePayrollSlip","deletePayrollSlip","disbursePayrollCashMovement","settings","addStaffMember","updateStaffMember","deleteStaffMember","clockInStaff","clockOutStaff","getActiveAttendance"]);
   const { t } = useTranslation();
 
   const sector: BusinessSector = settings.businessSector || 'FNB';

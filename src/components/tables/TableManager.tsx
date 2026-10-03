@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { Table, Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
@@ -47,7 +47,7 @@ export const TableManager: React.FC = () => {
     orders,
     heldOrders,
     recallHoldOrder,
-  } = usePOS();
+  } = usePOSFields(["tables","saveTable","deleteTable","settings","activateBusinessSector","kdsTickets","carwashQueue","bookings","orders","heldOrders","recallHoldOrder"]);
 
   const activeSectorKey: BusinessSector = settings.businessSector || 'FNB';
   const activePreset = BUSINESS_PRESETS[activeSectorKey] || BUSINESS_PRESETS.FNB;

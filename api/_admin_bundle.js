@@ -164,14 +164,13 @@ function trustedPrincipal(req) {
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
   const { rows } = await db.query(
-    `SELECT 1
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1 AND t.owner_user_ref = $2
-      LIMIT 1`,
-    [businessId, principal.subject]
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
   );
-  return rows.length === 1;
+  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
@@ -191,6 +190,44 @@ async function tenantForPrincipal(db, principal) {
     return res.rows[0]?.id ?? null;
   }
   return null;
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
 }
 
 // src/config/freePlanPolicy.ts
@@ -538,8 +575,8 @@ async function subscriptionStatus(db, tenantId) {
   const s = await ensureSubscription(db, tenantId);
   const sub = serializeSubscription(s);
   const access = subscriptionAccess(sub);
-  const tenant = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
-  if (!tenant.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
+  const tenant2 = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
+  if (!tenant2.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
   if (access.status !== s.status && access.status !== "FREE") {
     await db.query("UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2", [access.status, s.id]).catch(() => {
     });
@@ -556,7 +593,7 @@ async function subscriptionStatus(db, tenantId) {
   const retainedOutlets = await outletUsage(db, tenantId);
   return {
     ok: true,
-    subscription: { ...sub, status: access.status, accessMode: access.accessMode, isActive: !!tenant.rows[0]?.is_active },
+    subscription: { ...sub, status: access.status, accessMode: access.accessMode, isActive: !!tenant2.rows[0]?.is_active },
     plan: sub.plan,
     ...access,
     activeDays,
@@ -862,7 +899,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "BILLING_UNAVAILABLE" });
     }
   };
-  const tenant = async (req) => {
+  const tenant2 = async (req) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
@@ -883,8 +920,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     return id;
   };
   app.get("/api/v1/subscription/plans", (_req, res) => res.json({ ok: true, plans: SAAS_PLANS }));
-  app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant(req)))));
-  app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant(req)) })));
+  app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant2(req)))));
+  app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant2(req)) })));
   app.post("/api/v1/subscription/free-plan", run(async (req, res) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
@@ -907,11 +944,11 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     res.json(await subscriptionStatus(db, tenantId));
   }));
   app.get("/api/v1/subscription/outlets", run(async (req, res) => {
-    const { rows } = await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`, [await tenant(req)]);
+    const { rows } = await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`, [await tenant2(req)]);
     res.json({ ok: true, rows });
   }));
   app.post("/api/v1/subscription/outlets", run(async (req, res) => {
-    const tenantId = await tenant(req), b = req.body || {};
+    const tenantId = await tenant2(req), b = req.body || {};
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
     const sector = String(b.businessSector || "FNB");
@@ -920,8 +957,15 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const result = await db.tx(async (c) => {
       await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
       await assertTenantWritable(c, tenantId);
-      const merchant = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
-      if (!merchant) throw new BillingError(409, "BUSINESS_SETUP_REQUIRED");
+      let scope;
+      try {
+        scope = await resolveBusinessScope(c, principal.subject, sector, b.businessId);
+      } catch (error) {
+        if (error instanceof BusinessScopeError) throw new BillingError(error.status, error.message);
+        throw error;
+      }
+      if (!scope || scope.tenantId !== tenantId) throw new BillingError(409, "BUSINESS_SETUP_REQUIRED");
+      const merchant = { id: scope.merchantId };
       const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID2();
       const existing = (await c.query("SELECT * FROM internal.outlets WHERE id=$1", [id])).rows[0];
       if (existing && (existing.tenant_id !== tenantId || existing.merchant_id !== merchant.id)) throw new BillingError(403, "OUTLET_NOT_OWNED");
@@ -937,11 +981,11 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     res.json({ ok: true, outlet: result });
   }));
   app.post("/api/v1/subscription/prorated-upgrade", run(async (req, res) => {
-    const quote = await createQuote(db, await tenant(req), req.body || {});
+    const quote = await createQuote(db, await tenant2(req), req.body || {});
     res.json({ ok: true, ...quote, netProratedAmount: quote.amount, proratedAmountIdr: quote.amount, breakdown: { newPlanPrice: quote.recurringAmount, unusedCredit: quote.unusedCredit, total: quote.amount } });
   }));
   app.post("/api/v1/subscription/checkout", run(async (req, res) => {
-    const tenantId = await tenant(req);
+    const tenantId = await tenant2(req);
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
     if (!isDokuConfigured()) throw new BillingError(503, "PAYMENT_GATEWAY_NOT_CONFIGURED");
@@ -982,7 +1026,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     }
   }));
   app.get("/api/v1/subscription/verify", run(async (req, res) => {
-    const tenantId = await tenant(req);
+    const tenantId = await tenant2(req);
     const invoiceId = typeof req.query?.invoiceId === "string" ? req.query.invoiceId : void 0;
     const invoiceNumber = typeof req.query?.invoiceNumber === "string" ? req.query.invoiceNumber : void 0;
     let query = "SELECT * FROM billing.invoices WHERE tenant_id=$1";
@@ -1159,14 +1203,183 @@ function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
 }
 
+// src/server/clientSupport.ts
+import { createClient } from "@supabase/supabase-js";
+var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var SupportError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+function createClientSupportProvider() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const auth = url && key ? createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) }
+  }) : null;
+  return {
+    configured: !!auth,
+    async ownerEmail(subject) {
+      if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+      if (!uuid.test(subject)) return null;
+      const { data, error } = await auth.auth.admin.getUserById(subject);
+      if (error) {
+        if (error.status === 404) return null;
+        throw new SupportError(502, "OWNER_LOOKUP_FAILED");
+      }
+      const u = data.user;
+      return u?.id === subject && !u.deleted_at && (!u.banned_until || Date.parse(u.banned_until) <= Date.now()) && u.email_confirmed_at && u.email ? u.email : null;
+    },
+    async sendReset(email) {
+      if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+      const destination = new URL("/reset-password", process.env.APP_URL || "https://kasir.newhope.space");
+      if (destination.protocol !== "https:") throw new SupportError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
+      const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: destination.href });
+      if (error) throw new SupportError(error.status === 429 ? 429 : 502, "PASSWORD_RESET_PROVIDER_REJECTED");
+    }
+  };
+}
+function supportStepUpError(principal, now = Date.now()) {
+  if (principal?.aal !== "aal2") return "MFA_REQUIRED";
+  if (!principal.mfaVerifiedAt || now / 1e3 - principal.mfaVerifiedAt >= 600 || principal.mfaVerifiedAt > now / 1e3 + 30) return "REAUTH_REQUIRED";
+  return null;
+}
+async function tenant(c, id, lock = false) {
+  const row = (await c.query(`SELECT id,name,owner_user_ref,is_active,created_at FROM internal.tenants WHERE id=$1 AND merged_into IS NULL${lock ? " FOR UPDATE" : ""}`, [id])).rows[0];
+  if (!row) throw new SupportError(404, "CLIENT_NOT_FOUND");
+  return row;
+}
+async function audit(c, req, action, reason, before, after) {
+  await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)
+    VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)`, [
+    req.params.tenantId,
+    req.internal.id,
+    action,
+    reason,
+    JSON.stringify(before),
+    JSON.stringify(after),
+    req.auditRequestId,
+    req.ip || null,
+    String(req.headers["user-agent"] || "").slice(0, 512)
+  ]);
+}
+function registerClientSupportRoutes(app, getDb, guard, provider = createClientSupportProvider()) {
+  const run = (fn) => async (req, res) => {
+    try {
+      await fn(req, res, await getDb());
+    } catch (e) {
+      res.status(e instanceof SupportError ? e.status : 500).json({ ok: false, error: e instanceof SupportError ? e.message : "CLIENT_SUPPORT_FAILED" });
+    }
+  };
+  app.get("/api/admin/clients", guard("VIEW_MERCHANT_HEALTH"), run(async (req, res, db) => {
+    const allowed = ["ROLE_SUPERADMIN", "ROLE_INTERNAL_SUPPORT"].includes(req.internal.role);
+    await db.query(`INSERT INTO internal.internal_access_log(id,internal_user_id,internal_role,action,resource,request_id)
+      VALUES(gen_random_uuid(),$1,$2,$3,'/api/admin/clients',$4)`, [req.internal.id, req.internal.role, allowed ? "VIEW_CLIENT_DIRECTORY" : "DENIED_VIEW_CLIENT_DIRECTORY", req.auditRequestId]);
+    if (!allowed) throw new SupportError(403, "CAPABILITY_DENIED");
+    const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 120) : "";
+    const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0)), limit = Math.max(1, Math.min(50, Math.floor(Number(req.query.limit) || 20)));
+    const filter = "t.merged_into IS NULL AND t.owner_user_ref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND ($1='' OR strpos(lower(t.name),lower($1))>0 OR t.id::text=$1)";
+    const total = (await db.query(`SELECT count(*)::int n FROM internal.tenants t WHERE ${filter}`, [search])).rows[0].n;
+    const rows = (await db.query(`SELECT t.id,t.name,t.is_active,t.created_at,
+      (SELECT count(*)::int FROM internal.merchants m WHERE m.tenant_id=t.id) business_count,
+      (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlet_count
+      FROM internal.tenants t WHERE ${filter} ORDER BY t.created_at DESC,t.id LIMIT $2 OFFSET $3`, [search, limit, offset])).rows;
+    res.json({ ok: true, rows, total, limit, offset });
+  }));
+  app.get("/api/admin/clients/:tenantId", guard("MANAGE_SUPPORT"), run(async (req, res, db) => {
+    const reason = typeof req.query.justification === "string" ? req.query.justification.trim() : "";
+    if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
+    const client = await tenant(db, req.params.tenantId);
+    let email = null, authStatus = "NOT_CONFIGURED";
+    if (provider.configured) {
+      try {
+        email = await provider.ownerEmail(client.owner_user_ref);
+        authStatus = email ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+      } catch {
+        authStatus = "UNAVAILABLE";
+      }
+    }
+    const [businesses, outlets, diagnostics, history] = await Promise.all([
+      db.query("SELECT id,name,business_sector,is_active FROM internal.merchants WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
+      db.query("SELECT id,merchant_id,name,is_active FROM internal.outlets WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
+      // Read the existing cross-service contract, never widen internal service
+      // permissions to raw POS ledgers or operational recovery payloads.
+      db.query(`SELECT count(*)::int ledger_records,max(created_at) last_transaction_at
+        FROM contract.transaction_log WHERE tenant_id=$1`, [client.id]),
+      db.query(`SELECT a.id,a.action,a.reason,a.created_at,a.after_state,u.email operator_email FROM internal.support_actions a
+        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`, [client.id])
+    ]);
+    res.json({
+      ok: true,
+      client: { ...client, ownerEmail: email, authStatus },
+      canEditProfile: req.internal.role === "ROLE_SUPERADMIN",
+      resetAvailable: !!email,
+      diagnostics: diagnostics.rows[0],
+      businesses: businesses.rows.slice(0, 200),
+      outlets: outlets.rows.slice(0, 200),
+      history: history.rows.slice(0, 50),
+      truncated: { businesses: businesses.rows.length > 200, outlets: outlets.rows.length > 200, history: history.rows.length > 50 }
+    });
+  }));
+  app.post("/api/admin/clients/:tenantId/actions", guard("MANAGE_SUPPORT"), run(async (req, res, db) => {
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
+    const action = req.body?.action;
+    if (!["NOTE", "UPDATE_CLIENT_PROFILE", "RESET_PASSWORD"].includes(action)) throw new SupportError(400, "INVALID_SUPPORT_ACTION");
+    if (action === "UPDATE_CLIENT_PROFILE" && req.internal.role !== "ROLE_SUPERADMIN") throw new SupportError(403, "CAPABILITY_DENIED");
+    if (action !== "RESET_PASSWORD") {
+      const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+      if (action === "UPDATE_CLIENT_PROFILE" && (name.length < 2 || name.length > 100)) throw new SupportError(400, "INVALID_CLIENT_NAME");
+      await db.tx(async (c) => {
+        const before = await tenant(c, req.params.tenantId, true);
+        if (action === "UPDATE_CLIENT_PROFILE") await c.query("UPDATE internal.tenants SET name=$2,updated_at=now() WHERE id=$1", [before.id, name]);
+        await audit(c, req, action, reason, { name: before.name }, { name: action === "UPDATE_CLIENT_PROFILE" ? name : before.name });
+      });
+      return res.json({ ok: true, message: action === "NOTE" ? "Catatan support tersimpan." : "Nama akun diperbarui; transaksi dan nama outlet tidak diubah." });
+    }
+    const stepUp = supportStepUpError(req.adminPrincipal);
+    if (stepUp) throw new SupportError(403, stepUp);
+    if (!provider.configured) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+    const requestKey = req.body.requestKey;
+    if (typeof requestKey !== "string" || !uuid.test(requestKey)) throw new SupportError(400, "INVALID_REQUEST_KEY");
+    const prepared = await db.tx(async (c) => {
+      const client = await tenant(c, req.params.tenantId, true);
+      if (!uuid.test(client.owner_user_ref || "")) throw new SupportError(409, "OWNER_AUTH_NOT_LINKED");
+      const old = (await c.query(`SELECT action FROM internal.support_actions WHERE tenant_id=$1
+        AND action IN ('PASSWORD_RESET_REQUESTED','PASSWORD_RESET_SENT','PASSWORD_RESET_FAILED') AND after_state->>'requestKey'=$2 ORDER BY created_at DESC,id DESC`, [client.id, requestKey])).rows;
+      if (old.length) return { client, replay: true, status: old.some((r) => r.action === "PASSWORD_RESET_SENT") ? "SENT" : old.some((r) => r.action === "PASSWORD_RESET_FAILED") ? "FAILED" : "PENDING" };
+      const recent = (await c.query("SELECT 1 FROM internal.support_actions WHERE tenant_id=$1 AND action='PASSWORD_RESET_REQUESTED' AND created_at>now()-interval '2 minutes' LIMIT 1", [client.id])).rows;
+      if (recent.length) throw new SupportError(429, "PASSWORD_RESET_COOLDOWN");
+      await audit(c, req, "PASSWORD_RESET_REQUESTED", reason, null, { requestKey, status: "PENDING" });
+      return { client, replay: false, status: "PENDING" };
+    });
+    if (prepared.replay) return res.status(prepared.status === "PENDING" ? 202 : 200).json({ ok: true, replayed: true, status: prepared.status, message: "Permintaan ini sudah tercatat; tidak ada email tambahan yang dikirim. Periksa riwayat support." });
+    let accepted = false;
+    try {
+      const email = await provider.ownerEmail(prepared.client.owner_user_ref);
+      if (!email) throw new SupportError(409, "OWNER_EMAIL_NOT_VERIFIED");
+      await provider.sendReset(email);
+      accepted = true;
+      await db.tx((c) => audit(c, req, "PASSWORD_RESET_SENT", reason, null, { requestKey, status: "SENT" }));
+    } catch (e) {
+      if (accepted) throw new SupportError(503, "PASSWORD_RESET_STATUS_UNKNOWN");
+      await db.tx((c) => audit(c, req, "PASSWORD_RESET_FAILED", reason, null, { requestKey, status: "FAILED" }));
+      throw e instanceof SupportError ? e : new SupportError(502, "PASSWORD_RESET_PROVIDER_REJECTED");
+    }
+    res.json({ ok: true, status: "SENT", message: "Permintaan email reset diterima oleh layanan Auth. Owner perlu memeriksa inbox/spam dan memilih kata sandi sendiri." });
+  }));
+}
+
 // src/server/subscriptionDetail.ts
 async function subscriptionDetail(db, tenantId) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const tenant = (await c.query("SELECT id,name,created_at,is_active FROM internal.tenants WHERE id=$1", [tenantId])).rows[0];
-    if (!tenant) return null;
+    const tenant2 = (await c.query("SELECT id,name,created_at,is_active FROM internal.tenants WHERE id=$1", [tenantId])).rows[0];
+    if (!tenant2) return null;
     const stored = (await c.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
-    const start = new Date(tenant.created_at).toISOString();
+    const start = new Date(tenant2.created_at).toISOString();
     const end = new Date(Date.parse(start) + TRIAL_DAYS * DAY_MS).toISOString();
     const s = stored || {
       plan_id: TRIAL_PLAN_ID,
@@ -1180,7 +1393,7 @@ async function subscriptionDetail(db, tenantId) {
     };
     const plan = SAAS_PLANS.find((p) => p.id === s.plan_id);
     const access = subscriptionAccess({
-      status: tenant.is_active ? s.status : "EXPIRED",
+      status: tenant2.is_active ? s.status : "EXPIRED",
       currentPeriodEnd: new Date(s.current_period_end).toISOString(),
       gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0
     });
@@ -1197,7 +1410,7 @@ async function subscriptionDetail(db, tenantId) {
     const activity = (await c.query("SELECT min(created_at) AS first_transaction_at,max(created_at) AS last_transaction_at FROM contract.merchant_revenue WHERE tenant_id=$1", [tenantId])).rows[0];
     const cap = plan ? plan.maxOutlets + Number(s.extra_outlets || 0) : null;
     return {
-      tenant,
+      tenant: tenant2,
       retrievedAt: (/* @__PURE__ */ new Date()).toISOString(),
       derivedTrial: !stored,
       activity,
@@ -1301,8 +1514,8 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
       if (action !== "NOTE" && req.internal.role !== "ROLE_SUPERADMIN") throw new BillingError(403, "CAPABILITY_DENIED");
       const result = await db.tx(async (c) => {
-        const tenant = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
-        if (!tenant.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
+        const tenant2 = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
+        if (!tenant2.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
         const before = await ensureSubscription(c, req.params.tenantId);
         let invoiceBefore = null, invoiceAfter = null;
         if (action === "EXTEND_TRIAL") {
@@ -1798,7 +2011,7 @@ async function recordAccess(db, who, action, resource, merchantId, justification
     [who.id, who.role, merchantId, action, resource, justification, ip, req.auditRequestId, String(req.headers["user-agent"] || "").slice(0, 512)]
   );
 }
-function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
+function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supportProvider) {
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
@@ -1866,9 +2079,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
           await recordAccess(db, who, securityError, req.path, null, null, req.ip || null, req);
           return res.status(403).json({ ok: false, error: securityError, requestId: req.auditRequestId });
         }
-        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const uuid2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         for (const value of [req.params.merchantId, req.params.tenantId, req.query.merchantId]) {
-          if (value !== void 0 && (typeof value !== "string" || !uuid.test(value))) return res.status(400).json({ ok: false, error: "INVALID_ID" });
+          if (value !== void 0 && (typeof value !== "string" || !uuid2.test(value))) return res.status(400).json({ ok: false, error: "INVALID_ID" });
         }
         const target = String(req.params.merchantId || req.params.tenantId || req.query.merchantId || "") || null;
         const reason = String(req.headers["x-justification"] || req.body?.reason || req.query.justification || "").trim() || null;
@@ -1882,6 +2095,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
         }
         if (requiresAudit(capability)) await recordAccess(db, who, capability, req.path, target, reason, req.ip || null, req);
         req.internal = who;
+        req.adminPrincipal = principal;
         req.environment = "PROVIDER_BO";
         next();
       } catch (err) {
@@ -1949,6 +2163,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
     res.json({ ok: true, message: `Pengguna internal ${email} berhasil ditambahkan sebagai ${role}`, user: inserted.rows[0] });
   }));
   registerSubscriptionAdminRoutes(app, getDb, guard, wrap);
+  registerClientSupportRoutes(app, getDb, guard, supportProvider);
   app.get("/api/admin/staff-commissions", guard("VIEW_TRANSACTION_LOG"), wrap(async (req, res, db) => {
     const f = cleanFilter(req.query);
     const { rows } = await db.query(`SELECT * FROM contract.staff_commission_ledger
@@ -2343,6 +2558,53 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
   );
 }
 
+// services/pos/businessDirectory.ts
+function registerBusinessDirectory(app, db) {
+  app.get("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const tenantId = await tenantForPrincipal(db, principal);
+      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
+      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
+        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
+        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
+        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
+      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
+      const businesses = /* @__PURE__ */ new Map();
+      for (const row of result.rows) {
+        let business = businesses.get(row.id);
+        if (!business) {
+          business = {
+            businessId: row.id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            sector: row.business_sector,
+            status: row.is_active ? "ACTIVE" : "INACTIVE",
+            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
+            transportRef: row.external_ref || row.id,
+            outlets: []
+          };
+          businesses.set(row.id, business);
+        }
+        if (row.outlet_id) business.outlets.push({
+          outletId: row.outlet_id,
+          businessId: row.id,
+          name: row.outlet_name,
+          address: row.address || "",
+          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
+          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
+        });
+      }
+      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
+    } catch {
+      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
+    }
+  });
+}
+
 // services/pos/sync.ts
 import { randomBytes } from "node:crypto";
 
@@ -2418,7 +2680,9 @@ async function scopeFor(db, req) {
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
     ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3`, [outletId, tenantId, sector])).rows[0];
+    JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3 AND m.is_active
+      AND t.is_active AND t.merged_into IS NULL`, [outletId, tenantId, sector])).rows[0];
   if (!row) throw new FinanceError(403, "OUTLET_NOT_OWNED");
   if (!row.is_active) throw new FinanceError(409, "OUTLET_SETUP_REQUIRED");
   await assertTenantWritable(db, tenantId);
@@ -2525,7 +2789,7 @@ function registerFinanceRoutes(app, db) {
         const current = rows.find((r) => r.status === "OPEN");
         return { shift: current ? await calculateShift(c, s, current) : null, history: rows.filter((r) => r.status === "CLOSED").map((r) => r.summary).filter(Boolean) };
       });
-      res.json({ ok: true, ...result });
+      res.json({ ok: true, ...result, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (error) {
       if (!(error instanceof FinanceError) && !(error instanceof BillingError)) {
         const diagnostic = error;
@@ -2711,7 +2975,7 @@ var operationalKinds = /* @__PURE__ */ new Set([
 ]);
 var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
-function operationalScopeIssue(owner, sector, kind, id, value) {
+function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${owner}_${sector}`) {
   if (!operationalKinds.has(kind) || kind === "users" || kind === "staff_members") return null;
   const row = value && typeof value === "object" ? value : {};
   if (kind === "store_settings" && typeof row.storeMode === "string") {
@@ -2721,12 +2985,123 @@ function operationalScopeIssue(owner, sector, kind, id, value) {
   for (const field of ["businessSector", "sector"]) {
     if (typeof row[field] === "string" && sectors.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
   }
-  if (typeof row.businessId === "string" && /_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/.test(row.businessId) && row.businessId !== `${owner}_${sector}`)
+  if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
   const ref = kind === "products" ? id : typeof row.productId === "string" ? row.productId : "";
   const match = /^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
   if (match && presets[match[1]] !== sector) return `WRONG_SECTOR:${presets[match[1]]}`;
   return null;
+}
+
+// services/pos/laborProjection.ts
+var text = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var timestamp2 = (value, optional = false) => {
+  if (optional && (value === void 0 || value === null || value === "")) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new BillingError(422, "INVALID_LABOR_DATE");
+  return new Date(value).toISOString();
+};
+var money2 = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new BillingError(422, "INVALID_PAYROLL_AMOUNT");
+  return value;
+};
+async function projectLabor(c, scope, sector, op) {
+  if (op.kind !== "attendance_logs" && op.kind !== "payroll_slips") return;
+  const attendance = op.kind === "attendance_logs";
+  const table = attendance ? "pos.staff_attendances" : "pos.staff_payrolls";
+  const clientColumn = attendance ? "client_attendance_id" : "client_slip_id";
+  const existing = (await c.query(`SELECT * FROM ${table} WHERE tenant_id=$1 AND ${clientColumn}=$2 FOR UPDATE`, [scope.tenantId, op.recordId])).rows[0];
+  if (existing && existing.merchant_id !== scope.merchantId) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
+  if (op.deleted) {
+    if (!attendance && existing?.status === "PAID") throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
+    return;
+  }
+  const value = op.value;
+  if (value.id !== op.recordId || !text(value.staffId, 96) || !text(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
+  if (attendance) {
+    if (!["CLOCKED_IN", "CLOCKED_OUT"].includes(String(value.status))) throw new BillingError(422, "INVALID_ATTENDANCE_STATUS");
+    const started = timestamp2(value.clockInTime), ended = timestamp2(value.clockOutTime, true);
+    if (value.status === "CLOCKED_OUT" && !ended || ended && Date.parse(ended) < Date.parse(started)) throw new BillingError(422, "INVALID_ATTENDANCE_DATE");
+    if (typeof value.branchId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.branchId)) throw new BillingError(422, "ATTENDANCE_OUTLET_REQUIRED");
+    const outlet = (await c.query("SELECT id FROM internal.outlets WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3", [value.branchId, scope.tenantId, scope.merchantId])).rows[0];
+    if (!outlet) throw new BillingError(403, "ATTENDANCE_OUTLET_NOT_OWNED");
+    if (existing && (existing.staff_id !== value.staffId || existing.outlet_id !== outlet.id || new Date(existing.clock_in_at).toISOString() !== started)) throw new BillingError(409, "ATTENDANCE_IDENTITY_IMMUTABLE");
+    if (existing?.clock_out_at && (!ended || new Date(existing.clock_out_at).toISOString() !== ended)) throw new BillingError(409, "CLOSED_ATTENDANCE_IMMUTABLE");
+    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
+    const saved2 = await c.query(
+      `INSERT INTO pos.staff_attendances
+      (tenant_id,merchant_id,outlet_id,client_attendance_id,staff_id,staff_name,staff_role,clock_in_at,clock_out_at,
+       shift_notes,status,branch_id,branch_name,clock_in_geo,clock_out_geo,business_sector)
+      VALUES($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$3::text,$12,$13::jsonb,$14::jsonb,$15)
+      ON CONFLICT(tenant_id,client_attendance_id) DO UPDATE SET
+        clock_out_at=EXCLUDED.clock_out_at,shift_notes=EXCLUDED.shift_notes,status=EXCLUDED.status,
+        clock_out_geo=EXCLUDED.clock_out_geo,updated_at=now()
+      WHERE pos.staff_attendances.merchant_id=EXCLUDED.merchant_id RETURNING id`,
+      [
+        scope.tenantId,
+        scope.merchantId,
+        outlet.id,
+        op.recordId,
+        value.staffId,
+        text(value.staffName, 120),
+        text(value.staffRole, 64) || "STAFF",
+        started,
+        ended,
+        text(value.shiftNotes, 500) || null,
+        value.status,
+        text(value.branchName, 100),
+        JSON.stringify(value.clockInGeo || null),
+        JSON.stringify(value.clockOutGeo || null),
+        sector
+      ]
+    );
+    if (!saved2.rows.length) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
+    return;
+  }
+  if (!["DRAFT", "PAID"].includes(String(value.status)) || typeof value.periodMonth !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.periodMonth) || !Number.isSafeInteger(value.daysAttended) || Number(value.daysAttended) < 0) throw new BillingError(422, "INVALID_PAYROLL_RECORD");
+  const start = timestamp2(value.periodStart), end = timestamp2(value.periodEnd), paid = timestamp2(value.paidAt, true);
+  if (end < start || value.status === "PAID" && !paid) throw new BillingError(422, "INVALID_PAYROLL_DATE");
+  const fields = ["baseSalary", "allowance", "individualCommission", "teamPoolCommission", "dailyTargetBonus", "grossEarnings", "deductions", "netSalary"];
+  const amounts = fields.map((field) => money2(value[field]));
+  const columns = ["base_salary", "allowance", "individual_commission", "team_pool_commission", "daily_target_bonus", "gross_earnings", "deductions", "net_salary"];
+  if (existing?.status === "PAID") {
+    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
+      throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
+    return;
+  }
+  const saved = await c.query(
+    `INSERT INTO pos.staff_payrolls
+    (tenant_id,merchant_id,client_slip_id,staff_id,staff_name,staff_role,period_month,period_start,period_end,days_attended,
+     base_salary,allowance,individual_commission,team_pool_commission,daily_target_bonus,gross_earnings,deductions,net_salary,
+     status,paid_at,payment_method,notes,business_sector)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+    ON CONFLICT(tenant_id,client_slip_id) DO UPDATE SET
+      staff_id=EXCLUDED.staff_id,staff_name=EXCLUDED.staff_name,staff_role=EXCLUDED.staff_role,
+      period_month=EXCLUDED.period_month,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,days_attended=EXCLUDED.days_attended,
+      base_salary=EXCLUDED.base_salary,allowance=EXCLUDED.allowance,individual_commission=EXCLUDED.individual_commission,
+      team_pool_commission=EXCLUDED.team_pool_commission,daily_target_bonus=EXCLUDED.daily_target_bonus,
+      gross_earnings=EXCLUDED.gross_earnings,deductions=EXCLUDED.deductions,net_salary=EXCLUDED.net_salary,
+      status=EXCLUDED.status,paid_at=EXCLUDED.paid_at,payment_method=EXCLUDED.payment_method,notes=EXCLUDED.notes,updated_at=now()
+    WHERE pos.staff_payrolls.merchant_id=EXCLUDED.merchant_id AND pos.staff_payrolls.status<>'PAID' RETURNING id`,
+    [
+      scope.tenantId,
+      scope.merchantId,
+      op.recordId,
+      value.staffId,
+      text(value.staffName, 120),
+      text(value.staffRole, 64) || "STAFF",
+      value.periodMonth,
+      start.slice(0, 10),
+      end.slice(0, 10),
+      value.daysAttended,
+      ...amounts,
+      value.status,
+      paid,
+      text(value.paymentMethod, 64) || null,
+      text(value.notes, 500) || null,
+      sector
+    ]
+  );
+  if (!saved.rows.length) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
 }
 
 // services/pos/sharedState.ts
@@ -2803,38 +3178,42 @@ function validOperations(value) {
   }
   return operations;
 }
-async function scopeFor2(db, subject, sector) {
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) return null;
-  const { rows } = await db.query(
-    `SELECT m.id AS merchant_id,m.name AS business_name,t.is_active
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND m.business_sector=$3
-    ORDER BY (m.external_ref=$4) DESC NULLS LAST, m.created_at, m.id LIMIT 1`,
-    [tenantId, subject, sector, `${subject}_${sector}`]
-  );
-  if (!rows.length || !rows[0].is_active) return null;
-  return { tenantId, merchantId: rows[0].merchant_id, businessName: rows[0].business_name };
-}
 function registerSharedStateRoutes(app, db) {
   app.get("/api/v1/sync/state", async (req, res) => {
     const principal = trustedPrincipal(req);
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const sector = String(req.query.sector || "");
     if (!SECTOR_SET.has(sector)) return res.status(400).json({ ok: false, error: "INVALID_SECTOR" });
+    const kinds = req.query.kinds === void 0 ? null : typeof req.query.kinds === "string" ? [...new Set(req.query.kinds.split(","))] : [];
+    if (kinds && (!kinds.length || kinds.length > 25 || kinds.some((kind) => !GLOBAL_KINDS.has(kind) && !SECTOR_KINDS.has(kind))))
+      return res.status(400).json({ ok: false, error: "INVALID_STATE_KINDS" });
     try {
-      const scope = await scopeFor2(db, principal.subject, sector);
+      const scope = await resolveBusinessScope(db, principal.subject, sector, req.query.businessId);
       if (!scope) return res.json({ ok: true, ready: false, records: [] });
-      const { rows } = await db.tx(async (c) => {
+      const snapshot = await db.tx(async (c) => {
+        await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
         await c.query(
           "SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId, scope.merchantId]
         );
-        return c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+        const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
+        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(
+          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
+          '|' ORDER BY scope,kind,record_id),'')) AS version
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=$2 AND merchant_id=$3))
-          ORDER BY scope,kind,record_id LIMIT 10001`, [scope.tenantId, sector, scope.merchantId]);
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`, parameters2);
+        const version = stamp.rows[0].version;
+        if (req.query.knownVersion === version && !req.query.legacyCandidates) return { rows: [], version, unchanged: true };
+        const result = await c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+          FROM pos.shared_state_records WHERE tenant_id=$1 AND
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
+          ORDER BY scope,kind,record_id LIMIT 10001`, parameters2);
+        return { ...result, version, unchanged: false };
       });
+      const { rows } = snapshot;
+      if (snapshot.unchanged) return res.json({ ok: true, ready: true, unchanged: true, version: snapshot.version, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, records: [] });
       let candidates = [];
       try {
         const parsed = JSON.parse(String(req.query.legacyCandidates || "[]"));
@@ -2842,14 +3221,17 @@ function registerSharedStateRoutes(app, db) {
       } catch {
       }
       const otherMerchants = candidates.length ? (await db.query(`SELECT id,business_sector FROM internal.merchants WHERE tenant_id=$1 AND business_sector<>$2`, [scope.tenantId, sector])).rows : [];
-      const foreignRecords = (await Promise.all(otherMerchants.map(async (merchant) => (await db.tx(async (c) => {
-        await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenantId, merchant.id]);
-        return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
+      const foreignRecords = (await Promise.all(otherMerchants.map(async (merchant) => {
+        const result = await db.tx(async (c) => {
+          await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenantId, merchant.id]);
+          return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
           JOIN jsonb_to_recordset($3::jsonb) AS candidate(kind text,"recordId" text) ON r.kind=candidate.kind AND r.record_id=candidate."recordId"
           WHERE r.tenant_id=$1 AND r.merchant_id=$2 AND r.scope<>'GLOBAL' AND NOT r.deleted`, [scope.tenantId, merchant.id, JSON.stringify(candidates)]);
-      })).rows))).flat().map((r) => ({ scope: r.scope, kind: r.kind, recordId: r.record_id, value: r.value }));
-      return res.json({ ok: true, ready: true, scopeProof: true, foreignRecords, business: { name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
-        scope: r.scope,
+        });
+        return result.rows.map((r) => ({ scope: merchant.business_sector, kind: r.kind, recordId: r.record_id, value: r.value }));
+      }))).flat();
+      return res.json({ ok: true, ready: true, version: snapshot.version, scopeProof: true, foreignRecords, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
+        scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
         kind: r.kind,
         recordId: r.record_id,
         value: r.value,
@@ -2858,7 +3240,8 @@ function registerSharedStateRoutes(app, db) {
         updatedAt: r.updated_at,
         ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
       })) });
-    } catch {
+    } catch (error) {
+      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
     }
   });
@@ -2870,7 +3253,7 @@ function registerSharedStateRoutes(app, db) {
     const operations = validOperations(req.body?.operations);
     if (!SECTOR_SET.has(sector) || !operations) return res.status(400).json({ ok: false, error: "INVALID_STATE_REQUEST" });
     try {
-      const scope = await scopeFor2(db, principal.subject, sector);
+      const scope = await resolveBusinessScope(db, principal.subject, sector, req.body?.businessId);
       if (!scope) return res.status(409).json({ ok: false, error: "BUSINESS_SETUP_REQUIRED" });
       const versions = await db.tx(async (c) => {
         await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [scope.tenantId]);
@@ -2881,6 +3264,10 @@ function registerSharedStateRoutes(app, db) {
         );
         const free = await freePlanState(c, scope.tenantId);
         assertFreeScope(free, sector, []);
+        if (free.free && !(await c.query(
+          "SELECT 1 FROM internal.outlets WHERE id=$1 AND merchant_id=$2 AND tenant_id=$3 AND is_active",
+          [free.selection?.branchId, scope.merchantId, scope.tenantId]
+        )).rows.length) throw new FreePlanAccessError("FREE_BRANCH_MISMATCH");
         const result = [];
         const changed = /* @__PURE__ */ new Set();
         const conflicts = [];
@@ -2895,7 +3282,7 @@ function registerSharedStateRoutes(app, db) {
           productOutlet = outlet.rows[0]?.id || null;
         }
         for (const op of operations) {
-          const issue = op.owner && op.owner !== principal.subject ? "WRONG_OWNER" : op.sector && op.sector !== sector ? "WRONG_SECTOR" : operationalScopeIssue(principal.subject, sector, op.kind, op.recordId, op.value);
+          const issue = op.owner && op.owner !== principal.subject ? "WRONG_OWNER" : op.sector && op.sector !== sector ? "WRONG_SECTOR" : operationalScopeIssue(principal.subject, sector, op.kind, op.recordId, op.value, scope.transportRef || scope.merchantId);
           if (issue) {
             rejected.push({ kind: op.kind, recordId: op.recordId, error: "WRONG_SCOPE", detail: issue });
             continue;
@@ -2910,7 +3297,7 @@ function registerSharedStateRoutes(app, db) {
               const existing = await c.query(`SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3 AND NOT sync_quarantined`, [scope.tenantId, scope.merchantId, op.recordId]);
               if (existing.rows.some((r2) => r2.outlet_id !== productOutlet)) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
             }
-            const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : sector;
+            const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : scope.legacyAlias ? sector : "BUSINESS:" + scope.merchantId;
             const merchantId = docScope === "GLOBAL" ? null : scope.merchantId;
             const r = await c.query(`INSERT INTO pos.shared_state_records
             (tenant_id,merchant_id,scope,kind,record_id,value,revision,deleted)
@@ -2942,6 +3329,7 @@ function registerSharedStateRoutes(app, db) {
             }
             if (!r.rows.length || !replayed && op.baseRevision !== 0 && Number(r.rows[0].revision) === 1)
               throw new StateConflict(op.kind, op.recordId);
+            await projectLabor(c, scope, sector, op);
             if (replayed) {
               result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
               await c.exec("RELEASE SAVEPOINT operational_record");
@@ -3014,7 +3402,7 @@ function registerSharedStateRoutes(app, db) {
                     Number(p.costPrice),
                     p.isAvailable !== false,
                     sector,
-                    `${principal.subject}_${sector}`,
+                    scope.transportRef || scope.merchantId,
                     String(p.categoryName || "Lainnya").slice(0, 100),
                     String(p.description || "").slice(0, 300),
                     String(p.unit || "pcs").slice(0, 20),
@@ -3045,7 +3433,7 @@ function registerSharedStateRoutes(app, db) {
             merchantId: scope.merchantId,
             tenantId: scope.tenantId,
             businessSector: sector,
-            businessId: `${principal.subject}_${sector}`,
+            businessId: scope.merchantId,
             appModule: "SYNC",
             eventType: "SHARED_STATE_CHANGED",
             actorUserId: principal.subject,
@@ -3057,6 +3445,7 @@ function registerSharedStateRoutes(app, db) {
       });
       return res.json({ ok: true, ...versions });
     } catch (error) {
+      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       if (error instanceof StateConflict) return res.status(409).json({ ok: false, error: "STATE_CONFLICT", kind: error.kind, recordId: error.recordId });
       if (error instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: error.message });
       if (error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
@@ -3070,7 +3459,7 @@ var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
-var money2 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+var money3 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
 var iso = (value) => new Date(String(value)).toISOString();
 var ReportRequestError = class extends Error {
   constructor(status, code) {
@@ -3127,7 +3516,7 @@ function parseReportFilter(query) {
     search
   };
 }
-async function scopeFor3(db, subject, filter) {
+async function scopeFor2(db, subject, filter) {
   const { rows } = await db.query(
     `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
     FROM internal.outlets o
@@ -3186,7 +3575,7 @@ function financial(row) {
   const totalCOGS = numeric(row.cogs);
   const totalTax = numeric(row.tax);
   const totalOrders = numeric(row.orders);
-  const grossProfit = money2(totalNetRevenue - totalTax - totalCOGS);
+  const grossProfit = money3(totalNetRevenue - totalTax - totalCOGS);
   return {
     totalOrders,
     totalGrossSales: numeric(row.gross_sales),
@@ -3197,8 +3586,8 @@ function financial(row) {
     totalRefunds: numeric(row.refunds),
     totalCOGS,
     grossProfit,
-    netProfitMargin: totalNetRevenue ? money2(grossProfit / totalNetRevenue * 100) : 0,
-    avgOrderValue: totalOrders ? money2(totalNetRevenue / totalOrders) : 0
+    netProfitMargin: totalNetRevenue ? money3(grossProfit / totalNetRevenue * 100) : 0,
+    avgOrderValue: totalOrders ? money3(totalNetRevenue / totalOrders) : 0
   };
 }
 async function revenueSummary(db, params) {
@@ -3245,7 +3634,7 @@ async function paymentBreakdown(db, params) {
       AND p.merchant_id=r.merchant_id AND p.payment_status IN ('PAID','SETTLED')
   ) SELECT payment_method,COALESCE(sum(total_amount * amount / NULLIF(tender_total,0)),0) AS amount
     FROM tenders GROUP BY payment_method ORDER BY payment_method`, params);
-  return Object.fromEntries(rows.map((row) => [row.payment_method, money2(numeric(row.amount))]));
+  return Object.fromEntries(rows.map((row) => [row.payment_method, money3(numeric(row.amount))]));
 }
 function localDate(timezone) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(/* @__PURE__ */ new Date());
@@ -3268,7 +3657,7 @@ function cashMovement(row) {
 async function serverReportSummary(db, subject, filter) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor3(c, subject, filter);
+    const scope = await scopeFor2(c, subject, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = parameters(scope, filter);
     const today = localDate(filter.timezone);
@@ -3304,7 +3693,7 @@ async function serverReportSummary(db, subject, filter) {
     const itemCount = (await c.query(`${revenueCTE} SELECT COALESCE(SUM(GREATEST(COALESCE(i.quantity_exact,i.quantity)-COALESCE(ret.qty,0),0)),0) AS qty
       FROM revenue r JOIN pos.transaction_items i ON i.transaction_id=r.id
       LEFT JOIN LATERAL(SELECT SUM(quantity) AS qty FROM pos.transaction_refund_items WHERE transaction_item_id=i.id) ret ON true`, params)).rows[0];
-    const sortedMethods = Object.entries(breakdown).map(([key, total]) => ({ key, name: key, count: numeric(counts.rows.find((row) => row.payment_method === key)?.count), total, percentage: financialSummary.totalNetRevenue ? money2(total / financialSummary.totalNetRevenue * 100) : 0 })).sort((a, b) => b.total - a.total);
+    const sortedMethods = Object.entries(breakdown).map(([key, total]) => ({ key, name: key, count: numeric(counts.rows.find((row) => row.payment_method === key)?.count), total, percentage: financialSummary.totalNetRevenue ? money3(total / financialSummary.totalNetRevenue * 100) : 0 })).sort((a, b) => b.total - a.total);
     const cashSales = breakdown.CASH || 0, cashCount = numeric(counts.rows.find((row) => row.payment_method === "CASH")?.count);
     const sumMethods = (methods) => methods.reduce((sum, method) => sum + (todayPayment[method] || 0), 0);
     const todayQrisSales = sumMethods(["QRIS", "QRIS_DYNAMIC", "QRIS_STATIC"]);
@@ -3329,10 +3718,10 @@ async function serverReportSummary(db, subject, filter) {
         itemsSold: numeric(itemCount.qty),
         cashSales,
         cashCount,
-        cashPercent: financialSummary.totalNetRevenue ? money2(cashSales / financialSummary.totalNetRevenue * 100) : 0,
-        cashlessSales: money2(financialSummary.totalNetRevenue - cashSales),
+        cashPercent: financialSummary.totalNetRevenue ? money3(cashSales / financialSummary.totalNetRevenue * 100) : 0,
+        cashlessSales: money3(financialSummary.totalNetRevenue - cashSales),
         cashlessCount: financialSummary.totalOrders - cashCount,
-        cashlessPercent: financialSummary.totalNetRevenue ? money2((financialSummary.totalNetRevenue - cashSales) / financialSummary.totalNetRevenue * 100) : 0,
+        cashlessPercent: financialSummary.totalNetRevenue ? money3((financialSummary.totalNetRevenue - cashSales) / financialSummary.totalNetRevenue * 100) : 0,
         orderCount: financialSummary.totalOrders,
         sortedMethods,
         mostUsedMethod: sortedMethods[0] || null
@@ -3346,7 +3735,7 @@ async function serverReportSummary(db, subject, filter) {
         todayCashSales,
         todayQrisSales,
         todayCardSales,
-        todayEWalletSales: money2(todayFinancial.totalNetRevenue - todayCashSales - todayQrisSales - todayCardSales),
+        todayEWalletSales: money3(todayFinancial.totalNetRevenue - todayCashSales - todayQrisSales - todayCardSales),
         todayCashIn: todayCash.cashIn,
         todayCashOut: todayCash.cashOut,
         todayExpenseBahan: todayCash.expenseBahan,
@@ -3385,7 +3774,7 @@ function cursorFor(value) {
 async function serverTransactions(db, subject, filter, cursor, limit = 100) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor3(c, subject, filter);
+    const scope = await scopeFor2(c, subject, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = [...parameters(scope, filter), cursor?.createdAt || null, cursor?.id || null, limit + 1];
     const { rows } = await c.query(`SELECT x.*,u.name AS cashier_name,r.total_amount AS recognized_revenue,r.cogs_amount AS recognized_cogs,
@@ -3504,19 +3893,20 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
   if (!created.rows.length) throw new BillingError(409, "INVENTORY_LOCATION_REQUIRED");
   return created.rows[0].id;
 }
-async function assertBusinessCanBeClaimed(db, businessId, ownerSubject) {
-  if (ownerSubject === "local-development") return;
+async function assertBusinessCanBeClaimed(db, businessId, ownerSubject, sector) {
+  if (ownerSubject === "local-development") return null;
   const { rows } = await db.query(
-    `SELECT t.owner_user_ref
+    `SELECT m.id,m.tenant_id,t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active,m.business_sector
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1
-      LIMIT 1`,
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
     [businessId]
   );
-  if (rows.length && rows[0].owner_user_ref !== ownerSubject) {
+  if (rows.length > 1 || rows.length && (rows[0].owner_user_ref !== ownerSubject || !rows[0].tenant_active || !rows[0].merchant_active || rows[0].merged_into || sector && rows[0].business_sector !== sector)) {
     throw new SyncAccessError("BUSINESS_NOT_OWNED");
   }
+  if (!rows.length && sector && businessId !== `${ownerSubject}_${sector}`) throw new SyncAccessError("BUSINESS_SETUP_REQUIRED");
+  return rows[0] || null;
 }
 async function productLimitForTenant(db, tenantId) {
   return -1;
@@ -3532,6 +3922,7 @@ var str = (v, max) => {
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
+  registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
   registerReportRoutes(app, db);
   registerFinanceRoutes(app, db);
@@ -3541,7 +3932,10 @@ function registerSyncRoutes(app, db) {
     const sector = str(req.body?.sector, 16);
     const storeName = str(req.body?.storeName, 100);
     if (!sector || !SECTOR_SET2.has(sector) || !storeName) return res.status(400).json({ ok: false, error: "INVALID_BUSINESS" });
-    const businessId = `${principal.subject}_${sector}`;
+    const create = req.body?.intent === "create";
+    const requestKey = str(req.body?.requestKey, 36);
+    if (create && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey || "")) return res.status(400).json({ ok: false, error: "BUSINESS_REQUEST_KEY_REQUIRED" });
+    const businessId = create ? `${principal.subject}_business_${requestKey}` : `${principal.subject}_${sector}`;
     try {
       const result = await db.tx(async (c) => {
         await assertBusinessCanBeClaimed(c, businessId, principal.subject);
@@ -3555,8 +3949,19 @@ function registerSyncRoutes(app, db) {
         if (!tenantId) throw new BillingError(409, "TENANT_NOT_PROVISIONED");
         await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
         await assertTenantWritable(c, tenantId);
-        const existing = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
-        if (existing) return { tenantId, merchantId: existing.id };
+        if (create) {
+          const ready = await c.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'");
+          if (!ready.rows.length) throw new BillingError(409, "MULTI_BUSINESS_MIGRATION_REQUIRED");
+          const free = await freePlanState(c, tenantId);
+          if (free.free) throw new BillingError(409, "FREE_SINGLE_BUSINESS");
+          const previous = (await c.query("SELECT id,business_sector,name FROM internal.merchants WHERE tenant_id=$1 AND external_ref=$2", [tenantId, businessId])).rows[0];
+          if (previous) {
+            if (previous.business_sector !== sector || previous.name !== storeName) throw new BillingError(409, "BUSINESS_REQUEST_KEY_CONFLICT");
+            return { tenantId, merchantId: previous.id };
+          }
+        }
+        const existing = create ? null : await resolveBusinessScope(c, principal.subject, sector, req.body?.businessId);
+        if (existing) return { tenantId, merchantId: existing.merchantId };
         const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
           VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
           DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1 RETURNING id`, [tenantId, storeName, sector, businessId]);
@@ -3565,7 +3970,7 @@ function registerSyncRoutes(app, db) {
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
-      return res.status(error instanceof BillingError ? error.status : 500).json({ ok: false, error: error instanceof BillingError ? error.message : "BUSINESS_SETUP_FAILED" });
+      return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
     }
   });
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
@@ -3574,7 +3979,7 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     if (!businessId) return res.status(400).json({ ok: false, error: "BUSINESS_ID_REQUIRED" });
     if (!await canAccessBusiness(db, principal, businessId)) return res.status(403).json({ ok: false, error: "BUSINESS_NOT_OWNED" });
-    const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE external_ref = $1", [businessId]);
+    const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)", [businessId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
     res.setHeader("Cache-Control", "no-store");
     return res.json({ ok: true, logoUrl: rows[0].logo_url || null });
@@ -3595,7 +4000,7 @@ function registerSyncRoutes(app, db) {
       if (!valid) return res.status(400).json({ ok: false, error: "INVALID_LOGO" });
     }
     const { rows } = await db.query(
-      "UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE external_ref = $2 RETURNING id",
+      "UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE (external_ref = $2 OR id::text = $2) RETURNING id",
       [logoUrl || null, businessId]
     );
     if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
@@ -3632,7 +4037,7 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({ ok: false, error: "INVALID_TRANSACTIONS" });
     try {
       const out = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
         if (idemKey) {
           const prev = await c.query(
             `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
@@ -3653,6 +4058,13 @@ function registerSyncRoutes(app, db) {
         let merchantId;
         let outletId;
         if (freeScope) {
+          if (!(await c.query(
+            `SELECT 1 FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+            WHERE m.id=$1 AND m.tenant_id=$3 AND t.owner_user_ref=$4 AND m.business_sector=$5
+              AND m.is_active AND t.is_active AND t.merged_into IS NULL
+              AND (m.id::text=$2 OR m.external_ref=$2 OR (m.external_ref IS NULL AND $2=$4||'_'||$5))`,
+            [freeScope.merchant_id, businessId, freeScope.tenant_id, ownerRef, sector]
+          )).rows.length) throw new SyncAccessError("FREE_BUSINESS_MISMATCH");
           tenantId = freeScope.tenant_id;
           merchantId = freeScope.merchant_id;
           outletId = freeScope.outlet_id;
@@ -3670,14 +4082,17 @@ function registerSyncRoutes(app, db) {
           );
           tenantId = t.rows[0].id;
           await assertTenantWritable(c, tenantId);
-          const m = await c.query(
+          if (claimedBusiness && claimedBusiness.tenant_id !== tenantId) throw new SyncAccessError("BUSINESS_NOT_OWNED");
+          const m = claimedBusiness ? { rows: [claimedBusiness] } : await c.query(
             `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
+             DO UPDATE SET external_ref = EXCLUDED.external_ref
+             WHERE internal.merchants.tenant_id=$1 AND internal.merchants.business_sector=$3 AND internal.merchants.is_active
            RETURNING id`,
             [tenantId, storeName, sector, businessId]
           );
+          if (!m.rows.length) throw new SyncAccessError("BUSINESS_NOT_OWNED");
           merchantId = m.rows[0].id;
           const outq = await c.query(
             `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
@@ -3847,6 +4262,7 @@ function registerSyncRoutes(app, db) {
               throw new FinanceError(409, "TRANSACTION_ID_CONFLICT");
             const status = str(x.paymentStatus, 20);
             if (status === "CANCELLED") {
+              const voidedAt = x.voidedAt ?? (/* @__PURE__ */ new Date()).toISOString();
               const upd = await c.query(
                 `UPDATE pos.transactions
                     SET order_status = 'VOIDED',
@@ -3854,7 +4270,7 @@ function registerSyncRoutes(app, db) {
                   WHERE tenant_id = $1 AND client_txn_id = $2 AND merchant_id = $4
                     AND order_status NOT IN ('VOIDED','CANCELLED')
                 RETURNING id`,
-                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null, merchantId]
+                [tenantId, clientId, voidedAt, merchantId]
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
@@ -3862,7 +4278,7 @@ function registerSyncRoutes(app, db) {
                 if (cashBalance !== 0) await c.query(
                   `INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,occurred_at)
                   VALUES($1,$2,$3,$4,'VOID',$5,$6,'Pembatalan transaksi',$7) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
-                  [tenantId, merchantId, original.outlet_id, "void:" + voidedTxnId, -cashBalance, voidedTxnId, x.voidedAt || (/* @__PURE__ */ new Date()).toISOString()]
+                  [tenantId, merchantId, original.outlet_id, "void:" + voidedTxnId, -cashBalance, voidedTxnId, voidedAt]
                 );
                 await c.query(
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
@@ -4042,7 +4458,7 @@ function registerSyncRoutes(app, db) {
     if (!await canAccessBusiness(db, principal, businessId)) {
       return res.status(403).json({ ok: false, error: "FORBIDDEN" });
     }
-    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE external_ref = $1`, [
+    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)`, [
       businessId
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: "MERCHANT_NOT_SYNCED" });
@@ -4073,15 +4489,16 @@ function registerSyncRoutes(app, db) {
       return res.status(403).json({ ok: false, error: "FORBIDDEN" });
     }
     const { rows } = await db.query(
-      `SELECT t.id, t.name, t.business_sector,
+      `SELECT m.id, m.name, m.business_sector,
               COUNT(x.id)::int              AS synced_transactions,
               COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
-         FROM internal.tenants t
-         LEFT JOIN pos.transactions x ON x.tenant_id = t.id
-        WHERE t.external_ref = $1
-        GROUP BY t.id, t.name, t.business_sector`,
-      [businessId]
+         FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+         LEFT JOIN pos.transactions x ON x.tenant_id = t.id AND x.merchant_id=m.id
+        WHERE (m.external_ref = $1 OR m.id::text=$1) AND t.owner_user_ref=$2
+          AND t.is_active AND t.merged_into IS NULL AND m.is_active
+        GROUP BY m.id, m.name, m.business_sector`,
+      [businessId, principal.subject]
     );
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
@@ -4104,8 +4521,8 @@ function registerSyncRoutes(app, db) {
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
-          WHERE m.external_ref = $1 AND m.business_sector=$4 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
-        [businessId, ownerRef, `tenant_${businessId}`, sector]
+          WHERE (m.external_ref = $1 OR m.id::text = $1) AND m.business_sector=$3 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,
+        [businessId, ownerRef, sector]
       );
       if (!tenantRes.rows.length) {
         return res.json({ ok: true, products: [], categories: [] });
@@ -4144,214 +4561,13 @@ function registerSyncRoutes(app, db) {
       res.status(500).json({ ok: false, error: err.message || "CATALOG_FETCH_FAILED" });
     }
   });
-  app.post("/api/v1/sync/attendance", async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const attendances = Array.isArray(body.attendances) ? body.attendances : [];
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
-    }
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        let outletId = null;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          outletId = freeScope.outlet_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-        let upserted = 0;
-        for (const att of attendances) {
-          const clientAttendanceId = str(att.id, 96);
-          const staffId = str(att.staffId, 96);
-          const staffName = str(att.staffName, 120);
-          const staffRole = str(att.staffRole, 64) || "STAFF";
-          const clockInAt = att.clockInTime ? new Date(att.clockInTime) : /* @__PURE__ */ new Date();
-          const clockOutAt = att.clockOutTime ? new Date(att.clockOutTime) : null;
-          const status = str(att.status, 32) || "CLOCKED_IN";
-          if (!clientAttendanceId || !staffId || !staffName) continue;
-          await c.query(
-            `INSERT INTO pos.staff_attendances (
-               tenant_id, merchant_id, outlet_id, client_attendance_id,
-               staff_id, staff_name, staff_role, clock_in_at, clock_out_at,
-               shift_notes, status, branch_id, branch_name, clock_in_geo, clock_out_geo,
-               business_sector, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, NOW())
-             ON CONFLICT (tenant_id, client_attendance_id)
-               DO UPDATE SET
-                 clock_out_at = COALESCE(EXCLUDED.clock_out_at, pos.staff_attendances.clock_out_at),
-                 shift_notes = COALESCE(EXCLUDED.shift_notes, pos.staff_attendances.shift_notes),
-                 status = EXCLUDED.status,
-                 clock_out_geo = COALESCE(EXCLUDED.clock_out_geo, pos.staff_attendances.clock_out_geo),
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              outletId,
-              clientAttendanceId,
-              staffId,
-              staffName,
-              staffRole,
-              clockInAt,
-              clockOutAt,
-              str(att.shiftNotes, 500),
-              status,
-              str(att.branchId, 64),
-              str(att.branchName, 100),
-              JSON.stringify(att.clockInGeo || null),
-              JSON.stringify(att.clockOutGeo || null),
-              sector
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "ATTENDANCE_SYNC_FAILED" });
-    }
+  app.post("/api/v1/sync/attendance", (req, res) => {
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_LABOR_SYNC_REQUIRED" });
   });
-  app.post("/api/v1/sync/payroll", async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const slips = Array.isArray(body.payrollSlips) ? body.payrollSlips : [];
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
-    }
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-        let upserted = 0;
-        for (const slip of slips) {
-          const clientSlipId = str(slip.id, 96);
-          const staffId = str(slip.staffId, 96);
-          const staffName = str(slip.staffName, 120);
-          const staffRole = str(slip.staffRole, 64) || "STAFF";
-          const periodMonth = str(slip.periodMonth, 16) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
-          const periodStart = slip.periodStart ? new Date(slip.periodStart) : /* @__PURE__ */ new Date();
-          const periodEnd = slip.periodEnd ? new Date(slip.periodEnd) : /* @__PURE__ */ new Date();
-          if (!clientSlipId || !staffId || !staffName) continue;
-          await c.query(
-            `INSERT INTO pos.staff_payrolls (
-               tenant_id, merchant_id, client_slip_id, staff_id, staff_name, staff_role,
-               period_month, period_start, period_end, days_attended,
-               base_salary, allowance, individual_commission, team_pool_commission,
-               daily_target_bonus, gross_earnings, deductions, net_salary,
-               status, paid_at, payment_method, notes, business_sector, updated_at
-             ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-               $11, $12, $13, $14, $15, $16, $17, $18,
-               $19, $20, $21, $22, $23, NOW()
-             )
-             ON CONFLICT (tenant_id, client_slip_id)
-               DO UPDATE SET
-                 status = EXCLUDED.status,
-                 paid_at = COALESCE(EXCLUDED.paid_at, pos.staff_payrolls.paid_at),
-                 payment_method = COALESCE(EXCLUDED.payment_method, pos.staff_payrolls.payment_method),
-                 notes = COALESCE(EXCLUDED.notes, pos.staff_payrolls.notes),
-                 net_salary = EXCLUDED.net_salary,
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              clientSlipId,
-              staffId,
-              staffName,
-              staffRole,
-              periodMonth,
-              periodStart,
-              periodEnd,
-              Number(slip.daysAttended) || 0,
-              num(slip.baseSalary),
-              num(slip.allowance),
-              num(slip.individualCommission),
-              num(slip.teamPoolCommission),
-              num(slip.dailyTargetBonus),
-              num(slip.grossEarnings),
-              num(slip.deductions),
-              num(slip.netSalary),
-              str(slip.status, 32) || "DRAFT",
-              slip.paidAt ? new Date(slip.paidAt) : null,
-              str(slip.paymentMethod, 64),
-              str(slip.notes, 500),
-              sector
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "PAYROLL_SYNC_FAILED" });
-    }
+  app.post("/api/v1/sync/payroll", (req, res) => {
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_LABOR_SYNC_REQUIRED" });
   });
 }
 
@@ -4401,7 +4617,6 @@ function normalizeVercelUrl(req) {
 }
 
 // api/_runtime.ts
-var runtime;
 async function buildRuntime() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL_NOT_CONFIGURED");
   const db = await connectDb({ schema: "billing", max: 2 });
@@ -4410,20 +4625,6 @@ async function buildRuntime() {
   app.use(express.json({ limit: "10mb", verify: (req, _res, buf) => {
     req.rawBody = buf;
   } }));
-  app.use(async (req, res, next) => {
-    try {
-      for (const name of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
-      if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(req.path)) {
-        const principal = await authenticateBearer(req);
-        if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-        req.headers["x-auth-sub"] = principal.subject;
-        if (principal.email) req.headers["x-auth-email"] = principal.email;
-      }
-      next();
-    } catch (err) {
-      next(err);
-    }
-  });
   registerBillingRoutes(app, db);
   registerAdminRoutes(app, async () => db);
   registerSyncRoutes(app, db);
@@ -4439,19 +4640,37 @@ async function buildRuntime() {
   });
   return app;
 }
-async function handleNativeApi(req, res) {
-  normalizeVercelUrl(req);
-  try {
-    runtime ??= buildRuntime().catch((err) => {
-      runtime = void 0;
-      throw err;
-    });
-    const app = await runtime;
-    app(req, res);
-  } catch {
-    res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
-  }
+function createNativeApiHandler(authenticate = authenticateBearer, build = buildRuntime) {
+  let runtime;
+  return async (req, res) => {
+    normalizeVercelUrl(req);
+    res.setHeader("Cache-Control", "no-store");
+    for (const name of ["x-auth-sub", "x-auth-email", "x-auth-email-verified", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
+    const path = String(req.url || "").split("?")[0];
+    if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(path)) {
+      let principal;
+      try {
+        principal = await authenticate(req);
+      } catch {
+        return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      }
+      if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      req.headers["x-auth-sub"] = principal.subject;
+      if (principal.email) req.headers["x-auth-email"] = principal.email;
+    }
+    try {
+      runtime ??= build().catch((err) => {
+        runtime = void 0;
+        throw err;
+      });
+      const app = await runtime;
+      app(req, res);
+    } catch {
+      res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
+    }
+  };
 }
+var handleNativeApi = createNativeApiHandler();
 
 // api/_gateway.ts
 async function proxyToGateway(req, res) {

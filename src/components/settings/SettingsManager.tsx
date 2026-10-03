@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
 import { SubscriptionBillingTab } from './SubscriptionBillingTab';
@@ -44,7 +44,7 @@ export const SettingsManager: React.FC = () => {
     deleteBranch,
     currentUser,
     hasPermission,
-  } = usePOS();
+  } = usePOSFields(["tenant","settings","updateSettings","promoCodes","addPromoCode","branches","saveBranch","deleteBranch","currentUser","hasPermission"]);
   const { t } = useTranslation();
 
   const logoInputRef = useRef<HTMLInputElement>(null);

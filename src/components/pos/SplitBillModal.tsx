@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah } from '../../utils/formatters';
 import { CartItem, PaymentMethod, Order } from '../../types';
@@ -31,7 +31,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   onClose,
   onPaymentSuccess,
 }) => {
-  const { cart, processPayment, selectedTable, selectedCustomer, clearCart, settings } = usePOS();
+  const { cart, processPayment, selectedTable, selectedCustomer, clearCart, settings } = usePOSFields(["cart","processPayment","selectedTable","selectedCustomer","clearCart","settings"]);
   const { t } = useTranslation();
   const [splitMode, setSplitMode] = useState<'EQUAL' | 'BY_ITEM'>('EQUAL');
 

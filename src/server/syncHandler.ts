@@ -5,7 +5,7 @@ import { registerSyncRoutes } from '../../services/pos/sync';
 import { normalizeVercelUrl } from './vercelUrl';
 
 const allowedMethods: Record<string, readonly string[]> = {
-  '/api/v1/sync/business': ['POST'],
+  '/api/v1/sync/business': ['GET','POST'],
   '/api/v1/sync/catalog': ['GET', 'POST'],
   '/api/v1/sync/transactions': ['POST'],
   '/api/v1/sync/activity': ['POST'],
@@ -13,6 +13,7 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/attendance': ['POST'],
   '/api/v1/sync/payroll': ['POST'],
   '/api/v1/sync/state': ['GET','POST'],
+  '/api/v1/sync/status': ['GET'],
   '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
   '/api/v1/reports/summary': ['GET'],
   '/api/v1/reports/transactions': ['GET'],

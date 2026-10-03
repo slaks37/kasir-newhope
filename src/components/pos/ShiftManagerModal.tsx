@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Shift } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -28,7 +28,7 @@ interface ShiftManagerModalProps {
 }
 
 export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose }) => {
-  const { shift, shiftHistory, startShift, endShift, orders } = usePOS();
+  const { shift, shiftHistory, startShift, endShift, orders } = usePOSFields(["shift","shiftHistory","startShift","endShift","orders"]);
   const { t } = useTranslation();
 
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');

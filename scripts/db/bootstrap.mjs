@@ -34,6 +34,7 @@ function migrationFiles() {
     ...ORDER.map((f) => ({ name: f, path: join(ROOT, f) })),
     ...numbered.map((f) => ({ name: f, path: join(MIGRATION_DIR, f) })),
     ...['free-plan-selection.sql','free-plan-ai-credit-access.sql','restrict-browser-rls-policies.sql','intelligence-cache.sql','intelligence-wallet.sql'].map(f=>({name:f,path:join(ROOT,'docs/security',f)})),
+    ...readdirSync(join(ROOT,'supabase/migrations')).filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort().map(f=>({name:'supabase/migrations/'+f,path:join(ROOT,'supabase/migrations',f)})),
   ];
 }
 

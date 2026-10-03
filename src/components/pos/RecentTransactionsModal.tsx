@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -46,7 +46,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
     hasPermission,
     sendLaundryWaNotification,
     updateOrderLaundryStatus,
-  } = usePOS();
+  } = usePOSFields(["orders","heldOrders","voidOrder","recallHoldOrder","cancelHoldOrder","settings","hasPermission","sendLaundryWaNotification","updateOrderLaundryStatus"]);
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -730,4 +730,3 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
     </div>
   );
 };
-

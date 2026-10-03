@@ -302,7 +302,7 @@ async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE_
   if (!principal?.subject || principal.subject === "local-development") throw new Error("AUTHENTICATION_REQUIRED");
   const merchant = (await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE m.external_ref=$1 AND t.owner_user_ref=$2`, [businessId, principal.subject])).rows[0];
+    WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`, [businessId, principal.subject])).rows[0];
   if (!merchant) throw new Error("BUSINESS_NOT_OWNED");
   const rows = (await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,
     r.service_charge_amount-COALESCE(f.service,0) AS net_service
@@ -2544,7 +2544,7 @@ async function assertAiAvailable(db, tenantId) {
 
 // services/ai/dailyBrief.ts
 async function computeDailyBrief(db, principal, businessId, now = /* @__PURE__ */ new Date()) {
-  const identity = (await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2`, [businessId, principal.subject])).rows[0];
+  const identity = (await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`, [businessId, principal.subject])).rows[0];
   if (!identity) throw new Error("BUSINESS_NOT_OWNED");
   await assertAiAvailable(db, identity.tenant_id);
   const snapshot = await loadMerchantSnapshot(db, principal, businessId, now);
@@ -2583,9 +2583,9 @@ function createDailyInsightsHandler(connect = () => connectDb({ schema: "ai", ma
         throw e;
       });
       const db = await database;
-      const merchants = (await db.query(`SELECT m.id,m.external_ref,t.owner_user_ref FROM internal.merchants m
+      const merchants = (await db.query(`SELECT m.id,COALESCE(m.external_ref,m.id::text) AS external_ref,t.owner_user_ref FROM internal.merchants m
         JOIN internal.tenants t ON t.id=m.tenant_id LEFT JOIN ai.business_intelligence_cache c ON c.merchant_id=m.id
-        WHERE m.external_ref IS NOT NULL AND t.owner_user_ref IS NOT NULL
+        WHERE t.owner_user_ref IS NOT NULL AND t.is_active AND t.merged_into IS NULL
         ORDER BY c.generated_at ASC NULLS FIRST,m.id LIMIT 25`)).rows;
       let written = 0, skipped = 0, failed = 0;
       for (const m of merchants) {

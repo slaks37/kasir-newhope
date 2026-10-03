@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { StockItem } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
@@ -44,7 +44,7 @@ export const RawMaterialReceiptScannerModal: React.FC<RawMaterialReceiptScannerM
   onClose,
   onSuccess,
 }) => {
-  const { stockItems, processRawMaterialReceipt, shift, settings } = usePOS();
+  const { stockItems, processRawMaterialReceipt, shift, settings } = usePOSFields(["stockItems","processRawMaterialReceipt","shift","settings"]);
 
   const [scanStep, setScanStep] = useState<'CAPTURE' | 'REVIEW' | 'SUCCESS'>('CAPTURE');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);

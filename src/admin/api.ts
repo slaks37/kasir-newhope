@@ -225,7 +225,19 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     window.dispatchEvent(new Event('admin-mfa-required'));
     throw new ApiError(403,result.error,'Verifikasi autentikator diperlukan. Setelah verifikasi, tinjau dan kirim kembali tindakan Anda.');
   }
-  if(!response.ok || result.ok===false) throw new ApiError(response.status,result.error || 'API_ERROR',result.detail || result.error || 'Permintaan gagal.');
+  if(!response.ok || result.ok===false) {
+    const supportErrors:Record<string,string>={
+      PASSWORD_RESET_COOLDOWN:'Reset baru dibatasi. Tunggu minimal 2 menit dan periksa inbox/spam owner terlebih dahulu.',
+      PASSWORD_RESET_STATUS_UNKNOWN:'Hasil pengiriman belum dapat dipastikan. Jangan kirim permintaan baru; periksa permintaan sebelumnya dan riwayat support.',
+      PASSWORD_RESET_PROVIDER_REJECTED:'Layanan email reset belum menerima permintaan. Periksa riwayat support sebelum mencoba lagi.',
+      SUPPORT_AUTH_NOT_CONFIGURED:'Layanan Auth untuk bantuan akun belum dikonfigurasi di server.',
+      SUPPORT_REDIRECT_NOT_CONFIGURED:'Alamat kembali untuk reset password belum dikonfigurasi dengan aman.',
+      OWNER_AUTH_NOT_LINKED:'Akun SaaS belum terhubung ke identitas owner Supabase yang valid.',
+      OWNER_EMAIL_NOT_VERIFIED:'Email owner belum terverifikasi. Reset tidak dikirim ke alamat lain.',
+      CLIENT_SUPPORT_FAILED:'Bantuan akun belum berhasil. Tidak ada transaksi yang diubah; periksa riwayat sebelum mencoba lagi.',
+    };
+    throw new ApiError(response.status,result.error || 'API_ERROR',supportErrors[result.error]||result.detail||result.error||'Permintaan gagal.');
+  }
   return result;
 }
 export const api={
@@ -269,6 +281,9 @@ export const api={
   support:(tenantId:string,body:any)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',undefined,body),
   supportHistory:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/support',{justification}),
   subscriptionDetail:(tenantId:string,justification:string)=>request('tenants/'+encodeURIComponent(tenantId)+'/subscription-detail',{justification}),
+  clients:(p?:Record<string,unknown>)=>request('clients',p),
+  client:(tenantId:string,justification:string)=>request('clients/'+encodeURIComponent(tenantId),{justification}),
+  clientAction:(tenantId:string,body:any)=>request('clients/'+encodeURIComponent(tenantId)+'/actions',undefined,body),
   blog:{
     list:(p?:Record<string,unknown>)=>request('blog',p),
     create:(body:any)=>request('blog',undefined,body,'POST'),

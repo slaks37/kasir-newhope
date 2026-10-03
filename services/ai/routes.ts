@@ -87,7 +87,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
       res.status(403).json({ ok: false, error: 'FORBIDDEN' });
       return false;
     }
-    const owner = await svc.db.query('SELECT tenant_id FROM internal.merchants WHERE external_ref=$1',[businessId]);
+    const owner = await svc.db.query('SELECT tenant_id FROM internal.merchants WHERE (external_ref=$1 OR id::text=$1)',[businessId]);
     try {
       await assertAiAvailable(svc.db,owner.rows[0]?.tenant_id);
     } catch(error) {

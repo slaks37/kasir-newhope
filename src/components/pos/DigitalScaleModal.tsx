@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
 import {
   Scale,
@@ -21,7 +21,7 @@ interface DigitalScaleModalProps {
 }
 
 export const DigitalScaleModal: React.FC<DigitalScaleModalProps> = ({ isOpen, onClose }) => {
-  const { cart, updateCartQuantity, products, addToCart } = usePOS();
+  const { cart, updateCartQuantity, products, addToCart } = usePOSFields(["cart","updateCartQuantity","products","addToCart"]);
   const [weightKg, setWeightKg] = useState<number>(3.5);
   const [tareKg, setTareKg] = useState<number>(0);
   const [isStable, setIsStable] = useState<boolean>(true);

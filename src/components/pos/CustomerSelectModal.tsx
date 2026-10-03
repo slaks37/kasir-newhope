@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { Customer } from '../../types';
 import { UserPlus, Search, Award, Check, X } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
@@ -11,7 +11,7 @@ interface CustomerSelectModalProps {
 }
 
 export const CustomerSelectModal: React.FC<CustomerSelectModalProps> = ({ onClose }) => {
-  const { customers, selectedCustomer, setSelectedCustomer, saveCustomer } = usePOS();
+  const { customers, selectedCustomer, setSelectedCustomer, saveCustomer } = usePOSFields(["customers","selectedCustomer","setSelectedCustomer","saveCustomer"]);
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');

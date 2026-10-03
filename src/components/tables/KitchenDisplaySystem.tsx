@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { KDSTicket, KDSStatus } from '../../types';
 import { useTranslation } from '../../i18n';
 import {
@@ -19,7 +19,7 @@ import {
 
 export const KitchenDisplaySystem: React.FC = () => {
   const { t } = useTranslation();
-  const { kdsTickets, updateKDSTicketStatus, clearCompletedKDSTickets } = usePOS();
+  const { kdsTickets, updateKDSTicketStatus, clearCompletedKDSTickets } = usePOSFields(["kdsTickets","updateKDSTicketStatus","clearCompletedKDSTickets"]);
   const [filterStatus, setFilterStatus] = useState<KDSStatus | 'ALL'>('ALL');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [currentTime, setCurrentTime] = useState(Date.now());

@@ -1,6 +1,6 @@
 import React from "react";
 import { BrandMark } from "./brand/Brand";
-import { usePOS } from "../context/POSContext";
+import { usePOSFields } from "../context/POSDomains";
 import {
   Store,
   MoreHorizontal,
@@ -64,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
     bookings,
     carwashQueue,
     sentLifecycleHookIds,
-  } = usePOS();
+  } = usePOSFields(['settings','shift','cart','heldOrders','soundEnabled','toggleSound','searchQuery','setSearchQuery','setActiveTab','currentUser','syncCenter','openSyncCenter','customers','orders','bookings','carwashQueue','sentLifecycleHookIds']);
   const { t } = useTranslation();
 
   const [showLifecycleCenter, setShowLifecycleCenter] = React.useState(false);
@@ -91,6 +91,7 @@ export const Header: React.FC<HeaderProps> = ({
   ]);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const activeOutlet=settings.branches?.find(branch=>branch.id===settings.activeBranchId);
   const syncFailed=syncCenter.phase==='error';
   const syncReview=syncCenter.phase==='review';
 
@@ -110,14 +111,14 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
         <div className="min-w-0">
-          <strong>{settings.storeName}</strong>
+          <strong>{currentUser.role==='ADMIN'||currentUser.role==='MANAGER'?<button type="button" onClick={()=>setActiveTab('businesses')} title="Buka Bisnis Saya" className="text-left">{settings.storeName}</button>:settings.storeName}</strong>
           <span>
             New Hope POS <i />
             {settings.storeMode === "FNB"
               ? "F&B"
               : settings.storeMode === "RETAIL"
                 ? "Ritel"
-                : "Jasa"}
+                : "Jasa"}{activeOutlet?` · ${activeOutlet.name}`:''}
           </span>
         </div>
       </div>

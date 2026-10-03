@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { StaffCommissionRule } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import {
@@ -26,7 +26,7 @@ export const StaffCommissionModal: React.FC<StaffCommissionModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { staffMembers, commissionRules, saveCommissionRule, orders, setActiveTab } = usePOS();
+  const { staffMembers, commissionRules, saveCommissionRule, orders, setActiveTab } = usePOSFields(["staffMembers","commissionRules","saveCommissionRule","orders","setActiveTab"]);
   const [selectedStaffId, setSelectedStaffId] = useState(staffMembers[0]?.id || '');
   const [commissionType, setCommissionType] = useState<'PERCENTAGE' | 'FIXED_PER_ORDER'>('PERCENTAGE');
   const [rateValue, setRateValue] = useState(25);

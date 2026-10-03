@@ -1,5 +1,5 @@
 import React from "react";
-import { usePOS } from "../context/POSContext";
+import { usePOSFields } from "../context/POSDomains";
 import { PermissionFeature } from "../types";
 import {
   LayoutDashboard,
@@ -20,6 +20,7 @@ import {
   BookOpen,
   Coins,
   CreditCard,
+  Building2,
 } from "lucide-react";
 
 import { BUSINESS_PRESETS } from "../data/businessPresets";
@@ -51,7 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     staffMembers,
     getActiveAttendance,
     currentUser,
-  } = usePOS();
+  } = usePOSFields(['activeTab','setActiveTab','products','heldOrders','shift','hasPermission','settings','staffMembers','attendanceLogs','getActiveAttendance','currentUser']);
   const { t } = useTranslation();
 
   const activePreset =
@@ -64,6 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ).length;
 
   const navItems = [
+    {id:'businesses' as const,label:'Bisnis Saya',icon:Building2},
     {
       id: "overview" as const,
       label: t('nav.overview'),
@@ -122,6 +124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const filteredNavItems = navItems.filter((item) => {
+    if (item.id==='businesses')return hasPermission('businesses');
     if (item.id === "overview" || item.id === "settings" || item.id === "payment") return true;
     return settings?.enabledModules?.[item.id as PermissionFeature] !== false;
   });

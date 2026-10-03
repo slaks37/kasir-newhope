@@ -2,7 +2,7 @@ import { useServerReport,calendarDate } from '../../lib/reports/client';
 import React, { useState, useMemo } from 'react';
 import { FirstSaleGuide } from './FirstSaleGuide';
 import { BusinessBrief } from '../ai/BusinessBrief';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS, BusinessSector } from '../../data/businessPresets';
 import {
@@ -72,7 +72,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     staffMembers,
     getActiveAttendance,
     activateBusinessSector,
-  } = usePOS();
+  } = usePOSFields(["setActiveTab","products","categories","tables","customers","syncStatus","forceSync","shift","settings","currentUser","staffMembers","getActiveAttendance","activateBusinessSector"]);
 
   const activeSector = settings.businessSector || 'FNB';
   const activePreset = BUSINESS_PRESETS[activeSector] || BUSINESS_PRESETS.FNB;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useModalFocus } from '../../hooks/useModalFocus';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { PaymentMethod, Order } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -73,7 +73,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     orderType: posOrderType,
     staffMembers,
     selectedStaff,
-  } = usePOS();
+  } = usePOSFields(["cart","selectedCustomer","selectedTable","settings","processPayment","holdOrder","payPendingOrder","orderType","staffMembers","selectedStaff"]);
   const { t } = useTranslation();
 
   const cart = pendingOrderToPay ? pendingOrderToPay.items : posCart;

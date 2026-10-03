@@ -21,13 +21,14 @@ import {
   ChevronRight,
   RefreshCw,
 } from 'lucide-react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useAuth } from '../../context/AuthContext';
 import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan, TRIAL_PLAN_ID, TRIAL_DAYS } from '../../config/saasPlans';
 import { isFreePlan } from '../../config/freePlanPolicy';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BusinessSector } from '../../types';
 import { newId, newDocumentNumber } from '../../lib/ids';
+import {checkoutDefaults,readCheckoutIntent,clearCheckoutIntent} from '../../lib/workspace/checkoutIntent';
 
 interface QuoteResponse {
   ok: boolean;
@@ -43,13 +44,8 @@ interface QuoteResponse {
 }
 
 export const SubscriptionPaymentPage: React.FC = () => {
-  const { settings, updateSettings, setActiveTab } = usePOS();
+  const { settings, updateSettings, setActiveTab } = usePOSFields(["settings","updateSettings","setActiveTab"]);
   const { user, session } = useAuth();
-
-  // Check if user just arrived from onboarding
-  const [isOnboarding, setIsOnboarding] = useState<boolean>(() => {
-    return Boolean(sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan'));
-  });
 
   // Check if trial has been used
   const hasUsedTrial = Boolean(
@@ -58,20 +54,14 @@ export const SubscriptionPaymentPage: React.FC = () => {
     (settings.subscription?.status === 'TRIAL' && Date.parse(settings.subscription?.currentPeriodEnd) <= Date.now())
   );
 
-  // Selected plan state
-  const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
-    const pending = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
-    if (pending && (pending === 'plan-plus-monthly' || pending === 'plan-pro-monthly' || pending === TRIAL_PLAN_ID)) {
-      return pending;
-    }
-    return !hasUsedTrial ? TRIAL_PLAN_ID : 'plan-plus-monthly';
+  const [defaults]=useState(()=>{
+    const pending=readCheckoutIntent(user?.id);
+    return checkoutDefaults(new URLSearchParams(window.location.search).get('intent'),settings.subscription,hasUsedTrial,pending?.plan||null,pending?.cycle||null);
   });
-
-  const [yearly, setYearly] = useState<boolean>(() => {
-    const cycle = sessionStorage.getItem('nhpos_pending_checkout_cycle') || localStorage.getItem('nhpos_pending_checkout_cycle');
-    return cycle ? cycle === 'YEARLY' : true;
-  });
-  const [extraOutlets, setExtraOutlets] = useState<number>(0);
+  const [isOnboarding,setIsOnboarding]=useState(defaults.onboarding);
+  const [selectedPlanId,setSelectedPlanId]=useState(defaults.planId);
+  const [yearly,setYearly]=useState(defaults.yearly);
+  const [extraOutlets,setExtraOutlets]=useState(defaults.extraOutlets);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
@@ -258,10 +248,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
       }
       const data = await res.json();
       if (data.ok && (data.paid || data.status === 'ACTIVE')) {
-        sessionStorage.removeItem('nhpos_pending_checkout_plan');
-        sessionStorage.removeItem('nhpos_pending_checkout_cycle');
-        localStorage.removeItem('nhpos_pending_checkout_plan');
-        localStorage.removeItem('nhpos_pending_checkout_cycle');
+        clearCheckoutIntent(user?.id);
         window.dispatchEvent(new CustomEvent('subscription-updated'));
         fireConfetti();
         const activeSub = data.subscription || settings.subscription;
@@ -372,10 +359,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
           subscription: trialSub,
         });
 
-        sessionStorage.removeItem('nhpos_pending_checkout_plan');
-        sessionStorage.removeItem('nhpos_pending_checkout_cycle');
-        localStorage.removeItem('nhpos_pending_checkout_plan');
-        localStorage.removeItem('nhpos_pending_checkout_cycle');
+        clearCheckoutIntent(user?.id);
 
         window.dispatchEvent(new CustomEvent('subscription-updated'));
         fireConfetti();
@@ -566,7 +550,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
             <button
               onClick={() => {
-                sessionStorage.removeItem('nhpos_pending_checkout_plan');
+                clearCheckoutIntent(user?.id);
                 setIsOnboarding(false);
                 setActiveTab('pos');
               }}

@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
+import {useAuth} from '../../context/AuthContext';
+import {clearCheckoutIntent} from '../../lib/workspace/checkoutIntent';
 import { Lock, ShieldAlert, CreditCard, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 export const SubscriptionLockScreen: React.FC<{ onRenewSuccess?: () => void }> = ({ onRenewSuccess }) => {
-  const { settings, setActiveTab } = usePOS();
+  const {user}=useAuth();
+  const { settings, setActiveTab } = usePOSFields(["settings","setActiveTab"]);
   const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -17,10 +20,7 @@ export const SubscriptionLockScreen: React.FC<{ onRenewSuccess?: () => void }> =
       const res = await fetch('/api/v1/subscription/verify');
       const data = await res.json();
       if (data.ok && (data.paid || data.status === 'ACTIVE')) {
-        sessionStorage.removeItem('nhpos_pending_checkout_plan');
-        sessionStorage.removeItem('nhpos_pending_checkout_cycle');
-        localStorage.removeItem('nhpos_pending_checkout_plan');
-        localStorage.removeItem('nhpos_pending_checkout_cycle');
+        clearCheckoutIntent(user?.id);
         window.dispatchEvent(new CustomEvent('subscription-updated'));
         onRenewSuccess?.();
         setActiveTab('pos');

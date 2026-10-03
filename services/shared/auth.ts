@@ -107,14 +107,13 @@ export function trustedPrincipal(req: Request): AuthPrincipal | null {
 export async function canAccessBusiness(db: Db, principal: AuthPrincipal, businessId: string): Promise<boolean> {
   if (principal.subject === 'local-development') return true;
   const { rows } = await db.query(
-    `SELECT 1
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1 AND t.owner_user_ref = $2
-      LIMIT 1`,
-    [businessId, principal.subject]
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
   );
-  return rows.length === 1;
+  return rows.length===1 && rows[0].owner_user_ref===principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
 
 export async function tenantForPrincipal(db: Db, principal: AuthPrincipal): Promise<string | null> {

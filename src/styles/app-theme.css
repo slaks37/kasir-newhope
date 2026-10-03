@@ -414,6 +414,20 @@
 .nh-field input::placeholder {
   color: #929bad;
 }
+.nh-field .nh-outlet-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  font-weight: 500;
+}
+.nh-field .nh-outlet-toggle input {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  flex: 0 0 18px;
+  accent-color: #b07908;
+}
 .nh-field input:hover {
   border-color: #b8c0ce;
 }

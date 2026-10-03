@@ -53,14 +53,13 @@ function trustedPrincipal(req) {
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
   const { rows } = await db.query(
-    `SELECT 1
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1 AND t.owner_user_ref = $2
-      LIMIT 1`,
-    [businessId, principal.subject]
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
   );
-  return rows.length === 1;
+  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
 
 // services/shared/db.ts
@@ -2248,7 +2247,7 @@ async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE_
   if (!principal?.subject || principal.subject === "local-development") throw new Error("AUTHENTICATION_REQUIRED");
   const merchant = (await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE m.external_ref=$1 AND t.owner_user_ref=$2`, [businessId, principal.subject])).rows[0];
+    WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`, [businessId, principal.subject])).rows[0];
   if (!merchant) throw new Error("BUSINESS_NOT_OWNED");
   const rows = (await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,
     r.service_charge_amount-COALESCE(f.service,0) AS net_service
@@ -2468,7 +2467,7 @@ async function getTenantGrant(db, tenantId) {
 async function keUuid(db, merchantId, businessId) {
   if (!merchantId || merchantId === "local-development" || !businessId) throw new Error("AUTHENTICATION_REQUIRED");
   const owned = await db.query(
-    "SELECT t.id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2",
+    "SELECT t.id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active",
     [businessId, merchantId]
   );
   if (!owned.rows.length) throw new Error("BUSINESS_NOT_OWNED");
@@ -2641,6 +2640,7 @@ var INTENT_CONFIDENCE_THRESHOLD = 0.45;
 // src/data/rolePermissions.ts
 var ROLE_PERMISSIONS = {
   ADMIN: [
+    "businesses",
     "home",
     "overview",
     "pos",
@@ -2658,6 +2658,7 @@ var ROLE_PERMISSIONS = {
     "labor"
   ],
   MANAGER: [
+    "businesses",
     "home",
     "overview",
     "pos",
@@ -4775,7 +4776,7 @@ function basketOffers(orders, products) {
 
 // services/ai/dailyBrief.ts
 async function computeDailyBrief(db, principal, businessId, now = /* @__PURE__ */ new Date()) {
-  const identity = (await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2`, [businessId, principal.subject])).rows[0];
+  const identity = (await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`, [businessId, principal.subject])).rows[0];
   if (!identity) throw new Error("BUSINESS_NOT_OWNED");
   await assertAiAvailable(db, identity.tenant_id);
   const snapshot = await loadMerchantSnapshot(db, principal, businessId, now);
@@ -4871,7 +4872,7 @@ function registerAssistantRoutes(app, database) {
       res.status(403).json({ ok: false, error: "FORBIDDEN" });
       return false;
     }
-    const owner = await svc.db.query("SELECT tenant_id FROM internal.merchants WHERE external_ref=$1", [businessId]);
+    const owner = await svc.db.query("SELECT tenant_id FROM internal.merchants WHERE (external_ref=$1 OR id::text=$1)", [businessId]);
     try {
       await assertAiAvailable(svc.db, owner.rows[0]?.tenant_id);
     } catch (error) {

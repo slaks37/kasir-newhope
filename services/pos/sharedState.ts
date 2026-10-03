@@ -1,11 +1,13 @@
 import type { Express } from 'express';
 import type { Db } from '../shared/db';
-import { trustedPrincipal, tenantForPrincipal } from '../shared/auth';
+import { trustedPrincipal } from '../shared/auth';
+import {BusinessScopeError,resolveBusinessScope} from './businessScope';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { assertFreeScope, freePlanState, FreePlanAccessError } from '../billing/freePlan';
 import { writeActivity, SECTORS } from './activity';
 import { ORDER_OPERATION_FIELDS } from '../../src/lib/sync/orderOperations';
 import { operationalScopeIssue } from '../../src/lib/sync/operationalScope';
+import {projectLabor} from './laborProjection';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const GLOBAL_KINDS = new Set(['users', 'staff_members']);
@@ -68,49 +70,59 @@ function validOperations(value: unknown): Operation[] | null {
   return operations;
 }
 
-async function scopeFor(db: Db, subject: string, sector: string) {
-  const tenantId = await tenantForPrincipal(db,{subject});
-  if (!tenantId) return null;
-  const {rows} = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,t.is_active
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND m.business_sector=$3
-    ORDER BY (m.external_ref=$4) DESC NULLS LAST, m.created_at, m.id LIMIT 1`,
-    [tenantId,subject,sector,`${subject}_${sector}`]);
-  if (!rows.length || !rows[0].is_active) return null;
-  return {tenantId,merchantId:rows[0].merchant_id as string,businessName:rows[0].business_name as string};
-}
-
 export function registerSharedStateRoutes(app: Express, db: Db) {
   app.get('/api/v1/sync/state', async (req,res) => {
     const principal=trustedPrincipal(req);
     if(!principal) return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
     const sector=String(req.query.sector||'');
     if(!SECTOR_SET.has(sector)) return res.status(400).json({ok:false,error:'INVALID_SECTOR'});
+    const kinds=req.query.kinds===undefined?null:typeof req.query.kinds==='string'?[...new Set(req.query.kinds.split(','))]:[];
+    if(kinds&&(!kinds.length||kinds.length>25||kinds.some(kind=>!GLOBAL_KINDS.has(kind)&&!SECTOR_KINDS.has(kind))))
+      return res.status(400).json({ok:false,error:'INVALID_STATE_KINDS'});
     try {
-      const scope=await scopeFor(db,principal.subject,sector);
+      const scope=await resolveBusinessScope(db,principal.subject,sector,req.query.businessId);
       if(!scope) return res.json({ok:true,ready:false,records:[]});
-      const {rows}=await db.tx(async c=>{
+      const snapshot=await db.tx(async c=>{
+        await c.exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId,scope.merchantId]);
-        return c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+        const parameters=[scope.tenantId,[sector,'BUSINESS:'+scope.merchantId],scope.merchantId,kinds];
+        const stamp=await c.query(`SELECT md5(COALESCE(string_agg(
+          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
+          '|' ORDER BY scope,kind,record_id),'')) AS version
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=$2 AND merchant_id=$3))
-          ORDER BY scope,kind,record_id LIMIT 10001`,[scope.tenantId,sector,scope.merchantId]);
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`,parameters);
+        const version=stamp.rows[0].version as string;
+        // Legacy scope proofs need their records even when the snapshot did not
+        // change. Version validation never replaces owner/merchant authorization.
+        if(req.query.knownVersion===version&&!req.query.legacyCandidates)return {rows:[],version,unchanged:true};
+        const result=await c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+          FROM pos.shared_state_records WHERE tenant_id=$1 AND
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
+          ORDER BY scope,kind,record_id LIMIT 10001`,parameters);
+        return {...result,version,unchanged:false};
       });
+      const {rows}=snapshot;
+      if(snapshot.unchanged)return res.json({ok:true,ready:true,unchanged:true,version:snapshot.version,kinds,business:{businessId:scope.merchantId,tenantId:scope.tenantId,name:scope.businessName,sector},records:[]});
       let candidates:Array<{kind:string;recordId:string}>=[];
       try{const parsed=JSON.parse(String(req.query.legacyCandidates||'[]'));if(Array.isArray(parsed)&&parsed.length<=100)candidates=parsed.filter(r=>SECTOR_KINDS.has(r?.kind)&&r.kind!=='store_settings'&&typeof r.recordId==='string'&&ID_RE.test(r.recordId));}catch{}
       const otherMerchants=candidates.length?(await db.query(`SELECT id,business_sector FROM internal.merchants WHERE tenant_id=$1 AND business_sector<>$2`,[scope.tenantId,sector])).rows:[];
-      const foreignRecords=(await Promise.all(otherMerchants.map(async merchant=>(await db.tx(async c=>{
+      const foreignRecords=(await Promise.all(otherMerchants.map(async merchant=>{
+        const result=await db.tx(async c=>{
         // Same authenticated owner, separate per-merchant RLS scope. Never widen policies.
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[scope.tenantId,merchant.id]);
         return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
           JOIN jsonb_to_recordset($3::jsonb) AS candidate(kind text,"recordId" text) ON r.kind=candidate.kind AND r.record_id=candidate."recordId"
           WHERE r.tenant_id=$1 AND r.merchant_id=$2 AND r.scope<>'GLOBAL' AND NOT r.deleted`,[scope.tenantId,merchant.id,JSON.stringify(candidates)]);
-      })).rows))).flat().map((r:any)=>({scope:r.scope,kind:r.kind,recordId:r.record_id,value:r.value}));
-      return res.json({ok:true,ready:true,scopeProof:true,foreignRecords,business:{name:scope.businessName,sector},truncated:rows.length>10000,records:rows.slice(0,10000).map((r:any)=>({scope:r.scope,kind:r.kind,
+        });
+        return result.rows.map((r:any)=>({scope:merchant.business_sector,kind:r.kind,recordId:r.record_id,value:r.value}));
+      }))).flat();
+      return res.json({ok:true,ready:true,version:snapshot.version,scopeProof:true,foreignRecords,kinds,business:{businessId:scope.merchantId,tenantId:scope.tenantId,name:scope.businessName,sector},truncated:rows.length>10000,records:rows.slice(0,10000).map((r:any)=>({scope:r.scope==='GLOBAL'?'GLOBAL':sector,kind:r.kind,
         recordId:r.record_id,value:r.value,revision:Number(r.revision),deleted:r.deleted,updatedAt:r.updated_at,
         ...(r.recovery_value?{recoveryValue:r.recovery_value,quarantineReason:r.quarantine_reason}:{} )}))});
-    } catch { return res.status(503).json({ok:false,error:'STATE_UNAVAILABLE'}); }
+    } catch(error) { if(error instanceof BusinessScopeError)return res.status(error.status).json({ok:false,error:error.message});return res.status(503).json({ok:false,error:'STATE_UNAVAILABLE'}); }
   });
 
   app.post('/api/v1/sync/state', async (req,res) => {
@@ -122,7 +134,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
     const operations=validOperations(req.body?.operations);
     if(!SECTOR_SET.has(sector) || !operations) return res.status(400).json({ok:false,error:'INVALID_STATE_REQUEST'});
     try {
-      const scope=await scopeFor(db,principal.subject,sector);
+      const scope=await resolveBusinessScope(db,principal.subject,sector,req.body?.businessId);
       if(!scope) return res.status(409).json({ok:false,error:'BUSINESS_SETUP_REQUIRED'});
       const versions=await db.tx(async c=>{
         await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[scope.tenantId]);
@@ -131,6 +143,8 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
           [scope.tenantId,scope.merchantId]);
         const free=await freePlanState(c,scope.tenantId);
         assertFreeScope(free,sector,[]);
+        if(free.free&&!(await c.query('SELECT 1 FROM internal.outlets WHERE id=$1 AND merchant_id=$2 AND tenant_id=$3 AND is_active',
+          [free.selection?.branchId,scope.merchantId,scope.tenantId])).rows.length)throw new FreePlanAccessError('FREE_BRANCH_MISMATCH');
         const result: Array<{kind:string;recordId:string;revision:number}> = [];
         const changed=new Set<string>();
         const conflicts:Array<{kind:string;recordId:string;error:string}>=[];
@@ -144,7 +158,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
         }
         for(const op of operations){
           const issue=op.owner&&op.owner!==principal.subject?'WRONG_OWNER':op.sector&&op.sector!==sector
-            ?'WRONG_SECTOR':operationalScopeIssue(principal.subject,sector,op.kind,op.recordId,op.value);
+            ?'WRONG_SECTOR':operationalScopeIssue(principal.subject,sector,op.kind,op.recordId,op.value,scope.transportRef||scope.merchantId);
           if(issue){rejected.push({kind:op.kind,recordId:op.recordId,error:'WRONG_SCOPE',detail:issue});continue;}
           await c.exec('SAVEPOINT operational_record');
           try {
@@ -156,7 +170,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
             const existing=await c.query(`SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3 AND NOT sync_quarantined`,[scope.tenantId,scope.merchantId,op.recordId]);
             if(existing.rows.some(r=>r.outlet_id!==productOutlet))throw new FreePlanAccessError('FREE_PRODUCT_BRANCH_MISMATCH');
           }
-          const docScope=GLOBAL_KINDS.has(op.kind)?'GLOBAL':sector;
+          const docScope=GLOBAL_KINDS.has(op.kind)?'GLOBAL':scope.legacyAlias?sector:'BUSINESS:'+scope.merchantId;
           const merchantId=docScope==='GLOBAL'?null:scope.merchantId;
           const r=await c.query(`INSERT INTO pos.shared_state_records
             (tenant_id,merchant_id,scope,kind,record_id,value,revision,deleted)
@@ -180,6 +194,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
           }
           if(!r.rows.length || (!replayed && op.baseRevision!==0 && Number(r.rows[0].revision)===1))
             throw new StateConflict(op.kind,op.recordId);
+          await projectLabor(c,scope,sector,op);
           if(replayed){result.push({kind:op.kind,recordId:op.recordId,revision:Number(r.rows[0].revision)});await c.exec('RELEASE SAVEPOINT operational_record');continue;}
           const settingsName=(op.value as Record<string,unknown>|null)?.storeName;
           if(op.kind==='store_settings'&&!op.deleted&&typeof settingsName==='string'&&settingsName.trim()){
@@ -228,7 +243,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
                 WHERE pos.products.business_sector=EXCLUDED.business_sector RETURNING id`,
                 [scope.tenantId,scope.merchantId,productOutlet,String(p.name).trim(),
                   String(p.sku||op.recordId).slice(0,50),Number(p.price),Number(p.costPrice),
-                  p.isAvailable!==false,sector,`${principal.subject}_${sector}`,
+                  p.isAvailable!==false,sector,scope.transportRef||scope.merchantId,
                   String(p.categoryName||'Lainnya').slice(0,100),String(p.description||'').slice(0,300),
                   String(p.unit||'pcs').slice(0,20),op.recordId]);
               if(!saved.rows.length)throw new StateConflict(op.kind,op.recordId);
@@ -251,7 +266,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
         const kinds=[...new Set(accepted.map(op=>op.kind))];
         if(accepted.length)
         await writeActivity(c,{merchantId:scope.merchantId,tenantId:scope.tenantId,
-          businessSector:sector,businessId:`${principal.subject}_${sector}`,appModule:'SYNC',
+          businessSector:sector,businessId:scope.merchantId,appModule:'SYNC',
           eventType:'SHARED_STATE_CHANGED',actorUserId:principal.subject,
           actorName:principal.email||null,summary:`${accepted.length} perubahan data operasional`,
           detail:{kinds,records:accepted.map(op=>({kind:op.kind,id:op.recordId,deleted:op.deleted}))}});
@@ -259,6 +274,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
       });
       return res.json({ok:true,...versions});
     } catch(error) {
+      if(error instanceof BusinessScopeError)return res.status(error.status).json({ok:false,error:error.message});
       if(error instanceof StateConflict) return res.status(409).json({ok:false,error:'STATE_CONFLICT',kind:error.kind,recordId:error.recordId});
       if(error instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:error.message});
       if(error instanceof BillingError) return res.status(error.status).json({ok:false,error:error.message});

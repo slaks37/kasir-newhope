@@ -34,6 +34,20 @@ disk.set(source,'[]');
 assert.equal(migrateLegacyFinancialData(target,{outletMappings:{'legacy-branch':outlet}}).acknowledged,1,'Reload uses retained original snapshot, not replaced cache');
 assert.equal(calls.length,2);assert.equal(calls[0].outletId,outlet);
 assert.equal(disk.get(foreignSource),foreignRaw,'Never modify another owner source');
+const parse=JSON.parse;let sourceParses=0;
+JSON.parse=((raw:string,...args:any[])=>{if(raw===original||raw===disk.get('newhope_legacy_financial_v1_'+target.businessId))sourceParses++;return (parse as any)(raw,...args);}) as typeof JSON.parse;
+try{
+  assert.equal(migrateLegacyFinancialData(target,{outletMappings:{'legacy-branch':outlet}}).complete,true);
+  assert.equal(sourceParses,0,'Already acknowledged recovery does not reparse the entire laptop snapshot every refresh');
+}finally{JSON.parse=parse;}
+// Losing an ACK changes no key count. A volatile fast path must still notice
+// and replay idempotently; a completed flag alone is never financial evidence.
+disk.set('newhope_legacy_financial_ack_'+target.businessId,'{}');
+const afterAckLoss=migrateLegacyFinancialData(target,{outletMappings:{'legacy-branch':outlet}});
+assert.equal(afterAckLoss.complete,false);assert.equal(afterAckLoss.queued,1);
+await flush(target,true);
+assert.equal(migrateLegacyFinancialData(target,{outletMappings:{'legacy-branch':outlet}}).complete,true);
+assert.equal(disk.get('newhope_legacy_financial_v1_'+target.businessId)?.includes('legacy-1'),true,'ACK retry retains the original recovery snapshot');
 const refund={action:'refund' as const,body:{sector:'FNB' as const,outletId:outlet,clientEventId:'refund-stable',clientTxnId:sale.id,
   refund:{clientRefundId:'refund-stable',occurredAt:'2026-10-01T10:00:00Z',refundMethod:'CASH' as const,reason:'Return',items:[{clientItemId:'line-1',quantity:1}]}}};
 enqueueCashCommand(target.businessId,refund);assert.equal(pendingRefund(target.businessId,sale.id),true);

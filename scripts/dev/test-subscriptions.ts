@@ -27,6 +27,7 @@ async function main(){
  await pg.exec('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;');
  const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
  for(const file of files){try{await pg.exec(fs.readFileSync(file,'utf8'));}catch(e){throw new Error('Migration '+file+': '+(e as Error).message);}}
+ for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort())await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/free-plan-ai-credit-access.sql','utf8'));
  await pg.exec(fs.readFileSync('docs/security/restrict-browser-rls-policies.sql','utf8'));

@@ -1,9 +1,9 @@
 import { ArrowUpRight, Package, Settings2, ShoppingCart } from "lucide-react";
-import { usePOS } from "../../context/POSContext";
+import { usePOSFields } from "../../context/POSDomains";
 
 /** Contextual guidance, shown only until this store has its first order. */
 export function FirstSaleGuide() {
-  const { orders, setActiveTab, hasPermission } = usePOS();
+  const { orders, setActiveTab, hasPermission } = usePOSFields(["orders","setActiveTab","hasPermission"]);
   if (orders.length > 0) return null;
   const steps = [
     {

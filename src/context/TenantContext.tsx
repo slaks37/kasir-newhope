@@ -9,20 +9,19 @@ import { BusinessSector, PermissionFeature, StoreMode, UserRole } from '../types
  * transactions, customers, staff roster and AI insights. Nothing may cross
  * between them.
  *
- * `businessId` is the partition key for every scoped read and write. It is
- * deliberately `${userId}_${sector}` so that the produced storage keys are
- * byte-identical to the ones this app has always written:
- *
- *     newhope_data_${businessId}_${entity}
- *   = newhope_data_usr-1_FNB_orders
- *
- * i.e. the partition already existed as a naming convention; this module turns
- * it into an explicit, single-sourced key so no call site can invent its own.
+ * `canonicalBusinessId` is the server UUID used for selection. `businessId`
+ * retains the server-declared transport/cache ref, including exact legacy
+ * owner_sector aliases. New same-sector businesses have distinct refs; sector
+ * is not an identity. Financial IDs and original recovery keys stay unchanged.
  */
 
 export interface TenantInfo {
   /** PARTITION KEY. Every scoped storage read/write and the AI cache use this. */
   businessId: string;
+  /** Server UUID is selection identity; businessId remains a durable transport
+   * alias so existing financial IDs and recovery keys are not rekeyed. */
+  canonicalBusinessId?:string;
+  legacyAlias?:string|null;
   /** The owning account. Also the SaaS tenant id today. */
   merchantId: string;
   tenantId: string;
@@ -40,7 +39,7 @@ export interface TenantInfo {
   permissions: PermissionFeature[];
 }
 
-/** Builds the canonical partition key for a business unit. */
+/** Legacy alias only. Never use this to identify a newly created business. */
 export function makeBusinessId(userId: string, sector: BusinessSector): string {
   const u = userId || 'usr-admin';
   const s = sector || 'FNB';
@@ -79,7 +78,10 @@ export function belongsToBusiness(
 ): boolean {
   if (!record) return false;
   if (record.businessId) return record.businessId === tenant.businessId;
-  return ((record.sector as BusinessSector) || 'FNB') === tenant.sector;
+  // Sector-only legacy membership is valid only in its proven owner_sector
+  // namespace, never in a second same-sector business.
+  return /_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/.test(tenant.businessId)&&
+    ((record.sector as BusinessSector) || 'FNB') === tenant.sector;
 }
 
 /** Stamps the partition key onto a record belonging to a shared collection. */

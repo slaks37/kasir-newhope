@@ -53,14 +53,13 @@ function trustedPrincipal(req) {
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
   const { rows } = await db.query(
-    `SELECT 1
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1 AND t.owner_user_ref = $2
-      LIMIT 1`,
-    [businessId, principal.subject]
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
   );
-  return rows.length === 1;
+  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
@@ -188,6 +187,91 @@ async function withRetry(fn, attempts = 15) {
   const failure = new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
   failure.cause = lastErr;
   throw failure;
+}
+
+// services/pos/businessDirectory.ts
+function registerBusinessDirectory(app, db) {
+  app.get("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const tenantId = await tenantForPrincipal(db, principal);
+      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
+      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
+        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
+        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
+        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
+      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
+      const businesses = /* @__PURE__ */ new Map();
+      for (const row of result.rows) {
+        let business = businesses.get(row.id);
+        if (!business) {
+          business = {
+            businessId: row.id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            sector: row.business_sector,
+            status: row.is_active ? "ACTIVE" : "INACTIVE",
+            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
+            transportRef: row.external_ref || row.id,
+            outlets: []
+          };
+          businesses.set(row.id, business);
+        }
+        if (row.outlet_id) business.outlets.push({
+          outletId: row.outlet_id,
+          businessId: row.id,
+          name: row.outlet_name,
+          address: row.address || "",
+          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
+          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
+        });
+      }
+      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
+    } catch {
+      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
+    }
+  });
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
 }
 
 // services/pos/sync.ts
@@ -454,7 +538,9 @@ async function scopeFor(db, req) {
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
     ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3`, [outletId, tenantId, sector])).rows[0];
+    JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3 AND m.is_active
+      AND t.is_active AND t.merged_into IS NULL`, [outletId, tenantId, sector])).rows[0];
   if (!row) throw new FinanceError(403, "OUTLET_NOT_OWNED");
   if (!row.is_active) throw new FinanceError(409, "OUTLET_SETUP_REQUIRED");
   await assertTenantWritable(db, tenantId);
@@ -561,7 +647,7 @@ function registerFinanceRoutes(app, db) {
         const current = rows.find((r) => r.status === "OPEN");
         return { shift: current ? await calculateShift(c, s, current) : null, history: rows.filter((r) => r.status === "CLOSED").map((r) => r.summary).filter(Boolean) };
       });
-      res.json({ ok: true, ...result });
+      res.json({ ok: true, ...result, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (error) {
       if (!(error instanceof FinanceError) && !(error instanceof BillingError)) {
         const diagnostic = error;
@@ -747,7 +833,7 @@ var operationalKinds = /* @__PURE__ */ new Set([
 ]);
 var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
-function operationalScopeIssue(owner, sector, kind, id, value) {
+function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${owner}_${sector}`) {
   if (!operationalKinds.has(kind) || kind === "users" || kind === "staff_members") return null;
   const row = value && typeof value === "object" ? value : {};
   if (kind === "store_settings" && typeof row.storeMode === "string") {
@@ -757,12 +843,123 @@ function operationalScopeIssue(owner, sector, kind, id, value) {
   for (const field of ["businessSector", "sector"]) {
     if (typeof row[field] === "string" && sectors.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
   }
-  if (typeof row.businessId === "string" && /_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/.test(row.businessId) && row.businessId !== `${owner}_${sector}`)
+  if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
   const ref = kind === "products" ? id : typeof row.productId === "string" ? row.productId : "";
   const match = /^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
   if (match && presets[match[1]] !== sector) return `WRONG_SECTOR:${presets[match[1]]}`;
   return null;
+}
+
+// services/pos/laborProjection.ts
+var text = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var timestamp2 = (value, optional = false) => {
+  if (optional && (value === void 0 || value === null || value === "")) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new BillingError(422, "INVALID_LABOR_DATE");
+  return new Date(value).toISOString();
+};
+var money2 = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new BillingError(422, "INVALID_PAYROLL_AMOUNT");
+  return value;
+};
+async function projectLabor(c, scope, sector, op) {
+  if (op.kind !== "attendance_logs" && op.kind !== "payroll_slips") return;
+  const attendance = op.kind === "attendance_logs";
+  const table = attendance ? "pos.staff_attendances" : "pos.staff_payrolls";
+  const clientColumn = attendance ? "client_attendance_id" : "client_slip_id";
+  const existing = (await c.query(`SELECT * FROM ${table} WHERE tenant_id=$1 AND ${clientColumn}=$2 FOR UPDATE`, [scope.tenantId, op.recordId])).rows[0];
+  if (existing && existing.merchant_id !== scope.merchantId) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
+  if (op.deleted) {
+    if (!attendance && existing?.status === "PAID") throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
+    return;
+  }
+  const value = op.value;
+  if (value.id !== op.recordId || !text(value.staffId, 96) || !text(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
+  if (attendance) {
+    if (!["CLOCKED_IN", "CLOCKED_OUT"].includes(String(value.status))) throw new BillingError(422, "INVALID_ATTENDANCE_STATUS");
+    const started = timestamp2(value.clockInTime), ended = timestamp2(value.clockOutTime, true);
+    if (value.status === "CLOCKED_OUT" && !ended || ended && Date.parse(ended) < Date.parse(started)) throw new BillingError(422, "INVALID_ATTENDANCE_DATE");
+    if (typeof value.branchId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.branchId)) throw new BillingError(422, "ATTENDANCE_OUTLET_REQUIRED");
+    const outlet = (await c.query("SELECT id FROM internal.outlets WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3", [value.branchId, scope.tenantId, scope.merchantId])).rows[0];
+    if (!outlet) throw new BillingError(403, "ATTENDANCE_OUTLET_NOT_OWNED");
+    if (existing && (existing.staff_id !== value.staffId || existing.outlet_id !== outlet.id || new Date(existing.clock_in_at).toISOString() !== started)) throw new BillingError(409, "ATTENDANCE_IDENTITY_IMMUTABLE");
+    if (existing?.clock_out_at && (!ended || new Date(existing.clock_out_at).toISOString() !== ended)) throw new BillingError(409, "CLOSED_ATTENDANCE_IMMUTABLE");
+    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
+    const saved2 = await c.query(
+      `INSERT INTO pos.staff_attendances
+      (tenant_id,merchant_id,outlet_id,client_attendance_id,staff_id,staff_name,staff_role,clock_in_at,clock_out_at,
+       shift_notes,status,branch_id,branch_name,clock_in_geo,clock_out_geo,business_sector)
+      VALUES($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$3::text,$12,$13::jsonb,$14::jsonb,$15)
+      ON CONFLICT(tenant_id,client_attendance_id) DO UPDATE SET
+        clock_out_at=EXCLUDED.clock_out_at,shift_notes=EXCLUDED.shift_notes,status=EXCLUDED.status,
+        clock_out_geo=EXCLUDED.clock_out_geo,updated_at=now()
+      WHERE pos.staff_attendances.merchant_id=EXCLUDED.merchant_id RETURNING id`,
+      [
+        scope.tenantId,
+        scope.merchantId,
+        outlet.id,
+        op.recordId,
+        value.staffId,
+        text(value.staffName, 120),
+        text(value.staffRole, 64) || "STAFF",
+        started,
+        ended,
+        text(value.shiftNotes, 500) || null,
+        value.status,
+        text(value.branchName, 100),
+        JSON.stringify(value.clockInGeo || null),
+        JSON.stringify(value.clockOutGeo || null),
+        sector
+      ]
+    );
+    if (!saved2.rows.length) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
+    return;
+  }
+  if (!["DRAFT", "PAID"].includes(String(value.status)) || typeof value.periodMonth !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.periodMonth) || !Number.isSafeInteger(value.daysAttended) || Number(value.daysAttended) < 0) throw new BillingError(422, "INVALID_PAYROLL_RECORD");
+  const start = timestamp2(value.periodStart), end = timestamp2(value.periodEnd), paid = timestamp2(value.paidAt, true);
+  if (end < start || value.status === "PAID" && !paid) throw new BillingError(422, "INVALID_PAYROLL_DATE");
+  const fields = ["baseSalary", "allowance", "individualCommission", "teamPoolCommission", "dailyTargetBonus", "grossEarnings", "deductions", "netSalary"];
+  const amounts = fields.map((field) => money2(value[field]));
+  const columns = ["base_salary", "allowance", "individual_commission", "team_pool_commission", "daily_target_bonus", "gross_earnings", "deductions", "net_salary"];
+  if (existing?.status === "PAID") {
+    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
+      throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
+    return;
+  }
+  const saved = await c.query(
+    `INSERT INTO pos.staff_payrolls
+    (tenant_id,merchant_id,client_slip_id,staff_id,staff_name,staff_role,period_month,period_start,period_end,days_attended,
+     base_salary,allowance,individual_commission,team_pool_commission,daily_target_bonus,gross_earnings,deductions,net_salary,
+     status,paid_at,payment_method,notes,business_sector)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+    ON CONFLICT(tenant_id,client_slip_id) DO UPDATE SET
+      staff_id=EXCLUDED.staff_id,staff_name=EXCLUDED.staff_name,staff_role=EXCLUDED.staff_role,
+      period_month=EXCLUDED.period_month,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,days_attended=EXCLUDED.days_attended,
+      base_salary=EXCLUDED.base_salary,allowance=EXCLUDED.allowance,individual_commission=EXCLUDED.individual_commission,
+      team_pool_commission=EXCLUDED.team_pool_commission,daily_target_bonus=EXCLUDED.daily_target_bonus,
+      gross_earnings=EXCLUDED.gross_earnings,deductions=EXCLUDED.deductions,net_salary=EXCLUDED.net_salary,
+      status=EXCLUDED.status,paid_at=EXCLUDED.paid_at,payment_method=EXCLUDED.payment_method,notes=EXCLUDED.notes,updated_at=now()
+    WHERE pos.staff_payrolls.merchant_id=EXCLUDED.merchant_id AND pos.staff_payrolls.status<>'PAID' RETURNING id`,
+    [
+      scope.tenantId,
+      scope.merchantId,
+      op.recordId,
+      value.staffId,
+      text(value.staffName, 120),
+      text(value.staffRole, 64) || "STAFF",
+      value.periodMonth,
+      start.slice(0, 10),
+      end.slice(0, 10),
+      value.daysAttended,
+      ...amounts,
+      value.status,
+      paid,
+      text(value.paymentMethod, 64) || null,
+      text(value.notes, 500) || null,
+      sector
+    ]
+  );
+  if (!saved.rows.length) throw new BillingError(409, "LABOR_PROJECTION_OWNER_CONFLICT");
 }
 
 // services/pos/sharedState.ts
@@ -839,38 +1036,42 @@ function validOperations(value) {
   }
   return operations;
 }
-async function scopeFor2(db, subject, sector) {
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) return null;
-  const { rows } = await db.query(
-    `SELECT m.id AS merchant_id,m.name AS business_name,t.is_active
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND m.business_sector=$3
-    ORDER BY (m.external_ref=$4) DESC NULLS LAST, m.created_at, m.id LIMIT 1`,
-    [tenantId, subject, sector, `${subject}_${sector}`]
-  );
-  if (!rows.length || !rows[0].is_active) return null;
-  return { tenantId, merchantId: rows[0].merchant_id, businessName: rows[0].business_name };
-}
 function registerSharedStateRoutes(app, db) {
   app.get("/api/v1/sync/state", async (req, res) => {
     const principal = trustedPrincipal(req);
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     const sector = String(req.query.sector || "");
     if (!SECTOR_SET.has(sector)) return res.status(400).json({ ok: false, error: "INVALID_SECTOR" });
+    const kinds = req.query.kinds === void 0 ? null : typeof req.query.kinds === "string" ? [...new Set(req.query.kinds.split(","))] : [];
+    if (kinds && (!kinds.length || kinds.length > 25 || kinds.some((kind) => !GLOBAL_KINDS.has(kind) && !SECTOR_KINDS.has(kind))))
+      return res.status(400).json({ ok: false, error: "INVALID_STATE_KINDS" });
     try {
-      const scope = await scopeFor2(db, principal.subject, sector);
+      const scope = await resolveBusinessScope(db, principal.subject, sector, req.query.businessId);
       if (!scope) return res.json({ ok: true, ready: false, records: [] });
-      const { rows } = await db.tx(async (c) => {
+      const snapshot = await db.tx(async (c) => {
+        await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
         await c.query(
           "SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId, scope.merchantId]
         );
-        return c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+        const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
+        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(
+          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
+          '|' ORDER BY scope,kind,record_id),'')) AS version
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=$2 AND merchant_id=$3))
-          ORDER BY scope,kind,record_id LIMIT 10001`, [scope.tenantId, sector, scope.merchantId]);
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`, parameters2);
+        const version = stamp.rows[0].version;
+        if (req.query.knownVersion === version && !req.query.legacyCandidates) return { rows: [], version, unchanged: true };
+        const result = await c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
+          FROM pos.shared_state_records WHERE tenant_id=$1 AND
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
+          ORDER BY scope,kind,record_id LIMIT 10001`, parameters2);
+        return { ...result, version, unchanged: false };
       });
+      const { rows } = snapshot;
+      if (snapshot.unchanged) return res.json({ ok: true, ready: true, unchanged: true, version: snapshot.version, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, records: [] });
       let candidates = [];
       try {
         const parsed = JSON.parse(String(req.query.legacyCandidates || "[]"));
@@ -878,14 +1079,17 @@ function registerSharedStateRoutes(app, db) {
       } catch {
       }
       const otherMerchants = candidates.length ? (await db.query(`SELECT id,business_sector FROM internal.merchants WHERE tenant_id=$1 AND business_sector<>$2`, [scope.tenantId, sector])).rows : [];
-      const foreignRecords = (await Promise.all(otherMerchants.map(async (merchant) => (await db.tx(async (c) => {
-        await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenantId, merchant.id]);
-        return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
+      const foreignRecords = (await Promise.all(otherMerchants.map(async (merchant) => {
+        const result = await db.tx(async (c) => {
+          await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenantId, merchant.id]);
+          return c.query(`SELECT r.scope,r.kind,r.record_id,r.value FROM pos.shared_state_records r
           JOIN jsonb_to_recordset($3::jsonb) AS candidate(kind text,"recordId" text) ON r.kind=candidate.kind AND r.record_id=candidate."recordId"
           WHERE r.tenant_id=$1 AND r.merchant_id=$2 AND r.scope<>'GLOBAL' AND NOT r.deleted`, [scope.tenantId, merchant.id, JSON.stringify(candidates)]);
-      })).rows))).flat().map((r) => ({ scope: r.scope, kind: r.kind, recordId: r.record_id, value: r.value }));
-      return res.json({ ok: true, ready: true, scopeProof: true, foreignRecords, business: { name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
-        scope: r.scope,
+        });
+        return result.rows.map((r) => ({ scope: merchant.business_sector, kind: r.kind, recordId: r.record_id, value: r.value }));
+      }))).flat();
+      return res.json({ ok: true, ready: true, version: snapshot.version, scopeProof: true, foreignRecords, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
+        scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
         kind: r.kind,
         recordId: r.record_id,
         value: r.value,
@@ -894,7 +1098,8 @@ function registerSharedStateRoutes(app, db) {
         updatedAt: r.updated_at,
         ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
       })) });
-    } catch {
+    } catch (error) {
+      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
     }
   });
@@ -906,7 +1111,7 @@ function registerSharedStateRoutes(app, db) {
     const operations = validOperations(req.body?.operations);
     if (!SECTOR_SET.has(sector) || !operations) return res.status(400).json({ ok: false, error: "INVALID_STATE_REQUEST" });
     try {
-      const scope = await scopeFor2(db, principal.subject, sector);
+      const scope = await resolveBusinessScope(db, principal.subject, sector, req.body?.businessId);
       if (!scope) return res.status(409).json({ ok: false, error: "BUSINESS_SETUP_REQUIRED" });
       const versions = await db.tx(async (c) => {
         await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [scope.tenantId]);
@@ -917,6 +1122,10 @@ function registerSharedStateRoutes(app, db) {
         );
         const free = await freePlanState(c, scope.tenantId);
         assertFreeScope(free, sector, []);
+        if (free.free && !(await c.query(
+          "SELECT 1 FROM internal.outlets WHERE id=$1 AND merchant_id=$2 AND tenant_id=$3 AND is_active",
+          [free.selection?.branchId, scope.merchantId, scope.tenantId]
+        )).rows.length) throw new FreePlanAccessError("FREE_BRANCH_MISMATCH");
         const result = [];
         const changed = /* @__PURE__ */ new Set();
         const conflicts = [];
@@ -931,7 +1140,7 @@ function registerSharedStateRoutes(app, db) {
           productOutlet = outlet.rows[0]?.id || null;
         }
         for (const op of operations) {
-          const issue = op.owner && op.owner !== principal.subject ? "WRONG_OWNER" : op.sector && op.sector !== sector ? "WRONG_SECTOR" : operationalScopeIssue(principal.subject, sector, op.kind, op.recordId, op.value);
+          const issue = op.owner && op.owner !== principal.subject ? "WRONG_OWNER" : op.sector && op.sector !== sector ? "WRONG_SECTOR" : operationalScopeIssue(principal.subject, sector, op.kind, op.recordId, op.value, scope.transportRef || scope.merchantId);
           if (issue) {
             rejected.push({ kind: op.kind, recordId: op.recordId, error: "WRONG_SCOPE", detail: issue });
             continue;
@@ -946,7 +1155,7 @@ function registerSharedStateRoutes(app, db) {
               const existing = await c.query(`SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND external_ref=$3 AND NOT sync_quarantined`, [scope.tenantId, scope.merchantId, op.recordId]);
               if (existing.rows.some((r2) => r2.outlet_id !== productOutlet)) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
             }
-            const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : sector;
+            const docScope = GLOBAL_KINDS.has(op.kind) ? "GLOBAL" : scope.legacyAlias ? sector : "BUSINESS:" + scope.merchantId;
             const merchantId = docScope === "GLOBAL" ? null : scope.merchantId;
             const r = await c.query(`INSERT INTO pos.shared_state_records
             (tenant_id,merchant_id,scope,kind,record_id,value,revision,deleted)
@@ -978,6 +1187,7 @@ function registerSharedStateRoutes(app, db) {
             }
             if (!r.rows.length || !replayed && op.baseRevision !== 0 && Number(r.rows[0].revision) === 1)
               throw new StateConflict(op.kind, op.recordId);
+            await projectLabor(c, scope, sector, op);
             if (replayed) {
               result.push({ kind: op.kind, recordId: op.recordId, revision: Number(r.rows[0].revision) });
               await c.exec("RELEASE SAVEPOINT operational_record");
@@ -1050,7 +1260,7 @@ function registerSharedStateRoutes(app, db) {
                     Number(p.costPrice),
                     p.isAvailable !== false,
                     sector,
-                    `${principal.subject}_${sector}`,
+                    scope.transportRef || scope.merchantId,
                     String(p.categoryName || "Lainnya").slice(0, 100),
                     String(p.description || "").slice(0, 300),
                     String(p.unit || "pcs").slice(0, 20),
@@ -1081,7 +1291,7 @@ function registerSharedStateRoutes(app, db) {
             merchantId: scope.merchantId,
             tenantId: scope.tenantId,
             businessSector: sector,
-            businessId: `${principal.subject}_${sector}`,
+            businessId: scope.merchantId,
             appModule: "SYNC",
             eventType: "SHARED_STATE_CHANGED",
             actorUserId: principal.subject,
@@ -1093,6 +1303,7 @@ function registerSharedStateRoutes(app, db) {
       });
       return res.json({ ok: true, ...versions });
     } catch (error) {
+      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       if (error instanceof StateConflict) return res.status(409).json({ ok: false, error: "STATE_CONFLICT", kind: error.kind, recordId: error.recordId });
       if (error instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: error.message });
       if (error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
@@ -1106,7 +1317,7 @@ var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
-var money2 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+var money3 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
 var iso = (value) => new Date(String(value)).toISOString();
 var ReportRequestError = class extends Error {
   constructor(status, code) {
@@ -1163,7 +1374,7 @@ function parseReportFilter(query) {
     search
   };
 }
-async function scopeFor3(db, subject, filter) {
+async function scopeFor2(db, subject, filter) {
   const { rows } = await db.query(
     `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
     FROM internal.outlets o
@@ -1222,7 +1433,7 @@ function financial(row) {
   const totalCOGS = numeric(row.cogs);
   const totalTax = numeric(row.tax);
   const totalOrders = numeric(row.orders);
-  const grossProfit = money2(totalNetRevenue - totalTax - totalCOGS);
+  const grossProfit = money3(totalNetRevenue - totalTax - totalCOGS);
   return {
     totalOrders,
     totalGrossSales: numeric(row.gross_sales),
@@ -1233,8 +1444,8 @@ function financial(row) {
     totalRefunds: numeric(row.refunds),
     totalCOGS,
     grossProfit,
-    netProfitMargin: totalNetRevenue ? money2(grossProfit / totalNetRevenue * 100) : 0,
-    avgOrderValue: totalOrders ? money2(totalNetRevenue / totalOrders) : 0
+    netProfitMargin: totalNetRevenue ? money3(grossProfit / totalNetRevenue * 100) : 0,
+    avgOrderValue: totalOrders ? money3(totalNetRevenue / totalOrders) : 0
   };
 }
 async function revenueSummary(db, params) {
@@ -1281,7 +1492,7 @@ async function paymentBreakdown(db, params) {
       AND p.merchant_id=r.merchant_id AND p.payment_status IN ('PAID','SETTLED')
   ) SELECT payment_method,COALESCE(sum(total_amount * amount / NULLIF(tender_total,0)),0) AS amount
     FROM tenders GROUP BY payment_method ORDER BY payment_method`, params);
-  return Object.fromEntries(rows.map((row) => [row.payment_method, money2(numeric(row.amount))]));
+  return Object.fromEntries(rows.map((row) => [row.payment_method, money3(numeric(row.amount))]));
 }
 function localDate(timezone) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(/* @__PURE__ */ new Date());
@@ -1304,7 +1515,7 @@ function cashMovement(row) {
 async function serverReportSummary(db, subject, filter) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor3(c, subject, filter);
+    const scope = await scopeFor2(c, subject, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = parameters(scope, filter);
     const today = localDate(filter.timezone);
@@ -1340,7 +1551,7 @@ async function serverReportSummary(db, subject, filter) {
     const itemCount = (await c.query(`${revenueCTE} SELECT COALESCE(SUM(GREATEST(COALESCE(i.quantity_exact,i.quantity)-COALESCE(ret.qty,0),0)),0) AS qty
       FROM revenue r JOIN pos.transaction_items i ON i.transaction_id=r.id
       LEFT JOIN LATERAL(SELECT SUM(quantity) AS qty FROM pos.transaction_refund_items WHERE transaction_item_id=i.id) ret ON true`, params)).rows[0];
-    const sortedMethods = Object.entries(breakdown).map(([key, total]) => ({ key, name: key, count: numeric(counts.rows.find((row) => row.payment_method === key)?.count), total, percentage: financialSummary.totalNetRevenue ? money2(total / financialSummary.totalNetRevenue * 100) : 0 })).sort((a, b) => b.total - a.total);
+    const sortedMethods = Object.entries(breakdown).map(([key, total]) => ({ key, name: key, count: numeric(counts.rows.find((row) => row.payment_method === key)?.count), total, percentage: financialSummary.totalNetRevenue ? money3(total / financialSummary.totalNetRevenue * 100) : 0 })).sort((a, b) => b.total - a.total);
     const cashSales = breakdown.CASH || 0, cashCount = numeric(counts.rows.find((row) => row.payment_method === "CASH")?.count);
     const sumMethods = (methods) => methods.reduce((sum, method) => sum + (todayPayment[method] || 0), 0);
     const todayQrisSales = sumMethods(["QRIS", "QRIS_DYNAMIC", "QRIS_STATIC"]);
@@ -1365,10 +1576,10 @@ async function serverReportSummary(db, subject, filter) {
         itemsSold: numeric(itemCount.qty),
         cashSales,
         cashCount,
-        cashPercent: financialSummary.totalNetRevenue ? money2(cashSales / financialSummary.totalNetRevenue * 100) : 0,
-        cashlessSales: money2(financialSummary.totalNetRevenue - cashSales),
+        cashPercent: financialSummary.totalNetRevenue ? money3(cashSales / financialSummary.totalNetRevenue * 100) : 0,
+        cashlessSales: money3(financialSummary.totalNetRevenue - cashSales),
         cashlessCount: financialSummary.totalOrders - cashCount,
-        cashlessPercent: financialSummary.totalNetRevenue ? money2((financialSummary.totalNetRevenue - cashSales) / financialSummary.totalNetRevenue * 100) : 0,
+        cashlessPercent: financialSummary.totalNetRevenue ? money3((financialSummary.totalNetRevenue - cashSales) / financialSummary.totalNetRevenue * 100) : 0,
         orderCount: financialSummary.totalOrders,
         sortedMethods,
         mostUsedMethod: sortedMethods[0] || null
@@ -1382,7 +1593,7 @@ async function serverReportSummary(db, subject, filter) {
         todayCashSales,
         todayQrisSales,
         todayCardSales,
-        todayEWalletSales: money2(todayFinancial.totalNetRevenue - todayCashSales - todayQrisSales - todayCardSales),
+        todayEWalletSales: money3(todayFinancial.totalNetRevenue - todayCashSales - todayQrisSales - todayCardSales),
         todayCashIn: todayCash.cashIn,
         todayCashOut: todayCash.cashOut,
         todayExpenseBahan: todayCash.expenseBahan,
@@ -1421,7 +1632,7 @@ function cursorFor(value) {
 async function serverTransactions(db, subject, filter, cursor, limit = 100) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor3(c, subject, filter);
+    const scope = await scopeFor2(c, subject, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = [...parameters(scope, filter), cursor?.createdAt || null, cursor?.id || null, limit + 1];
     const { rows } = await c.query(`SELECT x.*,u.name AS cashier_name,r.total_amount AS recognized_revenue,r.cogs_amount AS recognized_cogs,
@@ -1540,19 +1751,20 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
   if (!created.rows.length) throw new BillingError(409, "INVENTORY_LOCATION_REQUIRED");
   return created.rows[0].id;
 }
-async function assertBusinessCanBeClaimed(db, businessId, ownerSubject) {
-  if (ownerSubject === "local-development") return;
+async function assertBusinessCanBeClaimed(db, businessId, ownerSubject, sector) {
+  if (ownerSubject === "local-development") return null;
   const { rows } = await db.query(
-    `SELECT t.owner_user_ref
+    `SELECT m.id,m.tenant_id,t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active,m.business_sector
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1
-      LIMIT 1`,
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
     [businessId]
   );
-  if (rows.length && rows[0].owner_user_ref !== ownerSubject) {
+  if (rows.length > 1 || rows.length && (rows[0].owner_user_ref !== ownerSubject || !rows[0].tenant_active || !rows[0].merchant_active || rows[0].merged_into || sector && rows[0].business_sector !== sector)) {
     throw new SyncAccessError("BUSINESS_NOT_OWNED");
   }
+  if (!rows.length && sector && businessId !== `${ownerSubject}_${sector}`) throw new SyncAccessError("BUSINESS_SETUP_REQUIRED");
+  return rows[0] || null;
 }
 async function productLimitForTenant(db, tenantId) {
   return -1;
@@ -1568,6 +1780,7 @@ var str = (v, max) => {
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 function registerSyncRoutes(app, db) {
+  registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
   registerReportRoutes(app, db);
   registerFinanceRoutes(app, db);
@@ -1577,7 +1790,10 @@ function registerSyncRoutes(app, db) {
     const sector = str(req.body?.sector, 16);
     const storeName = str(req.body?.storeName, 100);
     if (!sector || !SECTOR_SET2.has(sector) || !storeName) return res.status(400).json({ ok: false, error: "INVALID_BUSINESS" });
-    const businessId = `${principal.subject}_${sector}`;
+    const create = req.body?.intent === "create";
+    const requestKey = str(req.body?.requestKey, 36);
+    if (create && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey || "")) return res.status(400).json({ ok: false, error: "BUSINESS_REQUEST_KEY_REQUIRED" });
+    const businessId = create ? `${principal.subject}_business_${requestKey}` : `${principal.subject}_${sector}`;
     try {
       const result = await db.tx(async (c) => {
         await assertBusinessCanBeClaimed(c, businessId, principal.subject);
@@ -1591,8 +1807,19 @@ function registerSyncRoutes(app, db) {
         if (!tenantId) throw new BillingError(409, "TENANT_NOT_PROVISIONED");
         await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
         await assertTenantWritable(c, tenantId);
-        const existing = (await c.query("SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1", [tenantId, sector])).rows[0];
-        if (existing) return { tenantId, merchantId: existing.id };
+        if (create) {
+          const ready = await c.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'");
+          if (!ready.rows.length) throw new BillingError(409, "MULTI_BUSINESS_MIGRATION_REQUIRED");
+          const free = await freePlanState(c, tenantId);
+          if (free.free) throw new BillingError(409, "FREE_SINGLE_BUSINESS");
+          const previous = (await c.query("SELECT id,business_sector,name FROM internal.merchants WHERE tenant_id=$1 AND external_ref=$2", [tenantId, businessId])).rows[0];
+          if (previous) {
+            if (previous.business_sector !== sector || previous.name !== storeName) throw new BillingError(409, "BUSINESS_REQUEST_KEY_CONFLICT");
+            return { tenantId, merchantId: previous.id };
+          }
+        }
+        const existing = create ? null : await resolveBusinessScope(c, principal.subject, sector, req.body?.businessId);
+        if (existing) return { tenantId, merchantId: existing.merchantId };
         const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
           VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
           DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1 RETURNING id`, [tenantId, storeName, sector, businessId]);
@@ -1601,7 +1828,7 @@ function registerSyncRoutes(app, db) {
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
-      return res.status(error instanceof BillingError ? error.status : 500).json({ ok: false, error: error instanceof BillingError ? error.message : "BUSINESS_SETUP_FAILED" });
+      return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
     }
   });
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
@@ -1610,7 +1837,7 @@ function registerSyncRoutes(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     if (!businessId) return res.status(400).json({ ok: false, error: "BUSINESS_ID_REQUIRED" });
     if (!await canAccessBusiness(db, principal, businessId)) return res.status(403).json({ ok: false, error: "BUSINESS_NOT_OWNED" });
-    const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE external_ref = $1", [businessId]);
+    const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)", [businessId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
     res.setHeader("Cache-Control", "no-store");
     return res.json({ ok: true, logoUrl: rows[0].logo_url || null });
@@ -1631,7 +1858,7 @@ function registerSyncRoutes(app, db) {
       if (!valid) return res.status(400).json({ ok: false, error: "INVALID_LOGO" });
     }
     const { rows } = await db.query(
-      "UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE external_ref = $2 RETURNING id",
+      "UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE (external_ref = $2 OR id::text = $2) RETURNING id",
       [logoUrl || null, businessId]
     );
     if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
@@ -1668,7 +1895,7 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({ ok: false, error: "INVALID_TRANSACTIONS" });
     try {
       const out = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
         if (idemKey) {
           const prev = await c.query(
             `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
@@ -1689,6 +1916,13 @@ function registerSyncRoutes(app, db) {
         let merchantId;
         let outletId;
         if (freeScope) {
+          if (!(await c.query(
+            `SELECT 1 FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+            WHERE m.id=$1 AND m.tenant_id=$3 AND t.owner_user_ref=$4 AND m.business_sector=$5
+              AND m.is_active AND t.is_active AND t.merged_into IS NULL
+              AND (m.id::text=$2 OR m.external_ref=$2 OR (m.external_ref IS NULL AND $2=$4||'_'||$5))`,
+            [freeScope.merchant_id, businessId, freeScope.tenant_id, ownerRef, sector]
+          )).rows.length) throw new SyncAccessError("FREE_BUSINESS_MISMATCH");
           tenantId = freeScope.tenant_id;
           merchantId = freeScope.merchant_id;
           outletId = freeScope.outlet_id;
@@ -1706,14 +1940,17 @@ function registerSyncRoutes(app, db) {
           );
           tenantId = t.rows[0].id;
           await assertTenantWritable(c, tenantId);
-          const m = await c.query(
+          if (claimedBusiness && claimedBusiness.tenant_id !== tenantId) throw new SyncAccessError("BUSINESS_NOT_OWNED");
+          const m = claimedBusiness ? { rows: [claimedBusiness] } : await c.query(
             `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
+             DO UPDATE SET external_ref = EXCLUDED.external_ref
+             WHERE internal.merchants.tenant_id=$1 AND internal.merchants.business_sector=$3 AND internal.merchants.is_active
            RETURNING id`,
             [tenantId, storeName, sector, businessId]
           );
+          if (!m.rows.length) throw new SyncAccessError("BUSINESS_NOT_OWNED");
           merchantId = m.rows[0].id;
           const outq = await c.query(
             `SELECT id FROM internal.outlets WHERE merchant_id = $1 AND is_active
@@ -1883,6 +2120,7 @@ function registerSyncRoutes(app, db) {
               throw new FinanceError(409, "TRANSACTION_ID_CONFLICT");
             const status = str(x.paymentStatus, 20);
             if (status === "CANCELLED") {
+              const voidedAt = x.voidedAt ?? (/* @__PURE__ */ new Date()).toISOString();
               const upd = await c.query(
                 `UPDATE pos.transactions
                     SET order_status = 'VOIDED',
@@ -1890,7 +2128,7 @@ function registerSyncRoutes(app, db) {
                   WHERE tenant_id = $1 AND client_txn_id = $2 AND merchant_id = $4
                     AND order_status NOT IN ('VOIDED','CANCELLED')
                 RETURNING id`,
-                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null, merchantId]
+                [tenantId, clientId, voidedAt, merchantId]
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
@@ -1898,7 +2136,7 @@ function registerSyncRoutes(app, db) {
                 if (cashBalance !== 0) await c.query(
                   `INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,occurred_at)
                   VALUES($1,$2,$3,$4,'VOID',$5,$6,'Pembatalan transaksi',$7) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
-                  [tenantId, merchantId, original.outlet_id, "void:" + voidedTxnId, -cashBalance, voidedTxnId, x.voidedAt || (/* @__PURE__ */ new Date()).toISOString()]
+                  [tenantId, merchantId, original.outlet_id, "void:" + voidedTxnId, -cashBalance, voidedTxnId, voidedAt]
                 );
                 await c.query(
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
@@ -2078,7 +2316,7 @@ function registerSyncRoutes(app, db) {
     if (!await canAccessBusiness(db, principal, businessId)) {
       return res.status(403).json({ ok: false, error: "FORBIDDEN" });
     }
-    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE external_ref = $1`, [
+    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)`, [
       businessId
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: "MERCHANT_NOT_SYNCED" });
@@ -2109,15 +2347,16 @@ function registerSyncRoutes(app, db) {
       return res.status(403).json({ ok: false, error: "FORBIDDEN" });
     }
     const { rows } = await db.query(
-      `SELECT t.id, t.name, t.business_sector,
+      `SELECT m.id, m.name, m.business_sector,
               COUNT(x.id)::int              AS synced_transactions,
               COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
-         FROM internal.tenants t
-         LEFT JOIN pos.transactions x ON x.tenant_id = t.id
-        WHERE t.external_ref = $1
-        GROUP BY t.id, t.name, t.business_sector`,
-      [businessId]
+         FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+         LEFT JOIN pos.transactions x ON x.tenant_id = t.id AND x.merchant_id=m.id
+        WHERE (m.external_ref = $1 OR m.id::text=$1) AND t.owner_user_ref=$2
+          AND t.is_active AND t.merged_into IS NULL AND m.is_active
+        GROUP BY m.id, m.name, m.business_sector`,
+      [businessId, principal.subject]
     );
     if (!rows.length) return res.json({ ok: true, synced: false });
     res.json({ ok: true, synced: true, ...rows[0] });
@@ -2140,8 +2379,8 @@ function registerSyncRoutes(app, db) {
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
-          WHERE m.external_ref = $1 AND m.business_sector=$4 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
-        [businessId, ownerRef, `tenant_${businessId}`, sector]
+          WHERE (m.external_ref = $1 OR m.id::text = $1) AND m.business_sector=$3 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,
+        [businessId, ownerRef, sector]
       );
       if (!tenantRes.rows.length) {
         return res.json({ ok: true, products: [], categories: [] });
@@ -2180,214 +2419,13 @@ function registerSyncRoutes(app, db) {
       res.status(500).json({ ok: false, error: err.message || "CATALOG_FETCH_FAILED" });
     }
   });
-  app.post("/api/v1/sync/attendance", async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const attendances = Array.isArray(body.attendances) ? body.attendances : [];
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
-    }
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        let outletId = null;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          outletId = freeScope.outlet_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-        let upserted = 0;
-        for (const att of attendances) {
-          const clientAttendanceId = str(att.id, 96);
-          const staffId = str(att.staffId, 96);
-          const staffName = str(att.staffName, 120);
-          const staffRole = str(att.staffRole, 64) || "STAFF";
-          const clockInAt = att.clockInTime ? new Date(att.clockInTime) : /* @__PURE__ */ new Date();
-          const clockOutAt = att.clockOutTime ? new Date(att.clockOutTime) : null;
-          const status = str(att.status, 32) || "CLOCKED_IN";
-          if (!clientAttendanceId || !staffId || !staffName) continue;
-          await c.query(
-            `INSERT INTO pos.staff_attendances (
-               tenant_id, merchant_id, outlet_id, client_attendance_id,
-               staff_id, staff_name, staff_role, clock_in_at, clock_out_at,
-               shift_notes, status, branch_id, branch_name, clock_in_geo, clock_out_geo,
-               business_sector, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, NOW())
-             ON CONFLICT (tenant_id, client_attendance_id)
-               DO UPDATE SET
-                 clock_out_at = COALESCE(EXCLUDED.clock_out_at, pos.staff_attendances.clock_out_at),
-                 shift_notes = COALESCE(EXCLUDED.shift_notes, pos.staff_attendances.shift_notes),
-                 status = EXCLUDED.status,
-                 clock_out_geo = COALESCE(EXCLUDED.clock_out_geo, pos.staff_attendances.clock_out_geo),
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              outletId,
-              clientAttendanceId,
-              staffId,
-              staffName,
-              staffRole,
-              clockInAt,
-              clockOutAt,
-              str(att.shiftNotes, 500),
-              status,
-              str(att.branchId, 64),
-              str(att.branchName, 100),
-              JSON.stringify(att.clockInGeo || null),
-              JSON.stringify(att.clockOutGeo || null),
-              sector
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "ATTENDANCE_SYNC_FAILED" });
-    }
+  app.post("/api/v1/sync/attendance", (req, res) => {
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_LABOR_SYNC_REQUIRED" });
   });
-  app.post("/api/v1/sync/payroll", async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? "Tanpa Nama";
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    const ownerRef = principal.subject;
-    const slips = Array.isArray(body.payrollSlips) ? body.payrollSlips : [];
-    if (!businessId || !sector || !SECTOR_SET2.has(sector)) {
-      return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
-    }
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId;
-        let merchantId;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-        let upserted = 0;
-        for (const slip of slips) {
-          const clientSlipId = str(slip.id, 96);
-          const staffId = str(slip.staffId, 96);
-          const staffName = str(slip.staffName, 120);
-          const staffRole = str(slip.staffRole, 64) || "STAFF";
-          const periodMonth = str(slip.periodMonth, 16) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
-          const periodStart = slip.periodStart ? new Date(slip.periodStart) : /* @__PURE__ */ new Date();
-          const periodEnd = slip.periodEnd ? new Date(slip.periodEnd) : /* @__PURE__ */ new Date();
-          if (!clientSlipId || !staffId || !staffName) continue;
-          await c.query(
-            `INSERT INTO pos.staff_payrolls (
-               tenant_id, merchant_id, client_slip_id, staff_id, staff_name, staff_role,
-               period_month, period_start, period_end, days_attended,
-               base_salary, allowance, individual_commission, team_pool_commission,
-               daily_target_bonus, gross_earnings, deductions, net_salary,
-               status, paid_at, payment_method, notes, business_sector, updated_at
-             ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-               $11, $12, $13, $14, $15, $16, $17, $18,
-               $19, $20, $21, $22, $23, NOW()
-             )
-             ON CONFLICT (tenant_id, client_slip_id)
-               DO UPDATE SET
-                 status = EXCLUDED.status,
-                 paid_at = COALESCE(EXCLUDED.paid_at, pos.staff_payrolls.paid_at),
-                 payment_method = COALESCE(EXCLUDED.payment_method, pos.staff_payrolls.payment_method),
-                 notes = COALESCE(EXCLUDED.notes, pos.staff_payrolls.notes),
-                 net_salary = EXCLUDED.net_salary,
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              clientSlipId,
-              staffId,
-              staffName,
-              staffRole,
-              periodMonth,
-              periodStart,
-              periodEnd,
-              Number(slip.daysAttended) || 0,
-              num(slip.baseSalary),
-              num(slip.allowance),
-              num(slip.individualCommission),
-              num(slip.teamPoolCommission),
-              num(slip.dailyTargetBonus),
-              num(slip.grossEarnings),
-              num(slip.deductions),
-              num(slip.netSalary),
-              str(slip.status, 32) || "DRAFT",
-              slip.paidAt ? new Date(slip.paidAt) : null,
-              str(slip.paymentMethod, 64),
-              str(slip.notes, 500),
-              sector
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "PAYROLL_SYNC_FAILED" });
-    }
+  app.post("/api/v1/sync/payroll", (req, res) => {
+    if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.status(409).json({ ok: false, error: "VERSIONED_LABOR_SYNC_REQUIRED" });
   });
 }
 
@@ -2423,7 +2461,7 @@ function normalizeVercelUrl(req) {
 
 // src/server/syncHandler.ts
 var allowedMethods = {
-  "/api/v1/sync/business": ["POST"],
+  "/api/v1/sync/business": ["GET", "POST"],
   "/api/v1/sync/catalog": ["GET", "POST"],
   "/api/v1/sync/transactions": ["POST"],
   "/api/v1/sync/activity": ["POST"],
@@ -2431,6 +2469,7 @@ var allowedMethods = {
   "/api/v1/sync/attendance": ["POST"],
   "/api/v1/sync/payroll": ["POST"],
   "/api/v1/sync/state": ["GET", "POST"],
+  "/api/v1/sync/status": ["GET"],
   "/api/v1/sync/receipt-logo": ["GET", "PUT"],
   "/api/v1/reports/summary": ["GET"],
   "/api/v1/reports/transactions": ["GET"],

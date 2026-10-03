@@ -17,6 +17,8 @@
  */
 
 import type express from 'express';
+import {registerBusinessDirectory} from './businessDirectory';
+import {BusinessScopeError,resolveBusinessScope} from './businessScope';
 import { randomBytes } from 'node:crypto';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessError } from '../billing/freePlan';
@@ -50,19 +52,20 @@ async function ensureInventoryLocation(db: Db, tenantId: string, merchantId: str
   return created.rows[0].id;
 }
 
-async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubject: string): Promise<void> {
-  if (ownerSubject === 'local-development') return;
+async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubject: string,sector?:string): Promise<{id:string;tenant_id:string}|null> {
+  if (ownerSubject === 'local-development') return null;
   const { rows } = await db.query(
-    `SELECT t.owner_user_ref
+    `SELECT m.id,m.tenant_id,t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active,m.business_sector
        FROM internal.merchants m
        JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE m.external_ref = $1
-      LIMIT 1`,
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
     [businessId]
   );
-  if (rows.length && rows[0].owner_user_ref !== ownerSubject) {
+  if (rows.length > 1 || rows.length && (rows[0].owner_user_ref !== ownerSubject||!rows[0].tenant_active||!rows[0].merchant_active||rows[0].merged_into||sector&&rows[0].business_sector!==sector)) {
     throw new SyncAccessError('BUSINESS_NOT_OWNED');
   }
+  if(!rows.length&&sector&&businessId!==`${ownerSubject}_${sector}`)throw new SyncAccessError('BUSINESS_SETUP_REQUIRED');
+  return rows[0] || null;
 }
 
 async function productLimitForTenant(db: Db, tenantId: string): Promise<number> {
@@ -122,6 +125,7 @@ const outletRef = (value: unknown): string | null => typeof value === 'string' &
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
   registerReportRoutes(app,db);
   registerFinanceRoutes(app,db);
@@ -133,7 +137,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const sector = str(req.body?.sector,16);
     const storeName = str(req.body?.storeName,100);
     if (!sector || !SECTOR_SET.has(sector) || !storeName) return res.status(400).json({ok:false,error:'INVALID_BUSINESS'});
-    const businessId = `${principal.subject}_${sector}`;
+    const create=req.body?.intent==='create';
+    const requestKey=str(req.body?.requestKey,36);
+    if(create&&!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey||''))return res.status(400).json({ok:false,error:'BUSINESS_REQUEST_KEY_REQUIRED'});
+    const businessId = create?`${principal.subject}_business_${requestKey}`:`${principal.subject}_${sector}`;
     try {
       const result = await db.tx(async c => {
         await assertBusinessCanBeClaimed(c,businessId,principal.subject);
@@ -147,8 +154,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         if (!tenantId) throw new BillingError(409,'TENANT_NOT_PROVISIONED');
         await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
         await assertTenantWritable(c,tenantId);
-        const existing = (await c.query('SELECT id FROM internal.merchants WHERE tenant_id=$1 AND business_sector=$2 ORDER BY created_at LIMIT 1',[tenantId,sector])).rows[0];
-        if (existing) return {tenantId,merchantId:existing.id};
+        if(create){
+          const ready=await c.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'");
+          if(!ready.rows.length)throw new BillingError(409,'MULTI_BUSINESS_MIGRATION_REQUIRED');
+          const free=await freePlanState(c,tenantId);
+          if(free.free)throw new BillingError(409,'FREE_SINGLE_BUSINESS');
+          const previous=(await c.query('SELECT id,business_sector,name FROM internal.merchants WHERE tenant_id=$1 AND external_ref=$2',[tenantId,businessId])).rows[0];
+          if(previous){if(previous.business_sector!==sector||previous.name!==storeName)throw new BillingError(409,'BUSINESS_REQUEST_KEY_CONFLICT');return {tenantId,merchantId:previous.id};}
+        }
+        const existing=create?null:await resolveBusinessScope(c,principal.subject,sector,req.body?.businessId);
+        if(existing)return {tenantId,merchantId:existing.merchantId};
         const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
           VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
           DO UPDATE SET name=EXCLUDED.name WHERE internal.merchants.tenant_id=$1 RETURNING id`,[tenantId,storeName,sector,businessId]);
@@ -157,7 +172,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       });
       return res.json({ok:true,...result});
     } catch (error) {
-      return res.status(error instanceof BillingError ? error.status : 500).json({ok:false,error:error instanceof BillingError ? error.message : 'BUSINESS_SETUP_FAILED'});
+      return res.status(error instanceof BillingError||error instanceof BusinessScopeError ? error.status : 500).json({ok:false,error:error instanceof BillingError||error instanceof BusinessScopeError ? error.message : 'BUSINESS_SETUP_FAILED'});
     }
   });
   // A receipt logo belongs to a business unit, never to the browser or owner account.
@@ -168,7 +183,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
     if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
     if (!(await canAccessBusiness(db, principal, businessId))) return res.status(403).json({ ok: false, error: 'BUSINESS_NOT_OWNED' });
-    const { rows } = await db.query('SELECT logo_url FROM internal.merchants WHERE external_ref = $1', [businessId]);
+    const { rows } = await db.query('SELECT logo_url FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)', [businessId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'BUSINESS_NOT_FOUND' });
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ ok: true, logoUrl: rows[0].logo_url || null });
@@ -192,7 +207,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       if (!valid) return res.status(400).json({ ok: false, error: 'INVALID_LOGO' });
     }
     const { rows } = await db.query(
-      'UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE external_ref = $2 RETURNING id',
+      'UPDATE internal.merchants SET logo_url = $1, updated_at = now() WHERE (external_ref = $2 OR id::text = $2) RETURNING id',
       [logoUrl || null, businessId]
     );
     if (!rows.length) return res.status(404).json({ ok: false, error: 'BUSINESS_NOT_FOUND' });
@@ -245,7 +260,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
     try {
       const out = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
+        const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef,sector);
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
         if (idemKey) {
           const prev = await c.query(
@@ -269,6 +284,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         let merchantId: string;
         let outletId: string;
         if (freeScope) {
+          // An older selected Free outlet can have a merchant without a
+          // transport alias. Its verified FK is sufficient for legacy delivery,
+          // but must not rekey that merchant or choose another same-sector one.
+          if(!(await c.query(`SELECT 1 FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+            WHERE m.id=$1 AND m.tenant_id=$3 AND t.owner_user_ref=$4 AND m.business_sector=$5
+              AND m.is_active AND t.is_active AND t.merged_into IS NULL
+              AND (m.id::text=$2 OR m.external_ref=$2 OR (m.external_ref IS NULL AND $2=$4||'_'||$5))`,
+            [freeScope.merchant_id,businessId,freeScope.tenant_id,ownerRef,sector])).rows.length)throw new SyncAccessError('FREE_BUSINESS_MISMATCH');
           tenantId = freeScope.tenant_id;
           merchantId = freeScope.merchant_id;
           outletId = freeScope.outlet_id;
@@ -287,16 +310,19 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         );
         tenantId = t.rows[0].id;
         await assertTenantWritable(c,tenantId);
+        if(claimedBusiness && claimedBusiness.tenant_id!==tenantId)throw new SyncAccessError('BUSINESS_NOT_OWNED');
 
         // Merchant (business level)
-        const m = await c.query(
+        const m = claimedBusiness ? {rows:[claimedBusiness]} : await c.query(
           `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
            VALUES (uuidv7(), $1, $2, $3, $4)
            ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-             DO UPDATE SET name = EXCLUDED.name
+             DO UPDATE SET external_ref = EXCLUDED.external_ref
+             WHERE internal.merchants.tenant_id=$1 AND internal.merchants.business_sector=$3 AND internal.merchants.is_active
            RETURNING id`,
           [tenantId, storeName, sector, businessId]
         );
+        if(!m.rows.length)throw new SyncAccessError('BUSINESS_NOT_OWNED');
         merchantId = m.rows[0].id;
 
         // Outlet (store branch level)
@@ -507,6 +533,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
              */
             const status = str(x.paymentStatus, 20);
             if (status === 'CANCELLED') {
+              // The void and compensating ledger entry are one event. Older
+              // clients omit voidedAt; never backdate only the transaction to
+              // its sale date while posting its cash reversal today.
+              const voidedAt=x.voidedAt??new Date().toISOString();
               const upd = await c.query(
                 `UPDATE pos.transactions
                     SET order_status = 'VOIDED',
@@ -514,14 +544,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                   WHERE tenant_id = $1 AND client_txn_id = $2 AND merchant_id = $4
                     AND order_status NOT IN ('VOIDED','CANCELLED')
                 RETURNING id`,
-                [tenantId, clientId, x.voidedAt ?? x.createdAt ?? null,merchantId]
+                [tenantId, clientId, voidedAt,merchantId]
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
                 const cashBalance=Number((await c.query('SELECT COALESCE(SUM(amount),0) AS amount FROM pos.cash_ledger WHERE transaction_id=$1 AND tenant_id=$2',[voidedTxnId,tenantId])).rows[0].amount);
                 if(cashBalance!==0)await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,occurred_at)
                   VALUES($1,$2,$3,$4,'VOID',$5,$6,'Pembatalan transaksi',$7) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
-                  [tenantId,merchantId,original.outlet_id,'void:'+voidedTxnId,-cashBalance,voidedTxnId,x.voidedAt||new Date().toISOString()]);
+                  [tenantId,merchantId,original.outlet_id,'void:'+voidedTxnId,-cashBalance,voidedTxnId,voidedAt]);
                 await c.query(
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
                   [voidedTxnId]
@@ -749,7 +779,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
     }
 
-    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE external_ref = $1`, [
+    const t = await db.query(`SELECT id, tenant_id, business_sector FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)`, [
       businessId,
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: 'MERCHANT_NOT_SYNCED' });
@@ -785,15 +815,16 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     }
 
     const { rows } = await db.query(
-      `SELECT t.id, t.name, t.business_sector,
+      `SELECT m.id, m.name, m.business_sector,
               COUNT(x.id)::int              AS synced_transactions,
               COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
-         FROM internal.tenants t
-         LEFT JOIN pos.transactions x ON x.tenant_id = t.id
-        WHERE t.external_ref = $1
-        GROUP BY t.id, t.name, t.business_sector`,
-      [businessId]
+         FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+         LEFT JOIN pos.transactions x ON x.tenant_id = t.id AND x.merchant_id=m.id
+        WHERE (m.external_ref = $1 OR m.id::text=$1) AND t.owner_user_ref=$2
+          AND t.is_active AND t.merged_into IS NULL AND m.is_active
+        GROUP BY m.id, m.name, m.business_sector`,
+      [businessId,principal.subject]
     );
 
     if (!rows.length) return res.json({ ok: true, synced: false });
@@ -835,8 +866,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
-          WHERE m.external_ref = $1 AND m.business_sector=$4 AND (t.owner_user_ref = $2 OR t.external_ref = $2 OR t.external_ref = $3)`,
-        [businessId, ownerRef, `tenant_${businessId}`,sector]
+          WHERE (m.external_ref = $1 OR m.id::text = $1) AND m.business_sector=$3 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,
+        [businessId, ownerRef,sector]
       );
       if (!tenantRes.rows.length) {
         return res.json({ ok: true, products: [], categories: [] });
@@ -878,227 +909,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
   /**
    * SINKRONISASI PRESENSI / CLOCK-IN STAF KE POSTGRESQL.
    */
-  app.post('/api/v1/sync/attendance', async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? 'Tanpa Nama';
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
-    const ownerRef = principal.subject;
-    const attendances: any[] = Array.isArray(body.attendances) ? body.attendances : [];
-
-    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
-      return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId dan sector wajib' });
-    }
-
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId: string;
-        let merchantId: string;
-        let outletId: string | null = null;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          outletId = freeScope.outlet_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-
-        let upserted = 0;
-        for (const att of attendances) {
-          const clientAttendanceId = str(att.id, 96);
-          const staffId = str(att.staffId, 96);
-          const staffName = str(att.staffName, 120);
-          const staffRole = str(att.staffRole, 64) || 'STAFF';
-          const clockInAt = att.clockInTime ? new Date(att.clockInTime) : new Date();
-          const clockOutAt = att.clockOutTime ? new Date(att.clockOutTime) : null;
-          const status = str(att.status, 32) || 'CLOCKED_IN';
-          if (!clientAttendanceId || !staffId || !staffName) continue;
-
-          await c.query(
-            `INSERT INTO pos.staff_attendances (
-               tenant_id, merchant_id, outlet_id, client_attendance_id,
-               staff_id, staff_name, staff_role, clock_in_at, clock_out_at,
-               shift_notes, status, branch_id, branch_name, clock_in_geo, clock_out_geo,
-               business_sector, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, NOW())
-             ON CONFLICT (tenant_id, client_attendance_id)
-               DO UPDATE SET
-                 clock_out_at = COALESCE(EXCLUDED.clock_out_at, pos.staff_attendances.clock_out_at),
-                 shift_notes = COALESCE(EXCLUDED.shift_notes, pos.staff_attendances.shift_notes),
-                 status = EXCLUDED.status,
-                 clock_out_geo = COALESCE(EXCLUDED.clock_out_geo, pos.staff_attendances.clock_out_geo),
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              outletId,
-              clientAttendanceId,
-              staffId,
-              staffName,
-              staffRole,
-              clockInAt,
-              clockOutAt,
-              str(att.shiftNotes, 500),
-              status,
-              str(att.branchId, 64),
-              str(att.branchName, 100),
-              JSON.stringify(att.clockInGeo || null),
-              JSON.stringify(att.clockOutGeo || null),
-              sector,
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message || 'ATTENDANCE_SYNC_FAILED' });
-    }
+  app.post('/api/v1/sync/attendance', (req,res) => {
+    if(!trustedPrincipal(req))return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
+    return res.status(409).json({ok:false,error:'VERSIONED_LABOR_SYNC_REQUIRED'});
   });
-
-  /**
-   * SINKRONISASI PENGGAJIAN / SLIP GAJI STAF KE POSTGRESQL.
-   */
-  app.post('/api/v1/sync/payroll', async (req, res) => {
-    const body = req.body ?? {};
-    const businessId = str(body.businessId, 96);
-    const sector = str(body.sector, 16);
-    const storeName = str(body.storeName, 100) ?? 'Tanpa Nama';
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
-    const ownerRef = principal.subject;
-    const slips: any[] = Array.isArray(body.payrollSlips) ? body.payrollSlips : [];
-
-    if (!businessId || !sector || !SECTOR_SET.has(sector)) {
-      return res.status(400).json({ ok: false, error: 'BAD_REQUEST', detail: 'businessId dan sector wajib' });
-    }
-
-    try {
-      const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, ownerRef);
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
-        let tenantId: string;
-        let merchantId: string;
-        if (freeScope) {
-          tenantId = freeScope.tenant_id;
-          merchantId = freeScope.merchant_id;
-          await assertTenantWritable(c, tenantId);
-        } else {
-          const tenantExternalRef = ownerRef || `tenant_${businessId}`;
-          const existingTenant = await tenantForPrincipal(c, { subject: ownerRef });
-          const t = existingTenant ? { rows: [{ id: existingTenant }] } : await c.query(
-            `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref)
-             VALUES (uuidv7(), $1, $2, $3)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [storeName, tenantExternalRef, ownerRef]
-          );
-          tenantId = t.rows[0].id;
-          await assertTenantWritable(c, tenantId);
-
-          const m = await c.query(
-            `INSERT INTO internal.merchants (id, tenant_id, name, business_sector, external_ref)
-             VALUES (uuidv7(), $1, $2, $3, $4)
-             ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-               DO UPDATE SET name = EXCLUDED.name
-             RETURNING id`,
-            [tenantId, storeName, sector, businessId]
-          );
-          merchantId = m.rows[0].id;
-        }
-
-        let upserted = 0;
-        for (const slip of slips) {
-          const clientSlipId = str(slip.id, 96);
-          const staffId = str(slip.staffId, 96);
-          const staffName = str(slip.staffName, 120);
-          const staffRole = str(slip.staffRole, 64) || 'STAFF';
-          const periodMonth = str(slip.periodMonth, 16) || new Date().toISOString().slice(0, 7);
-          const periodStart = slip.periodStart ? new Date(slip.periodStart) : new Date();
-          const periodEnd = slip.periodEnd ? new Date(slip.periodEnd) : new Date();
-          if (!clientSlipId || !staffId || !staffName) continue;
-
-          await c.query(
-            `INSERT INTO pos.staff_payrolls (
-               tenant_id, merchant_id, client_slip_id, staff_id, staff_name, staff_role,
-               period_month, period_start, period_end, days_attended,
-               base_salary, allowance, individual_commission, team_pool_commission,
-               daily_target_bonus, gross_earnings, deductions, net_salary,
-               status, paid_at, payment_method, notes, business_sector, updated_at
-             ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-               $11, $12, $13, $14, $15, $16, $17, $18,
-               $19, $20, $21, $22, $23, NOW()
-             )
-             ON CONFLICT (tenant_id, client_slip_id)
-               DO UPDATE SET
-                 status = EXCLUDED.status,
-                 paid_at = COALESCE(EXCLUDED.paid_at, pos.staff_payrolls.paid_at),
-                 payment_method = COALESCE(EXCLUDED.payment_method, pos.staff_payrolls.payment_method),
-                 notes = COALESCE(EXCLUDED.notes, pos.staff_payrolls.notes),
-                 net_salary = EXCLUDED.net_salary,
-                 updated_at = NOW()`,
-            [
-              tenantId,
-              merchantId,
-              clientSlipId,
-              staffId,
-              staffName,
-              staffRole,
-              periodMonth,
-              periodStart,
-              periodEnd,
-              Number(slip.daysAttended) || 0,
-              num(slip.baseSalary),
-              num(slip.allowance),
-              num(slip.individualCommission),
-              num(slip.teamPoolCommission),
-              num(slip.dailyTargetBonus),
-              num(slip.grossEarnings),
-              num(slip.deductions),
-              num(slip.netSalary),
-              str(slip.status, 32) || 'DRAFT',
-              slip.paidAt ? new Date(slip.paidAt) : null,
-              str(slip.paymentMethod, 64),
-              str(slip.notes, 500),
-              sector,
-            ]
-          );
-          upserted++;
-        }
-        return { ok: true, upserted };
-      });
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message || 'PAYROLL_SYNC_FAILED' });
-    }
+  app.post('/api/v1/sync/payroll', (req,res) => {
+    if(!trustedPrincipal(req))return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
+    return res.status(409).json({ok:false,error:'VERSIONED_LABOR_SYNC_REQUIRED'});
   });
 }

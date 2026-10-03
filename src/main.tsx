@@ -24,14 +24,15 @@ try {
 import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { POSProvider } from './context/POSContext';
 import { LanguageProvider } from './i18n/LanguageContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App';
 import './index.css';
 import './styles/app-theme.css';
+import { normalizeLegacyRoute } from './lib/navigation/workspaceRouter';
 
 installAuthenticatedFetch();
+normalizeLegacyRoute();
 const McpConnections = lazy(() => import('./components/mcp/McpConnections').then(m => ({ default: m.McpConnections })));
 
 // Do not initialize or persist account-scoped POS state under an anonymous
@@ -39,7 +40,7 @@ const McpConnections = lazy(() => import('./components/mcp/McpConnections').then
 function POSSession() {
   const {user,loading}=useAuth();
   if(loading) return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;
-  return <POSProvider key={user?.id || 'guest'}><App /></POSProvider>;
+  return <App />;
 }
 
 createRoot(document.getElementById('root')!).render(

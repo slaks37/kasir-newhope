@@ -1,13 +1,14 @@
 import React,{useEffect,useState} from 'react';
-import {usePOS} from '../../context/POSContext';
+import {usePOSFields} from '../../context/POSDomains';
 import {useTenant} from '../../context/TenantContext';
 import {isFreePlan} from '../../config/freePlanPolicy';
 import {formatRupiah as rp} from '../../utils/formatters';
 import type {BusinessBrain} from '../../lib/assistant/businessBrain';
+import {refreshCoordinator} from '../../lib/sync/refreshCoordinator';
 
 type Brief={businessId:string;generatedAt:string;sales:BusinessBrain['sales'];insights:Array<{id:string;title:string}>};
 export function BusinessBrief(){
-  const {setActiveTab,settings}=usePOS();const tenant=useTenant();
+  const {setActiveTab,settings}=usePOSFields(["setActiveTab","settings"]);const tenant=useTenant();
   const enabled=!isFreePlan(settings.subscription)&&['ADMIN','MANAGER'].includes(tenant.userRole);
   const [state,setState]=useState<{businessId:string;brief:Brief|null;error:string|null}>({businessId:tenant.businessId,brief:null,error:null});
   useEffect(()=>{
@@ -24,9 +25,8 @@ export function BusinessBrief(){
       }catch{if(!controller.signal.aborted)setState({businessId:tenant.businessId,brief:null,error:'Ringkasan cloud belum tersedia. Angka perangkat tidak dipakai sebagai pengganti.'});}
       finally{running=false;}
     };
-    void refresh();const timer=window.setInterval(refresh,30000);
-    window.addEventListener('financial-updated',refresh);window.addEventListener('focus',refresh);
-    return()=>{controller.abort();window.clearInterval(timer);window.removeEventListener('financial-updated',refresh);window.removeEventListener('focus',refresh);};
+    const unsubscribe=refreshCoordinator.register('brief:'+tenant.businessId,{run:refresh,interval:120000,events:['financial-updated']});
+    return()=>{controller.abort();unsubscribe();};
   },[tenant.businessId,enabled]);
   if(!enabled)return null;
   const brief=state.businessId===tenant.businessId?state.brief:null;

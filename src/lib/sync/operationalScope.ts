@@ -4,7 +4,7 @@ export const operationalKinds=new Set(['categories','products','tables','custome
   'payroll_slips','sent_lifecycle_hooks','store_settings','users','staff_members']);
 const sectors=new Set(['FNB','LAUNDRY','RETAIL','CARWASH','BARBERSHOP']);
 const presets:Record<string,string>={fnb:'FNB',ld:'LAUNDRY',rt:'RETAIL',cw:'CARWASH',bb:'BARBERSHOP'};
-export function operationalScopeIssue(owner:string,sector:string,kind:string,id:string,value:unknown):string|null {
+export function operationalScopeIssue(owner:string,sector:string,kind:string,id:string,value:unknown,businessId=`${owner}_${sector}`):string|null {
   if(!operationalKinds.has(kind)||kind==='users'||kind==='staff_members')return null;
   const row=value&&typeof value==='object'?value as Record<string,unknown>:{};
   if(kind==='store_settings'&&typeof row.storeMode==='string'){
@@ -14,7 +14,7 @@ export function operationalScopeIssue(owner:string,sector:string,kind:string,id:
   for(const field of ['businessSector','sector']){
     if(typeof row[field]==='string'&&sectors.has(row[field] as string)&&row[field]!==sector)return `WRONG_SECTOR:${row[field]}`;
   }
-  if(typeof row.businessId==='string'&&/_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/.test(row.businessId)&&row.businessId!==`${owner}_${sector}`)
+  if(typeof row.businessId==='string'&&row.businessId!==businessId)
     return 'WRONG_BUSINESS:'+row.businessId;
   const ref=kind==='products'?id:typeof row.productId==='string'?row.productId:'';
   const match=/^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);

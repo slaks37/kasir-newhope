@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { StaffMember, GeoLocationInfo, calculateDistanceMeters } from '../../types';
 import { formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
@@ -48,7 +48,7 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
     branches,
     activeBranch,
     settings,
-  } = usePOS();
+  } = usePOSFields(["staffMembers","attendanceLogs","clockInStaff","clockOutStaff","getActiveAttendance","branches","activeBranch","settings"]);
   const { t } = useTranslation();
 
   const activeSectorPreset =

@@ -29,9 +29,9 @@ export function validateArguments(name: string, args: unknown): Record<string, a
 
 /** Revalidate current ownership and plan on EVERY call, including after refresh. */
 export async function authorizedBusiness(db: Db, subject: string, businessId: string) {
-  const business = (await db.query(`SELECT m.id,m.tenant_id,m.external_ref AS business_id,m.name,m.business_sector
+  const business = (await db.query(`SELECT m.id,m.tenant_id,COALESCE(m.external_ref,m.id::text) AS business_id,m.name,m.business_sector
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE m.external_ref=$1 AND t.owner_user_ref=$2 AND m.is_active=true`, [businessId, subject])).rows[0];
+    WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active=true`, [businessId, subject])).rows[0];
   if (!business) throw new Error('BUSINESS_ACCESS_DENIED');
   await assertAiAvailable(db, business.tenant_id);
   return business;

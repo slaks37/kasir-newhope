@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem, Category } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -67,7 +67,7 @@ export const InventoryManager: React.FC = () => {
     deleteBundle,
     toggleProductAvailability,
     toggleBundleAvailability,
-  } = usePOS();
+  } = usePOSFields(["products","categories","saveProduct","deleteProduct","saveCategory","deleteCategory","adjustStock","inventoryLogs","stockItems","saveStockItem","deleteStockItem","adjustStockItemQuantity","bundles","saveBundle","deleteBundle","toggleProductAvailability","toggleBundleAvailability"]);
   const { t } = useTranslation();
 
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'bundles' | 'stock' | 'recipes' | 'logs'>('catalog');

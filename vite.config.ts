@@ -15,6 +15,7 @@ export default defineConfig(() => {
       },
     },
     build: {
+      manifest:true,
       rollupOptions: {
         // Dua entry terpisah, sengaja. Konsol internal tidak boleh ikut
         // ter-bundle ke aplikasi kasir: kode yang tidak pernah terkirim ke

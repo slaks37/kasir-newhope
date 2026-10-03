@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { UserRole } from '../../types';
 import { ShieldAlert, X, KeyRound, Lock, AlertCircle, ShieldCheck } from 'lucide-react';
 import { getPinLockoutStatus } from '../../lib/auth/pinSecurity';
@@ -19,7 +19,7 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
   onClose,
   onAuthorized,
 }) => {
-  const { verifyPin } = usePOS();
+  const { verifyPin } = usePOSFields(["verifyPin"]);
   const [pinInput, setPinInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
@@ -248,4 +248,3 @@ export const PinAuthorizationModal: React.FC<PinAuthorizationModalProps> = ({
     </div>
   );
 };
-

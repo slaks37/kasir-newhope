@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useAuth } from '../../context/AuthContext';
 import { FREE_PRODUCT_LIMIT } from '../../config/freePlanPolicy';
 
 export function FreePlanSelection({onClose}: {onClose?:()=>void}) {
-  const {products,settings}=usePOS();
+  const {products,settings}=usePOSFields(["products","settings"]);
   const {session}=useAuth();
   const saved=settings.subscription?.freeSelection?.sector===(settings.businessSector||'FNB')?settings.subscription.freeSelection:undefined;
   const [ids,setIds]=useState<string[]>(saved?.productIds || []);
