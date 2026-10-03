@@ -39,7 +39,7 @@ export function SyncCenter(){
         {syncCenter.operationalConflicts.map(c=><article key={c.kind+'_'+c.recordId} className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="font-semibold">{c.kind} / {c.recordId}</p>
           <p className="text-sm">Lokal: {c.localLabel||c.recordId} (revisi asal {c.localRevision??0}). Cloud: {c.serverChecked?(c.serverRevision===undefined?'belum tercatat':`${c.serverLabel||c.recordId} · revisi ${c.serverRevision}`):'belum diverifikasi'}.</p>
-          {c.error&&c.error!=='STATE_CONFLICT'&&<p className="text-sm">{c.error}</p>}
+          {c.error&&c.error!=='STATE_CONFLICT'&&<p className="text-sm">{c.error==='OPERATIONAL_RECORD_TOO_LARGE'?'Catatan lama terlalu besar untuk dikirim. Salinan tetap disimpan. Untuk produk, unggah ulang foto melalui editor agar diperkecil; catatan lain tetap tersinkron otomatis.':c.error}</p>}
           <div className="mt-2 flex flex-wrap gap-2">
             <button disabled={!!busy} onClick={()=>void resolve(c.kind,c.recordId,'server')} className="rounded-lg border bg-white px-3 py-2 disabled:opacity-50">Pakai data server (cadangkan lokal)</button>
             <button disabled={!!busy||!!c.error&&c.error!=='STATE_CONFLICT'} onClick={()=>void resolve(c.kind,c.recordId,'local')} className="rounded-lg bg-amber-400 px-3 py-2 disabled:opacity-50">Pakai perubahan saya</button>

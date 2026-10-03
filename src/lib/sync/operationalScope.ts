@@ -4,6 +4,18 @@ export const operationalKinds=new Set(['categories','products','tables','custome
   'payroll_slips','sent_lifecycle_hooks','store_settings','users','staff_members']);
 const sectors=new Set(['FNB','LAUNDRY','RETAIL','CARWASH','BARBERSHOP']);
 const presets:Record<string,string>={fnb:'FNB',ld:'LAUNDRY',rt:'RETAIL',cw:'CARWASH',bb:'BARBERSHOP'};
+/** Legacy preset IDs encode provenance, not names. UUID/custom IDs carry no
+ * implied sector. Check references too, so a renamed product/table cannot hide
+ * contamination. Financial kinds never enter this validator. */
+function presetSector(kind:string,id:unknown):string|undefined {
+  if(typeof id!=='string')return;
+  const pattern=kind==='products'?/^prod-(fnb|ld|rt|cw|bb)-\d+$/:
+    kind==='categories'?/^cat-(fnb|ld|rt|cw|bb)-\d+$/:
+    kind==='tables'?/^tbl-(ld|rt|cw|bb)-[md]?\d+$/:null;
+  const match=pattern?.exec(id);
+  if(match)return presets[match[1]];
+  if(kind==='tables'&&/^tbl-\d+$/.test(id))return 'FNB';
+}
 export function operationalScopeIssue(owner:string,sector:string,kind:string,id:string,value:unknown,businessId=`${owner}_${sector}`):string|null {
   if(!operationalKinds.has(kind)||kind==='users'||kind==='staff_members')return null;
   const row=value&&typeof value==='object'?value as Record<string,unknown>:{};
@@ -16,8 +28,19 @@ export function operationalScopeIssue(owner:string,sector:string,kind:string,id:
   }
   if(typeof row.businessId==='string'&&row.businessId!==businessId)
     return 'WRONG_BUSINESS:'+row.businessId;
-  const ref=kind==='products'?id:typeof row.productId==='string'?row.productId:'';
-  const match=/^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
-  if(match&&presets[match[1]]!==sector)return `WRONG_SECTOR:${presets[match[1]]}`;
+  const references:[string,unknown][]=[[kind,id],['products',row.productId],['categories',row.categoryId],['tables',row.tableId]];
+  // Bundles, held carts and KDS contain product references, not financial rows.
+  for(const field of ['items','recipeIngredients'])if(Array.isArray(row[field])){
+    for(const item of row[field] as unknown[]){
+      if(item&&typeof item==='object'){
+        const value=item as Record<string,unknown>;
+        references.push(['products',value.productId],['products',(value.product as Record<string,unknown>|undefined)?.id]);
+      }
+    }
+  }
+  for(const [kind,ref] of references){
+    const source=presetSector(kind,ref);
+    if(source&&source!==sector)return `WRONG_SECTOR:${source}`;
+  }
   return null;
 }

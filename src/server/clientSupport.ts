@@ -2,6 +2,7 @@ import {createClient} from '@supabase/supabase-js';
 import type {Express} from 'express';
 import type {Db} from '../../services/shared/db';
 import type {AuthPrincipal} from '../../services/shared/auth';
+import {accountSubscription} from '../config/accountSubscription';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export interface ClientSupportProvider {
@@ -75,23 +76,29 @@ export function registerClientSupportRoutes(app:Express,getDb:()=>Promise<Db>,gu
     const offset=Math.max(0,Math.floor(Number(req.query.offset)||0)),limit=Math.max(1,Math.min(50,Math.floor(Number(req.query.limit)||20)));
     // Directory discovery exposes account names, not owner email/passwords.
     const filter="t.merged_into IS NULL AND t.owner_user_ref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND ($1='' OR strpos(lower(t.name),lower($1))>0 OR t.id::text=$1)";
-    const total=(await db.query(`SELECT count(*)::int n FROM internal.tenants t WHERE ${filter}`,[search])).rows[0].n;
-    const rows=(await db.query(`SELECT t.id,t.name,t.is_active,t.created_at,
+    const result=(await db.query(`WITH matching AS (SELECT t.id,t.name,t.is_active,t.created_at FROM internal.tenants t WHERE ${filter}),
+      page AS (SELECT * FROM matching ORDER BY created_at DESC,id LIMIT $2 OFFSET $3),
+      details AS (SELECT t.*,to_jsonb(s) subscription_snapshot,
       (SELECT count(*)::int FROM internal.merchants m WHERE m.tenant_id=t.id) business_count,
       (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlet_count
-      FROM internal.tenants t WHERE ${filter} ORDER BY t.created_at DESC,t.id LIMIT $2 OFFSET $3`,[search,limit,offset])).rows;
-    res.json({ok:true,rows,total,limit,offset});
+      FROM page t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id)
+      SELECT (SELECT count(*)::int FROM matching) total,
+        COALESCE(jsonb_agg(details ORDER BY created_at DESC,id),'[]'::jsonb) rows FROM details`,[search,limit,offset])).rows[0];
+    const rows=result.rows.map(({subscription_snapshot,...row}:any)=>({...row,...accountSubscription(row,subscription_snapshot,row.active_outlet_count)}));
+    res.json({ok:true,rows,total:result.total,limit,offset});
   }));
   app.get('/api/admin/clients/:tenantId',guard('MANAGE_SUPPORT'),run(async(req,res,db)=>{
     const reason=typeof req.query.justification==='string'?req.query.justification.trim():'';
     if(reason.length<10||reason.length>2000)throw new SupportError(400,'REASON_MINIMUM_10_CHARACTERS');
     const client=await tenant(db,req.params.tenantId);
-    let email:string|null=null,authStatus='NOT_CONFIGURED';
+    const identity=async()=>{let email:string|null=null,authStatus='NOT_CONFIGURED';
     if(provider.configured){try{
       if(provider.ownerIdentity){const owner=await provider.ownerIdentity(client.owner_user_ref);email=owner?.email||null;authStatus=owner?(owner.verified?'VERIFIED':'EMAIL_UNCONFIRMED'):'OWNER_NOT_FOUND';}
       else{email=await provider.ownerEmail(client.owner_user_ref);authStatus=email?'VERIFIED':'OWNER_NOT_VERIFIED';}
-    }catch{authStatus='UNAVAILABLE';}}
-    const [businesses,outlets,diagnostics,history]=await Promise.all([
+    }catch{authStatus='UNAVAILABLE';}}return {email,authStatus};};
+    // The Auth network lookup must not serialize all independent DB reads.
+    const [{email,authStatus},businesses,outlets,diagnostics,history,billing]=await Promise.all([
+      identity(),
       db.query('SELECT id,name,business_sector,is_active FROM internal.merchants WHERE tenant_id=$1 ORDER BY name,id LIMIT 201',[client.id]),
       db.query('SELECT id,merchant_id,name,is_active FROM internal.outlets WHERE tenant_id=$1 ORDER BY name,id LIMIT 201',[client.id]),
       // Read the existing cross-service contract, never widen internal service
@@ -99,8 +106,13 @@ export function registerClientSupportRoutes(app:Express,getDb:()=>Promise<Db>,gu
       db.query(`SELECT count(*)::int ledger_records,max(created_at) last_transaction_at
         FROM contract.transaction_log WHERE tenant_id=$1`,[client.id]),
       db.query(`SELECT a.id,a.action,a.reason,a.created_at,a.after_state,u.email operator_email FROM internal.support_actions a
-        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`,[client.id])]);
+        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`,[client.id]),
+      db.query(`SELECT to_jsonb(s) subscription_snapshot,
+        (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlets
+        FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.id=$1`,[client.id])]);
+    const plan=accountSubscription(client,billing.rows[0].subscription_snapshot,billing.rows[0].active_outlets);
     res.json({ok:true,client:{...client,ownerEmail:email,authStatus},canEditProfile:req.internal.role==='ROLE_SUPERADMIN',
+      ...plan,resetStepUpRequired:!!supportStepUpError(req.adminPrincipal),
       resetAvailable:authStatus==='VERIFIED',confirmationAvailable:authStatus==='EMAIL_UNCONFIRMED'&&!!provider.sendConfirmation,diagnostics:diagnostics.rows[0],businesses:businesses.rows.slice(0,200),outlets:outlets.rows.slice(0,200),history:history.rows.slice(0,50),
       truncated:{businesses:businesses.rows.length>200,outlets:outlets.rows.length>200,history:history.rows.length>50}});
   }));

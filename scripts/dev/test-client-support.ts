@@ -10,19 +10,25 @@ import {guardedPath} from '../../src/lib/navigation/routes';
 import {acknowledgeReset,pendingResetKey} from '../../src/admin/resetIntent';
 import type {Db} from '../../services/shared/db';
 import type {AuthPrincipal} from '../../services/shared/auth';
+import {SAAS_PLANS} from '../../src/config/saasPlans';
+import {accountSubscription} from '../../src/config/accountSubscription';
+import {pastikanPaket} from '../../services/billing/store';
+import {ensureSubscription} from '../../services/billing/engine';
 
 const pg=new PGlite();
 let failAudit='',configured=true,rejectProvider=false,unverified=false;
+let authGate:Promise<void>|undefined,releaseAuth:(()=>void)|undefined;
 const sent:string[]=[],lookup:string[]=[];
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{
   if(failAudit&&sql.includes('INSERT INTO internal.support_actions')&&params?.includes(failAudit))throw new Error('AUDIT_UNAVAILABLE');
+  if(sql.includes('FROM contract.transaction_log'))releaseAuth?.();
   const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows||0};
 },exec:async sql=>{await runner.exec(sql);},tx:fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
 const db=wrap(pg),now=Math.floor(Date.now()/1000);
 const subjects={admin:randomUUID(),support:randomUUID(),growth:randomUUID(),merchant:randomUUID()};
 const owner=randomUUID(),client=randomUUID(),synthetic=randomUUID(),other=randomUUID();
 const verifiedOwners=new Set([owner]);
-const provider:ClientSupportProvider={get configured(){return configured;},async ownerEmail(subject){lookup.push(subject);return unverified?null:verifiedOwners.has(subject)?'verified-owner@test.invalid':null;},async sendReset(email){if(rejectProvider)throw new Error('PRIVATE_PROVIDER_DETAIL');sent.push(email);}};
+const provider:ClientSupportProvider={get configured(){return configured;},async ownerEmail(subject){lookup.push(subject);await authGate;return unverified?null:verifiedOwners.has(subject)?'verified-owner@test.invalid':null;},async sendReset(email){if(rejectProvider)throw new Error('PRIVATE_PROVIDER_DETAIL');sent.push(email);}};
 const principals:Record<string,AuthPrincipal>={
   admin:{subject:subjects.admin,aal:'aal2',mfaVerifiedAt:now},
   support:{subject:subjects.support,aal:'aal2',mfaVerifiedAt:now},
@@ -41,6 +47,13 @@ async function main(){
   const business=randomUUID(),outlet=randomUUID();
   await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Preserved business','LAUNDRY')",[business,client]);
   await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'Preserved outlet')",[outlet,client,business]);
+  await pastikanPaket(db,SAAS_PLANS);
+  await ensureSubscription(db,client);
+  await db.query("UPDATE billing.subscriptions SET plan_id='plan-pro-monthly',status='ACTIVE',billing_cycle='YEARLY',extra_outlets=4 WHERE tenant_id=$1",[client]);
+  const fnb=randomUUID(),retail=randomUUID(),carwash=randomUUID();
+  for(const [id,sector]of [[fnb,'FNB'],[retail,'RETAIL'],[carwash,'CARWASH']])await db.query('INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,$3,$4)',[id,client,sector+' business',sector]);
+  await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'FNB outlet')",[randomUUID(),client,fnb]);
+  for(const id of [retail,carwash,business])await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,'Historical outlet',false)",[randomUUID(),client,id]);
   await db.query("INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,command) VALUES($1,$2,$3,'financial-fixture','CASH_IN',28000,$4::jsonb)",[client,business,outlet,JSON.stringify({eventId:'financial-fixture',amount:28000})]);
   await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,deleted,recovery_value,quarantine_reason) VALUES($1,$2,'LAUNDRY','products','prod-ld-12',null,true,$3::jsonb,'RECOVERY_FIXTURE')",[client,business,JSON.stringify({id:'prod-ld-12',name:'Preserved recovery',sector:'LAUNDRY'})]);
   const before=await financialSnapshot();
@@ -59,12 +72,25 @@ async function main(){
     assert.equal((await call('clients','merchant')).status,403);
     assert.equal((await call('clients','growth')).status,403);
     const list=await call('clients');assert.equal(list.status,200);assert.equal(list.body.total,2);assert.equal(list.body.rows.some((r:any)=>r.id===synthetic),false);assert.equal('owner_user_ref' in list.body.rows[0],false);
+    const listed=list.body.rows.find((r:any)=>r.id===client);assert.equal(listed.business_count,4);assert.deepEqual(listed.capacity,{used:2,included:4,extra:4,max:8,remaining:6});
+    assert.equal(listed.subscription.status,'ACTIVE');assert.equal((await call('clients?offset=999')).body.total,2);assert.deepEqual((await call('clients?offset=999')).body.rows,[]);
+    assert.equal((await call('me','noMfa')).body.mfaRequired,true);assert.equal((await call('clients','noMfa')).status,403);
     assert.equal((await call('clients/'+client,'support')).status,400);
     assert.equal((await call('clients/'+client)).status,400);
     assert.equal((await call(detail,'growth')).status,403);
     assert.equal((await call('clients/not-a-uuid?justification=Owner%20help%20ticket')).status,400);
     assert.equal((await call('clients/'+randomUUID()+'?justification=Owner%20help%20ticket')).status,404);
-    const d=await call(detail,'support');assert.equal(d.status,200);assert.equal(d.body.client.ownerEmail,'verified-owner@test.invalid');assert.equal(d.body.canEditProfile,false);
+    authGate=new Promise(resolve=>{releaseAuth=resolve;});
+    const timer=setTimeout(()=>{releaseAuth?.();},3000),started=Date.now();
+    const d=await call(detail,'support');clearTimeout(timer);authGate=undefined;releaseAuth=undefined;
+    assert.ok(Date.now()-started<3000,'Independent DB reads must start before the owner Auth lookup finishes');
+    assert.equal(d.status,200);assert.equal(d.body.client.ownerEmail,'verified-owner@test.invalid');assert.equal(d.body.canEditProfile,false);
+    assert.deepEqual(d.body.capacity,listed.capacity);assert.equal(d.body.resetStepUpRequired,false);
+    assert.equal((await call(detail,'stale')).body.resetStepUpRequired,true);
+    const billingList=await call('subscriptions');assert.equal(billingList.body.rows.find((r:any)=>r.id===client).maxOutlets,8);
+    const billingDetail=await call('tenants/'+client+'/subscription-detail','admin');assert.deepEqual(billingDetail.body.capacity,listed.capacity);
+    const free=accountSubscription({created_at:new Date(Date.now()-46*86400000),is_active:true},null,2);
+    assert.equal(free.subscription.status,'FREE');assert.equal(free.capacity.max,1);assert.equal(free.capacity.extra,0);
     assert.equal((await call('clients/'+client+'/actions','support',action('UPDATE_CLIENT_PROFILE',{name:'Denied'}))).status,403);
     assert.equal((await call('clients/'+client+'/actions','admin',action('UPDATE_CLIENT_PROFILE',{name:'x'.repeat(101)}))).status,400);
     assert.equal((await call('clients/'+client+'/actions','support',action('NOTE'))).status,200);
@@ -103,7 +129,7 @@ async function main(){
     rejectProvider=true;const failedKey=randomUUID();const rejected=await call('clients/'+failed+'/actions','admin',reset(failedKey));assert.equal(rejected.status,502);assert.equal(JSON.stringify(rejected).includes('PRIVATE_PROVIDER_DETAIL'),false);rejectProvider=false;
     const failedReplay=await call('clients/'+failed+'/actions','admin',reset(failedKey));assert.equal(failedReplay.body.status,'FAILED');assert.equal(sent.length,2);
     assert.ok(lookup.every(x=>x!==subjects.admin));
-    assert.equal((await db.query('SELECT count(*)::int n FROM billing.subscriptions')).rows[0].n,0,'Support must not initialize trials');
+    assert.equal((await db.query('SELECT count(*)::int n FROM billing.subscriptions')).rows[0].n,1,'Support must not initialize trials');
     assert.deepEqual(await financialSnapshot(),before);
     assert.equal(supportStepUpError(principals.noMfa),'MFA_REQUIRED');assert.equal(supportStepUpError(principals.admin),null);
     assert.equal(guardedPath('/reset-password',false),'/reset-password');assert.equal(guardedPath('/reset-password',true),'/reset-password');

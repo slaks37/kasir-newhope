@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {productThumbnail,validateProductImageFile,PRODUCT_IMAGE_MAX_CHARS} from '../../src/lib/catalog/productImage';
+import {businessAvailability} from '../../src/lib/workspace/businessPresentation';
+import {ean13,newInternalBarcode} from '../../src/lib/catalog/barcode';
+assert.equal(ean13('400638133393'),'4006381333931');
+assert.throws(()=>ean13('123'));
+for(let i=0;i<20;i++){const code=newInternalBarcode();assert.equal(code.length,13);assert.equal(code,ean13(code.slice(0,12)));}
+for(const type of ['image/jpeg','image/png','image/webp'])validateProductImageFile({type,size:100});
+for(const type of ['image/svg+xml','text/html','application/pdf'])assert.throws(()=>validateProductImageFile({type,size:100}));
+assert.throws(()=>validateProductImageFile({type:'image/png',size:5*1024*1024+1}));
+assert.throws(()=>validateProductImageFile({type:'image/png',size:0}));
+let released=0,attempts=0,draws=0;
+const context={fillStyle:'',fillRect(){},drawImage(){draws++;}};
+const canvas={width:0,height:0,getContext:()=>context,toDataURL:()=>{attempts++;return 'data:image/jpeg;base64,'+'A'.repeat(attempts<4?60000:10000);}};
+Object.defineProperty(globalThis,'window',{value:{Image:class{src='';naturalWidth=1200;naturalHeight=800;decode=async()=>{};}}});
+Object.defineProperty(globalThis,'document',{value:{createElement:(tag:string)=>{assert.equal(tag,'canvas');return canvas;}}});
+URL.createObjectURL=()=> 'blob:photo-fixture';URL.revokeObjectURL=()=>{released++;};
+const photo=await productThumbnail({type:'image/png',size:100} as File);
+assert.ok(photo.length<=PRODUCT_IMAGE_MAX_CHARS);assert.equal(canvas.width,480);assert.equal(canvas.height,320);assert.equal(draws,2);assert.equal(released,1);
+canvas.getContext=()=>null as any;await assert.rejects(()=>productThumbnail({type:'image/png',size:100} as File));assert.equal(released,2,'Failed decode/canvas paths release temporary resources');
+const business={businessId:'b',tenantId:'t',name:'Laundry',sector:'LAUNDRY',status:'ACTIVE',legacyAlias:null,outlets:[{outletId:'o',businessId:'b',name:'Historical',address:'',status:'INACTIVE'}]};
+assert.equal(businessAvailability(business).label,'Belum ada outlet aktif');assert.equal(businessAvailability(business).inactive.length,1);
+assert.equal(businessAvailability({...business,outlets:[{...business.outlets[0],status:'ACTIVE'}]}).label,'Siap beroperasi');
+assert.equal(businessAvailability({...business,status:'INACTIVE'}).label,'Bisnis dinonaktifkan');
+console.log('PASS: bounded product photo, file validation, compression, resource cleanup, and distinct business/outlet status');

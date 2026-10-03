@@ -833,6 +833,13 @@ var operationalKinds = /* @__PURE__ */ new Set([
 ]);
 var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
+function presetSector(kind, id) {
+  if (typeof id !== "string") return;
+  const pattern = kind === "products" ? /^prod-(fnb|ld|rt|cw|bb)-\d+$/ : kind === "categories" ? /^cat-(fnb|ld|rt|cw|bb)-\d+$/ : kind === "tables" ? /^tbl-(ld|rt|cw|bb)-[md]?\d+$/ : null;
+  const match = pattern?.exec(id);
+  if (match) return presets[match[1]];
+  if (kind === "tables" && /^tbl-\d+$/.test(id)) return "FNB";
+}
 function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${owner}_${sector}`) {
   if (!operationalKinds.has(kind) || kind === "users" || kind === "staff_members") return null;
   const row = value && typeof value === "object" ? value : {};
@@ -845,9 +852,19 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
   }
   if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
-  const ref = kind === "products" ? id : typeof row.productId === "string" ? row.productId : "";
-  const match = /^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
-  if (match && presets[match[1]] !== sector) return `WRONG_SECTOR:${presets[match[1]]}`;
+  const references = [[kind, id], ["products", row.productId], ["categories", row.categoryId], ["tables", row.tableId]];
+  for (const field of ["items", "recipeIngredients"]) if (Array.isArray(row[field])) {
+    for (const item of row[field]) {
+      if (item && typeof item === "object") {
+        const value2 = item;
+        references.push(["products", value2.productId], ["products", value2.product?.id]);
+      }
+    }
+  }
+  for (const [kind2, ref] of references) {
+    const source = presetSector(kind2, ref);
+    if (source && source !== sector) return `WRONG_SECTOR:${source}`;
+  }
   return null;
 }
 

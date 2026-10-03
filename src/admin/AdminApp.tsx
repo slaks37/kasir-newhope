@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, useRef } from "react";
 import {
   Menu,
   X,
@@ -30,17 +30,17 @@ import {
 import { ErrorBox, Loading } from "./ui";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { Brand } from "../components/brand/Brand";
-import Overview from "./pages/Overview";
-import Merchants from "./pages/Merchants";
-import Transactions from "./pages/Transactions";
-import Products from "./pages/Products";
-import ActivityPage from "./pages/Activity";
-import Audit from "./pages/Audit";
-import UserManagement from "./pages/UserManagement";
-import Subscriptions from "./pages/Subscriptions";
-import Clients from "./pages/Clients";
-import BlogManagement from "./pages/BlogManagement";
-import StaffCommissions from "./pages/StaffCommissions";
+const Overview=lazy(()=>import('./pages/Overview'));
+const Merchants=lazy(()=>import('./pages/Merchants'));
+const Transactions=lazy(()=>import('./pages/Transactions'));
+const Products=lazy(()=>import('./pages/Products'));
+const ActivityPage=lazy(()=>import('./pages/Activity'));
+const Audit=lazy(()=>import('./pages/Audit'));
+const UserManagement=lazy(()=>import('./pages/UserManagement'));
+const Subscriptions=lazy(()=>import('./pages/Subscriptions'));
+const Clients=lazy(()=>import('./pages/Clients'));
+const BlogManagement=lazy(()=>import('./pages/BlogManagement'));
+const StaffCommissions=lazy(()=>import('./pages/StaffCommissions'));
 import AdminMfa from './AdminMfa';
 
 type PageId =
@@ -512,7 +512,7 @@ export default function AdminApp() {
               onBack={() => setPage(menu[0]?.id || "overview")}
             />
           ) : (
-            <>
+            <Suspense fallback={<Loading/>}>
               {page === "overview" && <Overview onOpenSector={openSector} />}
               {page === "merchants" && (
                 <Merchants sector={sector} onSector={setSector} />
@@ -532,7 +532,7 @@ export default function AdminApp() {
                 <ActivityPage sector={sector} onSector={setSector} />
               )}
               {page === "audit" && <Audit />}
-            </>
+            </Suspense>
           )}
         </main>
       </div>

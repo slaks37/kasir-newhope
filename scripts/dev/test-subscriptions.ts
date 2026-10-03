@@ -136,7 +136,16 @@ async function main(){
    const response=await fetch(url+'/api/admin/'+path,{headers:{authorization:'Bearer test-admin'}});
    assert.equal(response.status,200,path+': '+await response.text());
   }
-  const report=await fetch(url+'/api/admin/subscriptions',{headers:{authorization:'Bearer test-admin'}});assert.equal(report.status,200);assert.equal((await report.json()).summary.active,1);
+  const secondaryBusiness=randomUUID();
+  await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Another Laundry','LAUNDRY')",[secondaryBusiness,tenant]);
+  const report=await fetch(url+'/api/admin/subscriptions',{headers:{authorization:'Bearer test-admin'}});assert.equal(report.status,200);
+  const subscriptionReport=await report.json();assert.equal(subscriptionReport.summary.active,1);
+  const account=subscriptionReport.rows.find((row:any)=>row.id===tenant);
+  assert.equal(subscriptionReport.rows.filter((row:any)=>row.id===tenant).length,1,'Several businesses never duplicate a subscription account');
+  assert.equal(account.businesses.length,2);assert.equal(account.businesses.find((row:any)=>row.id===secondaryBusiness).active_outlets,0);
+  assert.equal(account.businesses.reduce((total:number,row:any)=>total+row.active_outlets,0),account.outlet_count,'Admin counts the same account-wide active outlets');
+  const businessSearch=await (await fetch(url+'/api/admin/subscriptions?search=Another%20Laundry',{headers:{authorization:'Bearer test-admin'}})).json();
+  assert.equal(businessSearch.rows.length,1);assert.equal(businessSearch.rows[0].id,tenant,'Search by business finds its owning subscription account');
   const expiredTrial=randomUUID();
   await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Expired trial','expired-trial-owner')",[expiredTrial]);
   const expiredSubscription=await ensureSubscription(db,expiredTrial);
@@ -145,6 +154,13 @@ async function main(){
   const expiredRow=expiredReport.rows.find((r:any)=>r.id===expiredTrial);
   assert.equal(expiredRow.status,'FREE');assert.equal(expiredRow.plan_id,'plan-free-lifetime');
   assert.equal(expiredRow.maxOutlets,1);assert.equal(expiredRow.extra_outlets,0);
+  assert.equal(expiredRow.outlet_count,0,'Free without an owner selection does not claim a licensed slot');
+  await db.query('UPDATE billing.subscriptions SET free_selection=$2::jsonb WHERE id=$1',[expiredSubscription.id,JSON.stringify({branchId:randomUUID(),sector:'FNB',productIds:[]})]);
+  const selectedFreeReport=await (await fetch(url+'/api/admin/subscriptions',{headers:{authorization:'Bearer test-admin'}})).json();
+  const selectedFree=selectedFreeReport.rows.find((r:any)=>r.id===expiredTrial);
+  assert.equal(selectedFree.outlet_count,1);assert.equal('free_selection' in selectedFree,false,'Directory does not leak raw product-selection payloads');
+  const selectedFreeDetail=await (await fetch(url+'/api/admin/tenants/'+expiredTrial+'/subscription-detail',{headers:{authorization:'Bearer test-admin'}})).json();
+  assert.equal(selectedFreeDetail.capacity.used,selectedFree.outlet_count);assert.equal(selectedFreeDetail.capacity.max,selectedFree.maxOutlets);
   const detailUrl=url+'/api/admin/tenants/'+tenant+'/subscription-detail';
   assert.equal((await fetch(detailUrl,{headers:{authorization:'Bearer no-mfa'}})).status,403);
   assert.equal((await fetch(detailUrl,{headers:{authorization:'Bearer merchant'}})).status,403);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {SharedStateSync} from '../../src/lib/sync/sharedState';
 import {repairOperationalCache,operationalRecovery} from '../../src/lib/sync/operationalRecovery';
 import {syncStatusModel} from '../../src/lib/sync/statusModel';
+import {operationalScopeIssue} from '../../src/lib/sync/operationalScope';
 const disk=new Map<string,string>();let failBackup=false;
 Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>disk.get(k)||null,setItem:(k:string,v:string)=>{if(failBackup&&k.includes('recovery_v2'))throw Error('quota');disk.set(k,v);}}});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:{onLine:true}});
@@ -65,4 +66,49 @@ contaminated.importLegacy('customers',[oldCustomer.value]);assert.equal(status.p
 assert.ok(operationalRecovery('owner','FNB').some(b=>b.records.some(r=>r.reason==='OTHER_CONFIRMED_SECTOR:LAUNDRY')));
 for(const [k,v]of finance)assert.equal(disk.get(k),v);contaminated.stop();
 assert.deepEqual(repairOperationalCache('owner','FNB','store_settings',{id:'main',storeMode:'SERVICE'}),{},'Incompatible sector mode is backed up before removal');
+// Screenshot regression: categories/tables were previously missed although
+// products were already quarantined. Names cannot be used as scope evidence.
+const layoutRows=[{kind:'categories',id:'cat-ld-1',name:'Renamed category'},
+  {kind:'tables',id:'tbl-ld-m1',name:'Renamed washer'},
+  {kind:'tables',id:'tbl-ld-d1',name:'Renamed dryer'},
+  {kind:'tables',id:'tbl-ld-4',name:'Loker B-01',activeOrder:{id:'LND-203',totalAmount:64000}}];
+for(const row of layoutRows){
+  assert.equal(operationalScopeIssue('owner','FNB',row.kind,row.id,row),'WRONG_SECTOR:LAUNDRY');
+  assert.equal(operationalScopeIssue('owner','LAUNDRY',row.kind,row.id,row),null);
+  const before=JSON.stringify([row]);disk.set(`newhope_data_layout_FNB_${row.kind}`,before);
+  assert.deepEqual(repairOperationalCache('layout','FNB',row.kind,[row]),[]);
+  assert.ok(operationalRecovery('layout','FNB').some(backup=>backup.raw===before));
+}
+assert.equal(operationalScopeIssue('owner','FNB','tables','custom-id',{name:'Mesin Washer Laundry'}),null,'A name is not proof of sector');
+assert.equal(operationalScopeIssue('owner','FNB','products','custom-id',{categoryId:'cat-ld-1'}),'WRONG_SECTOR:LAUNDRY');
+assert.equal(operationalScopeIssue('owner','FNB','held_orders','hold',{items:[{product:{id:'prod-ld-12'}}]}),'WRONG_SECTOR:LAUNDRY');
+assert.equal(operationalScopeIssue('owner','FNB','orders','ledger',{productId:'prod-ld-12'}),null,'Never quarantine financial ledger through operational repair');
+cloud=layoutRows.map(row=>({scope:'FNB',kind:row.kind,recordId:row.id,value:row,revision:1,deleted:false}));
+disk.set('newhope_shared_outbox_layout_FNB',JSON.stringify(layoutRows.map(row=>({kind:row.kind,recordId:row.id,value:row,baseRevision:0,deleted:false}))));
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,ready:true,records:cloud})})});
+const layout=new SharedStateSync('layout','FNB',rows=>{visible=rows;},v=>{status=v;});
+assert.equal(status.pending,0);await layout.refresh(true);assert.equal(visible.length,0);
+for(const row of layoutRows){assert.ok(layout.legacyQuarantined(row.kind,row.id));layout.importLegacy(row.kind,[row]);}
+assert.equal(status.pending,0,'Cloud/local/outbox copies cannot re-import the contaminated layout');layout.stop();
+for(const [k,v]of finance)assert.equal(disk.get(k),v);
 console.log('PASS: Laundry-in-FNB quarantine+backup, old arrays, latest edit/reload, 60/61 ACK, mixed lanes, lost ACK, no zombies, backup failure and proven foreign legacy CRM');
+// 100 compressed product photos must split below the serverless body budget.
+// One oversized old record remains reviewable, not silently deleted or allowed
+// to reject otherwise-valid records in the same batch.
+const payloadSizes:number[]=[];
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,options?:any)=>{
+  if(!options?.body)return {ok:true,json:async()=>({ok:true,ready:true,records:[]})};
+  payloadSizes.push(new TextEncoder().encode(options.body).byteLength);
+  const sent=JSON.parse(options.body).operations;
+  assert.ok(sent.every((op:any)=>JSON.stringify(op.value).length<=64000));
+  return {ok:true,json:async()=>({ok:true,versions:sent.map((op:any)=>({kind:op.kind,recordId:op.recordId,revision:1}))})};
+}});
+const photoSync=new SharedStateSync('photo-budget','FNB',()=>{},value=>{status=value;});
+await photoSync.refresh(true);photoSync.prime('products',[]);
+photoSync.track('products',[{id:'oversized',name:'Preserve original',image:'x'.repeat(65000)},...Array.from({length:100},(_,i)=>({id:'photo-'+i,name:'Photo '+i,image:'data:image/jpeg;base64,'+'a'.repeat(39900)}))]);
+for(let i=0;i<4&&status.pending>1;i++)await photoSync.flush();
+assert.equal(status.pending,1);assert.equal(status.conflicts[0].error,'OPERATIONAL_RECORD_TOO_LARGE');
+assert.ok(payloadSizes.length>=2);assert.ok(payloadSizes.every(size=>size<2800000));
+assert.ok(disk.get('newhope_shared_outbox_photo-budget_FNB')?.includes('Preserve original'));
+photoSync.stop();for(const [k,v]of finance)assert.equal(disk.get(k),v);
+console.log('PASS: photo batch body budget, per-record oversized review, unrelated ACKs, original payload retained');

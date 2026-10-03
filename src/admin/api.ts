@@ -1,11 +1,11 @@
 /**
  * Klien HTTP & Data Provider untuk Admin Back-Office.
  *
- * Mengakses data Supabase langsung dengan pemrosesan analitik realtime,
- * otentikasi role internal, dan audit jejak akses.
+ * Membaca API server yang memverifikasi identitas, role, dan audit akses.
  */
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import {coalescedRead} from '../lib/sync/refreshCoordinator';
 
 const IDENTITY_KEY = 'nhpos_internal_identity';
 
@@ -202,7 +202,9 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   if(!data.session?.access_token) throw new ApiError(401,'UNAUTHORIZED','Silakan masuk kembali.');
   const query=new URLSearchParams();
   for(const [key,value] of Object.entries(params || {})) if(value!==undefined && value!==null && value!=='') query.set(key,String(value));
-  const response=await fetch('/api/admin/'+path+(query.size?'?'+query:''),
+  const target='/api/admin/'+path+(query.size?'?'+query:'');
+  const run=async()=>{
+  const response=await fetch(target,
     {method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   const contentType=response.headers.get('content-type') || '';
   let result:any=null;
@@ -222,7 +224,9 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     throw new ApiError(response.status,'INVALID_RESPONSE','Respons server tidak berformat JSON.');
   }
   if(response.status===403 && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {
-    window.dispatchEvent(new Event('admin-mfa-required'));
+    // The support drawer performs its own step-up and retains the selected
+    // account, ticket and uncertain intent. Other pages use the global gate.
+    if(!/^clients\/[0-9a-f-]+\/actions$/i.test(path))window.dispatchEvent(new Event('admin-mfa-required'));
     throw new ApiError(403,result.error,'Verifikasi autentikator diperlukan. Setelah verifikasi, tinjau dan kirim kembali tindakan Anda.');
   }
   if(!response.ok || result.ok===false) {
@@ -239,6 +243,12 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     throw new ApiError(response.status,result.error || 'API_ERROR',supportErrors[result.error]||result.detail||result.error||'Permintaan gagal.');
   }
   return result;
+  };
+  // Reuse the existing in-flight read coordinator, not a second cache. Exact
+  // session isolation also prevents an MFA refresh from joining an old read.
+  // Nothing persists; writes/justified private reads are never coalesced.
+  return !body&&(!method||method==='GET')&&!params?.justification
+    ?coalescedRead('admin:'+data.session.access_token+':'+target,run):run();
 }
 export const api={
   logout:async()=>{await supabase.auth.signOut();setIdentity(null);},

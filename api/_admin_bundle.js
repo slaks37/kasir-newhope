@@ -1127,9 +1127,6 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
-  if (principal.subject !== "verified-owner" && principal.subject !== "admin-sub") {
-    return null;
-  }
   if (principal.aal !== "aal2") return "MFA_REQUIRED";
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && (!principal.mfaVerifiedAt || now / 1e3 - principal.mfaVerifiedAt >= 600 || principal.mfaVerifiedAt > now / 1e3 + 30)) return "REAUTH_REQUIRED";
   return null;
@@ -1205,6 +1202,51 @@ function requiresAudit(cap) {
 
 // src/server/clientSupport.ts
 import { createClient } from "@supabase/supabase-js";
+
+// src/config/accountSubscription.ts
+function accountSubscription(tenant2, stored, used, now = Date.now()) {
+  const start = new Date(tenant2.created_at).toISOString();
+  const end = new Date(Date.parse(start) + TRIAL_DAYS * DAY_MS).toISOString();
+  const s = stored || {
+    plan_id: TRIAL_PLAN_ID,
+    status: "TRIAL",
+    current_period_start: start,
+    current_period_end: end,
+    grace_period_end: new Date(Date.parse(end) + 14 * DAY_MS).toISOString(),
+    trial_started_at: start,
+    trial_ends_at: end,
+    extra_outlets: 0
+  };
+  const access = subscriptionAccess({
+    status: tenant2.is_active ? s.status : "EXPIRED",
+    planId: tenant2.is_active ? s.plan_id : void 0,
+    currentPeriodEnd: new Date(s.current_period_end).toISOString(),
+    gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0
+  }, now);
+  const planId = access.status === "FREE" ? FREE_PLAN_ID : s.plan_id;
+  const plan = findSaaSPlan(planId);
+  const included = plan?.maxOutlets ?? null, extra = access.status === "FREE" ? 0 : Number(s.extra_outlets || 0);
+  const max = included === null ? null : included + extra;
+  const licensedUsed = access.status === "FREE" ? s.free_selection ? 1 : 0 : Number(used);
+  return {
+    subscription: {
+      planId,
+      planName: plan?.name || planId,
+      billingCycle: s.billing_cycle || null,
+      periodStart: s.current_period_start,
+      periodEnd: s.current_period_end,
+      graceEnd: s.grace_period_end,
+      trialStart: s.trial_started_at,
+      trialEnd: s.trial_ends_at,
+      recurringAmount: s.recurring_amount ?? null,
+      ...access
+    },
+    retainedOutlets: Number(used),
+    capacity: { included, extra, used: licensedUsed, max, remaining: max === null ? null : Math.max(0, max - licensedUsed) }
+  };
+}
+
+// src/server/clientSupport.ts
 var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var SupportError = class extends Error {
   constructor(status, code) {
@@ -1293,33 +1335,41 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
     const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 120) : "";
     const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0)), limit = Math.max(1, Math.min(50, Math.floor(Number(req.query.limit) || 20)));
     const filter = "t.merged_into IS NULL AND t.owner_user_ref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND ($1='' OR strpos(lower(t.name),lower($1))>0 OR t.id::text=$1)";
-    const total = (await db.query(`SELECT count(*)::int n FROM internal.tenants t WHERE ${filter}`, [search])).rows[0].n;
-    const rows = (await db.query(`SELECT t.id,t.name,t.is_active,t.created_at,
+    const result = (await db.query(`WITH matching AS (SELECT t.id,t.name,t.is_active,t.created_at FROM internal.tenants t WHERE ${filter}),
+      page AS (SELECT * FROM matching ORDER BY created_at DESC,id LIMIT $2 OFFSET $3),
+      details AS (SELECT t.*,to_jsonb(s) subscription_snapshot,
       (SELECT count(*)::int FROM internal.merchants m WHERE m.tenant_id=t.id) business_count,
       (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlet_count
-      FROM internal.tenants t WHERE ${filter} ORDER BY t.created_at DESC,t.id LIMIT $2 OFFSET $3`, [search, limit, offset])).rows;
-    res.json({ ok: true, rows, total, limit, offset });
+      FROM page t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id)
+      SELECT (SELECT count(*)::int FROM matching) total,
+        COALESCE(jsonb_agg(details ORDER BY created_at DESC,id),'[]'::jsonb) rows FROM details`, [search, limit, offset])).rows[0];
+    const rows = result.rows.map(({ subscription_snapshot, ...row }) => ({ ...row, ...accountSubscription(row, subscription_snapshot, row.active_outlet_count) }));
+    res.json({ ok: true, rows, total: result.total, limit, offset });
   }));
   app.get("/api/admin/clients/:tenantId", guard("MANAGE_SUPPORT"), run(async (req, res, db) => {
     const reason = typeof req.query.justification === "string" ? req.query.justification.trim() : "";
     if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
     const client = await tenant(db, req.params.tenantId);
-    let email = null, authStatus = "NOT_CONFIGURED";
-    if (provider.configured) {
-      try {
-        if (provider.ownerIdentity) {
-          const owner = await provider.ownerIdentity(client.owner_user_ref);
-          email = owner?.email || null;
-          authStatus = owner ? owner.verified ? "VERIFIED" : "EMAIL_UNCONFIRMED" : "OWNER_NOT_FOUND";
-        } else {
-          email = await provider.ownerEmail(client.owner_user_ref);
-          authStatus = email ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+    const identity = async () => {
+      let email2 = null, authStatus2 = "NOT_CONFIGURED";
+      if (provider.configured) {
+        try {
+          if (provider.ownerIdentity) {
+            const owner = await provider.ownerIdentity(client.owner_user_ref);
+            email2 = owner?.email || null;
+            authStatus2 = owner ? owner.verified ? "VERIFIED" : "EMAIL_UNCONFIRMED" : "OWNER_NOT_FOUND";
+          } else {
+            email2 = await provider.ownerEmail(client.owner_user_ref);
+            authStatus2 = email2 ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+          }
+        } catch {
+          authStatus2 = "UNAVAILABLE";
         }
-      } catch {
-        authStatus = "UNAVAILABLE";
       }
-    }
-    const [businesses, outlets, diagnostics, history] = await Promise.all([
+      return { email: email2, authStatus: authStatus2 };
+    };
+    const [{ email, authStatus }, businesses, outlets, diagnostics, history, billing] = await Promise.all([
+      identity(),
       db.query("SELECT id,name,business_sector,is_active FROM internal.merchants WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
       db.query("SELECT id,merchant_id,name,is_active FROM internal.outlets WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
       // Read the existing cross-service contract, never widen internal service
@@ -1327,12 +1377,18 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
       db.query(`SELECT count(*)::int ledger_records,max(created_at) last_transaction_at
         FROM contract.transaction_log WHERE tenant_id=$1`, [client.id]),
       db.query(`SELECT a.id,a.action,a.reason,a.created_at,a.after_state,u.email operator_email FROM internal.support_actions a
-        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`, [client.id])
+        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`, [client.id]),
+      db.query(`SELECT to_jsonb(s) subscription_snapshot,
+        (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlets
+        FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.id=$1`, [client.id])
     ]);
+    const plan = accountSubscription(client, billing.rows[0].subscription_snapshot, billing.rows[0].active_outlets);
     res.json({
       ok: true,
       client: { ...client, ownerEmail: email, authStatus },
       canEditProfile: req.internal.role === "ROLE_SUPERADMIN",
+      ...plan,
+      resetStepUpRequired: !!supportStepUpError(req.adminPrincipal),
       resetAvailable: authStatus === "VERIFIED",
       confirmationAvailable: authStatus === "EMAIL_UNCONFIRMED" && !!provider.sendConfirmation,
       diagnostics: diagnostics.rows[0],
@@ -1407,24 +1463,6 @@ async function subscriptionDetail(db, tenantId) {
     const tenant2 = (await c.query("SELECT id,name,created_at,is_active FROM internal.tenants WHERE id=$1", [tenantId])).rows[0];
     if (!tenant2) return null;
     const stored = (await c.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
-    const start = new Date(tenant2.created_at).toISOString();
-    const end = new Date(Date.parse(start) + TRIAL_DAYS * DAY_MS).toISOString();
-    const s = stored || {
-      plan_id: TRIAL_PLAN_ID,
-      status: "TRIAL",
-      current_period_start: start,
-      current_period_end: end,
-      grace_period_end: new Date(Date.parse(end) + 14 * DAY_MS).toISOString(),
-      trial_started_at: start,
-      trial_ends_at: end,
-      extra_outlets: 0
-    };
-    const plan = SAAS_PLANS.find((p) => p.id === s.plan_id);
-    const access = subscriptionAccess({
-      status: tenant2.is_active ? s.status : "EXPIRED",
-      currentPeriodEnd: new Date(s.current_period_end).toISOString(),
-      gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0
-    });
     const outlets = (await c.query("SELECT id,name,is_active FROM internal.outlets WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [tenantId])).rows;
     const usage = (await c.query("SELECT count(*)::int AS used FROM internal.outlets WHERE tenant_id=$1 AND is_active", [tenantId])).rows[0].used;
     const invoices = (await c.query(`SELECT id,invoice_number,amount,currency,payment_status,reconciliation_status,reconciliation_note,created_at,due_date
@@ -1436,25 +1474,12 @@ async function subscriptionDetail(db, tenantId) {
       FROM internal.support_actions a JOIN internal.internal_users u ON u.id=a.internal_user_id
       WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`, [tenantId])).rows;
     const activity = (await c.query("SELECT min(created_at) AS first_transaction_at,max(created_at) AS last_transaction_at FROM contract.merchant_revenue WHERE tenant_id=$1", [tenantId])).rows[0];
-    const cap = plan ? plan.maxOutlets + Number(s.extra_outlets || 0) : null;
     return {
       tenant: tenant2,
       retrievedAt: (/* @__PURE__ */ new Date()).toISOString(),
       derivedTrial: !stored,
       activity,
-      subscription: {
-        planId: s.plan_id,
-        planName: plan?.name || s.plan_id,
-        billingCycle: s.billing_cycle || null,
-        periodStart: s.current_period_start,
-        periodEnd: s.current_period_end,
-        graceEnd: s.grace_period_end,
-        trialStart: s.trial_started_at,
-        trialEnd: s.trial_ends_at,
-        recurringAmount: s.recurring_amount ?? null,
-        ...access
-      },
-      capacity: { included: plan?.maxOutlets ?? null, extra: Number(s.extra_outlets || 0), used: usage, max: cap, remaining: cap === null ? null : Math.max(0, cap - usage) },
+      ...accountSubscription(tenant2, stored, usage),
       outlets: outlets.slice(0, 200),
       invoices: invoices.slice(0, 100),
       payments: payments.slice(0, 100),
@@ -1472,21 +1497,24 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
     res.json({ ok: true, ...detail });
   }));
   app.get("/api/admin/subscriptions", guard("VIEW_MERCHANT_HEALTH"), wrap(async (req, res, db) => {
+    const search = String(req.query.search || "").trim().toLowerCase().slice(0, 100);
     const { rows } = await db.query(`SELECT t.id,t.name,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
-      s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,
+      s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,to_jsonb(s)->'free_selection' AS free_selection,
       (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) AS outlet_count,
       (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
       (SELECT max(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS last_transaction_at,
-      EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted
-      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`);
+      EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted,
+      EXISTS(SELECT 1 FROM internal.merchants m WHERE m.tenant_id=t.id AND position($1 in lower(m.name))>0) AS matches_business
+      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`, [search]);
     if (rows.length > 1e4) return res.status(503).json({ ok: false, error: "SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION" });
     const all = rows.map((r) => {
-      const end = r.current_period_end || new Date(Date.parse(r.created_at) + TRIAL_DAYS * DAY_MS);
-      const access = subscriptionAccess({ status: r.is_active ? r.status || "TRIAL" : "EXPIRED", planId: r.is_active ? r.plan_id : void 0, currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: r.grace_period_end ? new Date(r.grace_period_end).toISOString() : void 0 });
-      const effectivePlanId = access.status === "FREE" ? FREE_PLAN_ID : r.plan_id;
+      const { subscription: access, capacity } = accountSubscription(r, r.subscription_id ? r : null, r.outlet_count);
+      const effectivePlanId = access.planId;
       const day = Math.max(1, Math.floor((Date.now() - Date.parse(r.trial_started_at || r.created_at)) / DAY_MS) + 1);
       return {
         ...r,
+        outlet_count: capacity.used,
+        retained_outlet_count: r.outlet_count,
         plan_id: effectivePlanId,
         extra_outlets: access.status === "FREE" ? 0 : r.extra_outlets,
         status: access.status,
@@ -1494,7 +1522,7 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
         daysLeft: access.daysLeft,
         trialDay: day,
         lifecycleStage: r.converted ? "CONVERTED" : lifecycleStage(day),
-        maxOutlets: access.status === "FREE" ? 1 : (SAAS_PLANS.find((p) => p.id === effectivePlanId)?.maxOutlets ?? 2) + Number(r.extra_outlets || 0)
+        maxOutlets: capacity.max
       };
     });
     const eligible = all.filter((r) => r.trial_started_at || r.plan_id === TRIAL_PLAN_ID || !r.subscription_id);
@@ -1508,12 +1536,22 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       converted,
       conversionRate: eligible.length ? Math.round(converted / eligible.length * 1e3) / 10 : 0
     };
-    const search = String(req.query.search || "").toLowerCase();
-    const filtered = all.filter((r) => (!search || r.name.toLowerCase().includes(search)) && (!req.query.status || r.status === req.query.status));
+    const filtered = all.filter((r) => (!search || r.name.toLowerCase().includes(search) || r.matches_business) && (!req.query.status || r.status === req.query.status));
     const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 25)), offset = Math.max(0, Number(req.query.offset) || 0);
+    const page = filtered.slice(offset, offset + limit);
+    const businesses = page.length ? (await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,
+      count(o.id) FILTER(WHERE o.is_active)::int AS active_outlets
+      FROM internal.merchants m LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+      WHERE m.tenant_id=ANY($1::uuid[]) GROUP BY m.id ORDER BY m.name,m.id`, [page.map((row) => row.id)])).rows : [];
+    const byTenant = /* @__PURE__ */ new Map();
+    for (const business of businesses) {
+      const group = byTenant.get(business.tenant_id) || [];
+      group.push(business);
+      byTenant.set(business.tenant_id, group);
+    }
     res.json({
       ok: true,
-      rows: filtered.slice(offset, offset + limit),
+      rows: page.map(({ matches_business, free_selection, ...row }) => ({ ...row, businesses: byTenant.get(row.id) || [] })),
       total: filtered.length,
       limit,
       offset,
@@ -2101,7 +2139,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
           });
         }
         const who = { id: rows[0].id, email: rows[0].email, fullName: rows[0].full_name, role: rows[0].role };
-        req.mfaRequired = (principal.subject === "verified-owner" || principal.subject === "admin-sub") && principal.aal !== "aal2";
+        req.mfaRequired = principal.aal !== "aal2";
         const securityError = adminSecurityError(principal, req.method);
         if (!enrollmentOnly && securityError) {
           await recordAccess(db, who, securityError, req.path, null, null, req.ip || null, req);
@@ -3003,6 +3041,13 @@ var operationalKinds = /* @__PURE__ */ new Set([
 ]);
 var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
+function presetSector(kind, id) {
+  if (typeof id !== "string") return;
+  const pattern = kind === "products" ? /^prod-(fnb|ld|rt|cw|bb)-\d+$/ : kind === "categories" ? /^cat-(fnb|ld|rt|cw|bb)-\d+$/ : kind === "tables" ? /^tbl-(ld|rt|cw|bb)-[md]?\d+$/ : null;
+  const match = pattern?.exec(id);
+  if (match) return presets[match[1]];
+  if (kind === "tables" && /^tbl-\d+$/.test(id)) return "FNB";
+}
 function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${owner}_${sector}`) {
   if (!operationalKinds.has(kind) || kind === "users" || kind === "staff_members") return null;
   const row = value && typeof value === "object" ? value : {};
@@ -3015,9 +3060,19 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
   }
   if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
-  const ref = kind === "products" ? id : typeof row.productId === "string" ? row.productId : "";
-  const match = /^prod-(fnb|ld|rt|cw|bb)-\d+$/.exec(ref);
-  if (match && presets[match[1]] !== sector) return `WRONG_SECTOR:${presets[match[1]]}`;
+  const references = [[kind, id], ["products", row.productId], ["categories", row.categoryId], ["tables", row.tableId]];
+  for (const field of ["items", "recipeIngredients"]) if (Array.isArray(row[field])) {
+    for (const item of row[field]) {
+      if (item && typeof item === "object") {
+        const value2 = item;
+        references.push(["products", value2.productId], ["products", value2.product?.id]);
+      }
+    }
+  }
+  for (const [kind2, ref] of references) {
+    const source = presetSector(kind2, ref);
+    if (source && source !== sector) return `WRONG_SECTOR:${source}`;
+  }
   return null;
 }
 

@@ -7,7 +7,7 @@ export default function SidePanel({title,onClose,busy=false,children}:{title:str
   latest.current={onClose,busy};
   useEffect(()=>{
     const previous=document.activeElement as HTMLElement|null,overflow=document.body.style.overflow;
-    const background=document.getElementById('root'),wasInert=background?.inert;
+    const background=document.getElementById('admin-root')||document.getElementById('root'),wasInert=background?.inert;
     document.body.style.overflow='hidden';panel.current?.focus();
     if(background)background.inert=true;
     const key=(e:KeyboardEvent)=>{

@@ -3,9 +3,9 @@ import { subscriptionDetail } from './subscriptionDetail';
 import type { Db } from '../../services/shared/db';
 import { BillingError } from '../../services/billing/engine';
 import { ensureSubscription, outletUsage, serializeSubscription } from '../../services/billing/engine';
-import { manualTierChange, lifecycleStage, subscriptionAccess } from '../config/subscriptionPolicy';
-import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID, TRIAL_DAYS } from '../config/saasPlans';
-import { FREE_PLAN_ID } from '../config/freePlanPolicy';
+import { manualTierChange, lifecycleStage } from '../config/subscriptionPolicy';
+import { DAY_MS, SAAS_PLANS, TRIAL_PLAN_ID } from '../config/saasPlans';
+import {accountSubscription} from '../config/accountSubscription';
 
 export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Promise<Db>,guard:any,wrap:any) {
   app.get('/api/admin/tenants/:tenantId/subscription-detail',guard('VIEW_MERCHANT_DETAIL'),wrap(async(req:any,res:any,db:Db)=>{
@@ -14,22 +14,23 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
     res.json({ok:true,...detail});
   }));
   app.get('/api/admin/subscriptions',guard('VIEW_MERCHANT_HEALTH'),wrap(async(req:any,res:any,db:Db)=>{
+    const search=String(req.query.search || '').trim().toLowerCase().slice(0,100);
     const {rows}=await db.query(`SELECT t.id,t.name,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
-      s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,
+      s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,to_jsonb(s)->'free_selection' AS free_selection,
       (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) AS outlet_count,
       (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
       (SELECT max(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS last_transaction_at,
-      EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted
-      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`);
+      EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted,
+      EXISTS(SELECT 1 FROM internal.merchants m WHERE m.tenant_id=t.id AND position($1 in lower(m.name))>0) AS matches_business
+      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`,[search]);
     // Bound response work; do not silently report partial platform totals.
     if(rows.length>10000) return res.status(503).json({ok:false,error:'SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION'});
     const all=rows.map(r=>{
-      const end=r.current_period_end || new Date(Date.parse(r.created_at)+TRIAL_DAYS*DAY_MS);
-      const access=subscriptionAccess({status:r.is_active?(r.status || 'TRIAL'):'EXPIRED',planId:r.is_active?r.plan_id:undefined,currentPeriodEnd:new Date(end).toISOString(),gracePeriodEnd:r.grace_period_end?new Date(r.grace_period_end).toISOString():undefined});
-      const effectivePlanId=access.status==='FREE'?FREE_PLAN_ID:r.plan_id;
+      const {subscription:access,capacity}=accountSubscription(r,r.subscription_id?r:null,r.outlet_count);
+      const effectivePlanId=access.planId;
       const day=Math.max(1,Math.floor((Date.now()-Date.parse(r.trial_started_at || r.created_at))/DAY_MS)+1);
-      return {...r,plan_id:effectivePlanId,extra_outlets:access.status==='FREE'?0:r.extra_outlets,status:access.status,accessMode:access.accessMode,daysLeft:access.daysLeft,trialDay:day,
-        lifecycleStage:r.converted?'CONVERTED':lifecycleStage(day),maxOutlets:access.status==='FREE'?1:(SAAS_PLANS.find(p=>p.id===effectivePlanId)?.maxOutlets ?? 2)+Number(r.extra_outlets || 0)};
+      return {...r,outlet_count:capacity.used,retained_outlet_count:r.outlet_count,plan_id:effectivePlanId,extra_outlets:access.status==='FREE'?0:r.extra_outlets,status:access.status,accessMode:access.accessMode,daysLeft:access.daysLeft,trialDay:day,
+        lifecycleStage:r.converted?'CONVERTED':lifecycleStage(day),maxOutlets:capacity.max};
     });
     const eligible=all.filter(r=>r.trial_started_at || r.plan_id===TRIAL_PLAN_ID || !r.subscription_id);
     const converted=eligible.filter(r=>r.converted).length;
@@ -37,10 +38,17 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
       expired:all.filter(r=>['EXPIRED','PAST_DUE'].includes(r.status)).length,trialEntrants:eligible.length,
       activated:eligible.filter(r=>r.first_transaction_at).length,converted,
       conversionRate:eligible.length?Math.round(converted/eligible.length*1000)/10:0};
-    const search=String(req.query.search || '').toLowerCase();
-    const filtered=all.filter(r=>(!search || r.name.toLowerCase().includes(search)) && (!req.query.status || r.status===req.query.status));
+    const filtered=all.filter(r=>(!search || r.name.toLowerCase().includes(search)||r.matches_business) && (!req.query.status || r.status===req.query.status));
     const limit=Math.max(1,Math.min(100,Number(req.query.limit)||25)),offset=Math.max(0,Number(req.query.offset)||0);
-    res.json({ok:true,rows:filtered.slice(offset,offset+limit),total:filtered.length,limit,offset,summary,plans:SAAS_PLANS,
+    const page=filtered.slice(offset,offset+limit);
+    // One paginated account row owns one subscription. List its actual merchant
+    // children in a single batch, never JOIN them into duplicate billing rows.
+    const businesses=page.length?(await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,
+      count(o.id) FILTER(WHERE o.is_active)::int AS active_outlets
+      FROM internal.merchants m LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+      WHERE m.tenant_id=ANY($1::uuid[]) GROUP BY m.id ORDER BY m.name,m.id`,[page.map(row=>row.id)])).rows:[];
+    const byTenant=new Map<string,any[]>();for(const business of businesses){const group=byTenant.get(business.tenant_id)||[];group.push(business);byTenant.set(business.tenant_id,group);}
+    res.json({ok:true,rows:page.map(({matches_business,free_selection,...row})=>({...row,businesses:byTenant.get(row.id)||[]})),total:filtered.length,limit,offset,summary,plans:SAAS_PLANS,
       canManage:req.internal.role==='ROLE_SUPERADMIN',canSupport:['ROLE_SUPERADMIN','ROLE_INTERNAL_SUPPORT'].includes(req.internal.role)});
   }));
   app.get('/api/admin/payments',guard('MANAGE_SUBSCRIPTION'),wrap(async(_req:any,res:any,db:Db)=>{

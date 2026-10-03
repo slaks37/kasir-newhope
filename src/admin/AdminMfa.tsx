@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { api, type Session } from './api';
 import { AuthLayout } from '../components/auth/AuthLayout';
 
-export default function AdminMfa({onVerified,onLogout}:{onVerified:(session:Session)=>void;onLogout:()=>void}) {
+export default function AdminMfa({onVerified,onLogout,embedded=false}:{onVerified:(session:Session)=>void;onLogout:()=>void;embedded?:boolean}) {
   const [factorId,setFactorId]=useState('');
   const [factors,setFactors]=useState<{id:string;friendly_name?:string}[]>([]);
   const [qr,setQr]=useState(''),[secret,setSecret]=useState(''),[code,setCode]=useState('');
@@ -14,8 +14,9 @@ export default function AdminMfa({onVerified,onLogout}:{onVerified:(session:Sess
     supabase.auth.mfa.listFactors().then(({data,error})=>{
       if(!active)return;
       if(error){setError(error.message);return;}
-      setFactors(data.totp);setFactorId(data.totp[0]?.id || '');
-      setCanEnroll(data.totp.length===0);
+      const verified=data.totp.filter(f=>f.status==='verified');
+      setFactors(verified);setFactorId(verified[0]?.id || '');
+      setCanEnroll(verified.length===0);
     }).catch(()=>{if(active)setError('Tidak dapat membaca autentikator. Muat ulang untuk mencoba lagi.');})
       .finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
@@ -41,8 +42,7 @@ export default function AdminMfa({onVerified,onLogout}:{onVerified:(session:Sess
     }catch(err){setCode('');setError((err as Error).message);}finally{setBusy(false);}
   };
 
-  return (
-    <AuthLayout admin>
+  const content=(<>
       <h1 className="text-2xl font-bold">Verifikasi autentikator admin</h1>
     <p className="my-4">Akses admin memerlukan MFA. Tindakan perubahan memerlukan kode yang diverifikasi dalam 10 menit terakhir. Tindakan sebelumnya tidak dikirim ulang otomatis.</p>
     {error && <p role="alert" className="text-red-700">{error}</p>}
@@ -63,21 +63,6 @@ export default function AdminMfa({onVerified,onLogout}:{onVerified:(session:Sess
           disabled={busy}
           onClick={async () => {
             try {
-              const session = await api.me();
-              onVerified({ ...session, mfaRequired: false });
-            } catch {
-              onVerified({ user: { email: '', fullName: 'Admin', role: 'ROLE_SUPERADMIN' }, capabilities: ['VIEW_SECTOR_ANALYTICS'], environment: 'PROVIDER_BO', mfaRequired: false });
-            }
-          }}
-          className="nh-app-button-primary w-full py-2 px-4 rounded font-medium text-center"
-        >
-          Masuk Langsung ke Dashboard &rarr;
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            try {
               await api.logout();
               onLogout();
             } catch {
@@ -89,6 +74,6 @@ export default function AdminMfa({onVerified,onLogout}:{onVerified:(session:Sess
           Keluar
         </button>
       </div>
-    </AuthLayout>
-  );
+    </>);
+  return embedded?content:<AuthLayout admin>{content}</AuthLayout>;
 }

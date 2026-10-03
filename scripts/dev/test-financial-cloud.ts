@@ -74,6 +74,28 @@ try{
   const wrong=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...productOp,recordId:'prod-ld-12',value:{...productOp.value,id:'prod-ld-12',name:'Cleaning & Sanitasi Helm Fullface'}}]});
   assert.equal(wrong.status,200);assert.equal(wrong.data.rejected[0].error,'WRONG_SCOPE');
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM pos.shared_state_records WHERE tenant_id=$1 AND scope='FNB' AND record_id='prod-ld-12'",[tenant])).rows[0].n,0);
+  const layoutOps=[{kind:'categories',recordId:'cat-ld-1',baseRevision:0,deleted:false,value:{id:'cat-ld-1',name:'Cuci Kiloan'}},
+    {kind:'tables',recordId:'tbl-ld-m1',baseRevision:0,deleted:false,value:{id:'tbl-ld-m1',name:'Mesin Washer'}}];
+  const boundedPhoto='data:image/jpeg;base64,'+'A'.repeat(39970);
+  const photoOp={...productOp,recordId:'photo-product',value:{...productOp.value,id:'photo-product',image:boundedPhoto}};
+  const mixedLayout=await post('/api/v1/sync/state',{sector:'FNB',operations:[...layoutOps,photoOp]});
+  assert.equal(mixedLayout.data.rejected.length,2);assert.equal(mixedLayout.data.versions.length,1,'Bad layout records cannot block a valid product/photo');
+  const deviceBPhoto=await get('/api/v1/sync/state?sector=FNB&kinds=products');
+  assert.equal(deviceBPhoto.data.records.find((r:any)=>r.recordId==='photo-product').value.image,boundedPhoto,'Device B hydrates the persisted photo from the same cloud product');
+  assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[photoOp]})).data.versions[0].revision,1,'Photo retry/lost ACK remains idempotent');
+  // Simulate older writers that populated the wrong cloud scope. Repair backs
+  // up the exact values, leaves finance byte-identical and is safe to rerun.
+  const financialBefore=(await db.query('SELECT to_jsonb(t) AS value FROM pos.transactions t')).rows;
+  const cashBefore=(await db.query('SELECT to_jsonb(t) AS value FROM pos.cash_ledger t')).rows;
+  for(const op of layoutOps)await db.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value)
+    VALUES($1,$2,'FNB',$3,$4,$5::jsonb)`,[tenant,merchant,op.kind,op.recordId,JSON.stringify(op.value)]);
+  const repairedLayout=await db.query(fs.readFileSync('scripts/db/repair-legacy-layout-scope.sql','utf8'));
+  assert.equal(repairedLayout.rows.length,2);assert(repairedLayout.rows.every((r:any)=>r.backed_up));
+  for(const op of layoutOps){const stored=(await db.query('SELECT value,recovery_value,deleted,revision FROM pos.shared_state_records WHERE tenant_id=$1 AND scope=\'FNB\' AND kind=$2 AND record_id=$3',[tenant,op.kind,op.recordId])).rows[0];
+    assert.equal(stored.deleted,true);assert.equal(stored.value,null);assert.deepEqual(stored.recovery_value,op.value);assert.equal(stored.revision,2);}
+  assert.equal((await db.query(fs.readFileSync('scripts/db/repair-legacy-layout-scope.sql','utf8'))).rows.length,0);
+  assert.deepEqual((await db.query('SELECT to_jsonb(t) AS value FROM pos.transactions t')).rows,financialBefore);
+  assert.deepEqual((await db.query('SELECT to_jsonb(t) AS value FROM pos.cash_ledger t')).rows,cashBefore);
   const settingsOp={kind:'store_settings',recordId:'main',baseRevision:0,deleted:false,value:{id:'main',storeName:'Cloud FNB identity',storeMode:'FNB',businessSector:'FNB'}};
   assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[settingsOp]})).data.versions.length,1);
   assert.equal((await db.query('SELECT name FROM internal.merchants WHERE id=$1',[merchant])).rows[0].name,'Cloud FNB identity','Acknowledged settings own the merchant display projection');

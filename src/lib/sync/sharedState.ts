@@ -150,7 +150,7 @@ export class SharedStateSync {
       for(const row of data.records as SharedRecord[]){
         if(row.recoveryValue)this.backup('cloud-quarantine',recordJson(row),[{kind:row.kind,recordId:row.recordId,reason:row.quarantineReason||'CLOUD_RECOVERY'}]);
         const issue=row.scope!==(globals.has(row.kind)?'GLOBAL':this.sector)?'WRONG_RESPONSE_SCOPE':operationalScopeIssue(this.owner,this.sector,row.kind,row.recordId,row.value,this.identity?.transportRef);
-        if(issue){this.backup('cloud-response',recordJson(row),[{kind:row.kind,recordId:row.recordId,reason:issue}]);continue;}safe.push(row);
+        if(issue){this.backup('cloud-response',recordJson(row),[{kind:row.kind,recordId:row.recordId,reason:issue}]);this.quarantinedKeys.add(keyFor(row.kind,row.recordId));continue;}safe.push(row);
       }
       // Complete cloud snapshot: don't keep vanished rows as zombie records.
       const receivedKinds=requestedKinds&&Array.isArray(data.kinds)?data.kinds as string[]:undefined;
@@ -213,7 +213,17 @@ export class SharedStateSync {
   }
   async flush(){
     if(this.inFlight||this.stopped||this.outletBlocked||!navigator.onLine||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
-    const operations=[...this.pending].filter(([key,op])=>!this.conflicts.has(key)&&(op.origin!=='legacy'||this.legacyCheckedKeys.has(key))).map(([,op])=>op).slice(0,100);if(!operations.length)return;
+    // Photo records must also respect the serverless request limit. A large
+    // legacy record remains pending for review; it never blocks other records.
+    const operations:Operation[]=[];let bytes=1024;
+    for(const [key,op] of this.pending){
+      if(this.conflicts.has(key)||(op.origin==='legacy'&&!this.legacyCheckedKeys.has(key)))continue;
+      if(JSON.stringify(op.value??null).length>64000){this.conflicts.set(key,{kind:op.kind,recordId:op.recordId,error:'OPERATIONAL_RECORD_TOO_LARGE'});continue;}
+      const size=new TextEncoder().encode(JSON.stringify(op)).byteLength;
+      if(operations.length>=100||bytes+size>2800000)break;
+      operations.push(op);bytes+=size;
+    }
+    if(!operations.length){this.persist();return;}
     this.inFlight=true;this.emit();
     try{const response=await fetch('/api/v1/sync/state',{method:'POST',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,businessId:this.identity?.businessId,outletId:this.outletId,operations})}),data=await response.json();
       if(this.stopped)return;

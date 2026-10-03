@@ -124,3 +124,21 @@ Separate Supabase logins for employees still require a server membership/authori
 - Further admin security gate: existing `adminSecurity.ts`/`adminRoutes.ts` restrict MFA checks to fixture subject strings (`verified-owner`, `admin-sub`), so their current tests do not establish MFA enforcement for real administrators. This follow-up does not change that policy or silently enroll/lock out real admins. Resolve enrollment and enforcement before claiming complete admin security or promoting this release.
 - Native-boundary fix deployed to replacement preview from exact archived commit `0e3ad23510cf1f05d7d5d6ba7d4777e76b0c604d`: `dpl_2RY7k2QFepzTGd9q5iras97963qZ`, `https://kasir-newhope-1aaplus23-slaks37s-projects.vercel.app`, READY, Vite, build 43s. Local `test:admin-security`, lint and build passed. Dry-run: 510 committed source files, zero credential/local-dependency files. The same deployment-only DB/AI isolation remains in force.
 - Replacement remote smoke: `/login` HTTP 200; anonymous `/api/admin/merchants`, `/api/v1/sync/business` and `/api/v1/reports/summary` HTTP 401 with `AUTHENTICATION_REQUIRED`, including the previously blocked admin cold start. This is HTTP/build verification, not browser-render or authenticated full cloud-sync acceptance. Production alias was checked again and remains on `b21e1c0`; no data migration, Git push or production promotion occurred.
+
+### 4 October QA follow-up
+
+- The previously noted fixture-only MFA gate is now replaced with universal
+  server enforcement. `/me` truthfully reports the need for MFA, real UUID
+  regression cases are covered, and the client no longer fabricates a session
+  after a failed check. User-operated TOTP enrollment/verification remains a
+  required handoff; see `docs/security/client-support.md` for email-test limits.
+- Exact known Laundry category/table IDs were active in the FNB shared state.
+  Client/server scope validation now covers their preset provenance, not just
+  products. A targeted production repair backed up 4 category and 10 layout
+  values then tombstoned the incorrect FNB records. Original recovery payloads
+  are retained; correct Laundry records and all financial ledgers/queues are
+  untouched. The repair transaction compared tenant financial table digests
+  before/after and would roll back on any difference. Reusable idempotent
+  operational-only SQL: `scripts/db/repair-legacy-layout-scope.sql`.
+- Empty real cloud catalogs are not repopulated with invented demo products.
+  Browser-original recovery data requires an explicit, scope-correct review.

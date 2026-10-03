@@ -3,6 +3,9 @@ import {api,waktu} from '../api';
 import {Card,ErrorBox,Loading,Pagination,SearchBox,Table,Th,Td} from '../ui';
 import SidePanel from '../SidePanel';
 import {acknowledgeReset,pendingResetKey} from '../resetIntent';
+import {sectorLabel} from '../../lib/workspace/businessPresentation';
+import {useSearch} from '../useSearch';
+import AdminMfa from '../AdminMfa';
 
 const button='bg-amber-400 text-slate-900 rounded-lg px-4 py-2 font-semibold disabled:opacity-50';
 const input='border border-slate-300 rounded-lg p-2 w-full';
@@ -11,6 +14,7 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
   const [reason,setReason]=useState(''),[ticket,setTicket]=useState('');
   const [data,setData]=useState<any>(null),[name,setName]=useState('');
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[confirmed,setConfirmed]=useState(false);
+  const [stepUp,setStepUp]=useState(false);
   const resetKey=useRef<string|null>(null),generation=useRef(0),alive=useRef(true);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;};},[]);
   const load=async(why:string)=>{
@@ -36,9 +40,13 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
       onChanged();
       const resultDetail=await api.client(row.id,ticket);
       if(alive.current){setData(resultDetail);setName(resultDetail.client.name);}
-    }catch(e:any){if(alive.current)setError(e.message);}
+    }catch(e:any){if(alive.current){setError(e.message);if(['MFA_REQUIRED','REAUTH_REQUIRED'].includes(e.code))setStepUp(true);}}
     finally{if(alive.current)setBusy(false);}
   };
+  if(stepUp)return <SidePanel title="Verifikasi sebelum membantu akun" onClose={()=>setStepUp(false)}>
+    <AdminMfa embedded onVerified={()=>{setStepUp(false);setConfirmed(false);void load(reason.trim());}} onLogout={()=>window.location.reload()}/>
+    <p className="text-sm text-slate-500">Akun dan alasan bantuan tetap disimpan selama panel terbuka. Email tidak dikirim otomatis setelah verifikasi.</p>
+  </SidePanel>;
   return <SidePanel title={'Customer & Support · '+(data?.client.name||row.name)} onClose={onClose} busy={busy}>
     <p className="text-sm text-slate-500">Kelola akun pelanggan SaaS, bukan pelanggan belanja toko. Akses detail dan tindakan dicatat dalam audit.</p>
     {error&&<ErrorBox error={{message:error}}/>}{message&&<p role="status" className="p-3 rounded-lg bg-emerald-50 text-emerald-900">{message}</p>}
@@ -49,7 +57,7 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
     {busy&&<Loading/>}
     {data&&<fieldset disabled={busy} className="space-y-5">
       <section className="space-y-2"><h3 className="font-bold">Akun owner</h3>
-        <p>{data.client.name} · {data.client.is_active?'Aktif':'Nonaktif'}<br/><small className="break-all">ID akun: {row.id}</small></p>
+        <p>{data.client.name} · {data.client.is_active?'Akun diizinkan':'Akun dinonaktifkan'}<br/><small className="break-all">ID akun: {row.id}</small></p>
         <p>Email akun: {data.client.ownerEmail||'Belum tersedia'}<br/><small>Status Auth: {data.client.authStatus}</small></p>
         {data.canEditProfile&&<form onSubmit={e=>{e.preventDefault();void act('UPDATE_CLIENT_PROFILE');}} className="space-y-2">
           <label className="block">Nama akun SaaS<input className={input} required minLength={2} maxLength={100} value={name} onChange={e=>setName(e.target.value)}/></label>
@@ -60,15 +68,19 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
         <p className="text-sm">Link dikirim hanya ke email owner terverifikasi di atas. Owner memilih password sendiri; admin tidak dapat melihat password. Memerlukan autentikator admin yang baru diverifikasi.</p>
         {!data.resetAvailable&&<p className="text-amber-800">{{EMAIL_UNCONFIRMED:'Email owner belum dikonfirmasi. Kirim ulang konfirmasi, lalu minta owner membuka link terbaru. Setelah terverifikasi, muat ulang detail untuk mengirim reset.',NOT_CONFIGURED:'Konfigurasi Auth server belum lengkap: administrator deployment perlu memasang SUPABASE_SERVICE_ROLE_KEY di server Vercel, bukan di browser.',UNAVAILABLE:'Layanan Auth gagal memeriksa akun. Coba muat ulang detail; jangan mengganti email atau password secara paksa.',OWNER_NOT_FOUND:'Akun owner tidak ditemukan atau tidak dapat dipulihkan. Periksa hubungan akun Auth dengan tenant.',OWNER_NOT_VERIFIED:'Akun owner belum terverifikasi.'}[data.client.authStatus as string]||'Reset belum tersedia. Periksa status Auth akun.'}</p>}
         <label className="flex gap-2 items-start"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>Saya telah memverifikasi permintaan bantuan owner dan email tujuan.</label>
-        <button type="button" className={button} disabled={!data.resetAvailable||!confirmed||reason.trim().length<10} onClick={()=>void act('RESET_PASSWORD')}>{resetKey.current?'Periksa permintaan reset sebelumnya':'Kirim email reset password'}</button>
-        {data.confirmationAvailable&&<button type="button" className={button} disabled={!confirmed||reason.trim().length<10} onClick={()=>void act('RESEND_CONFIRMATION')}>Kirim ulang konfirmasi email</button>}
+        {data.resetStepUpRequired&&<div className="p-3 rounded-lg bg-amber-50 text-amber-900"><p>Verifikasi autentikator admin diperlukan sebelum mengirim email. Ini tidak mengubah password owner.</p><button type="button" className={button} onClick={()=>setStepUp(true)}>Verifikasi autentikator admin</button></div>}
+        <button type="button" className={button} disabled={!data.resetAvailable||!confirmed||data.resetStepUpRequired||reason.trim().length<10} onClick={()=>void act('RESET_PASSWORD')}>{resetKey.current?'Periksa permintaan reset sebelumnya':'Kirim email reset password'}</button>
+        {!confirmed&&<p className="text-xs text-slate-500">Centang konfirmasi permintaan owner untuk mengaktifkan pengiriman.</p>}
+        {data.confirmationAvailable&&<button type="button" className={button} disabled={!confirmed||data.resetStepUpRequired||reason.trim().length<10} onClick={()=>void act('RESEND_CONFIRMATION')}>Kirim ulang konfirmasi email</button>}
       </section>
       <section className="space-y-2"><h3 className="font-bold">Diagnosis cloud</h3>
         <p>{data.diagnostics.ledger_records} catatan transaksi di server<br/>Transaksi terakhir: {waktu(data.diagnostics.last_transaction_at)}</p>
         <p className="text-xs text-slate-500">Antrean offline perangkat tidak dapat diperiksa dari admin ini. Angka server bukan bukti bahwa semua perangkat selesai sinkron.</p>
         <h4 className="font-semibold">Unit usaha & outlet</h4>
-        {data.businesses.map((b:any)=><p key={b.id}>{b.name} · {b.business_sector} · {b.is_active?'Aktif':'Nonaktif'}</p>)}
-        {data.outlets.map((o:any)=><p key={o.id} className="text-sm">Outlet: {o.name} · {o.is_active?'Aktif':'Ditunda / nonaktif'}</p>)}
+        <p>{data.subscription.planName} · {data.subscription.status}<br/>{data.capacity.used} dari {data.capacity.max??'—'} slot outlet digunakan · {data.capacity.remaining??'—'} slot tersedia</p>
+        <p className="text-sm text-slate-500">{data.businesses.length} bisnis terdaftar. Batas paket berlaku untuk outlet aktif gabungan, bukan jumlah bisnis.</p>
+        {data.businesses.map((b:any)=>{const active=data.outlets.filter((o:any)=>o.merchant_id===b.id&&o.is_active);return <div key={b.id} className="border rounded-lg p-3"><p className="font-semibold">{b.name} · {sectorLabel(b.business_sector)}</p><p className="text-sm">{!b.is_active?'Bisnis dinonaktifkan':active.length?(data.subscription.status==='FREE'?`${active.length} outlet tersimpan · Akses mengikuti pilihan paket Free`:`${active.length} outlet aktif · Siap beroperasi`):'Belum ada outlet aktif'}</p>{active.map((o:any)=><p key={o.id} className="text-sm">{o.name} · {data.subscription.status==='FREE'?'Tersimpan; hanya outlet pilihan owner dapat dibuka':'Memakai 1 slot outlet'}</p>)}</div>;})}
+        {data.outlets.some((o:any)=>!o.is_active)&&<details><summary>Outlet belum dibuka / nonaktif ({data.outlets.filter((o:any)=>!o.is_active).length})</summary><p className="text-xs text-slate-500">Data historis tetap tersimpan. Tidak menggunakan slot aktif.</p>{data.outlets.filter((o:any)=>!o.is_active).map((o:any)=><p key={o.id} className="text-sm">{o.name}</p>)}</details>}
         {!data.businesses.length&&<p>Belum ada unit usaha.</p>}
         <button type="button" className="underline" onClick={onSubscriptions}>Kelola langganan & kapasitas outlet</button>
       </section>
@@ -81,11 +93,12 @@ function ClientPanel({row,onClose,onChanged,onSubscriptions}:{row:any;onClose:()
 
 export default function Clients({onSubscriptions}:{onSubscriptions:()=>void}) {
   const [search,setSearch]=useState(''),[offset,setOffset]=useState(0),[version,setVersion]=useState(0);
+  const settledSearch=useSearch(search);
   const [data,setData]=useState<any>(null),[selected,setSelected]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
-  useEffect(()=>{let active=true;setLoading(true);setError('');api.clients({search,offset,limit:20}).then(r=>{if(active)setData(r);}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[search,offset,version]);
+  useEffect(()=>{let active=true;setLoading(true);setError('');api.clients({search:settledSearch,offset,limit:20}).then(r=>{if(active)setData(r);}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[settledSearch,offset,version]);
   return <div className="space-y-4"><p className="text-slate-500">Bantuan akun owner: profil SaaS, reset password, diagnosis cloud, dan riwayat support. Data keuangan tidak dapat dihapus atau ditimpa dari sini.</p>
     {error&&<ErrorBox error={{message:error}}/>}<Card title="Customer & Support"><div className="p-4"><SearchBox value={search} onChange={v=>{setSearch(v);setOffset(0);}} placeholder="Cari nama akun / ID..."/></div>
-      {loading?<Loading/>:data&&<><div className="overflow-x-auto"><Table><thead><tr><Th>Akun SaaS</Th><Th>Status</Th><Th>Unit usaha / outlet aktif</Th><Th>Aksi</Th></tr></thead><tbody>{data.rows.map((r:any)=><tr key={r.id}><Td>{r.name}<br/><small>{waktu(r.created_at)}</small></Td><Td>{r.is_active?'Aktif':'Nonaktif'}</Td><Td>{r.business_count} / {r.active_outlet_count}</Td><Td><button className="underline" onClick={()=>setSelected(r)}>Kelola & bantu</button></Td></tr>)}</tbody></Table></div>{!data.rows.length&&<p className="p-5">Tidak ada akun yang cocok.</p>}<Pagination offset={offset} total={data.total} limit={20} onChange={setOffset}/></>}
+      {loading?<Loading/>:data&&<><div className="overflow-x-auto"><Table><thead><tr><Th>Akun SaaS</Th><Th>Paket / status langganan</Th><Th>Bisnis terdaftar</Th><Th>Outlet aktif / kapasitas paket</Th><Th>Aksi</Th></tr></thead><tbody>{data.rows.map((r:any)=><tr key={r.id}><Td>{r.name}<br/><small>{waktu(r.created_at)}</small></Td><Td>{r.subscription.planName} · {r.subscription.status}<br/><small>{r.is_active?'Akun diizinkan':'Akun dinonaktifkan'}</small></Td><Td>{r.business_count} bisnis</Td><Td>{r.capacity.used} dari {r.capacity.max??'—'} slot<br/><small>{r.capacity.remaining??'—'} slot tersedia</small></Td><Td><button className="underline" onClick={()=>setSelected(r)}>Kelola & bantu</button></Td></tr>)}</tbody></Table></div>{!data.rows.length&&<p className="p-5">Tidak ada akun yang cocok.</p>}<Pagination offset={offset} total={data.total} limit={20} onChange={setOffset}/></>}
     </Card>{selected&&<ClientPanel key={selected.id} row={selected} onClose={()=>setSelected(null)} onChanged={()=>setVersion(v=>v+1)} onSubscriptions={()=>{setSelected(null);onSubscriptions();}}/>}
   </div>;
 }

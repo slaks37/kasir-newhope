@@ -19,6 +19,12 @@ await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'
 await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'Laundry Fixture','LAUNDRY')",[merchant,tenant]);
 await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'Outlet Utama')",[outlet,tenant,merchant]);
 await pastikanPaket(db,SAAS_PLANS);await ensureSubscription(db,tenant);
+await db.query("UPDATE billing.subscriptions SET plan_id='plan-pro-monthly',status='ACTIVE',billing_cycle='YEARLY',extra_outlets=4 WHERE tenant_id=$1",[tenant]);
+for(const sector of ['FNB','RETAIL','CARWASH']) {
+  const business=randomUUID();
+  await db.query('INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,$3,$4)',[business,tenant,sector+' Fixture',sector]);
+  await db.query('INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,$4,$5)',[randomUUID(),tenant,business,sector+' Outlet Fixture',sector==='FNB']);
+}
 const nativeFetch=globalThis.fetch;
 globalThis.fetch=((input:any,init?:RequestInit)=>{const u=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);if(!['127.0.0.1','localhost'].includes(u.hostname))throw Error('FIXTURE_REMOTE_FETCH_DENIED');return nativeFetch(input,init);}) as typeof fetch;
 const app=express();app.use(express.json());

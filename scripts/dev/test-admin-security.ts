@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import type { Request } from 'express';
 import { authenticateBearer } from '../../services/shared/auth';
 import { adminSecurityError } from '../../src/server/adminSecurity';
@@ -33,6 +34,10 @@ async function main() {
     validToken=token({...claims,sub:'different-subject'});assert.equal(await authenticateBearer(request(validToken)),null);
     validToken=token({...claims,exp:now-1});assert.equal(await authenticateBearer(request(validToken)),null);
     validToken='malformed';assert.equal(await authenticateBearer(request(validToken)),null);
+    const realSubject=randomUUID();
+    assert.equal(adminSecurityError({subject:realSubject,aal:'aal1'},'GET'),'MFA_REQUIRED','Real UUID administrators must not bypass MFA');
+    assert.equal(adminSecurityError({subject:realSubject,aal:'aal2',mfaVerifiedAt:now-601},'POST',now*1000),'REAUTH_REQUIRED');
+    assert.equal(adminSecurityError({subject:realSubject,aal:'aal2',mfaVerifiedAt:now},'POST',now*1000),null);
     console.log('PASS: Auth validation precedes claims; forged/expired/mismatched tokens denied; user_metadata and token refresh cannot satisfy MFA freshness');
   } finally {
     globalThis.fetch=originalFetch;

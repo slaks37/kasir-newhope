@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState,useRef,useEffect } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Product, StockItem, StockType, ProductBundle, RecipeIngredient, BundleItem, Category } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { newId } from '../../lib/ids';
+import {productThumbnail} from '../../lib/catalog/productImage';
+import {newInternalBarcode} from '../../lib/catalog/barcode';
 import {
   Package,
   Plus,
@@ -110,13 +112,16 @@ export const InventoryManager: React.FC = () => {
   const [formName, setFormName] = useState('');
   const [formSku, setFormSku] = useState('');
   const [formBarcode, setFormBarcode] = useState('');
-  const [formCategoryId, setFormCategoryId] = useState(categories[0]?.id || 'cat-makanan');
+  const [formCategoryId, setFormCategoryId] = useState(categories[0]?.id || '');
   const [formPrice, setFormPrice] = useState(25000);
   const [formCostPrice, setFormCostPrice] = useState(12000);
   const [formStock, setFormStock] = useState(50);
   const [formMinStock, setFormMinStock] = useState(10);
   const [formUnit, setFormUnit] = useState('porsi');
   const [formImage, setFormImage] = useState('');
+  const [imageBusy,setImageBusy]=useState(false),[imageError,setImageError]=useState('');
+  const imageRequest=useRef(0);
+  useEffect(()=>()=>{imageRequest.current++;},[]);
   const [formDescription, setFormDescription] = useState('');
   const [formReorderPointWholesale, setFormReorderPointWholesale] = useState<number | ''>('');
   const [formWholesaleMinQty, setFormWholesaleMinQty] = useState<number | ''>('');
@@ -155,19 +160,13 @@ export const InventoryManager: React.FC = () => {
   const [bundleItemsList, setBundleItemsList] = useState<BundleItem[]>([]);
   const [bundleIsAvailable, setBundleIsAvailable] = useState(true);
 
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Ukuran foto terlalu besar (maksimal 5MB)');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    e.target.value='';if(!file)return;
+    const request=++imageRequest.current;setImageBusy(true);setImageError('');
+    try{const image=await productThumbnail(file);if(request===imageRequest.current)setFormImage(image);}
+    catch(error){if(request===imageRequest.current)setImageError(error instanceof Error?error.message:'Foto tidak dapat dibaca.');}
+    finally{if(request===imageRequest.current)setImageBusy(false);}
   };
 
   const lowStockProducts = products.filter((p) => p.stock <= p.minStockAlert);
@@ -280,16 +279,17 @@ export const InventoryManager: React.FC = () => {
   /* -------------------------------------------------------------------------- */
 
   const handleOpenAddModal = () => {
+    imageRequest.current++;setImageBusy(false);setImageError('');
     setFormName('');
     setFormSku(`SKU-${Math.floor(1000 + Math.random() * 9000)}`);
-    setFormBarcode(`899${Math.floor(1000000 + Math.random() * 9000000)}`);
-    setFormCategoryId(categories[0]?.id || 'cat-makanan');
-    setFormPrice(25000);
-    setFormCostPrice(12000);
-    setFormStock(50);
+    setFormBarcode('');
+    setFormCategoryId(categories[0]?.id || '');
+    setFormPrice(0);
+    setFormCostPrice(0);
+    setFormStock(0);
     setFormMinStock(10);
     setFormUnit('pcs');
-    setFormImage('https://images.unsplash.com/photo-1541167760496-1628856ab772?auto=format&fit=crop&q=80&w=400');
+    setFormImage('');
     setFormDescription('');
     setFormReorderPointWholesale(15);
     setFormWholesaleMinQty(30);
@@ -299,6 +299,7 @@ export const InventoryManager: React.FC = () => {
   };
 
   const handleOpenEditModal = (p: Product) => {
+    imageRequest.current++;setImageBusy(false);setImageError('');
     setEditingProduct(p);
     setFormName(p.name);
     setFormSku(p.sku);
@@ -319,7 +320,7 @@ export const InventoryManager: React.FC = () => {
 
   const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName) return;
+    if (!formName||imageBusy) return;
 
     const prod: Product = {
       id: editingProduct ? editingProduct.id : newId('prod'),
@@ -337,10 +338,7 @@ export const InventoryManager: React.FC = () => {
       reorderPointWholesale: formReorderPointWholesale !== '' ? Number(formReorderPointWholesale) : undefined,
       wholesaleMinQty: formWholesaleMinQty !== '' ? Number(formWholesaleMinQty) : undefined,
       isAvailable: formIsAvailable,
-      variants: editingProduct?.variants || [
-        { id: 'v-1', name: 'Regular', priceExtra: 0 },
-        { id: 'v-2', name: 'Large', priceExtra: 5000 },
-      ],
+      variants: editingProduct?.variants || [],
       modifierGroups: editingProduct?.modifierGroups,
       recipeIngredients: editingProduct?.recipeIngredients,
     };
@@ -1370,6 +1368,19 @@ export const InventoryManager: React.FC = () => {
                   />
                 </div>
 
+                <div className="col-span-2 rounded-2xl border border-slate-200 p-3">
+                  <label htmlFor="product-photo" className="font-black text-slate-700 block mb-2">Foto produk / makanan (opsional)</label>
+                  <div className="flex items-start gap-3">
+                    {formImage?<img src={formImage} alt="Pratinjau foto produk" className="w-24 h-24 rounded-xl border object-cover"/>:<div className="w-24 h-24 rounded-xl bg-slate-100 flex items-center justify-center"><Image aria-hidden="true" className="text-slate-400"/></div>}
+                    <div className="flex-1 space-y-2">
+                      <input id="product-photo" type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy} onChange={event=>void handleProductImageUpload(event)} className="block w-full text-xs file:rounded-lg file:border-0 file:bg-amber-100 file:px-3 file:py-2 file:font-bold"/>
+                      <p className="text-slate-500">JPG, PNG, WebP · maksimal 5 MB. Foto diperkecil dan disimpan bersama produk ke cloud saat produk disimpan.</p>
+                      {formImage&&<button type="button" disabled={imageBusy} onClick={()=>setFormImage('')} className="underline text-slate-600">Hapus foto dari produk</button>}
+                      {imageBusy&&<p role="status">Memproses foto…</p>}{imageError&&<p role="alert" className="text-rose-700">{imageError}</p>}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Status Switch (Aktif / Non-Aktif) */}
                 <div className="col-span-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
                   <div>
@@ -1407,13 +1418,13 @@ export const InventoryManager: React.FC = () => {
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="font-black text-slate-700">Barcode EAN-13</label>
+                    <label className="font-black text-slate-700">Barcode (opsional)</label>
                     <button
                       type="button"
-                      onClick={() => setFormBarcode(`899${Math.floor(1000000 + Math.random() * 9000000)}`)}
+                      onClick={() => setFormBarcode(newInternalBarcode())}
                       className="text-[10px] font-bold text-amber-600 hover:text-amber-700 cursor-pointer"
                     >
-                      + Generate EAN-13
+                      + Buat kode internal
                     </button>
                   </div>
                   <input
@@ -1448,6 +1459,7 @@ export const InventoryManager: React.FC = () => {
                     }}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-950 focus:border-amber-500 outline-none"
                   >
+                    <option value="">Tanpa kategori</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -1496,18 +1508,22 @@ export const InventoryManager: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <span className="font-black text-amber-800 flex items-center space-x-1.5 text-xs">
                       <Percent className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Kalkulator Margin &amp; Laba Satuan (Retail Engine)</span>
+                      <span>Perkiraan Laba &amp; Margin per Produk</span>
                     </span>
                     <span
                       className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
-                        formPrice - formCostPrice < 0
+                        formPrice <= 0
+                          ? 'bg-slate-200 text-slate-700'
+                          : formPrice - formCostPrice < 0
                           ? 'bg-rose-500 text-white'
                           : formPrice > 0 && Math.round(((formPrice - formCostPrice) / formPrice) * 100) < 20
                           ? 'bg-amber-500 text-slate-950'
                           : 'bg-emerald-500 text-slate-950'
                       }`}
                     >
-                      {formPrice - formCostPrice < 0
+                      {formPrice <= 0
+                        ? 'Isi harga terlebih dahulu'
+                        : formPrice - formCostPrice < 0
                         ? 'Rugi (Jual < Modal)'
                         : formPrice > 0 && Math.round(((formPrice - formCostPrice) / formPrice) * 100) < 20
                         ? 'Margin Tipis'
@@ -1596,9 +1612,10 @@ export const InventoryManager: React.FC = () => {
                 </button>
                 <button
                   type="submit"
+                  disabled={imageBusy}
                   className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 font-black text-slate-950 shadow-xs cursor-pointer"
                 >
-                  Simpan Produk
+                  {imageBusy?'Memproses foto…':'Simpan Produk'}
                 </button>
               </div>
             </form>

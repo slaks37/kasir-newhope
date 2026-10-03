@@ -1,4 +1,4 @@
-# Customer & Support (local implementation, 3 October 2026)
+# Customer & Support (QA follow-up, 4 October 2026)
 
 Customer means a SaaS account/tenant and its owner, not a store's shoppers.
 The existing admin auth, membership guard, audit tables, and Supabase session
@@ -42,30 +42,41 @@ remain authoritative. No parallel identity store or financial sync mechanism.
   database grants, raw POS operational access, automatic financial writes,
   queue deletion, recovery deletion, or trial initialization.
 
-## Activation prerequisites / limitations
+## Production inspection / remaining handoff
 
-The initial support/reset implementation is deployed in production commit
-`ce4cbe7` (3 October 2026). The confirmation-resend follow-up is local and
-tested, not yet deployed. Production inspection on 4 October found custom
-Resend SMTP enabled, but admin detail returns `NOT_CONFIGURED`: the Vercel
-project has frontend Supabase URL/anon variables and no
-`SUPABASE_SERVICE_ROLE_KEY`. SMTP readiness does not configure the application's
-server Auth admin client. Before enabling real email reset:
+On 4 October the server Auth lookup returns `VERIFIED` for the specifically
+approved New Hope owner. The previous missing-service-role diagnosis is no
+longer current. Supabase has the exact HTTPS `/reset-password` and `/login`
+redirects allowlisted. Custom Resend SMTP is configured; DKIM, sending MX and
+SPF are verified. Its separate receiving-MX warning does not establish an
+outbound reset failure. Provider acceptance is not inbox delivery.
 
-- Confirm server Supabase URL/service-role credential configuration without
-  exposing the credential in the frontend.
-- Allowlist the exact production recovery URL in Supabase Auth redirect URLs.
-- Allowlist `/login` on the production origin for confirmation resends. The
-  follow-up distinguishes unconfirmed/missing/unavailable Auth accounts and
-  uses Supabase `resend(type: signup)` only for the exact unconfirmed owner.
-  It shares MFA, audit-before-send, two-minute cooldown, and replay protection;
-  confirmation never sets `email_confirmed_at` or changes a password.
-- Verify production SMTP/sender configuration and delivery with an approved
-  test owner. Default Auth email limitations are not evidence of production
-  SMTP readiness.
-- Admin must enroll/verify an authenticator. The preexisting global admin MFA
-  rollout limitation remains documented in `docs/architecture/workspace-refactor.md`;
-  this feature independently enforces MFA for **every password reset**.
+The owner/admin has no verified MFA factor. Previously the global admin guard
+only checked fixture subjects and the MFA UI offered a fabricated dashboard
+session. This follow-up removes both bypasses: all subjects require `aal2`,
+mutations require fresh MFA, and login offers real Supabase TOTP enrollment.
+The user must enroll and enter the code themselves; no factor is enrolled by
+QA and no password is set on their behalf. An expired reset verification now
+opens MFA inside the support drawer, retaining the selected account/reason;
+verification never automatically sends the queued action.
+
+The user approved one real reset email to their own account. Real inbox/link
+verification is pending that user-operated MFA handoff. The loopback fixture
+and simulated SDK/provider tests are not evidence of production delivery.
+
+## Canonical capacity and loading
+
+- One account owns one subscription. All directory/detail/support projections
+  use `accountSubscription`, without writes or trial initialization.
+- Four businesses is not four licensed outlets. The inspected account has
+  two active outlets, Pro's four included slots and four add-on slots: 2/8.
+  Both pages expose registered business count separately from used/capacity.
+- Free retains historical outlet rows but licenses only the owner's selected
+  outlet; inactive historical entries remain recoverable and use no slot.
+- Admin sections are lazy-loaded; payment reconciliation loads only when
+  opened. Search is debounced, identical in-flight GETs reuse the existing
+  coordinator with exact session-token isolation, and owner Auth lookup runs
+  alongside independent detail DB queries. No second state/cache system.
 
 ## Verification
 
@@ -76,9 +87,11 @@ server Auth admin client. Before enabling real email reset:
   ledger and recovery rows, no trial creation, and existing `svc_internal` grants.
 - Supabase SDK provider calls tested with simulated Auth responses only.
 - `npm run test:admin-security`, `npm run test:subscriptions`, `npm run lint`,
-  `npm run build` pass. No real reset email/payment/customer mutation was tested.
+  `npm run build` pass, including 4 businesses/2 active/8 capacity and Free
+  selection parity. No real reset email/payment/customer mutation was tested.
 - Loopback-only browser fixture: subscription/manual-tier/detail drawers,
-  Escape/focus restoration, customer detail, support-note save/history.
+  Escape/focus restoration, customer detail, support-note save/history,
+  confirmation checkbox enabling reset, provider acceptance and audited outcome.
   Fixture entry and fake provider are not production Vite inputs.
 
 Official recovery reference:
