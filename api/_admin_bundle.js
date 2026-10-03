@@ -4446,7 +4446,6 @@ function normalizeVercelUrl(req) {
 }
 
 // api/_runtime.ts
-var runtime;
 async function buildRuntime() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL_NOT_CONFIGURED");
   const db = await connectDb({ schema: "billing", max: 2 });
@@ -4455,20 +4454,6 @@ async function buildRuntime() {
   app.use(express.json({ limit: "10mb", verify: (req, _res, buf) => {
     req.rawBody = buf;
   } }));
-  app.use(async (req, res, next) => {
-    try {
-      for (const name of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
-      if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(req.path)) {
-        const principal = await authenticateBearer(req);
-        if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-        req.headers["x-auth-sub"] = principal.subject;
-        if (principal.email) req.headers["x-auth-email"] = principal.email;
-      }
-      next();
-    } catch (err) {
-      next(err);
-    }
-  });
   registerBillingRoutes(app, db);
   registerAdminRoutes(app, async () => db);
   registerSyncRoutes(app, db);
@@ -4484,19 +4469,37 @@ async function buildRuntime() {
   });
   return app;
 }
-async function handleNativeApi(req, res) {
-  normalizeVercelUrl(req);
-  try {
-    runtime ??= buildRuntime().catch((err) => {
-      runtime = void 0;
-      throw err;
-    });
-    const app = await runtime;
-    app(req, res);
-  } catch {
-    res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
-  }
+function createNativeApiHandler(authenticate = authenticateBearer, build = buildRuntime) {
+  let runtime;
+  return async (req, res) => {
+    normalizeVercelUrl(req);
+    res.setHeader("Cache-Control", "no-store");
+    for (const name of ["x-auth-sub", "x-auth-email", "x-auth-email-verified", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
+    const path = String(req.url || "").split("?")[0];
+    if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(path)) {
+      let principal;
+      try {
+        principal = await authenticate(req);
+      } catch {
+        return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      }
+      if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      req.headers["x-auth-sub"] = principal.subject;
+      if (principal.email) req.headers["x-auth-email"] = principal.email;
+    }
+    try {
+      runtime ??= build().catch((err) => {
+        runtime = void 0;
+        throw err;
+      });
+      const app = await runtime;
+      app(req, res);
+    } catch {
+      res.status(503).json({ ok: false, error: "DATABASE_UNAVAILABLE" });
+    }
+  };
 }
+var handleNativeApi = createNativeApiHandler();
 
 // api/_gateway.ts
 async function proxyToGateway(req, res) {
