@@ -3,6 +3,7 @@ import {useAuth} from './context/AuthContext';
 import {useWorkspaceRoute,navigate} from './lib/navigation/workspaceRouter';
 import {guardedPath,moduleForPath,pathForModule,type WorkspaceModule} from './lib/navigation/routes';
 const LoginPage=lazy(()=>import('./components/auth/LoginPage').then(m=>({default:m.LoginPage})));
+const ResetPasswordPage=lazy(()=>import('./components/auth/ResetPasswordPage'));
 const HomePage=lazy(()=>import('./components/home/HomePage').then(m=>({default:m.HomePage})));
 const BlogHarapanBaru=lazy(()=>import('./components/blog/BlogHarapanBaru').then(m=>({default:m.BlogHarapanBaru})));
 const Workspace=lazy(()=>import('./Workspace').then(m=>({default:m.Workspace})));
@@ -17,6 +18,7 @@ export function App() {
   const handleOpenPOS=(targetTab?:string)=>navigate(pathForModule((targetTab||'overview') as WorkspaceModule));
   const handleLogout=async()=>{await signOut();navigate('/login',true);};
   if(loading||destination!==route)return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;
+  if(pathname==='/reset-password')return <Suspense fallback={<TabLoading/>}><ResetPasswordPage/></Suspense>;
   if(!user&&(pathname==='/login'||pathname==='/register'))return <Suspense fallback={<TabLoading/>}><LoginPage onBackToLanding={handleGoToLanding} initialMode={pathname==='/register'?'register':'login'}/></Suspense>;
   if(pathname==='/blog'||pathname.startsWith('/blog/'))return <Suspense fallback={<TabLoading/>}><BlogHarapanBaru initialSlug={pathname.startsWith('/blog/')?pathname.slice(6):null} onBackToHome={handleGoToLanding} onOpenLogin={()=>navigate('/login')} onOpenRegister={()=>navigate('/register')}/></Suspense>;
   if(pathname==='/'||!moduleForPath(pathname))return <Suspense fallback={<TabLoading/>}><HomePage isStandaloneLanding={!user} onOpenLogin={()=>navigate('/login')} onOpenRegister={()=>navigate('/register')} onOpenPOS={handleOpenPOS}/></Suspense>;

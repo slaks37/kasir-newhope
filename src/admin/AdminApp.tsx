@@ -38,6 +38,7 @@ import ActivityPage from "./pages/Activity";
 import Audit from "./pages/Audit";
 import UserManagement from "./pages/UserManagement";
 import Subscriptions from "./pages/Subscriptions";
+import Clients from "./pages/Clients";
 import BlogManagement from "./pages/BlogManagement";
 import StaffCommissions from "./pages/StaffCommissions";
 import AdminMfa from './AdminMfa';
@@ -46,6 +47,7 @@ type PageId =
   | "overview"
   | "merchants"
   | "subscriptions"
+  | "clients"
   | "commissions"
   | "users"
   | "blog"
@@ -80,6 +82,12 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
     cap: "VIEW_MERCHANT_HEALTH",
   },
   {
+    id: "clients",
+    label: "Customer & Support",
+    icon: Store,
+    cap: "MANAGE_SUPPORT",
+  },
+  {
     id: "commissions",
     label: "Komisi & Staf",
     icon: Award,
@@ -93,7 +101,7 @@ const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
   },
   {
     id: "users",
-    label: "User Admin & Client",
+    label: "Tim Admin & Hak Akses",
     icon: ShieldCheck,
     cap: "VIEW_ACCESS_AUDIT",
   },
@@ -510,6 +518,7 @@ export default function AdminApp() {
                 <Merchants sector={sector} onSector={setSector} />
               )}
               {page === "subscriptions" && <Subscriptions />}
+              {page === "clients" && <Clients onSubscriptions={()=>setPage('subscriptions')} />}
               {page === "commissions" && <StaffCommissions />}
               {page === "users" && <UserManagement />}
               {page === "blog" && <BlogManagement />}

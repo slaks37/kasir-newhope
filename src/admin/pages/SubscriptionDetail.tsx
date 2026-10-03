@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {api,rupiah,tanggal} from '../api';
-import {Card,ErrorBox,Loading} from '../ui';
+import {ErrorBox,Loading} from '../ui';
+import SidePanel from '../SidePanel';
 
 export default function SubscriptionDetail({tenantId,name,onClose}:{tenantId:string;name:string;onClose:()=>void}) {
   const [reason,setReason]=useState(''),[query,setQuery]=useState<{reason:string}|null>(null);
@@ -13,14 +14,13 @@ export default function SubscriptionDetail({tenantId,name,onClose}:{tenantId:str
     return()=>{active=false;};
   },[tenantId,query]);
   const date=(value:any)=>value?tanggal(value):'Belum tersedia';
-  return <Card title={'Detail langganan · '+name}>
+  return <SidePanel title={'Detail langganan · '+name} onClose={onClose}>
     <div className="p-4 space-y-4">
-      <button type="button" onClick={onClose} className="underline">Tutup detail</button>
       <form onSubmit={e=>{e.preventDefault();if(reason.trim().length>=10)setQuery({reason:reason.trim()});}} className="space-y-2">
         <label className="block">Alasan akses / nomor tiket (dicatat dalam audit)
           <input required minLength={10} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="block border rounded p-2 w-full"/>
         </label>
-        <button disabled={loading || reason.trim().length<10} className="bg-slate-900 text-white rounded px-4 py-2">{data?'Muat ulang detail':'Buka detail'}</button>
+        <button disabled={loading || reason.trim().length<10} className="bg-amber-400 text-slate-900 rounded px-4 py-2 disabled:opacity-50">{data?'Muat ulang detail':'Buka detail'}</button>
       </form>
       {loading&&<Loading/>}{error&&<ErrorBox error={{message:error}}/>}
       {data&&<>
@@ -41,5 +41,5 @@ export default function SubscriptionDetail({tenantId,name,onClose}:{tenantId:str
         {Object.entries(data.truncated).filter(([,v])=>v).map(([key])=><p key={key} className="text-amber-800">Daftar {key} dibatasi; ini bukan seluruh riwayat.</p>)}
       </>}
     </div>
-  </Card>;
+  </SidePanel>;
 }

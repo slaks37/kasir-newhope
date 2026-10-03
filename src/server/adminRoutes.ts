@@ -24,7 +24,8 @@ import {
   resolveEnvironment,
 } from '../lib/rbac/environments';
 import type { Db } from '../../services/shared/db';
-import { authenticateBearer } from '../../services/shared/auth';
+import { authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
+import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import * as repo from './repo';
 
@@ -62,6 +63,7 @@ interface AdminRequest extends express.Request {
   environment?: AppEnvironment | null;
   auditRequestId?: string;
   mfaRequired?: boolean;
+  adminPrincipal?: AuthPrincipal;
 }
 
 // Membership is provisioned explicitly with a verified Supabase user subject.
@@ -76,7 +78,7 @@ async function recordAccess(db: Db, who: InternalIdentity, action: string, resou
     [who.id,who.role,merchantId,action,resource,justification,ip,req.auditRequestId,String(req.headers['user-agent'] || '').slice(0,512)]);
 }
 
-export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer): void {
+export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider): void {
   app.use('/api/admin',(req:AdminRequest,res,next)=>{
     const forwarded=String(req.headers['x-request-id'] || '');
     const trusted=process.env.INTERNAL_GATEWAY_TOKEN && req.headers['x-newhope-gateway-token']===process.env.INTERNAL_GATEWAY_TOKEN;
@@ -162,7 +164,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
           return res.status(400).json({ok:false,error:'MERCHANT_AND_JUSTIFICATION_REQUIRED'});
         }
         if(requiresAudit(capability)) await recordAccess(db,who,capability,req.path,target,reason,req.ip || null,req);
-        req.internal=who;req.environment='PROVIDER_BO';next();
+        req.internal=who;req.adminPrincipal=principal;req.environment='PROVIDER_BO';next();
       }catch(err){ next(err); }
     };
   }
@@ -237,6 +239,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     res.json({ok:true,message:`Pengguna internal ${email} berhasil ditambahkan sebagai ${role}`,user:inserted.rows[0]});
   }));
   registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
+  registerClientSupportRoutes(app,getDb,guard,supportProvider);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
     const f=repo.cleanFilter(req.query);
     const {rows}=await db.query(`SELECT * FROM contract.staff_commission_ledger

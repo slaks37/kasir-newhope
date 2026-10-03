@@ -575,8 +575,8 @@ async function subscriptionStatus(db, tenantId) {
   const s = await ensureSubscription(db, tenantId);
   const sub = serializeSubscription(s);
   const access = subscriptionAccess(sub);
-  const tenant = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
-  if (!tenant.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
+  const tenant2 = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
+  if (!tenant2.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
   if (access.status !== s.status && access.status !== "FREE") {
     await db.query("UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2", [access.status, s.id]).catch(() => {
     });
@@ -593,7 +593,7 @@ async function subscriptionStatus(db, tenantId) {
   const retainedOutlets = await outletUsage(db, tenantId);
   return {
     ok: true,
-    subscription: { ...sub, status: access.status, accessMode: access.accessMode, isActive: !!tenant.rows[0]?.is_active },
+    subscription: { ...sub, status: access.status, accessMode: access.accessMode, isActive: !!tenant2.rows[0]?.is_active },
     plan: sub.plan,
     ...access,
     activeDays,
@@ -899,7 +899,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "BILLING_UNAVAILABLE" });
     }
   };
-  const tenant = async (req) => {
+  const tenant2 = async (req) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
@@ -920,8 +920,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     return id;
   };
   app.get("/api/v1/subscription/plans", (_req, res) => res.json({ ok: true, plans: SAAS_PLANS }));
-  app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant(req)))));
-  app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant(req)) })));
+  app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant2(req)))));
+  app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant2(req)) })));
   app.post("/api/v1/subscription/free-plan", run(async (req, res) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
@@ -944,11 +944,11 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     res.json(await subscriptionStatus(db, tenantId));
   }));
   app.get("/api/v1/subscription/outlets", run(async (req, res) => {
-    const { rows } = await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`, [await tenant(req)]);
+    const { rows } = await db.query(`SELECT o.*,m.business_sector FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id WHERE o.tenant_id=$1 ORDER BY o.created_at`, [await tenant2(req)]);
     res.json({ ok: true, rows });
   }));
   app.post("/api/v1/subscription/outlets", run(async (req, res) => {
-    const tenantId = await tenant(req), b = req.body || {};
+    const tenantId = await tenant2(req), b = req.body || {};
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
     const sector = String(b.businessSector || "FNB");
@@ -981,11 +981,11 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     res.json({ ok: true, outlet: result });
   }));
   app.post("/api/v1/subscription/prorated-upgrade", run(async (req, res) => {
-    const quote = await createQuote(db, await tenant(req), req.body || {});
+    const quote = await createQuote(db, await tenant2(req), req.body || {});
     res.json({ ok: true, ...quote, netProratedAmount: quote.amount, proratedAmountIdr: quote.amount, breakdown: { newPlanPrice: quote.recurringAmount, unusedCredit: quote.unusedCredit, total: quote.amount } });
   }));
   app.post("/api/v1/subscription/checkout", run(async (req, res) => {
-    const tenantId = await tenant(req);
+    const tenantId = await tenant2(req);
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
     if (!isDokuConfigured()) throw new BillingError(503, "PAYMENT_GATEWAY_NOT_CONFIGURED");
@@ -1026,7 +1026,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     }
   }));
   app.get("/api/v1/subscription/verify", run(async (req, res) => {
-    const tenantId = await tenant(req);
+    const tenantId = await tenant2(req);
     const invoiceId = typeof req.query?.invoiceId === "string" ? req.query.invoiceId : void 0;
     const invoiceNumber = typeof req.query?.invoiceNumber === "string" ? req.query.invoiceNumber : void 0;
     let query = "SELECT * FROM billing.invoices WHERE tenant_id=$1";
@@ -1203,14 +1203,183 @@ function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
 }
 
+// src/server/clientSupport.ts
+import { createClient } from "@supabase/supabase-js";
+var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var SupportError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+function createClientSupportProvider() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const auth = url && key ? createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) }
+  }) : null;
+  return {
+    configured: !!auth,
+    async ownerEmail(subject) {
+      if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+      if (!uuid.test(subject)) return null;
+      const { data, error } = await auth.auth.admin.getUserById(subject);
+      if (error) {
+        if (error.status === 404) return null;
+        throw new SupportError(502, "OWNER_LOOKUP_FAILED");
+      }
+      const u = data.user;
+      return u?.id === subject && !u.deleted_at && (!u.banned_until || Date.parse(u.banned_until) <= Date.now()) && u.email_confirmed_at && u.email ? u.email : null;
+    },
+    async sendReset(email) {
+      if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+      const destination = new URL("/reset-password", process.env.APP_URL || "https://kasir.newhope.space");
+      if (destination.protocol !== "https:") throw new SupportError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
+      const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: destination.href });
+      if (error) throw new SupportError(error.status === 429 ? 429 : 502, "PASSWORD_RESET_PROVIDER_REJECTED");
+    }
+  };
+}
+function supportStepUpError(principal, now = Date.now()) {
+  if (principal?.aal !== "aal2") return "MFA_REQUIRED";
+  if (!principal.mfaVerifiedAt || now / 1e3 - principal.mfaVerifiedAt >= 600 || principal.mfaVerifiedAt > now / 1e3 + 30) return "REAUTH_REQUIRED";
+  return null;
+}
+async function tenant(c, id, lock = false) {
+  const row = (await c.query(`SELECT id,name,owner_user_ref,is_active,created_at FROM internal.tenants WHERE id=$1 AND merged_into IS NULL${lock ? " FOR UPDATE" : ""}`, [id])).rows[0];
+  if (!row) throw new SupportError(404, "CLIENT_NOT_FOUND");
+  return row;
+}
+async function audit(c, req, action, reason, before, after) {
+  await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)
+    VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)`, [
+    req.params.tenantId,
+    req.internal.id,
+    action,
+    reason,
+    JSON.stringify(before),
+    JSON.stringify(after),
+    req.auditRequestId,
+    req.ip || null,
+    String(req.headers["user-agent"] || "").slice(0, 512)
+  ]);
+}
+function registerClientSupportRoutes(app, getDb, guard, provider = createClientSupportProvider()) {
+  const run = (fn) => async (req, res) => {
+    try {
+      await fn(req, res, await getDb());
+    } catch (e) {
+      res.status(e instanceof SupportError ? e.status : 500).json({ ok: false, error: e instanceof SupportError ? e.message : "CLIENT_SUPPORT_FAILED" });
+    }
+  };
+  app.get("/api/admin/clients", guard("VIEW_MERCHANT_HEALTH"), run(async (req, res, db) => {
+    const allowed = ["ROLE_SUPERADMIN", "ROLE_INTERNAL_SUPPORT"].includes(req.internal.role);
+    await db.query(`INSERT INTO internal.internal_access_log(id,internal_user_id,internal_role,action,resource,request_id)
+      VALUES(gen_random_uuid(),$1,$2,$3,'/api/admin/clients',$4)`, [req.internal.id, req.internal.role, allowed ? "VIEW_CLIENT_DIRECTORY" : "DENIED_VIEW_CLIENT_DIRECTORY", req.auditRequestId]);
+    if (!allowed) throw new SupportError(403, "CAPABILITY_DENIED");
+    const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 120) : "";
+    const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0)), limit = Math.max(1, Math.min(50, Math.floor(Number(req.query.limit) || 20)));
+    const filter = "t.merged_into IS NULL AND t.owner_user_ref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND ($1='' OR strpos(lower(t.name),lower($1))>0 OR t.id::text=$1)";
+    const total = (await db.query(`SELECT count(*)::int n FROM internal.tenants t WHERE ${filter}`, [search])).rows[0].n;
+    const rows = (await db.query(`SELECT t.id,t.name,t.is_active,t.created_at,
+      (SELECT count(*)::int FROM internal.merchants m WHERE m.tenant_id=t.id) business_count,
+      (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) active_outlet_count
+      FROM internal.tenants t WHERE ${filter} ORDER BY t.created_at DESC,t.id LIMIT $2 OFFSET $3`, [search, limit, offset])).rows;
+    res.json({ ok: true, rows, total, limit, offset });
+  }));
+  app.get("/api/admin/clients/:tenantId", guard("MANAGE_SUPPORT"), run(async (req, res, db) => {
+    const reason = typeof req.query.justification === "string" ? req.query.justification.trim() : "";
+    if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
+    const client = await tenant(db, req.params.tenantId);
+    let email = null, authStatus = "NOT_CONFIGURED";
+    if (provider.configured) {
+      try {
+        email = await provider.ownerEmail(client.owner_user_ref);
+        authStatus = email ? "VERIFIED" : "OWNER_NOT_VERIFIED";
+      } catch {
+        authStatus = "UNAVAILABLE";
+      }
+    }
+    const [businesses, outlets, diagnostics, history] = await Promise.all([
+      db.query("SELECT id,name,business_sector,is_active FROM internal.merchants WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
+      db.query("SELECT id,merchant_id,name,is_active FROM internal.outlets WHERE tenant_id=$1 ORDER BY name,id LIMIT 201", [client.id]),
+      // Read the existing cross-service contract, never widen internal service
+      // permissions to raw POS ledgers or operational recovery payloads.
+      db.query(`SELECT count(*)::int ledger_records,max(created_at) last_transaction_at
+        FROM contract.transaction_log WHERE tenant_id=$1`, [client.id]),
+      db.query(`SELECT a.id,a.action,a.reason,a.created_at,a.after_state,u.email operator_email FROM internal.support_actions a
+        JOIN internal.internal_users u ON u.id=a.internal_user_id WHERE a.tenant_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT 51`, [client.id])
+    ]);
+    res.json({
+      ok: true,
+      client: { ...client, ownerEmail: email, authStatus },
+      canEditProfile: req.internal.role === "ROLE_SUPERADMIN",
+      resetAvailable: !!email,
+      diagnostics: diagnostics.rows[0],
+      businesses: businesses.rows.slice(0, 200),
+      outlets: outlets.rows.slice(0, 200),
+      history: history.rows.slice(0, 50),
+      truncated: { businesses: businesses.rows.length > 200, outlets: outlets.rows.length > 200, history: history.rows.length > 50 }
+    });
+  }));
+  app.post("/api/admin/clients/:tenantId/actions", guard("MANAGE_SUPPORT"), run(async (req, res, db) => {
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 10 || reason.length > 2e3) throw new SupportError(400, "REASON_MINIMUM_10_CHARACTERS");
+    const action = req.body?.action;
+    if (!["NOTE", "UPDATE_CLIENT_PROFILE", "RESET_PASSWORD"].includes(action)) throw new SupportError(400, "INVALID_SUPPORT_ACTION");
+    if (action === "UPDATE_CLIENT_PROFILE" && req.internal.role !== "ROLE_SUPERADMIN") throw new SupportError(403, "CAPABILITY_DENIED");
+    if (action !== "RESET_PASSWORD") {
+      const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+      if (action === "UPDATE_CLIENT_PROFILE" && (name.length < 2 || name.length > 100)) throw new SupportError(400, "INVALID_CLIENT_NAME");
+      await db.tx(async (c) => {
+        const before = await tenant(c, req.params.tenantId, true);
+        if (action === "UPDATE_CLIENT_PROFILE") await c.query("UPDATE internal.tenants SET name=$2,updated_at=now() WHERE id=$1", [before.id, name]);
+        await audit(c, req, action, reason, { name: before.name }, { name: action === "UPDATE_CLIENT_PROFILE" ? name : before.name });
+      });
+      return res.json({ ok: true, message: action === "NOTE" ? "Catatan support tersimpan." : "Nama akun diperbarui; transaksi dan nama outlet tidak diubah." });
+    }
+    const stepUp = supportStepUpError(req.adminPrincipal);
+    if (stepUp) throw new SupportError(403, stepUp);
+    if (!provider.configured) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+    const requestKey = req.body.requestKey;
+    if (typeof requestKey !== "string" || !uuid.test(requestKey)) throw new SupportError(400, "INVALID_REQUEST_KEY");
+    const prepared = await db.tx(async (c) => {
+      const client = await tenant(c, req.params.tenantId, true);
+      if (!uuid.test(client.owner_user_ref || "")) throw new SupportError(409, "OWNER_AUTH_NOT_LINKED");
+      const old = (await c.query(`SELECT action FROM internal.support_actions WHERE tenant_id=$1
+        AND action IN ('PASSWORD_RESET_REQUESTED','PASSWORD_RESET_SENT','PASSWORD_RESET_FAILED') AND after_state->>'requestKey'=$2 ORDER BY created_at DESC,id DESC`, [client.id, requestKey])).rows;
+      if (old.length) return { client, replay: true, status: old.some((r) => r.action === "PASSWORD_RESET_SENT") ? "SENT" : old.some((r) => r.action === "PASSWORD_RESET_FAILED") ? "FAILED" : "PENDING" };
+      const recent = (await c.query("SELECT 1 FROM internal.support_actions WHERE tenant_id=$1 AND action='PASSWORD_RESET_REQUESTED' AND created_at>now()-interval '2 minutes' LIMIT 1", [client.id])).rows;
+      if (recent.length) throw new SupportError(429, "PASSWORD_RESET_COOLDOWN");
+      await audit(c, req, "PASSWORD_RESET_REQUESTED", reason, null, { requestKey, status: "PENDING" });
+      return { client, replay: false, status: "PENDING" };
+    });
+    if (prepared.replay) return res.status(prepared.status === "PENDING" ? 202 : 200).json({ ok: true, replayed: true, status: prepared.status, message: "Permintaan ini sudah tercatat; tidak ada email tambahan yang dikirim. Periksa riwayat support." });
+    let accepted = false;
+    try {
+      const email = await provider.ownerEmail(prepared.client.owner_user_ref);
+      if (!email) throw new SupportError(409, "OWNER_EMAIL_NOT_VERIFIED");
+      await provider.sendReset(email);
+      accepted = true;
+      await db.tx((c) => audit(c, req, "PASSWORD_RESET_SENT", reason, null, { requestKey, status: "SENT" }));
+    } catch (e) {
+      if (accepted) throw new SupportError(503, "PASSWORD_RESET_STATUS_UNKNOWN");
+      await db.tx((c) => audit(c, req, "PASSWORD_RESET_FAILED", reason, null, { requestKey, status: "FAILED" }));
+      throw e instanceof SupportError ? e : new SupportError(502, "PASSWORD_RESET_PROVIDER_REJECTED");
+    }
+    res.json({ ok: true, status: "SENT", message: "Permintaan email reset diterima oleh layanan Auth. Owner perlu memeriksa inbox/spam dan memilih kata sandi sendiri." });
+  }));
+}
+
 // src/server/subscriptionDetail.ts
 async function subscriptionDetail(db, tenantId) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const tenant = (await c.query("SELECT id,name,created_at,is_active FROM internal.tenants WHERE id=$1", [tenantId])).rows[0];
-    if (!tenant) return null;
+    const tenant2 = (await c.query("SELECT id,name,created_at,is_active FROM internal.tenants WHERE id=$1", [tenantId])).rows[0];
+    if (!tenant2) return null;
     const stored = (await c.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
-    const start = new Date(tenant.created_at).toISOString();
+    const start = new Date(tenant2.created_at).toISOString();
     const end = new Date(Date.parse(start) + TRIAL_DAYS * DAY_MS).toISOString();
     const s = stored || {
       plan_id: TRIAL_PLAN_ID,
@@ -1224,7 +1393,7 @@ async function subscriptionDetail(db, tenantId) {
     };
     const plan = SAAS_PLANS.find((p) => p.id === s.plan_id);
     const access = subscriptionAccess({
-      status: tenant.is_active ? s.status : "EXPIRED",
+      status: tenant2.is_active ? s.status : "EXPIRED",
       currentPeriodEnd: new Date(s.current_period_end).toISOString(),
       gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0
     });
@@ -1241,7 +1410,7 @@ async function subscriptionDetail(db, tenantId) {
     const activity = (await c.query("SELECT min(created_at) AS first_transaction_at,max(created_at) AS last_transaction_at FROM contract.merchant_revenue WHERE tenant_id=$1", [tenantId])).rows[0];
     const cap = plan ? plan.maxOutlets + Number(s.extra_outlets || 0) : null;
     return {
-      tenant,
+      tenant: tenant2,
       retrievedAt: (/* @__PURE__ */ new Date()).toISOString(),
       derivedTrial: !stored,
       activity,
@@ -1345,8 +1514,8 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
       if (action !== "NOTE" && req.internal.role !== "ROLE_SUPERADMIN") throw new BillingError(403, "CAPABILITY_DENIED");
       const result = await db.tx(async (c) => {
-        const tenant = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
-        if (!tenant.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
+        const tenant2 = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
+        if (!tenant2.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
         const before = await ensureSubscription(c, req.params.tenantId);
         let invoiceBefore = null, invoiceAfter = null;
         if (action === "EXTEND_TRIAL") {
@@ -1842,7 +2011,7 @@ async function recordAccess(db, who, action, resource, merchantId, justification
     [who.id, who.role, merchantId, action, resource, justification, ip, req.auditRequestId, String(req.headers["user-agent"] || "").slice(0, 512)]
   );
 }
-function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
+function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supportProvider) {
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
@@ -1910,9 +2079,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
           await recordAccess(db, who, securityError, req.path, null, null, req.ip || null, req);
           return res.status(403).json({ ok: false, error: securityError, requestId: req.auditRequestId });
         }
-        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const uuid2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         for (const value of [req.params.merchantId, req.params.tenantId, req.query.merchantId]) {
-          if (value !== void 0 && (typeof value !== "string" || !uuid.test(value))) return res.status(400).json({ ok: false, error: "INVALID_ID" });
+          if (value !== void 0 && (typeof value !== "string" || !uuid2.test(value))) return res.status(400).json({ ok: false, error: "INVALID_ID" });
         }
         const target = String(req.params.merchantId || req.params.tenantId || req.query.merchantId || "") || null;
         const reason = String(req.headers["x-justification"] || req.body?.reason || req.query.justification || "").trim() || null;
@@ -1926,6 +2095,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
         }
         if (requiresAudit(capability)) await recordAccess(db, who, capability, req.path, target, reason, req.ip || null, req);
         req.internal = who;
+        req.adminPrincipal = principal;
         req.environment = "PROVIDER_BO";
         next();
       } catch (err) {
@@ -1993,6 +2163,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer) {
     res.json({ ok: true, message: `Pengguna internal ${email} berhasil ditambahkan sebagai ${role}`, user: inserted.rows[0] });
   }));
   registerSubscriptionAdminRoutes(app, getDb, guard, wrap);
+  registerClientSupportRoutes(app, getDb, guard, supportProvider);
   app.get("/api/admin/staff-commissions", guard("VIEW_TRANSACTION_LOG"), wrap(async (req, res, db) => {
     const f = cleanFilter(req.query);
     const { rows } = await db.query(`SELECT * FROM contract.staff_commission_ledger
