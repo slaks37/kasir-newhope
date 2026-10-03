@@ -9,6 +9,22 @@ import {
 
 const SNAPSHOT_PREFIX = 'newhope_legacy_financial_v1_';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Only fully acknowledged recovery can use the fast path. Cache is volatile:
+// reload always verifies durable ACKs again. Changed snapshots, holds, retired
+// rows, mappings or storage key count invalidate it, including ACK loss.
+const completedMigrations=new Map<string,{storage:Storage;inputs:unknown[];result:LegacyMigrationResult}>();
+function checkpointInputs(target:SyncTarget,options:LegacyMigrationOptions){
+  const sourceKeys:string[]=[];
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    if(key&&(key==='newhope_orders'||key.startsWith('newhope_data_')&&key.endsWith(`_${target.sector}_orders`)))sourceKeys.push(key);
+  }
+  return [localStorage.length,options.outletMappings?JSON.stringify(options.outletMappings):'{}',
+    sourceKeys.sort().join('\x00'),
+    ...['newhope_legacy_financial_v1_','newhope_legacy_financial_ack_','newhope_legacy_cash_ack_','newhope_legacy_financial_holds_']
+      .map(prefix=>localStorage.getItem(prefix+target.businessId)),
+    localStorage.getItem('newhope_retired_financial_outbox_'+target.ownerRef+'_'+target.sector)];
+}
 
 interface LegacySnapshot {
   version: 1;
@@ -65,6 +81,11 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
     deferredCashMovements: 0, needsOutletMapping: 0, conflicts: 0, invalid: 0,
     complete: false, error: null, unassignedSourceKeys: [],unmappedOutletRefs:[],reviewRecords:[],
   };
+  // Verified new UUID business has no legacy partition. Do not discover/import
+  // another business's owner_sector snapshots merely because sectors match.
+  if(target.legacyAlias===null&&UUID.test(target.canonicalBusinessId||'')){
+    result.complete=true;return result;
+  }
   if (!target.ownerRef || target.businessId !== makeBusinessId(target.ownerRef, target.sector)) {
     result.error = 'LEGACY_OWNER_SCOPE_MISMATCH';
     return result;
@@ -72,6 +93,9 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
   const sourceKey = partitionKey(target.businessId, 'orders');
   const snapshotKey = `${SNAPSHOT_PREFIX}${target.businessId}`;
   try {
+    const completed=completedMigrations.get(target.businessId),inputs=checkpointInputs(target,options);
+    if(completed?.storage===localStorage&&inputs.every((value,index)=>value===completed.inputs[index]))return structuredClone(completed.result);
+    completedMigrations.delete(target.businessId);
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key !== sourceKey && (key === 'newhope_orders' ||
@@ -218,6 +242,7 @@ export function migrateLegacyFinancialData(target: SyncTarget, options: LegacyMi
     }
     result.unmappedOutletRefs=[...new Set(result.unmappedOutletRefs)];
     result.complete = transactionImportFinished && result.deferredCashMovements === 0 && result.unassignedSourceKeys.length === 0;
+    if(result.complete)completedMigrations.set(target.businessId,{storage:localStorage,inputs:checkpointInputs(target,options),result:structuredClone(result)});
   } catch (error) {
     result.error = error instanceof Error ? error.message : 'LEGACY_MIGRATION_FAILED';
   }

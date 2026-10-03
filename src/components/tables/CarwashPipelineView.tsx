@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { CarwashQueueItem, CarwashStage } from '../../types';
 import { formatDateTime } from '../../utils/formatters';
 import {
@@ -35,7 +35,7 @@ export const CarwashPipelineView: React.FC = () => {
     updateCarwashStage,
     removeCarwashQueue,
     staffMembers,
-  } = usePOS();
+  } = usePOSFields(["carwashQueue","addCarwashQueue","updateCarwashStage","removeCarwashQueue","staffMembers"]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);

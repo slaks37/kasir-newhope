@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import {
   MessageSquare,
   Share2,
@@ -46,7 +46,7 @@ export const WhatsAppLifecycleCenter: React.FC<WhatsAppLifecycleCenterProps> = (
     sentLifecycleHookIds,
     markLifecycleHookSent,
     dismissLifecycleHook,
-  } = usePOS();
+  } = usePOSFields(["customers","orders","bookings","carwashQueue","settings","sentLifecycleHookIds","markLifecycleHookSent","dismissLifecycleHook"]);
 
   const sector = settings.businessSector || 'FNB';
 

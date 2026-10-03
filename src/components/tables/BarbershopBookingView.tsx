@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { AppointmentBooking, BookingStatus } from '../../types';
 import { newId } from '../../lib/ids';
 import { formatRupiah } from '../../utils/formatters';
@@ -38,7 +38,7 @@ export const BarbershopBookingView: React.FC = () => {
     products,
     addToCart,
     setActiveTab,
-  } = usePOS();
+  } = usePOSFields(["bookings","saveBooking","deleteBooking","updateBookingStatus","sendBookingWaReminder","staffMembers","setSelectedStaff","products","addToCart","setActiveTab"]);
 
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]

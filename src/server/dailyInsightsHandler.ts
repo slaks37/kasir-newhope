@@ -15,9 +15,9 @@ export function createDailyInsightsHandler(connect=()=>connectDb({schema:'ai',ma
       database??=connect().catch(e=>{database=undefined;throw e;});const db=await database;
       // Oldest cache first: subsequent runs make progress instead of repeatedly
       // serving only the first merchants. Each run is bounded to 25 units.
-      const merchants=(await db.query(`SELECT m.id,m.external_ref,t.owner_user_ref FROM internal.merchants m
+      const merchants=(await db.query(`SELECT m.id,COALESCE(m.external_ref,m.id::text) AS external_ref,t.owner_user_ref FROM internal.merchants m
         JOIN internal.tenants t ON t.id=m.tenant_id LEFT JOIN ai.business_intelligence_cache c ON c.merchant_id=m.id
-        WHERE m.external_ref IS NOT NULL AND t.owner_user_ref IS NOT NULL
+        WHERE t.owner_user_ref IS NOT NULL AND t.is_active AND t.merged_into IS NULL
         ORDER BY c.generated_at ASC NULLS FIRST,m.id LIMIT 25`)).rows;
       let written=0,skipped=0,failed=0;
       for(const m of merchants){try{const document=await computeDailyBrief(db,{subject:m.owner_user_ref},m.external_ref);await cacheDailyBrief(db,document);written++;}

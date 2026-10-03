@@ -10,7 +10,7 @@ export async function loadMerchantSnapshot(db: Db, principal: AuthPrincipal, bus
   if(!principal?.subject||principal.subject==='local-development')throw new Error('AUTHENTICATION_REQUIRED');
   const merchant=(await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE m.external_ref=$1 AND t.owner_user_ref=$2`,[businessId,principal.subject])).rows[0];
+    WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,[businessId,principal.subject])).rows[0];
   if(!merchant)throw new Error('BUSINESS_NOT_OWNED');
   // Refuse excessive histories rather than silently truncate financial totals.
   const rows=(await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,

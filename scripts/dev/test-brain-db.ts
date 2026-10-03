@@ -50,8 +50,10 @@ try {
   const populatedReport=reportAggregates(populated,{period:'LAST_30'});
   assert.equal(populatedReport.revenueTotal,10000);assert.equal(populatedReport.cogs,4000);assert.equal(populatedReport.grossMarginPct,60);
   const otherTenant=randomUUID(), secondTenant=randomUUID();
-  await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Other','other-owner'),($2,'Second','brain-owner')",[otherTenant,secondTenant]);
-  await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Second','FNB','second-business'),($3,$4,'Other','FNB','other-business')",[randomUUID(),secondTenant,randomUUID(),otherTenant]);
+  await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref,is_active,merged_into) VALUES($1,'Other','other-owner',true,NULL),($2,'Legacy wallet archive','brain-owner',false,$3)",[otherTenant,secondTenant,tenant]);
+  await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Second','FNB','second-business'),($3,$4,'Other','FNB','other-business')",[randomUUID(),tenant,randomUUID(),otherTenant]);
+  assert.equal((await loadMerchantSnapshot(db,{subject:'brain-owner'},merchant)).merchantId,merchant,'Canonical UUID resolves the same existing merchant');
+  assert.equal((await ambilDompet(db,'brain-owner',merchant)).merchantId,tenant,'UUID transport does not create a separate credit wallet');
   const wallet=await ambilDompet(db,'brain-owner','brain-test');
   assert.equal(wallet.balance,30);
   assert.equal((await ambilDompet(db,'brain-owner','second-business')).merchantId,wallet.merchantId);
@@ -110,6 +112,10 @@ try {
     await kembalikanKredit(db,'brain-owner','brain-test',wallet.periodResetAt);
     assert.equal((await ambilDompet(db,'brain-owner','brain-test')).balance,30,'old-period refund cannot inflate new grant');
     // Preserve ambiguous legacy wallets but do not take away the zero-token path.
+    // Fresh isolated DB only: reproduce rows from before the canonical-owner
+    // index existed. This is not a production migration or a grant relaxation.
+    await db.exec('DROP INDEX internal.uq_tenant_canonical_owner');
+    await db.query('UPDATE internal.tenants SET merged_into=NULL WHERE id=$1',[secondTenant]);
     await db.query('INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at) VALUES($1,$1,5,30,25,$2)',[secondTenant,nextPeriod]);
     const deterministic=await call('POST','/api/v1/assistant/query',{...safeBody,query:'omzet hari ini',allowLlm:false});
     assert.equal(deterministic.payload.answer.costCredits,0);

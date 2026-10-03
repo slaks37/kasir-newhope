@@ -94,6 +94,8 @@ export interface SyncStatus {
 type SyncMeta = Omit<SyncStatus, 'pending' | 'inFlight'>;
 
 export interface SyncTarget {
+  canonicalBusinessId?:string;
+  legacyAlias?:string|null;
   businessId: string;
   outletId?: string;
   sector: BusinessSector;

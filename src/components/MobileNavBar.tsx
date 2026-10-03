@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../context/POSContext';
+import { usePOSFields } from '../context/POSDomains';
 import { PermissionFeature } from '../types';
 import {
   LayoutDashboard,
@@ -50,7 +50,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     settings,
     currentUser,
     shift,
-  } = usePOS();
+  } = usePOSFields(["activeTab","setActiveTab","products","heldOrders","hasPermission","settings","currentUser","shift"]);
   const { t } = useTranslation();
 
   const [showMoreMenu, setShowMoreMenu] = useState(false);

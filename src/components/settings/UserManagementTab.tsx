@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { ROLE_PERMISSIONS } from '../../data/rolePermissions';
 import { User, UserRole, PermissionFeature } from '../../types';
 import { newId } from '../../lib/ids';
@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 export const UserManagementTab: React.FC = () => {
-  const { users, currentUser, saveUser, deleteUser } = usePOS();
+  const { users, currentUser, saveUser, deleteUser } = usePOSFields(["users","currentUser","saveUser","deleteUser"]);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editingUser, setEditingUser] = useState<Partial<User>>({
@@ -106,6 +106,7 @@ export const UserManagementTab: React.FC = () => {
   };
 
   const featureLabels: Record<PermissionFeature, string> = {
+    businesses:'Bisnis Saya',
     home: 'Beranda Publik',
     overview: 'Overview & Ringkasan Toko',
     pos: 'Transaksi Kasir POS',

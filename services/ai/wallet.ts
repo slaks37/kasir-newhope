@@ -50,7 +50,7 @@ async function keUuid(db: Db, merchantId: string, businessId?: string): Promise<
   // merchantId MUST be the verified session subject, never a supplied UUID.
   if (!merchantId || merchantId === 'local-development' || !businessId) throw new Error('AUTHENTICATION_REQUIRED');
   const owned = await db.query(
-    'SELECT t.id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2',
+    'SELECT t.id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active',
     [businessId, merchantId]);
   if (!owned.rows.length) throw new Error('BUSINESS_NOT_OWNED');
   const wallets = await db.query(

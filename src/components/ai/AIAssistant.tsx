@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
 import { buildSnapshot } from '../../lib/assistant/snapshot';
 import { toAiContext, useTenant } from '../../context/TenantContext';
@@ -719,7 +719,7 @@ export const AIAssistant: React.FC = () => {
     settings,
     setActiveTab,
     addPromoCode,
-  } = usePOS();
+  } = usePOSFields(["products","categories","orders","customers","tables","stockItems","staffMembers","attendanceLogs","inventoryLogs","shift","shiftHistory","promoCodes","settings","setActiveTab","addPromoCode"]);
 
   /**
    * The active business unit + signed-in role. Everything the assistant reads,

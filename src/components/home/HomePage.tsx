@@ -31,7 +31,8 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { usePOS } from "../../context/POSContext";
+import {clearCheckoutIntent,saveCheckoutIntent} from '../../lib/workspace/checkoutIntent';
+import {navigate} from '../../lib/navigation/workspaceRouter';
 import {
   BUSINESS_PRESETS,
   type BusinessSector,
@@ -324,7 +325,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   onOpenPOS,
 }) => {
   const { user } = useAuth();
-  const { setActiveTab, activateBusinessSector, settings } = usePOS();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<BusinessSector>("FNB");
   const [isYearlyBilling, setIsYearlyBilling] = useState(true);
@@ -339,7 +339,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   const ai = aiExamples[aiQuery];
   const openPOS = (targetTab: "pos" | "settings" | "overview" | "payment" = "pos") => {
     if (user) {
-      setActiveTab(targetTab as any);
       onOpenPOS?.(targetTab);
     } else if (onOpenRegister) onOpenRegister();
     else onOpenLogin?.();
@@ -350,22 +349,16 @@ export const HomePage: React.FC<HomePageProps> = ({
   };
   const choosePlan = (id: string) => {
     if (id === "plan-free") {
-      sessionStorage.removeItem("nhpos_pending_checkout_plan");
-      sessionStorage.removeItem("nhpos_pending_checkout_cycle");
-      localStorage.removeItem("nhpos_pending_checkout_plan");
-      localStorage.removeItem("nhpos_pending_checkout_cycle");
+      clearCheckoutIntent(user?.id);
       register();
       return;
     }
     const cycle = isYearlyBilling ? "YEARLY" : "MONTHLY";
-    sessionStorage.setItem("nhpos_pending_checkout_plan", id);
-    sessionStorage.setItem("nhpos_pending_checkout_cycle", cycle);
-    localStorage.setItem("nhpos_pending_checkout_plan", id);
-    localStorage.setItem("nhpos_pending_checkout_cycle", cycle);
+    saveCheckoutIntent(user?.id,id,cycle);
     if (user) {
       openPOS("payment");
     } else {
-      register();
+      navigate('/register?returnTo=%2Fsubscription');
     }
   };
   const navClose = () => setMenuOpen(false);
@@ -726,22 +719,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <ChevronDown size={16} />
                   </summary>
                   <p>
-                    Mode toko saat ini:{" "}
-                    {BUSINESS_PRESETS[settings.businessSector || "FNB"].name}.
-                    Beralih memuat katalog sektor yang dipilih dan mengosongkan
-                    keranjang aktif.
+                    Kelola bisnis dan outlet di ruang kerja. Pratinjau ini tidak
+                    mengubah katalog atau keranjang toko yang sedang aktif.
                   </p>
                   <button
                     type="button"
                     className="nh-button nh-button-secondary"
                     onClick={() => {
-                      activateBusinessSector(selectedSector);
-                      setNotice(
-                        `Mode ${sector.label} aktif. Katalog sektor siap digunakan.`,
-                      );
+                      openPOS('settings');
                     }}
                   >
-                    Aktifkan {sector.label}
+                    Kelola bisnis saya
                   </button>
                 </details>
               )}

@@ -21,6 +21,9 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { hashPin, verifyPinHash } from '../lib/auth/pinSecurity';
 import { BusinessSector } from '../types';
 import { registerCloudAccount } from '../lib/auth/cloudSignup';
+import {setReadScope} from '../lib/sync/refreshCoordinator';
+import {claimCheckoutIntent} from '../lib/workspace/checkoutIntent';
+import {restoreAuthSession} from '../lib/auth/sessionLifecycle';
 
 export interface SignUpOptions {
   fullName?: string;
@@ -117,6 +120,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  React.useLayoutEffect(()=>{
+    setReadScope(user?.id||'anonymous');
+    if(user?.id)try{claimCheckoutIntent(user.id);}catch{/* Form hints never block authentication. */}
+  },[user?.id]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -134,25 +141,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    // Ambil sesi yang sudah ada di localStorage / Supabase SDK
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      setLoading(false);
-    }).catch((err) => {
-      console.warn('[auth] getSession fetch failed (offline/unreachable):', err);
-      setLoading(false);
-    });
-
-    // Subscribe ke perubahan state auth (login, logout, token refresh)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    return restoreAuthSession<Session|null>(
+      supabase.auth.getSession().then(({data})=>data.session),
+      receive=>{
+        const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>receive(session));
+        return()=>subscription.unsubscribe();
+      },
+      session=>{setSession(session);setUser(session?.user??null);setLoading(false);},
+      error=>{console.warn('[auth] Session restoration failed:',error);setLoading(false);}
+    );
   }, []);
 
   const signInWithGoogle = useCallback(async () => {

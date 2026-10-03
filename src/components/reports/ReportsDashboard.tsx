@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { usePOS } from '../../context/POSContext';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useReportWorkspace } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { exportCloudReport } from '../../utils/cloudReportExporter';
-import { useServerReport, calendarDate } from '../../lib/reports/client';
+import { useServerReport, calendarDate, fetchServerTransactions } from '../../lib/reports/client';
 import { CashMovementType, CashMovementCategory, CashMovement } from '../../types';
 import {
   BarChart3,
@@ -73,7 +73,7 @@ export const ReportsDashboard: React.FC = () => {
     addCashMovement,
     deleteCashMovement,
     setInitialCash,
-  } = usePOS();
+  } = useReportWorkspace();
   const { t } = useTranslation();
 
   // Navigation Sub-Tabs
@@ -82,6 +82,8 @@ export const ReportsDashboard: React.FC = () => {
   // Filters
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('today');
   const [searchQuery, setSearchQuery] = useState('');
+  const [serverSearch,setServerSearch]=useState('');
+  useEffect(()=>{const timer=setTimeout(()=>setServerSearch(searchQuery),300);return()=>clearTimeout(timer);},[searchQuery]);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('ALL');
 
   // Cash Movement Modal state
@@ -107,9 +109,12 @@ export const ReportsDashboard: React.FC = () => {
   const [shiftSummary, setShiftSummary] = useState<any>(null);
 
   const today=calendarDate();
-  const report=useServerReport({sector:settings.businessSector||'FNB',outletId:settings.activeBranchId,
+  const reportQuery={sector:settings.businessSector||'FNB',outletId:settings.activeBranchId,
     ...(dateFilter==='all'?{}:{from:calendarDate('Asia/Jakarta',dateFilter==='week'?-6:dateFilter==='month'?-29:0),to:today}),
-    paymentMethod:selectedPaymentMethod,search:searchQuery});
+    paymentMethod:selectedPaymentMethod,search:serverSearch};
+  const report=useServerReport(reportQuery);
+  const [exportBusy,setExportBusy]=useState(false);
+  const [exportError,setExportError]=useState('');
   const summary=report.summary;
   const todayMetrics=summary?.todayMetrics;
   const cashMovements=summary?.cashMovements||[];
@@ -161,8 +166,18 @@ export const ReportsDashboard: React.FC = () => {
 
   const topProductsBarData=summary?.topProductsBarData||[];
   const areaChartData=summary?.areaChartData||[];
-  const handleExportExcel=()=>{if(summary)exportCloudReport(summary,report.transactions,settings.storeName,'csv');};
-  const handleExportPDF=()=>{if(summary)exportCloudReport(summary,report.transactions,settings.storeName,'pdf');};
+  const exportAll=async(format:'csv'|'pdf')=>{
+    if(!summary||exportBusy)return;
+    // Reserve the print window inside the click gesture, before awaiting network.
+    const popup=format==='pdf'?window.open('','_blank'):undefined;
+    if(format==='pdf'&&!popup){setExportError('Izinkan jendela cetak untuk ekspor PDF.');return;}
+    setExportBusy(true);setExportError('');
+    try{const rows=await fetchServerTransactions(reportQuery);exportCloudReport(summary,rows,settings.storeName,format,popup);}
+    catch(error){popup?.close();setExportError(error instanceof Error?error.message:'Ekspor gagal.');}
+    finally{setExportBusy(false);}
+  };
+  const handleExportExcel=()=>void exportAll('csv');
+  const handleExportPDF=()=>void exportAll('pdf');
 
   // Cash Movement Submission Handler
   const handleSaveCashMovement = (e: React.FormEvent) => {
@@ -707,7 +722,10 @@ export const ReportsDashboard: React.FC = () => {
                   <span>Daftar Riwayat Struk Transaksi Penjualan</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Menampilkan {filteredOrders.length} transaksi selesai pada periode {dateFilterLabel}
+                  Menampilkan {filteredOrders.length} transaksi selesai yang dimuat pada periode {dateFilterLabel}. Total keuangan dihitung server, bukan jumlah baris halaman ini.
+                  {report.nextCursor && <button disabled={report.loadingMore} onClick={()=>void report.loadMore()} className="ml-2 font-bold text-amber-700 disabled:opacity-50">{report.loadingMore?'Memuat…':'Muat transaksi berikutnya'}</button>}
+                  {exportBusy && <span role="status"> Menyiapkan ekspor seluruh periode…</span>}
+                  {exportError && <span role="alert" className="text-rose-700"> {exportError}</span>}
                 </p>
               </div>
 

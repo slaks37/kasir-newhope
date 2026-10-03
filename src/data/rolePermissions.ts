@@ -5,6 +5,7 @@ import { PermissionFeature, UserRole } from '../types';
 // constants forces a full module invalidation on every edit.
 export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
   ADMIN: [
+    'businesses',
     'home',
     'overview',
     'pos',
@@ -22,6 +23,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionFeature[]> = {
     'labor',
   ],
   MANAGER: [
+    'businesses',
     'home',
     'overview',
     'pos',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -11,7 +11,7 @@ interface HoldOrdersModalProps {
 }
 
 export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({ onClose }) => {
-  const { heldOrders, recallHoldOrder, cancelHoldOrder } = usePOS();
+  const { heldOrders, recallHoldOrder, cancelHoldOrder } = usePOSFields(["heldOrders","recallHoldOrder","cancelHoldOrder"]);
   const { t } = useTranslation();
   const [orderToPay, setOrderToPay] = useState<Order | null>(null);
 

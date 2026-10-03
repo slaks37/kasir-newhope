@@ -11,12 +11,14 @@ import { pastikanPaket } from '../../services/billing/store';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { transactionLog, sectorSummary } from '../../src/server/repo';
 
+// No dataDir/connection string: each run creates a new in-memory WASM engine.
 const pg=new PGlite();
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows||0};},exec:async sql=>{await runner.exec(sql);},tx:async fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
 const db=wrap(pg),owner=randomUUID(),other=randomUUID(),tenant=randomUUID(),merchant=randomUUID(),outlet=randomUUID(),inactive=randomUUID();
 const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
 await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
 for(const file of files)await pg.exec(fs.readFileSync(file,'utf8'));
+for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort())await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
 await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
 await pastikanPaket(db,SAAS_PLANS);
 await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,$2,'Owner')",[owner,owner+'@fixture.invalid']);
@@ -27,17 +29,40 @@ await ensureSubscription(db,tenant);
 const app=express();app.use(express.json());app.use(createSyncHandler(async req=>req.headers.authorization==='Bearer owner'?{subject:owner}:req.headers.authorization==='Bearer other'?{subject:other}:null,async()=>db));
 const server=app.listen(0,'127.0.0.1');await new Promise<void>((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
 const base='http://127.0.0.1:'+(server.address() as any).port;
+const nativeFetch=globalThis.fetch;
+globalThis.fetch=((input:any,init?:RequestInit)=>{
+  const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);
+  assert.equal(url.origin,base,'Integration fixture must never contact a remote service');
+  return nativeFetch(input,init);
+}) as typeof fetch;
 const post=async(path:string,body:any,token='owner')=>{const response=await fetch(base+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
 const get=async(path:string,token='owner')=>{const response=await fetch(base+path,{headers:{authorization:'Bearer '+token}});return {status:response.status,data:await response.json()};};
 const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  const directory=await get('/api/v1/sync/business');
+  assert.equal(directory.status,200);assert.equal(directory.data.businesses[0].businessId,merchant);
+  assert.equal(directory.data.businesses[0].legacyAlias,owner+'_FNB');
+  assert.equal(directory.data.businesses[0].outlets.length,2,'Inactive outlets remain discoverable with history preserved');
+  assert.equal((await get('/api/v1/sync/business','other')).data.businesses.length,0,'Directory never crosses tenants');
   const tableOp={kind:'tables',recordId:'conflict',baseRevision:0,deleted:false,value:{id:'conflict',name:'Server table'}};
   assert.equal((await post('/api/v1/sync/state',{sector:'FNB',operations:[tableOp]})).status,200);
   const batch=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...tableOp,value:{...tableOp.value,name:'Stale table'}},
     ...Array.from({length:60},(_,i)=>({kind:'tables',recordId:'batch-'+i,baseRevision:0,deleted:false,value:{id:'batch-'+i,name:'Table '+i}}))]});
   assert.equal(batch.status,200,JSON.stringify(batch));assert.equal(batch.data.versions.length,60);assert.equal(batch.data.conflicts.length,1);
+  const coreSnapshot=await get('/api/v1/sync/state?sector=FNB&kinds=store_settings,users');
+  assert.equal(coreSnapshot.status,200);assert.deepEqual(coreSnapshot.data.kinds,['store_settings','users']);
+  assert.equal(coreSnapshot.data.records.length,0,'Core bootstrap excludes the 61 table records');
+  const tableSnapshot=await get('/api/v1/sync/state?sector=FNB&kinds=tables');
+  assert.equal(tableSnapshot.data.records.length,61);assert(tableSnapshot.data.records.every((r:any)=>r.kind==='tables'));
+  const unchanged=await get('/api/v1/sync/state?sector=FNB&kinds=tables&knownVersion='+tableSnapshot.data.version);
+  assert.equal(unchanged.data.unchanged,true);assert.equal(unchanged.data.records.length,0,'Unchanged revisions omit the operational payload');
+  const changedTable=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...tableOp,baseRevision:1,value:{...tableOp.value,name:'Changed'}}]});
+  assert.equal(changedTable.data.versions[0].revision,2);
+  const changedSnapshot=await get('/api/v1/sync/state?sector=FNB&kinds=tables&knownVersion='+tableSnapshot.data.version);
+  assert.notEqual(changedSnapshot.data.version,tableSnapshot.data.version);assert.equal(changedSnapshot.data.records.length,61);
+  assert.equal((await get('/api/v1/sync/state?sector=FNB&kinds=orders')).status,400,'Financial ledger cannot be requested as operational state');
   const laundryMerchant=randomUUID(),laundryOutlet=randomUUID();
   await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Laundry','LAUNDRY',$3)",[laundryMerchant,tenant,owner+'_LAUNDRY']);
   await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,'Laundry',true)",[laundryOutlet,tenant,laundryMerchant]);
@@ -54,7 +79,7 @@ try{
   assert.equal((await db.query('SELECT name FROM internal.merchants WHERE id=$1',[merchant])).rows[0].name,'Cloud FNB identity','Acknowledged settings own the merchant display projection');
   const wrongMode=await post('/api/v1/sync/state',{sector:'FNB',operations:[{...settingsOp,baseRevision:1,value:{...settingsOp.value,storeMode:'SERVICE'}}]});
   assert.equal(wrongMode.data.rejected[0].error,'WRONG_SCOPE');
-  await assert.rejects(()=>db.query("UPDATE pos.shared_state_records SET value=jsonb_set(value,'{storeMode}','\"SERVICE\"') WHERE tenant_id=$1 AND scope='FNB' AND kind='store_settings'",[tenant]),/shared_settings_sector_mode/,'Older writers cannot recreate cross-sector settings');
+  await assert.rejects(()=>db.query("UPDATE pos.shared_state_records SET value=jsonb_set(value,'{storeMode}','\"SERVICE\"') WHERE tenant_id=$1 AND scope='FNB' AND kind='store_settings'",[tenant]),/shared_settings_sector_mode|BUSINESS_STORE_MODE_MISMATCH/,'Older writers cannot recreate cross-sector settings');
   assert.equal((await post('/api/v1/sync/catalog',{businessId:owner+'_FNB',sector:'FNB',products:[]})).status,409,'Projection cannot independently own state');
   const scopedCustomer={kind:'customers',recordId:'same-customer',baseRevision:0,deleted:false,value:{id:'same-customer',name:'Same customer'}};
   assert.equal((await post('/api/v1/sync/state',{sector:'LAUNDRY',operations:[scopedCustomer]})).data.versions.length,1);
@@ -110,7 +135,7 @@ try{
   const admin=await transactionLog(db,{tenantId:tenant,merchantId:merchant,outletId:outlet,from:'2026-10-01',to:'2026-10-01'});assert.equal(admin.revenueAmount,0);assert.equal(admin.refundAmount,55000);assert.equal(admin.total,1);
   const second={...tx,clientTxnId:'void-A',items:[{...tx.items[0],clientItemId:'void-line'}]};
   assert.equal((await post('/api/v1/sync/transactions',{...body,transactions:[second]})).status,200);
-  const voidBody={...body,transactions:[{...second,paymentStatus:'CANCELLED'}]};assert.equal((await post('/api/v1/sync/transactions',voidBody)).status,200);assert.equal((await post('/api/v1/sync/transactions',voidBody)).status,200);
+  const voidBody={...body,transactions:[{...second,paymentStatus:'CANCELLED',voidedAt:'2026-10-01T06:00:00Z'}]};assert.equal((await post('/api/v1/sync/transactions',voidBody)).status,200);assert.equal((await post('/api/v1/sync/transactions',voidBody)).status,200);
   assert.equal((await get('/api/v1/reports/summary?'+query)).data.financialSummary.totalNetRevenue,0);
   assert.equal((await transactionLog(db,{merchantId:merchant})).counts.voided,1);
   const cash={...scope,clientEventId:'cash-A',type:'CASH_OUT',amount:5000,category:'OPERASIONAL',description:'Expense',occurredAt:'2026-10-01T10:00:00Z'};
@@ -189,6 +214,15 @@ try{
   assert.equal((await get('/api/v1/finance/shift?sector=FNB&outletId='+outlet)).data.shift.expectedCash,23750,'Original-method split refunds reverse only the cash share');
   const allTime=await get('/api/v1/reports/summary?sector=FNB&outletId='+outlet);
   assert.equal(allTime.status,200,JSON.stringify(allTime));assert.ok(allTime.data.financialSummary.totalNetRevenue>0);
+  const legacyVoid={...tx,clientTxnId:'legacy-void-no-time'};
+  assert.equal((await post('/api/v1/sync/transactions',{...body,transactions:[legacyVoid]})).status,200);
+  const voidStarted=Date.now();
+  assert.equal((await post('/api/v1/sync/transactions',{...body,transactions:[{...legacyVoid,paymentStatus:'CANCELLED'}]})).status,200);
+  const voidEvent=(await db.query(`SELECT t.voided_at,l.occurred_at FROM pos.transactions t
+    JOIN pos.cash_ledger l ON l.transaction_id=t.id AND l.event_type='VOID'
+    WHERE t.tenant_id=$1 AND t.client_txn_id=$2`,[tenant,legacyVoid.clientTxnId])).rows[0];
+  assert.equal(new Date(voidEvent.voided_at).getTime(),new Date(voidEvent.occurred_at).getTime(),'Legacy void and compensating cash share one event timestamp');
+  assert.ok(new Date(voidEvent.voided_at).getTime()>=voidStarted,'Missing void timestamp is not backdated to the sale date');
   // Reproduce an older version's wrong FNB projection, with a real historical
   // sale referring to its primary ID. Repair must never rewrite the ledger.
   const oldProduct=randomUUID();
@@ -209,6 +243,102 @@ try{
   const recovered=(await get('/api/v1/sync/state?sector=FNB')).data.records.find((r:any)=>r.recordId==='prod-ld-12');
   assert.equal(recovered.deleted,true);assert.equal(recovered.recoveryValue.name,'Cleaning & Sanitasi Helm Fullface');
   assert.equal((await get('/api/v1/sync/catalog?businessId='+owner+'_FNB&sector=FNB')).data.products.some((p:any)=>p.id==='prod-ld-12'),false);
+  const explicit=await get('/api/v1/sync/state?sector=FNB&businessId='+merchant);
+  assert.equal(explicit.data.business.businessId,merchant,'Selected canonical business is echoed for client verification');
+  assert.equal((await get('/api/v1/sync/state?sector=FNB&businessId='+merchant,'other')).status,403);
+  assert.equal((await post('/api/v1/sync/state',{sector:'LAUNDRY',businessId:merchant,operations:[tableOp]})).status,403,'Business UUID cannot cross its sector');
+  const barberA=randomUUID(),barberB=randomUUID();
+  for(const id of [barberA,barberB])await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Same brand','BARBERSHOP',$3)",[id,tenant,id===barberA?null:id]);
+  const unaliased=(await get('/api/v1/sync/business')).data.businesses.find((b:any)=>b.businessId===barberA);
+  assert.equal(unaliased.transportRef,barberA,'Old businesses without aliases use their existing UUID, never a guessed sector alias');
+  assert.equal(unaliased.legacyAlias,null);
+  assert.equal((await get('/api/v1/sync/receipt-logo?businessId='+barberA)).status,200,'Logo reads support canonical UUID without provisioning');
+  assert.equal((await get('/api/v1/sync/receipt-logo?businessId='+barberA,'other')).status,403);
+  const ambiguous=await get('/api/v1/sync/state?sector=BARBERSHOP');
+  assert.equal(ambiguous.status,409);assert.equal(ambiguous.data.error,'BUSINESS_SELECTION_REQUIRED','Never select the first of two same-sector businesses');
+  assert.equal((await post('/api/v1/sync/state',{sector:'BARBERSHOP',operations:[tableOp]})).status,409,'Ambiguous writes are held, not silently reassigned');
+  assert.equal((await get('/api/v1/sync/state?sector=BARBERSHOP&businessId='+barberB)).data.business.businessId,barberB);
+  const barberOutlets=[randomUUID(),randomUUID()];
+  for(const [index,id] of [barberA,barberB].entries())await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,'Same-sector outlet',true)",[barberOutlets[index],tenant,id]);
+  const sameProduct={kind:'products',recordId:'shared-product-id',baseRevision:0,deleted:false,
+    value:{id:'shared-product-id',name:'Brand A product',price:12000,costPrice:5000,businessSector:'BARBERSHOP'}};
+  for(const [index,id] of [barberA,barberB].entries()){
+    const response=await post('/api/v1/sync/state',{sector:'BARBERSHOP',businessId:id,outletId:barberOutlets[index],operations:[{...sameProduct,value:{...sameProduct.value,name:index?'Brand B product':'Brand A product',businessId:id}}]});
+    assert.equal(response.status,200,JSON.stringify(response));assert.equal(response.data.versions.length,1);assert.equal(response.data.conflicts.length,0);
+  }
+  for(const [index,id] of [barberA,barberB].entries()){
+    const snapshot=(await get('/api/v1/sync/state?sector=BARBERSHOP&businessId='+id)).data;
+    assert.equal(snapshot.records.find((r:any)=>r.recordId==='shared-product-id').value.name,index?'Brand B product':'Brand A product');
+    assert.equal(snapshot.records.find((r:any)=>r.recordId==='shared-product-id').scope,'BARBERSHOP','Wire sector is an attribute, storage scope is merchant UUID');
+  }
+  const canonicalProductRows=(await db.query("SELECT merchant_id,business_id,name FROM pos.products WHERE tenant_id=$1 AND external_ref='shared-product-id' ORDER BY name",[tenant])).rows;
+  assert.equal(canonicalProductRows.length,2);assert.equal(new Set(canonicalProductRows.map((r:any)=>r.merchant_id)).size,2,'Identical product IDs cannot compete for normalized ownership');
+  const laborScope={sector:'BARBERSHOP',businessId:barberA,outletId:barberOutlets[0]};
+  const attendanceOp={kind:'attendance_logs',recordId:'versioned-attendance',baseRevision:0,deleted:false,value:{id:'versioned-attendance',staffId:'synthetic-staff',staffName:'Fixture staff',staffRole:'STAFF',branchId:barberOutlets[0],branchName:'Branch',clockInTime:'2026-10-01T01:00:00Z',status:'CLOCKED_IN',businessSector:'BARBERSHOP'}};
+  const attendanceAccepted=await post('/api/v1/sync/state',{...laborScope,operations:[attendanceOp]});
+  assert.equal(attendanceAccepted.data.versions.length,1,JSON.stringify(attendanceAccepted));
+  const closedAttendance={...attendanceOp,baseRevision:1,value:{...attendanceOp.value,status:'CLOCKED_OUT',clockOutTime:'2026-10-01T09:00:00Z'}};
+  assert.equal((await post('/api/v1/sync/state',{...laborScope,operations:[closedAttendance]})).data.versions[0].revision,2);
+  assert.equal((await post('/api/v1/sync/state',{...laborScope,operations:[attendanceOp]})).data.conflicts.length,1,'Stale clock-in cannot reopen the normalized attendance');
+  assert.equal((await db.query("SELECT status FROM pos.staff_attendances WHERE tenant_id=$1 AND client_attendance_id='versioned-attendance'",[tenant])).rows[0].status,'CLOCKED_OUT');
+  const mixedLabor=await post('/api/v1/sync/state',{...laborScope,operations:[{...closedAttendance,baseRevision:2,value:{...closedAttendance.value,branchId:barberOutlets[1]}},{kind:'tables',recordId:'unblocked-table',baseRevision:0,deleted:false,value:{id:'unblocked-table',name:'Unrelated'}}]});
+  assert.equal(mixedLabor.data.rejected[0].error,'ATTENDANCE_OUTLET_NOT_OWNED');assert.equal(mixedLabor.data.versions.length,1,'Labor rejection cannot roll back an unrelated record');
+  const sameLaborOtherBusiness=await post('/api/v1/sync/state',{sector:'BARBERSHOP',businessId:barberB,outletId:barberOutlets[1],operations:[{...attendanceOp,value:{...attendanceOp.value,branchId:barberOutlets[1]}}]});
+  assert.equal(sameLaborOtherBusiness.data.rejected[0].error,'LABOR_PROJECTION_OWNER_CONFLICT','Existing normalized attendance ownership cannot be claimed by another business');
+  const payrollOp={kind:'payroll_slips',recordId:'versioned-payroll',baseRevision:0,deleted:false,value:{id:'versioned-payroll',staffId:'synthetic-staff',staffName:'Fixture staff',staffRole:'STAFF',periodMonth:'2026-10',periodStart:'2026-10-01',periodEnd:'2026-10-31',daysAttended:1,baseSalary:10000,allowance:0,individualCommission:0,teamPoolCommission:0,dailyTargetBonus:0,grossEarnings:10000,deductions:0,netSalary:10000,status:'DRAFT'}};
+  const draftPayroll=await post('/api/v1/sync/state',{...laborScope,operations:[payrollOp]});assert.equal(draftPayroll.data.versions.length,1,JSON.stringify(draftPayroll));
+  const paidPayroll={...payrollOp,baseRevision:1,value:{...payrollOp.value,status:'PAID',paidAt:'2026-10-31T01:00:00Z',paymentMethod:'BANK'}};
+  assert.equal((await post('/api/v1/sync/state',{...laborScope,operations:[paidPayroll]})).data.versions[0].revision,2);
+  const immutablePayroll=await post('/api/v1/sync/state',{...laborScope,operations:[{...paidPayroll,baseRevision:2,value:{...paidPayroll.value,netSalary:99999}}]});
+  assert.equal(immutablePayroll.data.rejected[0].error,'PAID_PAYROLL_IMMUTABLE');
+  assert.equal((await post('/api/v1/sync/state',{...laborScope,operations:[{...paidPayroll,baseRevision:2,deleted:true,value:null}]})).data.rejected[0].error,'PAID_PAYROLL_IMMUTABLE');
+  assert.equal(Number((await db.query("SELECT net_salary FROM pos.staff_payrolls WHERE tenant_id=$1 AND client_slip_id='versioned-payroll'",[tenant])).rows[0].net_salary),10000);
+  for(const kind of ['attendance','payroll'])assert.equal((await post('/api/v1/sync/'+kind,{businessId:barberA,sector:'BARBERSHOP'})).status,409,'Unversioned labor writer cannot compete with shared state');
+  await db.tx(async c=>{
+    await c.exec('SET LOCAL ROLE svc_pos');
+    await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tenant,barberB]);
+    await c.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision) VALUES($1,$2,$3,'tables','service-role-scope',$4::jsonb,1)",
+      [tenant,barberB,'BUSINESS:'+barberB,JSON.stringify({id:'service-role-scope',sector:'BARBERSHOP'})]);
+  });
+  assert.equal((await db.query("SELECT has_function_privilege('authenticated','pos.validate_shared_business_namespace()','EXECUTE') AS allowed")).rows[0].allowed,false,'Trigger adds no browser execute grant');
+  const lostAck=await post('/api/v1/sync/state',{sector:'BARBERSHOP',businessId:barberB,outletId:barberOutlets[1],operations:[{...sameProduct,value:{...sameProduct.value,name:'Brand B product',businessId:barberB}}]});
+  assert.equal(lostAck.data.versions[0].revision,1,'Same-business lost ACK replay does not mutate the other business or increment revisions');
+  // Simulate a pre-migration operational row in this fresh in-memory fixture.
+  await db.exec('ALTER TABLE pos.shared_state_records DISABLE TRIGGER shared_business_namespace_guard');
+  await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value) VALUES($1,$2,'BARBERSHOP','tables','old-table',$3::jsonb)",[tenant,barberA,JSON.stringify({id:'old-table',name:'Original bytes',businessSector:'BARBERSHOP'})]);
+  await db.exec('ALTER TABLE pos.shared_state_records ENABLE TRIGGER shared_business_namespace_guard');
+  const original=(await db.query("SELECT to_jsonb(r) AS original FROM pos.shared_state_records r WHERE tenant_id=$1 AND scope='BARBERSHOP' AND record_id='old-table'",[tenant])).rows[0].original;
+  for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')))await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+  const namespaceRow=(await db.query("SELECT scope,scope_recovery_snapshot,value FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND record_id='old-table'",[tenant,barberA])).rows[0];
+  assert.equal(namespaceRow.scope,'BUSINESS:'+barberA);assert.deepEqual(namespaceRow.scope_recovery_snapshot,original);assert.deepEqual(namespaceRow.value,original.value);
+  await assert.rejects(()=>db.query("UPDATE pos.shared_state_records SET scope='BARBERSHOP' WHERE tenant_id=$1 AND merchant_id=$2 AND record_id='old-table'",[tenant,barberA]),/BUSINESS_NAMESPACE_REQUIRED/);
+  const ambiguousProvision=await post('/api/v1/sync/business',{sector:'BARBERSHOP',storeName:'Unsafe implicit selection'});
+  assert.equal(ambiguousProvision.status,409,'Provisioning also rejects sector-only ambiguity');
+  assert.equal((await post('/api/v1/sync/business',{sector:'BARBERSHOP',storeName:'Explicit',businessId:barberB})).data.merchantId,barberB);
+  const createKey=randomUUID();
+  const creation={intent:'create',requestKey:createKey,sector:'LAUNDRY',storeName:'Second Laundry'};
+  const created=await post('/api/v1/sync/business',creation);
+  assert.equal(created.status,200,JSON.stringify(created));assert.notEqual(created.data.merchantId,laundryMerchant);
+  assert.equal((await post('/api/v1/sync/business',creation)).data.merchantId,created.data.merchantId,'Creation retry after lost ACK cannot duplicate a business');
+  assert.equal((await post('/api/v1/sync/business',{...creation,sector:'RETAIL'})).status,409,'Request key cannot be reused for another business');
+  await db.query('UPDATE internal.merchants SET is_active=false WHERE id=$1',[barberB]);
+  assert.equal((await get('/api/v1/sync/state?sector=BARBERSHOP&businessId='+barberB)).status,403,'Inactive businesses cannot accept sync');
+  assert.equal((await get('/api/v1/sync/business')).data.businesses.filter((b:any)=>b.sector==='BARBERSHOP').length,2,'Directory retains distinct same-sector and inactive businesses');
+  assert.equal(await financialBytes(),beforeRepair,'Directory and identity checks do not mutate financial ledger rows');
+  const merchantCount=(await db.query('SELECT COUNT(*)::int n FROM internal.merchants WHERE tenant_id=$1',[tenant])).rows[0].n;
+  const canonicalSale={...tx,clientTxnId:'old-unaliased-business-sale',items:[{...tx.items[0],clientItemId:'old-unaliased-line'}]};
+  const canonicalBody={businessId:barberA,sector:'BARBERSHOP',outletId:barberOutlets[0],storeName:'Stale client name',transactions:[canonicalSale]};
+  assert.equal((await post('/api/v1/sync/transactions',canonicalBody)).status,200,'Existing unaliased business accepts UUID transport');
+  assert.equal((await post('/api/v1/sync/transactions',canonicalBody)).status,200);
+  assert.equal((await db.query('SELECT COUNT(*)::int n FROM internal.merchants WHERE tenant_id=$1',[tenant])).rows[0].n,merchantCount,'Financial sync cannot create a UUID-as-alias duplicate');
+  const unchangedIdentity=(await db.query('SELECT external_ref,name FROM internal.merchants WHERE id=$1',[barberA])).rows[0];
+  assert.equal(unchangedIdentity.external_ref,null);assert.equal(unchangedIdentity.name,'Same brand','Financial delivery cannot rename the business');
+  const canonicalRows=(await db.query('SELECT merchant_id,outlet_id FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2',[tenant,canonicalSale.clientTxnId])).rows;
+  assert.equal(canonicalRows.length,1);assert.equal(canonicalRows[0].merchant_id,barberA);assert.equal(canonicalRows[0].outlet_id,barberOutlets[0]);
+  const canonicalStatus=await get('/api/v1/sync/status?businessId='+barberA);
+  assert.equal(canonicalStatus.data.synced_transactions,1,'Sync status counts the selected business, not all tenant sales');
   console.log('PASS: 60/61 partial commit, merchant-scoped identities, exact replay, server-side wrong-scope backups and byte-equivalent financial ledger');
+  console.log('PASS: canonical directory and explicit business authorization; same-sector ambiguity and inactive/foreign selections fail closed');
+  console.log('PASS: two same-sector businesses own identical product IDs independently, exact replay, old-namespace recovery snapshot and idempotent creation');
   console.log('PASS: Device A → PostgreSQL → Device B → Admin equality; retry, immutable cash, refund, void, SETTLED split tender, tenant/outlet isolation and timezone');
-}finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
+}finally{globalThis.fetch=nativeFetch;await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}

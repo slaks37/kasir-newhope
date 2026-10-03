@@ -1,17 +1,17 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {usePOS} from '../../context/POSContext';
+import {usePOSFields} from '../../context/POSDomains';
 import {LegacyRecoveryPanel} from './LegacyRecoveryPanel';
 import {operationalRecovery,recoveryGroups} from '../../lib/sync/operationalRecovery';
 
 /** The only user-facing recovery surface. Header only opens this center. */
 export function SyncCenter(){
-  const {syncCenter,closeSyncCenter,forceSync,resolveOperationalConflict,settings}=usePOS();
+  const {syncCenter,closeSyncCenter,forceSync,resolveOperationalConflict,settings}=usePOSFields(["syncCenter","closeSyncCenter","forceSync","resolveOperationalConflict","settings"]);
   const close=useRef<HTMLButtonElement>(null),[busy,setBusy]=useState('');
   useEffect(()=>{const previous=document.activeElement as HTMLElement|null;close.current?.focus();
     const key=(e:KeyboardEvent)=>{if(e.key==='Escape')closeSyncCenter();};document.addEventListener('keydown',key);
     return()=>{document.removeEventListener('keydown',key);previous?.focus();};},[closeSyncCenter]);
   let backups:ReturnType<typeof operationalRecovery>=[];
-  try{backups=operationalRecovery(syncCenter.businessId.replace(/_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/,''),settings.businessSector||'FNB');}catch{}
+  try{backups=operationalRecovery(syncCenter.owner||syncCenter.businessId.replace(/_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/,''),settings.businessSector||'FNB',syncCenter.operationalNamespace);}catch{}
   const protectedRecords=recoveryGroups(backups);
   const resolve=async(kind:string,recordId:string,choice:'server'|'local')=>{
     setBusy(kind+recordId);try{await resolveOperationalConflict(kind,recordId,choice);}finally{setBusy('');}

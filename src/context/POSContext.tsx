@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { useState, useEffect, ReactNode } from 'react';
 import { orderOperations,mergeOrderOperations } from '../lib/sync/orderOperations';
 import {
   Category,
@@ -57,8 +57,6 @@ import {
   orderToPayload,
   getPendingTransactions,
   markCloudRead,
-  pushAttendance,
-  pushPayroll,
   pullCatalog,
   type SyncStatus,
   type SyncTarget,
@@ -71,6 +69,16 @@ import {
   resetPinAttempts,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
+import {useWorkspaceBusiness} from './WorkspaceBusinessContext';
+import {WorkspaceCache} from '../lib/workspace/operationalCache';
+import {hasVerifiedFinancialScope,saveVerifiedFinancialScope} from '../lib/workspace/offlineBootstrap';
+import {readReceiptLogo,saveReceiptLogo} from '../lib/workspace/receiptLogo';
+import {useOnline} from '../lib/workspace/useOnline';
+import {useCartState} from './domains/useCartState';
+import {useCatalogState,useCustomerState} from './domains/useCatalogState';
+import {useLaborState} from './domains/useLaborState';
+import {useInventoryState} from './domains/useInventoryState';
+import {directoryOutletRows} from '../lib/workspace/businessIdentity';
 import { isFreePlan, freeProductAllowed } from '../config/freePlanPolicy';
 import { mergeServerOutlets, prepareOutletBusiness } from '../lib/sync/outlets';
 import { SharedStateSync, recordIdOf, type SharedRecord, type SharedSyncStatus } from '../lib/sync/sharedState';
@@ -102,17 +110,22 @@ import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { newId } from '../lib/ids';
 import { migrateLegacyFinancialData, type LegacyMigrationResult } from '../lib/sync/legacyMigration';
 import { enqueueCashCommand, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
-import { fetchRecentServerTransactions, fetchReportSummary, reportParams } from '../lib/reports/client';
+import { fetchFinancialWorkspace } from '../lib/reports/client';
+import { useWorkspaceRoute, navigateModule } from '../lib/navigation/workspaceRouter';
+import { moduleForPath } from '../lib/navigation/routes';
+import { refreshCoordinator } from '../lib/sync/refreshCoordinator';
+import { POSDomainProvider,usePOSSnapshot } from './POSDomains';
+import { kindsForModule } from '../lib/sync/moduleKinds';
 
-interface POSContextType {
+export interface POSContextType {
   /**
    * The active business unit + signed-in user. Partition key for all scoped
    * data and the sole source of AI scoping. Also available via `useTenant()`.
    */
   tenant: TenantInfo;
 
-  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment';
-  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment') => void;
+  activeTab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment' | 'businesses';
+  setActiveTab: (tab: 'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment' | 'businesses') => void;
   
   categories: Category[];
   products: Product[];
@@ -372,7 +385,7 @@ interface POSContextType {
   setInitialCash: (amount: number) => void;
 }
 
-const POSContext = createContext<POSContextType | undefined>(undefined);
+// Compatibility consumers retain usePOS; hot paths subscribe to individual domains.
 
 /*
  * Storage keys are derived from the tenant partition key, never hand-built.
@@ -387,7 +400,7 @@ const getGlobalUserKey = (entity: string, userId: string): string => accountKey(
 export const safeSetLocalStorage = (key: string, value: string): void => {
   if(operationalCacheBlocked(key))return;
   try {
-    localStorage.setItem(key, value);
+    if(localStorage.getItem(key)!==value)localStorage.setItem(key, value);
   } catch (e) {
     console.warn(`[storage] LocalStorage write failed for key "${key}" (quota exceeded or blocked):`, e);
   }
@@ -435,6 +448,21 @@ const seedAttendanceFor = (_sector: BusinessSector): AttendanceRecord[] => [];
 
 export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user: authUser, session: authSession } = useAuth();
+  const workspaceBusiness=useWorkspaceBusiness();
+  const online=useOnline();
+  const selectedBusiness=workspaceBusiness.business;
+  const storageId=selectedBusiness.transportRef!;
+  const operationalNamespace=selectedBusiness.legacyAlias?undefined:selectedBusiness.businessId;
+  const cache=React.useRef<WorkspaceCache|null>(null);
+  if(!cache.current)cache.current=new WorkspaceCache(authUser!.id,selectedBusiness.sector,storageId,operationalNamespace);
+  // These closures belong to this immutable provider instance. A second
+  // same-sector business never consults an owner_sector partition.
+  const getScopedKey=(entity:string,_owner:string,_sector:BusinessSector)=>cache.current!.key(entity);
+  const safeSetLocalStorage=(key:string,value:string)=>{try{cache.current!.write(key,value);}catch(error){console.warn('[storage] Cache write failed; original data retained',error);}};
+  const loadScopedData=<T,>(entity:string,owner:string,sector:BusinessSector,fallback:T):T=>{
+    try{return cache.current!.load(entity,fallback,kindsForModule(activeTab));
+    }catch{return fallback;}
+  };
   // Store identity is independent of the local cashier profile.
   const storeOwnerId = authUser?.id || 'usr-owner';
   const legacyKeys = React.useRef<Set<string> | null>(null);
@@ -460,16 +488,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     createdAt: authUser?.created_at || new Date().toISOString(),
   };
 
-  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'pos' | 'tables' | 'inventory' | 'customers' | 'reports' | 'ai' | 'settings' | 'labor' | 'payment'>(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash || '';
-      const pendingPlan = sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan');
-      if (hash.includes('payment') || pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly') {
-        return 'payment';
-      }
-    }
-    return 'overview';
-  });
+  const workspaceRoute=useWorkspaceRoute();
+  const activeTab=moduleForPath(workspaceRoute.split('?')[0])||'overview';
+  const setActiveTab=navigateModule;
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
@@ -480,7 +501,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (Array.isArray(parsed) && parsed.length > 0) {
           const cleaned = parsed.filter((u) => u.name !== 'Budi Santoso' && u.email !== 'budi@newhope.id');
           const admins=cleaned.filter((u:User)=>u.role==='ADMIN');
-          if (cleaned.length > 0 && admins.every((u:User)=>u.id===storeOwnerId)) return cleaned;
+          if (cleaned.length > 0 && admins.length > 0 && admins.every((u:User)=>u.id===storeOwnerId)) return cleaned;
         }
       } catch {}
     }
@@ -493,7 +514,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.name !== 'Budi Santoso' && parsed.email !== 'budi@newhope.id') {
-          if (parsed.id===storeOwnerId || users.some(u=>u.id===parsed.id)) return parsed;
+          const selected=users.find(u=>u.id===parsed.id&&u.status==='ACTIVE');
+          if(selected)return selected;
         }
       } catch (e) {
         console.error('Failed to parse current user', e);
@@ -502,130 +524,73 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return defaultOwnerUser;
   });
 
-  // Sync with authUser when user signs in
+  // This provider is mounted per account/business. Token refresh must never
+  // rehydrate the roster from disk or replace a cashier's current cloud profile.
+  const ownerName=authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko';
+  const ownerEmail=authUser?.email||'';
   useEffect(() => {
-    if (authUser) {
-      const activeName = authUser.user_metadata?.full_name || authUser.user_metadata?.store_name || authUser.email?.split('@')[0] || 'Pemilik Toko';
-      const updatedUser: User = {
-        id: authUser.id,
-        name: activeName,
-        username: authUser.email?.split('@')[0] || 'owner',
-        role: 'ADMIN',
-        pin: currentUser?.pin || '1234',
-        email: authUser.email || '',
-        phone: '',
-        status: 'ACTIVE',
-        createdAt: authUser.created_at || new Date().toISOString(),
-      };
-      const scopedRoster=localStorage.getItem(`newhope_users_${authUser.id}`);
-      let restored:User[]=[];
-      try { const parsed=scopedRoster?JSON.parse(scopedRoster):[];if(Array.isArray(parsed))restored=parsed; } catch {}
-      let legacy:User[]=[];
-      try {const parsed=JSON.parse(localStorage.getItem('newhope_users')||'[]');if(Array.isArray(parsed))legacy=parsed;} catch {}
-      const legacyOwners=legacy.filter(u=>u.role==='ADMIN');
-      const safeLegacy=!scopedRoster&&legacyOwners.length>0&&legacyOwners.every(u=>u.id===authUser.id)
-        ? legacy.filter(u=>u.id!==authUser.id) : [];
-      const roster=[updatedUser,...(restored.length?restored:safeLegacy).filter(u=>u.id!==authUser.id&&u.role!=='ADMIN')];
-      setUsers(roster);
-      void Promise.all(roster.map(async user=>user.id!==authUser.id&&!user.pin.startsWith('sha256$')
-        ? {...user,pin:await hashPin(user.pin)} : user)).then(secured=>{
-          setUsers(previous=>previous.length===roster.length&&previous.every((user,index)=>user.id===roster[index].id)
-            ? secured : previous);
-        });
-      const last=localStorage.getItem(`newhope_current_user_${authUser.id}`);
-      let previous:User|undefined;
-      try {previous=last?JSON.parse(last):undefined;} catch {}
-      setCurrentUser(roster.find(u=>u.id===previous?.id&&u.status==='ACTIVE')||updatedUser);
+    const update=(user:User)=>user.id===storeOwnerId&&(user.name!==ownerName||user.email!==ownerEmail)
+      ?{...user,name:ownerName,email:ownerEmail}:user;
+    setUsers(previous=>previous.some(user=>update(user)!==user)?previous.map(update):previous);
+    setCurrentUser(update);
+  },[storeOwnerId,ownerName,ownerEmail]);
+
+  useEffect(()=>{
+    let active=true;
+    for(const original of users){
+      if(original.id===storeOwnerId||original.pin.startsWith('sha256$'))continue;
+      void hashPin(original.pin).then(pin=>{
+        if(!active)return;
+        // An arriving cloud record or edit wins over this old hashing job.
+        setUsers(previous=>previous.includes(original)?previous.map(user=>user===original?{...user,pin}:user):previous);
+      }).catch(()=>{console.warn('[auth] Staff PIN migration deferred');});
     }
-  }, [authUser]);
+    return()=>{active=false;};
+  },[storeOwnerId]);
 
   const [settings, setSettings] = useState<StoreSettings>(() => {
     const uId = storeOwnerId;
     const loaded = loadGlobalUserData('settings', uId, INITIAL_SETTINGS);
     const storeName = authUser?.user_metadata?.store_name || authUser?.user_metadata?.full_name;
-    const sector = (authUser?.user_metadata?.business_sector || authUser?.user_metadata?.sector || loaded.businessSector || 'FNB') as BusinessSector;
+    const sector = selectedBusiness.sector as BusinessSector;
+    const legacySettingsMatch=!!selectedBusiness.legacyAlias&&loaded.businessSector===sector&&
+      (!loaded.activeBranchId||selectedBusiness.outlets.some(outlet=>outlet.outletId===loaded.activeBranchId));
     const scopedSettings=loadScopedData<Partial<StoreSettings>>('store_settings',uId,sector,{});
     const mismatch=loaded.businessSector&&loaded.businessSector!==sector;
     if(mismatch){const key=getGlobalUserKey('settings',uId),raw=localStorage.getItem(key);
       if(raw)backupOperational(uId,sector,key,raw,[{kind:'store_settings',recordId:'main',reason:'WRONG_SECTOR:'+loaded.businessSector}]);}
     
-    // Check if there is an active pending paid plan
-    const pendingPlan = typeof window !== 'undefined'
-      ? (sessionStorage.getItem('nhpos_pending_checkout_plan') || localStorage.getItem('nhpos_pending_checkout_plan'))
-      : null;
-    const isPendingPlan = pendingPlan === 'plan-plus-monthly' || pendingPlan === 'plan-pro-monthly';
-
-    let sub = loaded.subscription;
-    if (isPendingPlan && (!sub || sub.status !== 'ACTIVE')) {
-      const nowIso = new Date().toISOString();
-      sub = {
-        id: 'sub-pending',
-        tenantId: uId,
-        planId: pendingPlan || 'plan-plus-monthly',
-        status: 'PENDING_PAYMENT' as const,
-        accessMode: 'RESTRICTED' as const,
-        currentPeriodStart: nowIso,
-        currentPeriodEnd: nowIso,
-        cancelAtPeriodEnd: false,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-    }
+    // Entitlement comes only from the verified account bootstrap. Checkout
+    // hints choose form defaults, never overwrite server subscription state.
+    const sub = workspaceBusiness.subscription;
 
     return {
-      ...loaded,
+      ...(legacySettingsMatch?loaded:INITIAL_SETTINGS),
       ...scopedSettings,
       // Brand assets come from the active business, not account-wide browser data.
-      logoUrl: undefined,
-      storeName: scopedSettings.storeName || (mismatch?BUSINESS_PRESETS[sector]?.defaultStoreName:storeName || (loaded.storeName && loaded.storeName !== 'New Hope POS' ? loaded.storeName : 'Toko Saya')),
-      storeMode: scopedSettings.storeMode || BUSINESS_PRESETS[sector]?.storeMode || loaded.storeMode,
+      logoUrl: !navigator.onLine?readReceiptLogo(uId,selectedBusiness.businessId):undefined,
+      storeName: scopedSettings.storeName || selectedBusiness.name,
+      storeMode: BUSINESS_PRESETS[sector].storeMode,
+      autoPrintReceipt:loaded.autoPrintReceipt,receiptPaperSize:loaded.receiptPaperSize,
       businessSector: sector,
       subscription: sub,
+      activeBranchId:workspaceBusiness.outletId,
     };
   });
 
-  useEffect(() => {
-    if (!authUser?.id) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const response = await fetch('/api/v1/subscription/status', {headers:{Authorization:`Bearer ${authSession?.access_token || ''}`}});
-        const data = await response.json();
-        if (active && response.ok && data.ok && data.subscription) {
-          setSettings(prev => ({ ...prev, subscription: data.subscription,
-            ...(data.subscription.status==='FREE' && data.subscription.freeSelection ? {activeBranchId:data.subscription.freeSelection.branchId}:{}),
-          }));
-        }
-      } catch { /* Offline uses the last verified deadline; never resets it. */ }
-    };
-    void refresh();
-    const interval = window.setInterval(refresh, 30000);
-    window.addEventListener('focus', refresh);
-    window.addEventListener('subscription-updated', refresh);
-    return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', refresh); window.removeEventListener('subscription-updated', refresh); };
-  }, [authUser?.id, authSession?.access_token]);
+  useEffect(()=>{
+    setSettings(previous=>JSON.stringify(previous.subscription)===JSON.stringify(workspaceBusiness.subscription)?previous:{...previous,subscription:workspaceBusiness.subscription});
+  },[workspaceBusiness.subscription]);
 
-  useEffect(() => {
-    if (!authUser?.id) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const response = await fetch('/api/v1/subscription/outlets',{headers:{Authorization:`Bearer ${authSession?.access_token || ''}`}});
-        const data = await response.json();
-        if (!active || !response.ok || !data.ok || !Array.isArray(data.rows)) return;
-        setSettings(prev => {
-          const merged = mergeServerOutlets(prev.branches || INITIAL_BRANCHES, data.rows);
-          const eligible = merged.filter(branch => branch.isActive && branch.businessSector === (prev.businessSector || 'FNB'));
-          const selected = eligible.find(branch => branch.id === (isFreePlan(prev.subscription)?prev.subscription?.freeSelection?.branchId:prev.activeBranchId));
-          return { ...prev, branches: merged, activeBranchId: selected?.id || eligible[0]?.id };
-        });
-      } catch { /* Keep offline branches when the server cannot be reached. */ }
-    };
-    void refresh();
-    window.addEventListener('focus', refresh);
-    window.addEventListener('outlets-updated', refresh);
-    return () => { active = false; window.removeEventListener('focus', refresh); window.removeEventListener('outlets-updated', refresh); };
-  }, [authUser?.id, authSession?.access_token, settings.businessSector]);
+  useEffect(()=>{
+    // Account bootstrap already owns the verified directory. Do not run a
+    // second outlet/subscription poller in POS or the setup gate.
+    setSettings(previous=>{
+      const branches=mergeServerOutlets(previous.branches||INITIAL_BRANCHES,directoryOutletRows(workspaceBusiness.directory.businesses));
+      const next={...previous,branches,activeBranchId:workspaceBusiness.outletId};
+      return JSON.stringify(previous)===JSON.stringify(next)?previous:next;
+    });
+  },[workspaceBusiness.directory,workspaceBusiness.outletId]);
 
   const freeOwnerOnly=isFreePlan(settings.subscription);
   useEffect(()=>{
@@ -643,6 +608,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         window.alert('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
       }
+      if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
+      if(!navigator.onLine&&(!workspaceBusiness.offlineExpiresAt||Date.now()>=workspaceBusiness.offlineExpiresAt))throw Error('OFFLINE_VERIFICATION_EXPIRED');
       return fn(...args);
     }) as T;
   }
@@ -652,13 +619,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!authUser?.id) return;
     let active = true;
     const sector = activeSector;
-    setSettings(prev => ({ ...prev, logoUrl: undefined }));
+    setSettings(prev => ({ ...prev, logoUrl: !navigator.onLine?readReceiptLogo(storeOwnerId,selectedBusiness.businessId):undefined }));
+    if(!navigator.onLine)return;
     const loadLogo = async () => {
       try {
-        const businessId = makeBusinessId(authUser.id, sector);
+        const businessId = storageId;
         const response = await fetch(`/api/v1/sync/receipt-logo?businessId=${encodeURIComponent(businessId)}`);
         const data = await response.json();
         if (active && response.ok && data.ok) {
+          try{saveReceiptLogo(storeOwnerId,selectedBusiness.businessId,data.logoUrl||null);}catch{console.warn('[workspace] Logo offline cache unavailable; cloud logo unchanged');}
           setSettings(prev => (prev.businessSector || 'FNB') === sector
             ? { ...prev, logoUrl: data.logoUrl || undefined } : prev);
         }
@@ -666,7 +635,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     void loadLogo();
     return () => { active = false; };
-  }, [authUser?.id, activeSector]);
+  }, [authUser?.id, activeSector,online,storeOwnerId,selectedBusiness.businessId]);
   const defaultPreset = BUSINESS_PRESETS[activeSector] || BUSINESS_PRESETS.FNB;
 
   /*
@@ -675,9 +644,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
    * definition of "which business am I looking at".
    */
   const tenant: TenantInfo = {
-    businessId: makeBusinessId(storeOwnerId, activeSector),
-    merchantId: storeOwnerId,
-    tenantId: storeOwnerId,
+    businessId: storageId,
+    canonicalBusinessId:selectedBusiness.businessId,
+    legacyAlias:selectedBusiness.legacyAlias,
+    merchantId: selectedBusiness.businessId,
+    tenantId: selectedBusiness.tenantId,
     sector: activeSector,
     businessName: settings.storeName,
     storeMode: settings.storeMode,
@@ -702,11 +673,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sector: activeSector,
     storeName: settings.storeName,
     ownerRef: storeOwnerId,
+    canonicalBusinessId:selectedBusiness.businessId,legacyAlias:selectedBusiness.legacyAlias,
   };
 
   const [cloudState,setCloudState]=useState<{scope:string;ready:boolean;error:string|null}>({scope:'',ready:false,error:null});
   const financialScopeKey=tenant.businessId+':'+(syncTarget.outletId||'');
-  const cloudReady=cloudState.scope===financialScopeKey&&cloudState.ready;
+  const offlineFinancialReady=!online&&!!workspaceBusiness.offlineExpiresAt&&!!syncTarget.outletId&&
+    hasVerifiedFinancialScope(storeOwnerId,selectedBusiness.businessId,syncTarget.outletId,workspaceBusiness.offlineExpiresAt);
+  const cloudReady=cloudState.scope===financialScopeKey&&cloudState.ready||offlineFinancialReady;
   const cloudError=cloudState.scope===financialScopeKey?cloudState.error:null;
   const [legacyMigrationStatus,setLegacyMigrationStatus]=useState<LegacyMigrationResult|null>(null);
   const legacyMappings=React.useRef<Record<string,string>>({});
@@ -714,11 +688,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   function requireFinancialWritable<T extends (...args:any[])=>any>(fn:T):T{
     return requireWritable(((...args:Parameters<T>)=>{
       if(!cloudReady||!sharedSyncStatus.ready||!syncTarget.outletId)throw new Error('CLOUD_OUTLET_NOT_READY');
+      if(!navigator.onLine&&workspaceBusiness.offlineExpiresAt&&Date.now()>=workspaceBusiness.offlineExpiresAt)throw Error('OFFLINE_VERIFICATION_EXPIRED');
       return fn(...args);
     }) as T);
   }
   const mapLegacyOutlet=(originalBranchRef:string,outletId:string)=>{
-    if(!settings.branches?.some(branch=>branch.id===outletId&&branch.isActive&&branch.businessSector===activeSector))
+    if(!settings.branches?.some(branch=>branch.id===outletId&&branch.isActive&&branch.businessId===selectedBusiness.businessId))
       throw new Error('OUTLET_NOT_ACTIVE');
     const key='newhope_legacy_outlet_mappings_'+tenant.businessId;
     let saved:Record<string,string>={};try{saved=JSON.parse(localStorage.getItem(key)||'{}');}catch{}
@@ -727,7 +702,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
-    getSyncStatus(makeBusinessId(storeOwnerId, activeSector))
+    getSyncStatus(storageId)
   );
   const activeSyncBusinessId=React.useRef(tenant.businessId);
   activeSyncBusinessId.current=tenant.businessId;
@@ -757,6 +732,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             inFlight:false,lastError:migration.error,failures:Math.max(1,previous.failures)}));
           return;
         }
+        const before=financialStatus(target.businessId);
+        const transactionBefore=getSyncStatus(target.businessId);
+        const cashBefore=getCashSyncStatus(target.businessId);
         const after = await flushSync(target, force);
         const cash=await flushCashQueue(target,force);
         const recovered=migrateLegacyFinancialData(target,{outletMappings:mappings});
@@ -764,7 +742,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setLegacyMigrationStatus(recovered);
           setSyncStatus(combineFinancialSyncStatus(after,cash));
         }
-        window.dispatchEvent(new Event('financial-updated'));
+        if(after.pending+cash.pending<before.pending||after.lastSyncedAt!==transactionBefore.lastSyncedAt||cash.lastSyncedAt!==cashBefore.lastSyncedAt)
+          window.dispatchEvent(new Event('financial-updated'));
       } catch {
         if(activeSyncBusinessId.current===target.businessId)setSyncStatus(financialStatus(target.businessId));
       } finally {runningFinancialSync.current.delete(target.businessId);}
@@ -782,6 +761,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       sector: activeSector,
       storeName: storeNameForSync,
       ownerRef: storeOwnerId,
+      canonicalBusinessId:selectedBusiness.businessId,legacyAlias:selectedBusiness.legacyAlias,
     };
 
     // Berpindah pengguna atau sektor berarti antrian yang berbeda.
@@ -790,44 +770,20 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 1. Saat dibuka — mengirim apa pun yang tertinggal dari sesi sebelumnya.
     void runSync(target, Boolean(target.outletId));
 
-    // 2. Saat jaringan kembali. Ini pemicu terpenting bagi kasir yang seharian
-    //    offline lalu masuk area ber-WiFi.
-    const onOnline = () => void runSync(target);
-    const onOutletsUpdated = () => void runSync(target, true);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('outlets-updated', onOutletsUpdated);
-    window.addEventListener('focus', onOnline);
-    const onVisible=()=>{if(document.visibilityState==='visible')onOnline();};
-    document.addEventListener('visibilitychange',onVisible);
-
-    // 3. Denyut berkala sebagai jaring pengaman. Event 'online' tidak selalu
-    //    menyala di semua perangkat, dan server bisa saja yang tadi mati.
-    const timer = window.setInterval(() => {if(navigator.onLine)void runSync(target);}, 10_000);
-
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('outlets-updated', onOutletsUpdated);
-      window.removeEventListener('focus',onOnline);
-      document.removeEventListener('visibilitychange',onVisible);
-      window.clearInterval(timer);
-    };
+    const unsubscribe=refreshCoordinator.register('financial-write:'+bizId,{run:()=>runSync(target),interval:15000,hidden:true,events:['outlets-updated']});
+    return unsubscribe;
   }, [bizId, activeSector, storeNameForSync, storeOwnerId, settings.activeBranchId, runSync]);
 
-  const [categories, setCategories] = useState<Category[]>(() => {
-    return loadScopedData('categories', storeOwnerId, activeSector, []);
-  });
-
-  const [products, setProducts] = useState<Product[]>(() => {
-    return loadScopedData('products', storeOwnerId, activeSector, []);
-  });
+  const {categories,setCategories,products,setProducts,syncProducts,saveProduct,deleteProduct,toggleProductAvailability,saveCategory,deleteCategory}=useCatalogState(
+    (kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback),
+    ()=>{if(soundEnabled)playPOSSound('click');},
+  );
 
   const [tables, setTables] = useState<Table[]>(() => {
     return loadScopedData('tables', storeOwnerId, activeSector, []);
   });
 
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    return loadScopedData('customers', storeOwnerId, activeSector, seedCustomersFor(activeSector));
-  });
+  const {customers,setCustomers,saveCustomer}=useCustomerState((kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback));
 
   const [orders, setOrders] = useState<Order[]>(() => {
     return loadScopedData('orders', storeOwnerId, activeSector, []);
@@ -886,34 +842,30 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('promo_codes', storeOwnerId, activeSector, seedPromosFor(activeSector));
   });
 
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [selectedTable, setSelectedTable] = useState<Table | null>(null);
-  const [orderType, setOrderType] = useState<OrderType>('DINE_IN');
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const {cart,setCart,selectedCustomer,setSelectedCustomer,selectedTable,setSelectedTable,selectedStaff,setSelectedStaff,
+    orderType,setOrderType,selectedCategory,setSelectedCategory,searchQuery,setSearchQuery,soundEnabled,
+    addToCart,removeFromCart,updateCartQuantity,updateCartItemNotes,applyCartItemDiscount,clearCart,toggleSound}=useCartState({
+      key:partitionKey(storageId,'cart_draft_'+(workspaceBusiness.outletId||'unselected')),
+      registerSwitchGuard:workspaceBusiness.registerSwitchGuard,
+      onPersistenceError:()=>setSyncStatus(previous=>({...previous,lastError:'CART_DRAFT_NOT_SAVED',failures:Math.max(1,previous.failures)})),
+      canAdd:product=>{
+        if(isFreePlan(settings.subscription)&&!freeProductAllowed(settings.subscription?.freeSelection,product.id,activeSector)){
+          window.alert('Produk ini tersimpan tetapi terkunci di paket Free. Ubah pilihan 10 produk atau upgrade.');return false;
+        }return true;
+      },
+    });
 
-  // Staff Members State & Selection
-  const [staffMembers, setStaffMembers] = useState<StaffMember[]>(() => {
-    return loadGlobalUserData('staff_members', storeOwnerId, INITIAL_STAFF_MEMBERS);
-  });
-  const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
-
-  // Stock Items State
-  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    return loadScopedData('stock_items', storeOwnerId, activeSector, INITIAL_STOCK_ITEMS);
-  });
-
-  // Product Bundles State
-  const [bundles, setBundles] = useState<ProductBundle[]>(() => {
-    return loadScopedData('bundles', storeOwnerId, activeSector, INITIAL_BUNDLES);
-  });
-
-  // Attendance Logs State (Clock In / Out)
-  const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>(() => {
-    return loadScopedData('attendance_logs', storeOwnerId, activeSector, seedAttendanceFor(activeSector));
-  });
+  const {staffMembers,setStaffMembers,sectorStaffMembers,addStaffMember,updateStaffMember,deleteStaffMember,toggleStaffAvailability,
+    attendanceLogs,setAttendanceLogs,clockInStaff,clockOutStaff,getActiveAttendance,commissionRules,setCommissionRules,
+    payrollSlips,setPayrollSlips,saveCommissionRule,savePayrollSlip,deletePayrollSlip}=useLaborState({
+      tenant,free:isFreePlan(settings.subscription),load:(kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback),
+      loadRoster:()=>cache.current!.loadRoster(kindsForModule(activeTab)),
+      outlet:()=>activeBranch,sound:kind=>{if(soundEnabled)playPOSSound(kind);},
+    });
+  const {stockItems,setStockItems,bundles,setBundles,saveStockItem,deleteStockItem,saveBundle,deleteBundle,toggleBundleAvailability,adjustStockItemQuantity}=useInventoryState(
+    (kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback),
+    {sound:kind=>{if(soundEnabled)playPOSSound(kind);},cashier:()=>shift.cashierName,appendLog:log=>setInventoryLogs(previous=>[log,...previous])},
+  );
 
   // KDS Tickets (F&B Kitchen Display System)
   const [kdsTickets, setKdsTickets] = useState<KDSTicket[]>(() => {
@@ -930,15 +882,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return loadScopedData('bookings', storeOwnerId, activeSector, []);
   });
 
-  // Staff Commission Rules
-  const [commissionRules, setCommissionRules] = useState<StaffCommissionRule[]>(() => {
-    return loadScopedData('commission_rules', storeOwnerId, activeSector, INITIAL_COMMISSION_RULES);
-  });
 
-  // Payroll Slips (Smart Labor & Commission Core)
-  const [payrollSlips, setPayrollSlips] = useState<PayrollSlip[]>(() => {
-    return loadScopedData('payroll_slips', storeOwnerId, activeSector, []);
-  });
 
   // Automated WhatsApp Lifecycle Hooks
   const [sentLifecycleHookIds, setSentLifecycleHookIds] = useState<string[]>(() => {
@@ -949,8 +893,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncCenterOpen,setSyncCenterOpen]=useState(false);
   const openSyncCenter=React.useCallback(()=>setSyncCenterOpen(true),[]);
   const closeSyncCenter=React.useCallback(()=>setSyncCenterOpen(false),[]);
-  const syncCenter=syncStatusModel({businessId:makeBusinessId(storeOwnerId,activeSector),financial:syncStatus,
-    operational:sharedSyncStatus,recovery:legacyMigrationStatus,cloudReady,cloudError,online:typeof navigator==='undefined'||navigator.onLine});
+  const syncCenter=React.useMemo(()=>syncStatusModel({businessId:storageId,owner:storeOwnerId,operationalNamespace,financial:syncStatus,
+    operational:sharedSyncStatus,recovery:legacyMigrationStatus,cloudReady,cloudError,online}),
+    [storageId,storeOwnerId,operationalNamespace,syncStatus,sharedSyncStatus,legacyMigrationStatus,cloudReady,cloudError,online]);
   const sharedSync = React.useRef<SharedStateSync | null>(null);
   const remoteOrderOperations=React.useRef(new Map<string,Record<string,unknown>>());
   const sharedSettings = React.useMemo(() => {
@@ -958,32 +903,35 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       logoUrl: _logoUrl, registeredTerminalId: _registeredTerminalId,
       autoPrintReceipt: _autoPrintReceipt, receiptPaperSize: _receiptPaperSize,
       businessSector: _businessSector, ...rest } = settings;
-    return {id:'main',...rest,businessSector:settings.businessSector,businessId:makeBusinessId(storeOwnerId,settings.businessSector||'FNB')};
+    return {id:'main',...rest,businessSector:settings.businessSector,businessId:storageId};
   },[settings,storeOwnerId]);
 
   // Hydrate operational records from the owner account and keep each change in
   // a durable, versioned outbox. Normalized transactions still use the ledger.
   useEffect(() => {
     if(!authUser?.id) return;
-    const cacheError=operationalCacheError(authUser.id,activeSector);
+    const cacheError=operationalCacheError(authUser.id,activeSector,storageId);
     if(cacheError){setSharedSyncStatus({ready:false,pending:0,error:cacheError});return;}
     remoteOrderOperations.current=new Map();
-    const importMarker=`newhope_operational_import_v2_${authUser.id}_${activeSector}`;
-    const needsLegacyImport=!localStorage.getItem(importMarker);
-    const store=new SharedStateSync(authUser.id,activeSector,(records,initial)=>{
+    const importMarker=`newhope_operational_import_v2_${storageId}`;
+    const hydratedKinds=new Set<string>();
+    const needsImport=(kind:string)=>!hydratedKinds.has(kind)&&!localStorage.getItem(importMarker)&&!localStorage.getItem(`${importMarker}:${kind}`);
+    const store=new SharedStateSync(authUser.id,activeSector,(records,initial,loadedKinds)=>{
       if(sharedSync.current!==store)return;
       const grouped=new Map<string,SharedRecord[]>();
       for(const record of records){
         const group=grouped.get(record.kind)||[];group.push(record);grouped.set(record.kind,group);
       }
       const apply=<T extends object>(kind:string,current:T[],set:React.Dispatch<React.SetStateAction<T[]>>) => {
+        if(loadedKinds&&!loadedKinds.includes(kind))return;
         const rows=grouped.get(kind)||[];
         const fromServer=rows.filter(row=>!row.deleted&&row.value).map(row=>row.value as T);
         const known=new Set(rows.map(row=>row.recordId));
         const legacyKey=kind==='staff_members' ? getGlobalUserKey(kind,authUser.id)
           : getScopedKey(kind,authUser.id,activeSector);
-        const imported=initial && needsLegacyImport && legacyKeys.current?.has(legacyKey)
-          ? repairOperationalCache(authUser.id,activeSector,kind,current).filter(row=>!known.has(recordIdOf(kind,row))&&!store.legacyQuarantined(kind,recordIdOf(kind,row))) : [];
+        const legacy=kind==='staff_members'?cache.current!.hydrateRoster() as T[]:cache.current!.hydrate<T[]>(kind,current);
+        const imported=needsImport(kind) && legacyKeys.current?.has(legacyKey)
+          ? repairOperationalCache(authUser.id,activeSector,kind,legacy,{businessId:storageId,namespace:operationalNamespace}).filter(row=>!known.has(recordIdOf(kind,row))&&!store.legacyQuarantined(kind,recordIdOf(kind,row))) : [];
         const merged=[...fromServer,...imported];
         if(imported.length)store.importLegacy(kind,imported);
         const cloudCategories=(grouped.get('categories')||[]).filter(r=>!r.deleted).map(r=>r.value);
@@ -995,9 +943,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       apply('tables',tables,setTables);
       apply('customers',customers,setCustomers);
       const operationRows=(grouped.get('order_operations')||[]).filter(row=>!row.deleted&&row.value);
-      remoteOrderOperations.current=new Map(operationRows.map(row=>[row.recordId,row.value!]));
-      store.prime('order_operations',operationRows.map(row=>row.value!));
-      setOrders(previous=>previous.map(row=>mergeOrderOperations(row,remoteOrderOperations.current.get(row.id))));
+      if(!loadedKinds||loadedKinds.includes('order_operations')){
+        remoteOrderOperations.current=new Map(operationRows.map(row=>[row.recordId,row.value!]));
+        store.prime('order_operations',operationRows.map(row=>row.value!));
+        setOrders(previous=>previous.map(row=>mergeOrderOperations(row,remoteOrderOperations.current.get(row.id))));
+      }
 
       apply('held_orders',heldOrders,setHeldOrders);
       apply('inventory_logs',inventoryLogs,setInventoryLogs);
@@ -1014,8 +964,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       apply('payroll_slips',payrollSlips,setPayrollSlips);
       apply('staff_members',staffMembers,setStaffMembers);
       const lifecycle=(grouped.get('sent_lifecycle_hooks')||[]).filter(row=>!row.deleted).map(row=>row.recordId);
-      store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
-      if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
+      if(!loadedKinds||loadedKinds.includes('sent_lifecycle_hooks')){
+        store.prime('sent_lifecycle_hooks',lifecycle.map(id=>({id})));
+        if(JSON.stringify(lifecycle)!==JSON.stringify(sentLifecycleHookIds))setSentLifecycleHookIds(lifecycle);
+      }
       const settingsQuarantined=grouped.get('store_settings')?.some(r=>r.quarantineReason);
       const fallbackName=settingsQuarantined?BUSINESS_PRESETS[activeSector].defaultStoreName:store.businessName;
       const remoteSettings=grouped.get('store_settings')?.find(row=>!row.deleted&&row.recordId==='main')?.value
@@ -1029,10 +981,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       if(remoteSettings){
         const {id: _id,businessId:_businessId,...safe}=remoteSettings;
-        setSettings(prev=>({...prev,...safe,subscription:prev.subscription,branches:prev.branches,
+        setSettings(prev=>{const next={...prev,...safe,subscription:prev.subscription,branches:prev.branches,
           activeBranchId:prev.activeBranchId,logoUrl:prev.logoUrl,
           registeredTerminalId:prev.registeredTerminalId,businessSector:prev.businessSector,
-          autoPrintReceipt:prev.autoPrintReceipt,receiptPaperSize:prev.receiptPaperSize} as StoreSettings));
+          autoPrintReceipt:prev.autoPrintReceipt,receiptPaperSize:prev.receiptPaperSize} as StoreSettings;
+          return JSON.stringify(prev)===JSON.stringify(next)?prev:next;});
       }
       const userRows=grouped.get('users')||[];
       const remoteUsers=userRows.filter(row=>!row.deleted&&row.value).map(row=>row.value as unknown as User);
@@ -1046,9 +999,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
       // One-time migration for accounts whose catalog was synced before the
       // versioned store existed. A tombstone counts as a record: never revive it.
-      const needsCatalogFallback=initial && needsLegacyImport && !grouped.get('products')?.length && !products.length;
+      const needsCatalogFallback=needsImport('products') && (!loadedKinds||loadedKinds.includes('products')) && !grouped.get('products')?.length && !products.length;
       if(needsCatalogFallback){
-        void pullCatalog({businessId:makeBusinessId(authUser.id,activeSector),sector:activeSector,
+        void pullCatalog({businessId:storageId,sector:activeSector,
           storeName:settings.storeName,ownerRef:authUser.id}).then(legacy=>{
           if(!legacy || sharedSync.current!==store)return;
           const restoredProducts=legacy.products.map((product:any)=>({
@@ -1063,16 +1016,21 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           store.importLegacy('products',restoredProducts);store.importLegacy('categories',restoredCategories);
           if(restoredProducts.length)setProducts(previous=>previous.length?previous:restoredProducts);
           if(restoredCategories.length)setCategories(previous=>previous.length?previous:restoredCategories);
-          localStorage.setItem(importMarker,'queued-v2');
+          localStorage.setItem(`${importMarker}:products`,'queued-v2');
+          localStorage.setItem(`${importMarker}:categories`,'queued-v2');
         });
       }
-      if(initial&&!needsCatalogFallback)localStorage.setItem(importMarker,'queued-v2');
-    },status=>{const error=operationalCacheError(authUser.id,activeSector);setSharedSyncStatus(error?{...status,ready:false,error}:status);});
+      // Core-only boot must not checkpoint collections that have not been read.
+      const completedKinds=loadedKinds||[...grouped.keys()];
+      for(const kind of completedKinds){
+        hydratedKinds.add(kind);
+        if(!(needsCatalogFallback&&['products','categories'].includes(kind)))localStorage.setItem(`${importMarker}:${kind}`,'queued-v2');
+      }
+    },status=>{const error=operationalCacheError(authUser.id,activeSector,storageId);setSharedSyncStatus(error?{...status,ready:false,error}:status);},{businessId:selectedBusiness.businessId,transportRef:storageId,namespace:operationalNamespace});
     sharedSync.current=store;
+    store.setKinds(kindsForModule(activeTab));
     const prime=<T extends object>(kind:string,rows:T[])=>store.prime(kind,rows);
-    prime('categories',categories);prime('products',products.map(product=>({
-      ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
-    })));prime('tables',tables);prime('customers',customers);
+    prime('categories',categories);prime('products',syncProducts);prime('tables',tables);prime('customers',customers);
     prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
     prime('order_operations',orders.map(orderOperations));
 
@@ -1082,26 +1040,23 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     prime('commission_rules',commissionRules);prime('payroll_slips',payrollSlips);
     prime('staff_members',staffMembers);
     prime('store_settings',[sharedSettings]);
-    store.start();
-    const onOnline=()=>void store.refresh(false);
-    const onFocus=()=>void store.refresh(false);
-    const onOutletsUpdated=()=>void store.resumeAfterOutletUpdate();
-    window.addEventListener('online',onOnline);window.addEventListener('focus',onFocus);
-    window.addEventListener('outlets-updated',onOutletsUpdated);
-    window.addEventListener('subscription-updated',onOutletsUpdated);
-    return ()=>{store.stop();if(sharedSync.current===store)sharedSync.current=null;
-      window.removeEventListener('online',onOnline);window.removeEventListener('focus',onFocus);
-      window.removeEventListener('outlets-updated',onOutletsUpdated);
-      window.removeEventListener('subscription-updated',onOutletsUpdated);};
+    if(workspaceBusiness.offlineExpiresAt&&!navigator.onLine)store.restoreOffline(workspaceBusiness.offlineExpiresAt);
+    const unsubscribe=refreshCoordinator.register('operational:'+selectedBusiness.businessId,{run:()=>store.resumeAfterOutletUpdate(),interval:60000,events:['outlets-updated','subscription-updated']});
+    return ()=>{unsubscribe();store.stop();if(sharedSync.current===store)sharedSync.current=null;};
   // Collection changes are tracked by the effect below. Recreating this owner/sector
   // connection on every edit would discard its in-flight version baseline.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[authUser?.id,activeSector]);
 
   useEffect(()=>{
+    const store=sharedSync.current;if(!store)return;
+    if(store.setKinds(kindsForModule(activeTab)))void store.refresh(false);
+  },[activeTab,activeSector]);
+
+  useEffect(()=>{
     if(!authUser?.id)return;
-    if(currentUser.id!==authUser.id && !users.some(user=>user.id===currentUser.id&&user.status==='ACTIVE'))
-      setCurrentUser(users.find(user=>user.id===authUser.id)||defaultOwnerUser);
+    setCurrentUser(previous=>users.find(user=>user.id===previous.id&&user.status==='ACTIVE')||
+      users.find(user=>user.id===authUser.id)||defaultOwnerUser);
   },[users,currentUser.id,authUser?.id]);
 
   useEffect(()=>{
@@ -1114,9 +1069,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(()=>{
     const store=sharedSync.current;
     if(!store)return;
-    store.track('categories',categories);store.track('products',products.map(product=>({
-      ...product,categoryName:categories.find(category=>category.id===product.categoryId)?.name||'Lainnya',
-    })));store.track('tables',tables);
+    store.track('categories',categories);store.track('products',syncProducts);store.track('tables',tables);
     store.track('customers',customers);
     store.track('held_orders',heldOrders);store.track('inventory_logs',inventoryLogs);
     store.track('order_operations',orders.map(orderOperations),false);
@@ -1130,13 +1083,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     store.track('store_settings',[sharedSettings]);
     store.track('sent_lifecycle_hooks',sentLifecycleHookIds.map(id=>({id})));
     store.track('users',users.filter(user=>user.id!==authUser?.id&&user.pin.startsWith('sha256$')));
-  },[categories,products,tables,customers,orders,heldOrders,inventoryLogs,cashMovements,
-    shiftHistory,promoCodes,stockItems,bundles,attendanceLogs,kdsTickets,
-    carwashQueue,bookings,commissionRules,payrollSlips,staffMembers,shift,
+  },[categories,syncProducts,tables,customers,orders,heldOrders,inventoryLogs,
+    promoCodes,stockItems,bundles,attendanceLogs,kdsTickets,
+    carwashQueue,bookings,commissionRules,payrollSlips,staffMembers,
     sharedSettings,sentLifecycleHookIds,users,authUser?.id]);
 
-  // Financial reads replace confirmed cache; pending commands remain recoverable.
+  const needsFinancialWorkspace=['pos','tables','reports'].includes(activeTab);
+  // Route-scoped reads never stop delivery of the separate durable queues.
   useEffect(()=>{
+    if(!needsFinancialWorkspace)return;
     if(!authUser?.id||!syncTarget.outletId){setCloudState({scope:financialScopeKey,ready:false,error:null});return;}
     const controller=new AbortController();let running=false;
     setCloudState({scope:financialScopeKey,ready:false,error:null});
@@ -1150,45 +1105,43 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setLegacyMigrationStatus(migration);
         if(migration.error)throw new Error(migration.error);
         const query={outletId:target.outletId,sector:target.sector};
-        const [remote,summary]=await Promise.all([fetchRecentServerTransactions(query,controller.signal),fetchReportSummary(query,controller.signal)]);
-        let shiftResponse=await fetch('/api/v1/finance/shift?'+reportParams(query),{signal:controller.signal,cache:'no-store'});
-        let shiftData=await shiftResponse.json();
-        if(!shiftResponse.ok||!shiftData.ok)throw new Error(shiftData.error||'SHIFT_UNAVAILABLE');
-        if(!shiftData.shift&&!shiftData.history?.length){
-          shiftResponse=await fetch('/api/v1/finance/shift/open',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
+        const {transactions:remote,shiftData:initialShift}=await fetchFinancialWorkspace(query,activeTab!=='reports',controller.signal);
+        let shiftData=initialShift;
+        if(activeTab==='pos'&&!shiftData.shift&&!shiftData.history?.length){
+          const shiftResponse=await fetch('/api/v1/finance/shift/open',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
             body:JSON.stringify({sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
           const opened=await shiftResponse.json();if(!shiftResponse.ok||!opened.ok)throw new Error(opened.error||'SHIFT_OPEN_FAILED');
           shiftData={...shiftData,shift:opened.shift};
         }
         if(controller.signal.aborted)return;
+        cache.current!.confirmFinancialHydration();
         const pendingIds=new Set(getPendingTransactions(target.businessId).map(row=>row.clientTxnId));
-        setOrders(previous=>{
+        if(remote)setOrders(previous=>{
           const pending=previous.filter(row=>pendingIds.has(row.id));
           const previousOperations=new Map(previous.map(row=>[row.id,orderOperations(row)]));
           const byId=new Map(remote.filter(row=>!pendingIds.has(row.id)).map(row=>[row.id,
             mergeOrderOperations(row,remoteOrderOperations.current.get(row.id)||previousOperations.get(row.id))]));
           for(const row of pending)byId.set(row.id,row);
           for(const row of previous.filter(row=>row.status==='HOLD'))if(!byId.has(row.id))byId.set(row.id,row);
-          return [...byId.values()].sort((a,b)=>b.date.localeCompare(a.date));
+          const next=[...byId.values()].sort((a,b)=>b.date.localeCompare(a.date));
+          return JSON.stringify(previous)===JSON.stringify(next)?previous:next;
         });
-        setCashMovements(summary.cashMovements);
-        if(shiftData.shift)setShift(shiftData.shift);
-        else if(shiftData.history?.[0])setShift(shiftData.history[0]);
-        setShiftHistory(shiftData.history||[]);
-        markCloudRead(target.businessId,summary.generatedAt);
+        const nextShift=shiftData.shift||shiftData.history?.[0];
+        if(nextShift)setShift(previous=>JSON.stringify(previous)===JSON.stringify(nextShift)?previous:nextShift);
+        setShiftHistory(previous=>JSON.stringify(previous)===JSON.stringify(shiftData.history||[])?previous:shiftData.history||[]);
+        markCloudRead(target.businessId,shiftData.generatedAt);
+        try{saveVerifiedFinancialScope(storeOwnerId,selectedBusiness.businessId,target.outletId!);}catch{console.warn('[workspace] Offline financial scope cache unavailable; ledger unchanged');}
         setSyncStatus(financialStatus(target.businessId));
         setCloudState({scope:financialScopeKey,ready:true,error:null});
       }catch(error){if(!controller.signal.aborted){
         const message=error instanceof Error?error.message:'CLOUD_UNAVAILABLE';
-        setCloudState(previous=>({...previous,scope:financialScopeKey,error:message}));
+        setCloudState(previous=>({...previous,scope:financialScopeKey,ready:message==='WORKSPACE_ACCESS_REVOKED'?false:previous.ready,error:message}));
         setSyncStatus(previous=>({...previous,lastError:message,failures:Math.max(1,previous.failures)}));
       }}finally{running=false;}
     };
-    void refresh();const timer=window.setInterval(refresh,10000);
-    const updated=()=>void refresh();
-    window.addEventListener('focus',updated);window.addEventListener('online',updated);window.addEventListener('financial-updated',updated);
-    return()=>{controller.abort();window.clearInterval(timer);window.removeEventListener('focus',updated);window.removeEventListener('online',updated);window.removeEventListener('financial-updated',updated);};
-  },[authUser?.id,financialScopeKey]);
+    const unsubscribe=refreshCoordinator.register('financial-read:'+financialScopeKey,{run:refresh,interval:30000,events:['financial-updated','outlets-updated']});
+    return()=>{controller.abort();unsubscribe();};
+  },[authUser?.id,financialScopeKey,needsFinancialWorkspace,activeTab==='pos',activeTab==='reports']);
 
   // Sync state to LocalStorage scoped per User and Sector
   useEffect(() => {
@@ -1271,7 +1224,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     const uId = storeOwnerId;
-    localStorage.setItem(getGlobalUserKey('settings', uId), JSON.stringify(settings));
+    const key=getGlobalUserKey('settings',uId),raw=JSON.stringify(settings);
+    if(localStorage.getItem(key)!==raw)localStorage.setItem(key,raw);
   }, [settings, storeOwnerId]);
 
   useEffect(() => {
@@ -1281,8 +1235,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [customers, storeOwnerId, settings.businessSector]);
 
   useEffect(() => {
-    const uId = storeOwnerId;
-    localStorage.setItem(getGlobalUserKey('staff_members', uId), JSON.stringify(staffMembers));
+    cache.current!.writeRoster(staffMembers);
   }, [staffMembers, storeOwnerId]);
 
   useEffect(() => {
@@ -1336,131 +1289,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // CRM writes use the versioned shared outbox above. The server mirrors accepted
   // metadata into normalized customers in the same transaction for admin reads.
 
-  /*
-   * SINKRONISASI PRESENSI / CLOCK-IN STAF KE POSTGRESQL.
-   */
-  useEffect(() => {
-    if (attendanceLogs.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushAttendance(
-        {
-          businessId: makeBusinessId(storeOwnerId, activeSector),
-          sector: activeSector,
-          storeName: settings.storeName,
-          ownerRef: storeOwnerId,
-        },
-        attendanceLogs.slice(0, 100).map((a) => ({
-          id: a.id,
-          staffId: a.staffId,
-          staffName: a.staffName,
-          staffRole: a.staffRole,
-          clockInTime: a.clockInTime,
-          clockOutTime: a.clockOutTime,
-          shiftNotes: a.shiftNotes,
-          status: a.status,
-          branchId: a.branchId,
-          branchName: a.branchName,
-          clockInGeo: a.clockInGeo,
-          clockOutGeo: a.clockOutGeo,
-        }))
-      );
-    }, 5_000);
-
-    return () => window.clearTimeout(timer);
-  }, [attendanceLogs, storeOwnerId, activeSector, settings.storeName]);
-
-  /*
-   * SINKRONISASI PENGGAJIAN / SLIP GAJI STAF KE POSTGRESQL.
-   */
-  useEffect(() => {
-    if (payrollSlips.length === 0) return;
-
-    const timer = window.setTimeout(() => {
-      void pushPayroll(
-        {
-          businessId: makeBusinessId(storeOwnerId, activeSector),
-          sector: activeSector,
-          storeName: settings.storeName,
-          ownerRef: storeOwnerId,
-        },
-        payrollSlips.slice(0, 50)
-      );
-    }, 5_000);
-
-    return () => window.clearTimeout(timer);
-  }, [payrollSlips, storeOwnerId, activeSector, settings.storeName]);
-
-  /*
-   * STAFF ARE SCOPED TO THE ACTIVE BUSINESS SECTOR.
-   *
-   * Unlike products/categories/tables, the staff list is stored globally per
-   * user (one roster across all of a merchant's businesses). Every consumer used
-   * to read that raw list, so a barber showed up in the cafe's "Pilih Petugas"
-   * modal, in the cafe's clock-in sheet, and inside the cafe's staff-performance
-   * insight.
-   *
-   * Scoping here — at the single source — means no screen can leak the wrong
-   * sector by forgetting to filter. `allStaffMembers` stays available for
-   * cross-sector management screens that genuinely need the whole roster.
-   */
-  const sectorStaffMembers = staffMembers.filter((s) => belongsToBusiness(s, tenant));
-
-  /** Guard against a stale selection surviving a business switch. */
-  const scopedSelectedStaff =
-    selectedStaff && belongsToBusiness(selectedStaff, tenant) ? selectedStaff : null;
-
-  const addStaffMember = (staff: Omit<StaffMember, 'id'>) => {
-    if (isFreePlan(settings.subscription)) throw new Error('FREE_OWNER_ONLY');
-    // Shared collection: stamp the partition key so the row can never be read
-    // by another business unit.
-    const newStaff: StaffMember = stampBusiness(
-      { ...staff, sector: staff.sector || activeSector, id: newId('stf') },
-      tenant
-    );
-    setStaffMembers((prev) => [newStaff, ...prev]);
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const updateStaffMember = (staffToUpdate: StaffMember) => {
-    setStaffMembers((prev) =>
-      prev.map((s) => (s.id === staffToUpdate.id ? { ...s, ...staffToUpdate } : s))
-    );
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const deleteStaffMember = (staffId: string) => {
-    setStaffMembers((prev) => prev.filter((s) => s.id !== staffId));
-    if (soundEnabled) playPOSSound('delete');
-  };
-
-  const toggleStaffAvailability = (staffId: string) => {
-    setStaffMembers((prev) =>
-      prev.map((s) => (s.id === staffId ? { ...s, isAvailable: !s.isAvailable } : s))
-    );
-    if (soundEnabled) playPOSSound('click');
-  };
+  // Attendance/payroll share the durable revisioned outbox. Admin projections
+  // are committed with each accepted record, not by a competing timed writer.
+  // A stale selected staff member may not survive a business switch.
+  const scopedSelectedStaff=selectedStaff&&belongsToBusiness(selectedStaff,tenant)?selectedStaff:null;
 
   const branches = settings.branches || INITIAL_BRANCHES;
-  const activeBranch = branches.find((b) => b.id === settings.activeBranchId) || branches[0];
+  const activeBranch = branches.find((b) => b.id === settings.activeBranchId && b.isActive && b.businessId===selectedBusiness.businessId);
 
   const setActiveBranchId = (branchId: string) => {
-    if (!branches.some(branch => branch.id === branchId && branch.isActive && branch.businessSector === activeSector)) throw new Error('OUTLET_NOT_ACTIVE_FOR_BUSINESS');
+    if (!branches.some(branch => branch.id === branchId && branch.isActive && branch.businessId===selectedBusiness.businessId)) throw new Error('OUTLET_NOT_ACTIVE_FOR_BUSINESS');
     if (isFreePlan(settings.subscription) && branchId !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LOCKED');
-    setSettings((prev) => ({ ...prev, activeBranchId: branchId }));
+    workspaceBusiness.select(selectedBusiness.businessId,branchId);
   };
 
   const saveBranch = async (branchToSave: StoreBranch) => {
     if (isFreePlan(settings.subscription) && branchToSave.id !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LIMIT');
     const originalId = branchToSave.id;
-    await prepareOutletBusiness(branchToSave.businessSector || activeSector, settings.storeName);
+    const business=await prepareOutletBusiness(branchToSave.businessSector || activeSector, settings.storeName,branchToSave.businessId||selectedBusiness.businessId);
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branchToSave, businessSector: branchToSave.businessSector || activeSector }),
+      body: JSON.stringify({ ...branchToSave,businessId:business.merchantId, businessSector: branchToSave.businessSector || activeSector }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || 'Outlet gagal disimpan');
-    branchToSave = { ...branchToSave, id: result.outlet.id };
+    branchToSave = { ...branchToSave, id: result.outlet.id,businessId:result.outlet.merchant_id };
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
       const idx = existing.findIndex((b) => b.id === originalId);
@@ -1482,7 +1335,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!branch) return;
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branch, businessSector: branch.businessSector || activeSector, isActive: false }),
+      body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: branch.businessSector || activeSector, isActive: false }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) { window.alert(result.error || 'Outlet gagal dinonaktifkan'); return; }
@@ -1495,137 +1348,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     window.dispatchEvent(new Event('outlets-updated'));
   };
 
-  const clockInStaff = (
-    staffId: string,
-    notes?: string,
-    geoInfo?: GeoLocationInfo,
-    branchInfo?: { id: string; name: string },
-    photoUrl?: string
-  ) => {
-    const staff = staffMembers.find((s) => s.id === staffId);
-    if (!staff) return;
 
-    const bId = branchInfo?.id || activeBranch?.id;
-    const bName = branchInfo?.name || activeBranch?.name;
-
-    const newRecord: AttendanceRecord = {
-      id: newId('att'),
-      staffId: staff.id,
-      staffName: staff.name,
-      staffRole: staff.role,
-      clockInTime: new Date().toISOString(),
-      shiftNotes: notes,
-      status: 'CLOCKED_IN',
-      branchId: bId,
-      branchName: bName,
-      clockInGeo: geoInfo,
-      businessSector: settings.businessSector,
-      photoUrl,
-    };
-
-    setAttendanceLogs((prev) => [newRecord, ...prev]);
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const clockOutStaff = (
-    staffId: string,
-    notes?: string,
-    geoInfo?: GeoLocationInfo,
-    branchInfo?: { id: string; name: string }
-  ) => {
-    const bId = branchInfo?.id || activeBranch?.id;
-    const bName = branchInfo?.name || activeBranch?.name;
-
-    setAttendanceLogs((prev) =>
-      prev.map((log) => {
-        if (log.staffId === staffId && log.status === 'CLOCKED_IN') {
-          return {
-            ...log,
-            clockOutTime: new Date().toISOString(),
-            shiftNotes: notes || log.shiftNotes,
-            status: 'CLOCKED_OUT',
-            clockOutGeo: geoInfo,
-            branchId: log.branchId || bId,
-            branchName: log.branchName || bName,
-          };
-        }
-        return log;
-      })
-    );
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const getActiveAttendance = (staffId: string): AttendanceRecord | undefined => {
-    return attendanceLogs.find((log) => log.staffId === staffId && log.status === 'CLOCKED_IN');
-  };
-
-  const saveStockItem = (item: StockItem) => {
-    setStockItems((prev) => {
-      const idx = prev.findIndex((s) => s.id === item.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = item;
-        return copy;
-      }
-      return [item, ...prev];
-    });
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const deleteStockItem = (id: string) => {
-    setStockItems((prev) => prev.filter((s) => s.id !== id));
-    if (soundEnabled) playPOSSound('delete');
-  };
-
-  const saveBundle = (bundle: ProductBundle) => {
-    setBundles((prev) => {
-      const idx = prev.findIndex((b) => b.id === bundle.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = bundle;
-        return copy;
-      }
-      return [bundle, ...prev];
-    });
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const deleteBundle = (id: string) => {
-    setBundles((prev) => prev.filter((b) => b.id !== id));
-    if (soundEnabled) playPOSSound('delete');
-  };
-
-  const toggleBundleAvailability = (id: string) => {
-    setBundles((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, isAvailable: !b.isAvailable } : b))
-    );
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const adjustStockItemQuantity = (id: string, qtyChange: number, reason: string) => {
-    const target = stockItems.find((s) => s.id === id);
-    if (!target) return;
-
-    const newQty = Math.max(0, target.stock + qtyChange);
-    const log: InventoryLog = {
-      id: newId('log'),
-      productId: target.id,
-      productName: target.name,
-      type: qtyChange >= 0 ? 'IN' : 'OUT',
-      quantity: Math.abs(qtyChange),
-      previousStock: target.stock,
-      newStock: newQty,
-      reason: reason || 'Penyesuaian Stok Bahan/WIP',
-      timestamp: new Date().toISOString(),
-      user: shift.cashierName,
-    };
-
-    setStockItems((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, stock: newQty, lastUpdated: new Date().toISOString() } : s))
-    );
-    setInventoryLogs((logs) => [log, ...logs]);
-    if (soundEnabled) playPOSSound('click');
-  };
 
   // Input Bahan Baku Otomatis dari Kamera / Scan Nota Belanja Supplier
   const processRawMaterialReceipt = (payload: {
@@ -1763,7 +1486,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_users_${authUser.id}`, JSON.stringify(users)); }, [users,authUser?.id]);
   useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_current_user_${authUser.id}`, JSON.stringify(currentUser)); }, [currentUser,authUser?.id]);
   useEffect(() => {
-    localStorage.setItem(
+    safeSetLocalStorage(
       getScopedKey('cash_movements', storeOwnerId, activeSector),
       JSON.stringify(cashMovements)
     );
@@ -1894,121 +1617,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
 
-  const toggleSound = () => setSoundEnabled((prev) => !prev);
-
-  // Add Item to Cart
-  const addToCart = (
-    product: Product,
-    variant?: ProductVariant,
-    modifiers: SelectedModifier[] = [],
-    quantity = 1,
-    notes = ''
-  ) => {
-    if (soundEnabled) playPOSSound('add_item');
-    if (isFreePlan(settings.subscription) && !freeProductAllowed(settings.subscription?.freeSelection,product.id,activeSector)) {
-      window.alert('Produk ini tersimpan tetapi terkunci di paket Free. Ubah pilihan 10 produk atau upgrade.');
-      return;
-    }
-
-    let unitPrice = product.price;
-    if (variant) unitPrice += variant.priceExtra;
-    modifiers.forEach((m) => { unitPrice += m.price; });
-
-    // Unique cart line identifier
-    const lineKey = `${product.id}-${variant?.id || 'base'}-${modifiers.map((m) => m.optionId).sort().join('_')}`;
-
-    setCart((prevCart) => {
-      const existingIndex = prevCart.findIndex((item) => item.id === lineKey);
-      if (existingIndex > -1) {
-        const updated = [...prevCart];
-        const item = updated[existingIndex];
-        const newQty = item.quantity + quantity;
-        updated[existingIndex] = {
-          ...item,
-          quantity: newQty,
-          totalPrice: unitPrice * newQty - item.discountAmount,
-        };
-        return updated;
-      }
-
-      const newItem: CartItem = {
-        id: lineKey,
-        productId: product.id,
-        name: product.name,
-        variantId: variant?.id,
-        variantName: variant?.name,
-        selectedModifiers: modifiers,
-        unitPrice,
-        // HPP dibekukan di sini, saat penjualan terjadi. Varian dan modifier
-        // tidak menambah HPP karena keduanya belum punya biaya sendiri di model
-        // data — kalau nanti ada, tambahkan ke sini, bukan ke pelaporan.
-        unitCost: product.costPrice || 0,
-        quantity,
-        itemNotes: notes,
-        discountPercent: 0,
-        discountAmount: 0,
-        totalPrice: unitPrice * quantity,
-      };
-      return [...prevCart, newItem];
-    });
-  };
-
-  const updateCartQuantity = (cartItemId: string, newQty: number) => {
-    if (newQty <= 0) {
-      removeFromCart(cartItemId);
-      return;
-    }
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id === cartItemId) {
-          const rawTotal = item.unitPrice * newQty;
-          const disc = item.discountPercent > 0 ? (rawTotal * item.discountPercent) / 100 : item.discountAmount;
-          return {
-            ...item,
-            quantity: newQty,
-            totalPrice: Math.max(0, rawTotal - disc),
-          };
-        }
-        return item;
-      })
-    );
-  };
-
-  const updateCartItemNotes = (cartItemId: string, notes: string) => {
-    setCart((prev) =>
-      prev.map((item) => (item.id === cartItemId ? { ...item, itemNotes: notes } : item))
-    );
-  };
-
-  const applyCartItemDiscount = (cartItemId: string, discountPercent: number, discountAmount: number) => {
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id === cartItemId) {
-          const rawTotal = item.unitPrice * item.quantity;
-          const disc = discountPercent > 0 ? (rawTotal * discountPercent) / 100 : discountAmount;
-          return {
-            ...item,
-            discountPercent,
-            discountAmount: disc,
-            totalPrice: Math.max(0, rawTotal - disc),
-          };
-        }
-        return item;
-      })
-    );
-  };
-
-  const removeFromCart = (cartItemId: string) => {
-    if (soundEnabled) playPOSSound('delete');
-    setCart((prev) => prev.filter((item) => item.id !== cartItemId));
-  };
-
-  const clearCart = () => {
-    setCart([]);
-    setSelectedCustomer(null);
-    setSelectedTable(null);
-    setSelectedStaff(null);
-  };
+  // Cart state/actions belong to the isolated cart domain.
 
   // Process Payment & Create Order
   const processPayment = (
@@ -2970,50 +2579,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return updatedOrder;
   };
 
-  // Save / Edit Product
-  const saveProduct = (product: Product) => {
-    // Saving inventory never silently replaces the owner's active Free selection.
-    // New products are retained here and must be selected before use in POS.
-    setProducts((prev) => {
-      const idx = prev.findIndex((p) => p.id === product.id);
-      if (idx > -1) {
-        const updated = [...prev];
-        updated[idx] = product;
-        return updated;
-      }
-      return [product, ...prev];
-    });
-  };
-
-  const deleteProduct = (productId: string) => {
-    setProducts((prev) => prev.filter((p) => p.id !== productId));
-  };
-
-  const toggleProductAvailability = (productId: string) => {
-    setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, isAvailable: !p.isAvailable } : p))
-    );
-    if (soundEnabled) playPOSSound('click');
-  };
-
-  const saveCategory = (category: Category) => {
-    setCategories((prev) => {
-      const idx = prev.findIndex((c) => c.id === category.id);
-      if (idx > -1) {
-        const updated = [...prev];
-        updated[idx] = category;
-        return updated;
-      }
-      return [...prev, category];
-    });
-  };
-
-  const deleteCategory = (categoryId: string) => {
-    setCategories((prev) => prev.filter((c) => c.id !== categoryId));
-    setProducts((prev) =>
-      prev.map((p) => (p.categoryId === categoryId ? { ...p, categoryId: '' } : p))
-    );
-  };
+  // Catalog CRUD belongs to the catalog domain; stock adjustment coordinates domains below.
 
   const adjustStock = (
     productId: string,
@@ -3048,17 +2614,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setInventoryLogs((prevLogs) => [log, ...prevLogs]);
   };
 
-  const saveCustomer = (customer: Customer) => {
-    setCustomers((prev) => {
-      const idx = prev.findIndex((c) => c.id === customer.id);
-      if (idx > -1) {
-        const updated = [...prev];
-        updated[idx] = customer;
-        return updated;
-      }
-      return [customer, ...prev];
-    });
-  };
+  // Customer CRUD belongs to the customer domain.
 
   const saveTable = (table: Table) => {
     setTables((prev) => {
@@ -3085,102 +2641,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       subscription:prev.subscription,branches:prev.branches,activeBranchId:prev.activeBranchId}));
   };
 
-  const activateBusinessSector = (sector: BusinessSector, customStoreName?: string) => {
-    if (isFreePlan(settings.subscription) && sector !== settings.subscription?.freeSelection?.sector) throw new Error('FREE_SINGLE_BUSINESS');
-    const preset = BUSINESS_PRESETS[sector];
-    if (!preset) return;
-
-    const uId = storeOwnerId;
-    const currentSec = settings.businessSector || 'FNB';
-    if(sector!==currentSec){
-      // Cancel outgoing hydration before state changes, not just at effect cleanup.
-      sharedSync.current?.stop();sharedSync.current=null;
-      setSharedSyncStatus({ready:false,pending:0,error:null});
-    }
-
-    // 1. Save current sector state to its own scoped storage before switching
-    safeSetLocalStorage(getScopedKey('store_settings',uId,currentSec),JSON.stringify(sharedSettings));
-    safeSetLocalStorage(getScopedKey('categories', uId, currentSec), JSON.stringify(categories));
-    safeSetLocalStorage(getScopedKey('products', uId, currentSec), JSON.stringify(products));
-    safeSetLocalStorage(getScopedKey('tables', uId, currentSec), JSON.stringify(tables));
-    safeSetLocalStorage(getScopedKey('stock_items', uId, currentSec), JSON.stringify(stockItems));
-    safeSetLocalStorage(getScopedKey('orders', uId, currentSec), JSON.stringify(orders.slice(0, 50)));
-    safeSetLocalStorage(getScopedKey('held_orders', uId, currentSec), JSON.stringify(heldOrders));
-    safeSetLocalStorage(getScopedKey('inventory_logs', uId, currentSec), JSON.stringify(inventoryLogs.slice(0, 50)));
-    safeSetLocalStorage(getScopedKey('shift', uId, currentSec), JSON.stringify(shift));
-    safeSetLocalStorage(getScopedKey('shift_history', uId, currentSec), JSON.stringify(shiftHistory.slice(0, 30)));
-    safeSetLocalStorage(getScopedKey('customers', uId, currentSec), JSON.stringify(customers));
-    safeSetLocalStorage(getScopedKey('attendance_logs', uId, currentSec), JSON.stringify(attendanceLogs));
-    safeSetLocalStorage(getScopedKey('promo_codes', uId, currentSec), JSON.stringify(promoCodes));
-    safeSetLocalStorage(getScopedKey('cash_movements', uId, currentSec), JSON.stringify(cashMovements));
-    safeSetLocalStorage(getScopedKey('kds_tickets', uId, currentSec), JSON.stringify(kdsTickets));
-    safeSetLocalStorage(getScopedKey('carwash_queue', uId, currentSec), JSON.stringify(carwashQueue));
-    safeSetLocalStorage(getScopedKey('bookings', uId, currentSec), JSON.stringify(bookings));
-    safeSetLocalStorage(getScopedKey('commission_rules', uId, currentSec), JSON.stringify(commissionRules));
-    safeSetLocalStorage(getScopedKey('payroll_slips', uId, currentSec), JSON.stringify(payrollSlips));
-    safeSetLocalStorage(getScopedKey('sent_lifecycle_hooks', uId, currentSec), JSON.stringify(sentLifecycleHookIds));
-
-    // 2. Load target sector state
-    const targetCategories = loadScopedData<Category[]>('categories', uId, sector, []);
-    const targetProducts = loadScopedData('products', uId, sector, []);
-    const targetTables = loadScopedData('tables', uId, sector, []);
-    const targetStockItems = loadScopedData('stock_items', uId, sector, INITIAL_STOCK_ITEMS);
-    const targetOrders = loadScopedData('orders', uId, sector, []);
-    const targetHeldOrders = loadScopedData('held_orders', uId, sector, []);
-    const targetLogs = loadScopedData('inventory_logs', uId, sector, []);
-    const targetShift = loadScopedData('shift', uId, sector, INITIAL_SHIFT);
-    const targetShiftHistory = loadScopedData('shift_history', uId, sector, []);
-    const targetCustomers = loadScopedData('customers', uId, sector, seedCustomersFor(sector));
-    const targetAttendance = loadScopedData('attendance_logs', uId, sector, seedAttendanceFor(sector));
-    const targetPromos = loadScopedData('promo_codes', uId, sector, seedPromosFor(sector));
-    const targetCashMovements = loadScopedData('cash_movements', uId, sector, []);
-    const targetKds = loadScopedData('kds_tickets', uId, sector, []);
-    const targetCarwash = loadScopedData('carwash_queue', uId, sector, []);
-    const targetBookings = loadScopedData('bookings', uId, sector, []);
-    const targetCommission = loadScopedData('commission_rules', uId, sector, []);
-    const targetPayrollSlips = loadScopedData('payroll_slips', uId, sector, []);
-    const targetLifecycleHooks = loadScopedData('sent_lifecycle_hooks', uId, sector, []);
-
-    const targetSettings=loadScopedData<Partial<StoreSettings>>('store_settings',uId,sector,{});
-    const storeName = customStoreName || targetSettings.storeName || preset.defaultStoreName;
-
-    const newSettings: StoreSettings = {
-      ...settings,
-      ...targetSettings,
-      logoUrl: undefined,
-      storeName,
-      businessSector: sector,
-      storeMode: preset.storeMode,
-      receiptHeader: `*** ${storeName} ***`,
-      receiptFooter: `Terima kasih telah bertransaksi di ${storeName}`,
-    };
-
-    setSettings(newSettings);
-    setCategories(targetCategories);
-    setProducts(targetProducts);
-    setTables(targetTables);
-    setStockItems(targetStockItems);
-    setOrders(targetOrders);
-    setHeldOrders(targetHeldOrders);
-    setInventoryLogs(targetLogs);
-    setShift(targetShift);
-    setShiftHistory(targetShiftHistory);
-    setCustomers(targetCustomers);
-    setAttendanceLogs(targetAttendance);
-    setPromoCodes(targetPromos);
-    setCashMovements(targetCashMovements);
-    setKdsTickets(targetKds);
-    setCarwashQueue(targetCarwash);
-    setBookings(targetBookings);
-    setCommissionRules(targetCommission);
-    setPayrollSlips(targetPayrollSlips);
-    setSentLifecycleHookIds(targetLifecycleHooks);
-
-    setSelectedCategory(targetCategories[0]?.id || 'ALL');
-    clearCart();
-    setSearchQuery('');
-
-    if (soundEnabled) playPOSSound('payment_success');
+  const activateBusinessSector = (sector: BusinessSector, _customStoreName?: string) => {
+    const choices=workspaceBusiness.directory.businesses.filter(b=>b.status==="ACTIVE"&&b.sector===sector&&b.transportRef);
+    if(choices.length===1)workspaceBusiness.select(choices[0].businessId);
+    else navigateModule("businesses");
   };
 
   const startShift = async (cashierName:string,initialCash:number):Promise<Shift> => {
@@ -3374,37 +2838,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return waUrl;
   };
 
-  const saveCommissionRule = (rule: StaffCommissionRule) => {
-    setCommissionRules((prev) => {
-      const idx = prev.findIndex((r) => r.staffId === rule.staffId);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = rule;
-        return next;
-      }
-      return [...prev, rule];
-    });
-  };
 
-  const savePayrollSlip = (slip: PayrollSlip) => {
-    setPayrollSlips((prev) => {
-      const idx = prev.findIndex((s) => s.id === slip.id);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = slip;
-        return next;
-      }
-      return [slip, ...prev];
-    });
-  };
-
-  const deletePayrollSlip = (slipId: string) => {
-    setPayrollSlips((prev) => prev.filter((s) => s.id !== slipId));
-  };
 
   const disbursePayrollCashMovement = (slipId: string, paymentMethod: string = 'TUNAI'): boolean => {
     const slip = payrollSlips.find((s) => s.id === slipId);
-    if (!slip) return false;
+    if (!slip || slip.status==='PAID') return false;
+    if(!Number.isFinite(slip.netSalary)||slip.netSalary<0)throw Error('INVALID_PAYROLL_AMOUNT');
 
     const updatedSlip: PayrollSlip = {
       ...slip,
@@ -3412,8 +2851,6 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       paidAt: new Date().toISOString(),
       paymentMethod,
     };
-    savePayrollSlip(updatedSlip);
-
     if (paymentMethod.toUpperCase().includes('TUNAI') || paymentMethod.toUpperCase().includes('KAS')) {
       addCashMovement(
         'CASH_OUT',
@@ -3423,6 +2860,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         slip.staffName
       );
     }
+    // Cash outbox persistence must succeed before marking the operational slip
+    // paid. A storage failure cannot leave a paid slip with no financial command.
+    savePayrollSlip(updatedSlip);
     return true;
   };
 
@@ -3435,7 +2875,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   return (
-    <POSContext.Provider
+    <POSDomainProvider
       value={{
         tenant,
         activeTab,
@@ -3535,7 +2975,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         payrollSlips,
         savePayrollSlip: requireWritable(savePayrollSlip),
         deletePayrollSlip: requireWritable(deletePayrollSlip),
-        disbursePayrollCashMovement: requireWritable(disbursePayrollCashMovement),
+        disbursePayrollCashMovement: requireFinancialWritable(requireWritable(disbursePayrollCashMovement)),
         sentLifecycleHookIds,
         markLifecycleHookSent: requireWritable(markLifecycleHookSent),
         dismissLifecycleHook: requireWritable(dismissLifecycleHook),
@@ -3561,14 +3001,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       {/* Anything below can read the active business unit via useTenant(). */}
       <TenantProvider value={tenant}>{children}</TenantProvider>
       {syncCenterOpen && <SyncCenter />}
-    </POSContext.Provider>
+    </POSDomainProvider>
   );
 };
 
 export const usePOS = () => {
-  const context = useContext(POSContext);
-  if (!context) {
-    throw new Error('usePOS must be used within a POSProvider');
-  }
-  return context;
+  return usePOSSnapshot();
 };

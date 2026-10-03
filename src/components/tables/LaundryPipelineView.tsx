@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { Order, LaundryStage } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import {
@@ -36,7 +36,7 @@ const LAUNDRY_STAGES: { key: LaundryStage; label: string; icon: any; color: stri
 ];
 
 export const LaundryPipelineView: React.FC = () => {
-  const { orders, updateLaundryStage, settings } = usePOS();
+  const { orders, updateLaundryStage, settings } = usePOSFields(["orders","updateLaundryStage","settings"]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrderForRack, setSelectedOrderForRack] = useState<Order | null>(null);
   const [rackInput, setRackInput] = useState('');

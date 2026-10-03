@@ -32,6 +32,7 @@ const MIGRATIONS = [
   'docs/security/restrict-browser-rls-policies.sql',
   'docs/security/intelligence-cache.sql',
   'docs/security/intelligence-wallet.sql',
+  ...fs.readdirSync(path.join(process.cwd(),'supabase/migrations')).filter(file=>file.endsWith('_business_scoped_operational_state.sql')).sort().map(file=>'supabase/migrations/'+file),
 ];
 
 async function main() {

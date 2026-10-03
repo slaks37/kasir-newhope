@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { useCatalog } from '../../context/POSDomains';
 import { isFreePlan, freeProductAllowed } from '../../config/freePlanPolicy';
 import { Product, ProductBundle } from '../../types';
 import { ProductCard } from './ProductCard';
@@ -28,10 +28,10 @@ interface ProductGridProps {
   onSelectProduct: (product: Product) => void;
 }
 
-export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => {
-  const {settings}=usePOS();
+export const ProductGrid: React.FC<ProductGridProps> = React.memo(({ onSelectProduct }) => {
   const { t } = useTranslation();
   const {
+    settings,
     products,
     categories,
     selectedCategory,
@@ -40,7 +40,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
     setSearchQuery,
     bundles,
     addToCart,
-  } = usePOS();
+  } = useCatalog();
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
@@ -552,4 +552,4 @@ export const ProductGrid: React.FC<ProductGridProps> = ({ onSelectProduct }) => 
       )}
     </div>
   );
-};
+});

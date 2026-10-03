@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useModalFocus } from '../../hooks/useModalFocus';
-import { usePOS } from '../../context/POSContext';
+import { useCart } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
 import { newId } from '../../lib/ids';
@@ -67,7 +67,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     staffMembers,
     selectedStaff,
     setSelectedStaff,
-  } = usePOS();
+  } = useCart();
   const { t } = useTranslation();
 
   const [editingItemNotes, setEditingItemNotes] = useState<{ id: string; notes: string } | null>(null);
@@ -203,7 +203,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
             } ${orderType !== 'DINE_IN' ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Grid2X2 className="w-4 h-4 text-amber-600 shrink-0" />
-            <span className="truncate">{selectedTable ? selectedTable.name : `${t('common.filter')} ${slotNoun}`}</span>
+            <span className="truncate">{selectedTable ? selectedTable.name : `${t('common.select')} ${slotNoun}`}</span>
             {selectedTable && (
               <span
                 onClick={(e) => {

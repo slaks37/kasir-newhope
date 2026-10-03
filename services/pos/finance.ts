@@ -25,7 +25,9 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
   if(!tenantId)throw new FinanceError(409,'TENANT_NOT_PROVISIONED');
   const row=(await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
     ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3`,[outletId,tenantId,sector])).rows[0];
+    JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3 AND m.is_active
+      AND t.is_active AND t.merged_into IS NULL`,[outletId,tenantId,sector])).rows[0];
   if(!row)throw new FinanceError(403,'OUTLET_NOT_OWNED');
   if(!row.is_active)throw new FinanceError(409,'OUTLET_SETUP_REQUIRED');
   await assertTenantWritable(db,tenantId);
@@ -129,7 +131,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
       const rows=(await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`,[s.tenantId,s.merchantId,s.outletId])).rows;
       const current=rows.find(r=>r.status==='OPEN');
       return {shift:current?await calculateShift(c,s,current):null,history:rows.filter(r=>r.status==='CLOSED').map(r=>r.summary).filter(Boolean)};
-    });res.json({ok:true,...result});}catch(error){
+    });res.json({ok:true,...result,generatedAt:new Date().toISOString()});}catch(error){
       if(!(error instanceof FinanceError)&&!(error instanceof BillingError)){
         const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[finance] shift read failed',{code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});

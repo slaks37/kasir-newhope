@@ -8,7 +8,7 @@ import { assertAiAvailable } from './entitlement';
 /** Authenticated principal is rechecked by the loader; only derived, bounded
  * summaries are returned/cached. Raw transactions never leave the adapter. */
 export async function computeDailyBrief(db:Db,principal:AuthPrincipal,businessId:string,now=new Date()){
-  const identity=(await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE m.external_ref=$1 AND t.owner_user_ref=$2`,[businessId,principal.subject])).rows[0];
+  const identity=(await db.query(`SELECT m.id,m.tenant_id FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,[businessId,principal.subject])).rows[0];
   if(!identity)throw new Error('BUSINESS_NOT_OWNED');
   await assertAiAvailable(db,identity.tenant_id);
   const snapshot=await loadMerchantSnapshot(db,principal,businessId,now);

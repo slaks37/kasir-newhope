@@ -1,8 +1,8 @@
 import React,{useState} from 'react';
-import {usePOS} from '../../context/POSContext';
+import {usePOSFields} from '../../context/POSDomains';
 
 export function LegacyRecoveryPanel(){
-  const {legacyMigrationStatus:status,settings,mapLegacyOutlet}=usePOS();
+  const {legacyMigrationStatus:status,settings,mapLegacyOutlet}=usePOSFields(["legacyMigrationStatus","settings","mapLegacyOutlet"]);
   const [error,setError]=useState('');
   if(!status||status.complete)return null;
   const branches=(settings.branches||[]).filter(branch=>branch.isActive&&branch.businessSector===settings.businessSector);

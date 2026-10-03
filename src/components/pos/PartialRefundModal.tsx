@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { printReceiptImages } from '../../lib/printReceipt';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { Order, OrderRefund } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -32,7 +32,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
   onClose,
   onRefundSuccess,
 }) => {
-  const { refundOrderItems, settings, shift } = usePOS();
+  const { refundOrderItems, settings, shift } = usePOSFields(["refundOrderItems","settings","shift"]);
   const { t } = useTranslation();
 
   const presetReasons = [

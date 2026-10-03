@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { User, UserRole } from '../../types';
 import { verifyPinHash } from '../../lib/auth/pinSecurity';
 import {
@@ -22,7 +22,7 @@ interface SwitchUserModalProps {
 }
 
 export const SwitchUserModal: React.FC<SwitchUserModalProps> = ({ onClose, onLogout }) => {
-  const { users, currentUser, switchUser, verifyPin } = usePOS();
+  const { users, currentUser, switchUser, verifyPin } = usePOSFields(["users","currentUser","switchUser","verifyPin"]);
 
   const [selectedUser, setSelectedUser] = useState<User | null>(currentUser);
   const [pinInput, setPinInput] = useState('');

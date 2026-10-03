@@ -1,7 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {PAID_SAAS_PLANS,annualTotal} from '../../config/saasPlans';
 import {formatRupiah,formatDateTime} from '../../utils/formatters';
-import {usePOS} from '../../context/POSContext';
+import {usePOSFields} from '../../context/POSDomains';
 import {useAuth} from '../../context/AuthContext';
 
 async function billingRequest(path:string,body?:any,token?:string){
@@ -11,7 +11,7 @@ async function billingRequest(path:string,body?:any,token?:string){
  const data=await r.json();if(!r.ok || !data.ok)throw new Error(data.error || 'Permintaan billing gagal');return data;
 }
 export const SubscriptionBillingTab:React.FC=()=>{
- const {currentUser,setActiveTab}=usePOS();
+ const {currentUser,setActiveTab}=usePOSFields(["currentUser","setActiveTab"]);
  const {session}=useAuth();
  const token = session?.access_token;
  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);

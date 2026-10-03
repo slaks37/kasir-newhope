@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePOS } from '../../context/POSContext';
+import { usePOSFields } from '../../context/POSDomains';
 import { Customer, CustomerTier } from '../../types';
 import { formatRupiah } from '../../utils/formatters';
 import { Users, UserPlus, Award, Phone, Mail, Search, CheckCircle2, Gift, Upload, User, MessageSquare } from 'lucide-react';
@@ -8,7 +8,7 @@ import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
 import { useTranslation } from '../../i18n';
 
 export const CustomerManager: React.FC = () => {
-  const { customers, saveCustomer, settings } = usePOS();
+  const { customers, saveCustomer, settings } = usePOSFields(["customers","saveCustomer","settings"]);
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');

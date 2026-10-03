@@ -1,11 +1,11 @@
 import React,{useMemo} from 'react';
-import {usePOS} from '../../context/POSContext';
+import {usePOSFields} from '../../context/POSDomains';
 import {useIntelligenceSnapshot} from './useIntelligenceSnapshot';
 import {recentBasketOffers,nextBestOffers} from '../../lib/assistant/businessBrain';
 import {isFreePlan} from '../../config/freePlanPolicy';
 import {formatRupiah} from '../../utils/formatters';
 export function UpsellSuggestions(){
-  const snapshot=useIntelligenceSnapshot();const {cart,products,addToCart,settings}=usePOS();
+  const snapshot=useIntelligenceSnapshot();const {cart,products,addToCart,settings}=usePOSFields(["cart","products","addToCart","settings"]);
   const enabled=!isFreePlan(settings.subscription);
   const brain=useMemo(()=>enabled?{offers:recentBasketOffers(snapshot)}:null,[snapshot,enabled]);
   const offers=brain?nextBestOffers(brain,cart,products).filter(o=>{const p=products.find(p=>p.id===o.bId);return p&&!p.variants?.length&&!p.modifierGroups?.some(g=>g.required);}):[];

@@ -75,7 +75,9 @@ export async function testFreeSync(db:Db,url:string) {
   assert.equal((await db.query('SELECT outlet_id FROM pos.products WHERE tenant_id=$1 AND external_ref=$2',[tenant,ids[0]])).rows[0].outlet_id,branch);
   await db.query('UPDATE billing.subscriptions SET free_selection=$2 WHERE tenant_id=$1',[tenant,JSON.stringify(selection)]);
   await db.query('UPDATE internal.outlets SET is_active=false WHERE id=$1',[branch]);
-  assert.equal((await (await send('state',versionedCatalog(catalog))).json()).rejected[0].error,'OUTLET_SETUP_REQUIRED');
+  const inactiveSelection=await send('state',versionedCatalog(catalog));
+  assert.equal(inactiveSelection.status,403,'No operational write is allowed for an inactive Free outlet');
+  assert.equal((await inactiveSelection.json()).error,'FREE_BRANCH_MISMATCH');
   await db.query('UPDATE internal.outlets SET is_active=true WHERE id=$1',[branch]);
   await db.query("UPDATE billing.subscriptions SET plan_id='plan-plus-monthly',status='ACTIVE',current_period_end=now()+interval '30 days' WHERE tenant_id=$1",[tenant]);
   assert.equal(await resolveFreeSyncScope(db,owner,'FNB'),undefined);

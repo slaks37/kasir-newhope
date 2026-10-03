@@ -113,6 +113,8 @@ export interface StaffMember {
 }
 
 export interface StoreBranch {
+  /** Canonical merchant UUID supplied by the server; sector is only an attribute. */
+  businessId?: string;
   id: string;
   name: string;
   address: string;
@@ -611,6 +613,7 @@ export interface User {
 }
 
 export type PermissionFeature = 
+  | 'businesses'
   | 'home'
   | 'overview'
   | 'pos' 

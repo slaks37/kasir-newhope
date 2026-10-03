@@ -10,6 +10,8 @@
 
 import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import {navigate} from '../../lib/navigation/workspaceRouter';
+import {readCheckoutIntent} from '../../lib/workspace/checkoutIntent';
 import {
   Mail,
   Lock,
@@ -40,15 +42,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 }) => {
   const { signInWithEmail, signUpWithEmail } = useAuth();
 
-  const [mode, setMode] = useState<"login" | "register">(initialMode);
-
-  React.useEffect(() => {
-    setMode(initialMode);
-  }, [initialMode]);
-
-  React.useEffect(() => {
-    window.location.hash = mode;
-  }, [mode]);
+  // URL owns the mode. A mirrored state/effect pair can overwrite navigation
+  // while the next lazy route is still loading.
+  const mode=initialMode;
+  const setMode=(next:'login'|'register')=>navigate('/'+next+window.location.search);
 
   const [fullName, setFullName] = useState("");
   const [storeName, setStoreName] = useState("");
@@ -188,9 +185,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             }
           }
           setSuccess("Pendaftaran berhasil! Membuka kasir toko baru Anda...");
-          setTimeout(() => {
-            window.location.hash = "";
-          }, 800);
+          // Auth guard restores the requested URL. A delayed hash mutation
+          // would race it and could overwrite the newly-opened workspace.
         }
       }
     } catch {
@@ -239,7 +235,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             : "Lengkapi informasi usaha. Kami siapkan ruang kasir Anda."}
         </p>
       </div>
-      {sessionStorage.getItem("nhpos_pending_checkout_plan") && (
+      {readCheckoutIntent() && (
         <div className="nh-form-notice">
           <Zap size={18} />
           <span>
@@ -292,7 +288,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
                 <div className="nh-field">
                   <label htmlFor="second-outlet-name">Outlet 2 — opsional</label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700" htmlFor="open-second-outlet">
+                  <label className="nh-outlet-toggle" htmlFor="open-second-outlet">
                     <input id="open-second-outlet" type="checkbox" checked={openSecondOutlet} onChange={e=>setOpenSecondOutlet(e.target.checked)} />
                     Buka sekarang (atau tunda sampai nanti)
                   </label>
