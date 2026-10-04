@@ -1,5 +1,7 @@
 # ERD — New Hope POS
 
+> **Cakupan (revisi 2026-10-04).** Diagram di bawah menggambarkan **inti awal** skema (enam migrasi pertama). Skema saat ini jauh lebih besar — ±61 tabel di skema `pos`, `billing`, `ai`, `internal` dan 36 view `contract.*` — termasuk hierarki tenant → merchant → outlet (0015), ledger keuangan kanonik (0044), shared state (0043) dan `billing.payment_events` (rekonsiliasi pembayaran; `webhook_logs` di bawah adalah desain lama). Sumber kebenaran adalah folder `migrations/` dan `supabase/migrations/`.
+
 **24 tabel dan 8 view, dalam 5 domain.** Diturunkan langsung dari keenam file
 migrasi, lalu diverifikasi dengan menjalankannya di PostgreSQL 18.3 — jadi
 diagram ini menunjukkan apa yang benar-benar dibuat Postgres, bukan yang
