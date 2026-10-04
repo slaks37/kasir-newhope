@@ -2,13 +2,46 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {fileURLToPath} from 'node:url';
-import {defineConfig} from 'vite';
+import {createHash} from 'node:crypto';
+import {defineConfig, type Plugin} from 'vite';
+import {serviceWorkerSource} from './src/pwa/serviceWorker';
+
+/**
+ * Emits /sw.js with the cashier app's assets (everything reachable from the
+ * `main` entry, including lazy routes and their CSS). Admin-only chunks are
+ * never precached on merchant devices.
+ */
+function cashierServiceWorker(): Plugin {
+  return {
+    name: 'newhope-cashier-service-worker',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const chunks = Object.values(bundle).filter((item): item is Extract<typeof item, {type: 'chunk'}> => item.type === 'chunk');
+      const entry = chunks.find(chunk => chunk.isEntry && chunk.name === 'main');
+      if (!entry) return;
+      const byFile = new Map(chunks.map(chunk => [chunk.fileName, chunk]));
+      const files = new Set<string>();
+      const visit = (fileName: string) => {
+        if (files.has(fileName)) return;
+        const chunk = byFile.get(fileName);
+        if (!chunk) return;
+        files.add(fileName);
+        for (const css of (chunk as {viteMetadata?: {importedCss?: Set<string>}}).viteMetadata?.importedCss ?? []) files.add(css);
+        [...chunk.imports, ...chunk.dynamicImports].forEach(visit);
+      };
+      visit(entry.fileName);
+      const assets = [...files].sort().map(file => '/' + file);
+      const buildId = createHash('sha256').update(assets.join('\n')).digest('hex').slice(0, 12);
+      this.emitFile({type: 'asset', fileName: 'sw.js', source: serviceWorkerSource(buildId, assets)});
+    },
+  };
+}
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), cashierServiceWorker()],
     resolve: {
       alias: {
         '@': projectDir,
