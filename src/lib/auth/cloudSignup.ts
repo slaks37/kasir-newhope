@@ -1,8 +1,8 @@
-import type { AuthError, Session, SupabaseClient } from '@supabase/supabase-js';
+import type { AuthError, GoTrueClient, Session } from '@supabase/auth-js';
 
 /** Only the Auth API handles passwords, verification and signup rate limits. */
 export async function registerCloudAccount(
-  client: Pick<SupabaseClient, 'auth'>,
+  client: { auth: GoTrueClient },
   input: { email: string; password: string; fullName: string; storeName: string; sector: string; firstOutletName: string; secondOutletName: string; redirectTo: string },
 ): Promise<{ error: AuthError | null; session: Session | null; requiresEmailConfirmation: boolean }> {
   try {
