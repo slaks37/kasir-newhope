@@ -45,8 +45,8 @@ export const BlogSEOHead: React.FC<BlogSEOHeadProps> = ({ post, isListPortal = f
     if (isListPortal || !post) {
       // SEO for Blog Harapan Baru Portal Homepage
       const portalTitle = 'Blog Harapan Baru — Tips Bisnis, Panduan Kasir & FinTech UMKM | New Hope POS';
-      const portalDesc = 'Portal edukasi resmi New Hope POS: Panduan membuka kafe, tips bisnis laundry kiloan, tutorial QRIS Dinamis, dan strategi kontrol resep HPP bahan baku.';
-      const portalKeywords = 'blog bisnis umkm, tips buka kafe, aplikasi kasir terbaik, qris dinamis pos, resep hpp, harapan baru pos';
+      const portalDesc = 'Portal edukasi resmi New Hope POS: Panduan membuka kafe, tips bisnis laundry kiloan, panduan pembayaran QRIS, dan strategi kontrol resep HPP bahan baku.';
+      const portalKeywords = 'blog bisnis umkm, tips buka kafe, aplikasi kasir terbaik, kasir qris, resep hpp, harapan baru pos';
       const canonical = 'https://kasir.newhope.space/#blog';
 
       document.title = portalTitle;

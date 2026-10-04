@@ -16,7 +16,7 @@
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import type { User, Session, AuthError } from '@supabase/supabase-js';
+import type { User, Session, AuthError } from '@supabase/auth-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { hashPin, verifyPinHash } from '../lib/auth/pinSecurity';
 import { BusinessSector } from '../types';

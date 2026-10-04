@@ -160,11 +160,11 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       extraOptions
     );
 
-    if (createdOrder) {
-      setPaidOrders((prev) => ({ ...prev, [personIdx]: createdOrder }));
-      // Langsung munculkan nota untuk pemesan yang baru bayar
-      setSelectedReceiptOrder(createdOrder);
-    }
+    // Only a recorded sale marks the person as paid (same guard as equal split).
+    if (!createdOrder) return;
+    setPaidOrders((prev) => ({ ...prev, [personIdx]: createdOrder }));
+    // Langsung munculkan nota untuk pemesan yang baru bayar
+    setSelectedReceiptOrder(createdOrder);
 
     setPaidPersons(updated);
     setActivePayingPerson(null);

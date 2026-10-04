@@ -3,7 +3,7 @@ import type { ServerReportSummary, ServerTransactionsResponse, ServerTransaction
 import { coalescedRead, refreshCoordinator } from '../sync/refreshCoordinator';
 import type {Shift} from '../../types';
 
-export interface ReportQuery {outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string}
+export interface ReportQuery {outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
 export function reportParams(query:ReportQuery):URLSearchParams{
   return new URLSearchParams(Object.entries(query).filter(([,value])=>value!==undefined&&value!=='').sort(([a],[b])=>a.localeCompare(b)) as [string,string][]);
 }
@@ -60,10 +60,13 @@ export function useServerReport(query:ReportQuery,includeTransactions=true){
   const current=useRef({key,query});current.current={key,query};
   const loadingPage=useRef<string|null>(null);
   const revision=useRef(0);
+  const retryRef=useRef<()=>void>(()=>{});
   useEffect(()=>{
     const controller=new AbortController();
     setState(cache.current.get(key)||empty(key));
+    let failures=0,retryTimer:ReturnType<typeof setTimeout>|undefined;
     const refresh=async()=>{
+      clearTimeout(retryTimer);
       const generation=++revision.current;
       try{
         if(!query.outletId)throw new Error('OUTLET_SETUP_REQUIRED');
@@ -75,11 +78,16 @@ export function useServerReport(query:ReportQuery,includeTransactions=true){
         if(controller.signal.aborted||generation!==revision.current)return;
         const next={key,summary,transactions:page?.transactions||[],nextCursor:page?.nextCursor||null,loading:false,loadingMore:false,error:null};
         cache.current.set(key,next);if(cache.current.size>10)cache.current.delete(cache.current.keys().next().value!);
-        setState(next);
-      }catch(error){if(!controller.signal.aborted&&generation===revision.current)setState(previous=>({...previous,key,loading:false,error:error instanceof Error?error.message:'REPORT_UNAVAILABLE'}));}
+        setState(next);failures=0;
+      }catch(error){if(!controller.signal.aborted&&generation===revision.current){
+        setState(previous=>({...previous,key,loading:false,error:error instanceof Error?error.message:'REPORT_UNAVAILABLE'}));
+        // Recover quickly after an outage instead of waiting for the 60 s cycle (5, 10, 20, 40 s).
+        if(failures<4)retryTimer=setTimeout(()=>void refresh(),5000*2**failures++);
+      }}
     };
+    retryRef.current=()=>{failures=0;void refresh();};
     const unsubscribe=refreshCoordinator.register('report:'+key,{run:refresh,interval:60000,events:['financial-updated']});
-    return()=>{controller.abort();revision.current++;unsubscribe();};
+    return()=>{controller.abort();revision.current++;clearTimeout(retryTimer);unsubscribe();};
   },[key,includeTransactions]);
   const loadMore=useCallback(async()=>{
     if(current.current.key!==state.key||!state.nextCursor||loadingPage.current===key)return;
@@ -99,5 +107,6 @@ export function useServerReport(query:ReportQuery,includeTransactions=true){
     }catch(error){if(current.current.key===key&&generation===revision.current)setState(previous=>({...previous,loadingMore:false,error:error instanceof Error?error.message:'REPORT_UNAVAILABLE'}));}
     finally{if(loadingPage.current===key){loadingPage.current=null;if(current.current.key===key)setState(previous=>({...previous,loadingMore:false}));}}
   },[key,state.key,state.nextCursor,query]);
-  return {...(state.key===key?state:empty(key)),loadMore};
+  const retry=useCallback(()=>retryRef.current(),[]);
+  return {...(state.key===key?state:empty(key)),loadMore,retry};
 }

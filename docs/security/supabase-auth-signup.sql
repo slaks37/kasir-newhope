@@ -11,6 +11,8 @@ DECLARE
   business_name text;
   owner_name text;
   business_sector text;
+  first_outlet text;
+  second_outlet text;
 BEGIN
   IF NEW.email IS NULL OR NEW.email_confirmed_at IS NULL THEN RETURN NEW; END IF;
   IF TG_OP = 'UPDATE' THEN
@@ -26,6 +28,10 @@ BEGIN
   owner_name := left(coalesce(nullif(btrim(NEW.raw_user_meta_data->>'full_name'), ''), 'Pemilik Toko'), 150);
   business_sector := coalesce(NEW.raw_user_meta_data->>'business_sector', 'FNB');
   IF business_sector NOT IN ('FNB','RETAIL','LAUNDRY','BARBERSHOP','CARWASH') THEN business_sector := 'FNB'; END IF;
+  -- Nama outlet dari form registrasi (label tampilan saja). Outlet kedua hanya
+  -- dibuka bila owner mencentang "Buka sekarang"; trial mencakup 2 outlet.
+  first_outlet := left(coalesce(nullif(btrim(NEW.raw_user_meta_data->>'first_outlet_name'), ''), business_name || ' (Cabang Utama)'), 150);
+  second_outlet := left(nullif(btrim(NEW.raw_user_meta_data->>'second_outlet_name'), ''), 150);
 
   INSERT INTO internal.users (id, email, full_name, is_active)
   VALUES (NEW.id, lower(NEW.email), owner_name, true);
@@ -37,7 +43,11 @@ BEGIN
   INSERT INTO internal.merchants (id, tenant_id, name, business_sector, is_active)
   VALUES (tenant_id, tenant_id, business_name, business_sector, true);
   INSERT INTO internal.outlets (id, tenant_id, merchant_id, name, is_active)
-  VALUES (pg_catalog.gen_random_uuid(), tenant_id, tenant_id, business_name || ' (Cabang Utama)', true);
+  VALUES (pg_catalog.gen_random_uuid(), tenant_id, tenant_id, first_outlet, true);
+  IF second_outlet IS NOT NULL AND second_outlet <> first_outlet THEN
+    INSERT INTO internal.outlets (id, tenant_id, merchant_id, name, is_active)
+    VALUES (pg_catalog.gen_random_uuid(), tenant_id, tenant_id, second_outlet, true);
+  END IF;
   INSERT INTO internal.memberships (id, user_id, tenant_id, merchant_id, role, pin, is_active)
   VALUES (pg_catalog.gen_random_uuid(), NEW.id, tenant_id, tenant_id, 'OWNER',
     pg_catalog.encode(extensions.gen_random_bytes(32), 'hex'), true);

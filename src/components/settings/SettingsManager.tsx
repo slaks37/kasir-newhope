@@ -31,6 +31,7 @@ import { formatRupiah } from '../../utils/formatters';
 import { newUuid } from '../../lib/ids';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
+import { notify } from '../../lib/ui/notify';
 
 export const SettingsManager: React.FC = () => {
   const {
@@ -89,11 +90,11 @@ export const SettingsManager: React.FC = () => {
     e.target.value = '';
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        alert('Ukuran gambar logo maksimal 5MB');
+        notify('Ukuran gambar logo maksimal 5MB');
         return;
       }
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-        alert('Logo harus berupa PNG, JPEG, atau WebP.');
+        notify('Logo harus berupa PNG, JPEG, atau WebP.');
         return;
       }
       const objectUrl = URL.createObjectURL(file);
@@ -122,7 +123,7 @@ export const SettingsManager: React.FC = () => {
         logoEditedRef.current = true;
         setFormSettings(prev => ({ ...prev, logoUrl }));
       } catch {
-        alert('Logo tidak dapat diproses. Coba gambar yang lebih kecil.');
+        notify('Logo tidak dapat diproses. Coba gambar yang lebih kecil.');
       } finally {
         URL.revokeObjectURL(objectUrl);
       }
@@ -152,7 +153,7 @@ export const SettingsManager: React.FC = () => {
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 3000);
     } catch {
-      alert('Logo belum tersimpan di server. Periksa koneksi dan coba lagi.');
+      notify('Logo belum tersimpan di server. Periksa koneksi dan coba lagi.');
     } finally {
       setIsSaving(false);
     }
@@ -200,7 +201,7 @@ export const SettingsManager: React.FC = () => {
   const handleGetCurrentGps = () => {
     setIsGettingGps(true);
     if (!navigator.geolocation) {
-      alert('Geolocation tidak didukung browser ini.');
+      notify('Geolocation tidak didukung browser ini.');
       setIsGettingGps(false);
       return;
     }
@@ -211,7 +212,7 @@ export const SettingsManager: React.FC = () => {
         setIsGettingGps(false);
       },
       (err) => {
-        alert(`Gagal mengambil GPS: ${err.message}`);
+        notify(`Gagal mengambil GPS: ${err.message}`);
         setIsGettingGps(false);
       },
       { enableHighAccuracy: true }
@@ -238,7 +239,7 @@ export const SettingsManager: React.FC = () => {
       setSavingBranch(true);
       await saveBranch(b);
       setShowBranchModal(false);
-    } catch (err) { alert((err as Error).message); }
+    } catch (err) { notify((err as Error).message); }
     finally { setSavingBranch(false); }
   };
 
@@ -435,7 +436,7 @@ export const SettingsManager: React.FC = () => {
 
                   {branches.length > 1 && (
                     <button
-                      onClick={async () => { try { await deleteBranch(b.id); } catch (err) { alert((err as Error).message); } }}
+                      onClick={async () => { try { await deleteBranch(b.id); } catch (err) { notify((err as Error).message); } }}
                       className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center space-x-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

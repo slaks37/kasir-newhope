@@ -1,7 +1,7 @@
 import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
-import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import { AuthUnavailableError, authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { isFreePlan } from '../../src/config/freePlanPolicy';
@@ -9,10 +9,18 @@ import { validateFreeBranchSelection, FreePlanAccessError } from './freePlan';
 import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus, activateFreeTrial } from './engine';
 import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
+/** A missing or out-of-range coordinate is stored as NULL ("not set"), never 0 — 0,0 is a real place in the Atlantic. */
+function coordinate(value: unknown, limit: number): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
+}
+
 export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
       if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
+      if (err instanceof AuthUnavailableError) return res.status(503).json({ok:false,error:'AUTH_UNAVAILABLE'});
       if (!(err instanceof BillingError)){
         const diagnostic=err as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[billing] INTERNAL_OPERATION_FAILED',{route:req.path,code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
@@ -90,7 +98,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       const {rows}=await c.query(`INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id,tenantId,merchant.id,String(b.name).trim(),String(b.address ?? existing?.address ?? ''),Number(b.latitude ?? existing?.latitude)||0,Number(b.longitude ?? existing?.longitude)||0,Math.max(1,Number(b.allowedRadiusMeters ?? existing?.radius_meters)||100),b.isActive!==false]);
+        [id,tenantId,merchant.id,String(b.name).trim(),String(b.address ?? existing?.address ?? ''),coordinate(b.latitude ?? existing?.latitude,90),coordinate(b.longitude ?? existing?.longitude,180),Math.max(1,Number(b.allowedRadiusMeters ?? existing?.radius_meters)||100),b.isActive!==false]);
       return rows[0];
     });res.json({ok:true,outlet:result});
   }));
@@ -154,12 +162,15 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       try{
         const inquiry=await checkDokuOrderStatus(inv.invoice_number);
         if(inquiry.ok && inquiry.status==='SUCCESS'){
-          let allowedChannels:string[];
-          try{allowedChannels=getDokuAllowedChannels();}catch{allowedChannels=['VIRTUAL_ACCOUNT_BCA'];}
-          const rawChannel=inquiry.channelId || inv.quote?.allowedChannels?.[0] || 'VIRTUAL_ACCOUNT_BCA';
-          const channel=allowedChannels.includes(rawChannel)?rawChannel:allowedChannels[0];
-          await reconcilePayment(db,{
-            eventKey:`inquiry-${inv.invoice_number}-${Date.now()}`,
+          // Same fail-closed channel policy as the signed webhook: an unknown
+          // or unapproved channel is recorded for review, never relabelled.
+          let allowedChannels:string[]=[];
+          try{allowedChannels=getDokuAllowedChannels();}catch{/* empty → validation issue below */}
+          const channel=String(inquiry.channelId || '');
+          const issue=!channel || !allowedChannels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':undefined;
+          const result=await reconcilePayment(db,{
+            eventKey:`inquiry-${inv.invoice_number}-${String(inquiry.transactionId || 'unknown')}`,
+            validationIssue:issue,
             invoiceNumber:inv.invoice_number,
             reference:String(inquiry.transactionId || `inquiry-${Date.now()}`),
             amount:Number(inv.amount),
@@ -170,7 +181,10 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
             payload:{status:'SUCCESS',channel,source:'INQUIRY'}
           });
           const statusData=await subscriptionStatus(db,tenantId);
-          return res.json({ok:true,paid:true,reconciled:true,status:statusData.subscription.status,subscription:statusData.subscription});
+          // Paid only when the ledger actually applied it; REVIEW stays pending for support.
+          const applied=result.outcome==='APPLIED' || result.outcome==='DUPLICATE';
+          return res.json({ok:true,paid:applied,reconciled:applied,outcome:result.outcome,reason:(result as {reason?:string}).reason,
+            status:applied?statusData.subscription.status:'PENDING_PAYMENT',subscription:statusData.subscription});
         }
       }catch(err:any){
         console.warn('[doku-verify] Inquiry check failed:',err.message);

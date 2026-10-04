@@ -10,7 +10,7 @@
  *   VITE_SUPABASE_ANON_KEY=eyJhbGci...
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createAuthClient } from './authClient';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -22,21 +22,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key',
-  {
-    auth: {
-      // Persist session di localStorage — user tidak perlu login ulang setiap
-      // buka tab baru.
-      persistSession: true,
-      // Auto-refresh token sebelum kedaluwarsa.
-      autoRefreshToken: true,
-      // Deteksi session dari URL fragment setelah OAuth redirect.
-      detectSessionInUrl: true,
-    },
-  }
-);
+/**
+ * Frontend hanya memakai `supabase.auth`. Klien dibuat dari @supabase/auth-js
+ * supaya storage/postgrest/realtime/functions tidak ikut ke bundle setiap halaman.
+ */
+export const supabase = {
+  auth: createAuthClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key'),
+};
 
 /** True kalau konfigurasi Supabase sudah terisi (bukan placeholder). */
 export const isSupabaseConfigured =

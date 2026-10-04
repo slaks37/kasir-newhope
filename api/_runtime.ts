@@ -3,7 +3,7 @@ import { connectDb } from '../services/shared/db';
 import { registerBillingRoutes } from '../services/billing/routes';
 import { registerAdminRoutes } from '../src/server/adminRoutes';
 import { registerSyncRoutes } from '../services/pos/sync';
-import { authenticateBearer } from '../services/shared/auth';
+import { AuthUnavailableError, authenticateBearer } from '../services/shared/auth';
 import { pastikanPaket } from '../services/billing/store';
 import { SAAS_PLANS } from '../src/config/saasPlans';
 
@@ -28,6 +28,15 @@ async function buildRuntime() {
   return app;
 }
 import { normalizeVercelUrl } from '../src/server/vercelUrl';
+import { applyPrincipal, stripIdentityHeaders } from '../src/server/serverlessBoundary';
+
+const PUBLIC_EXACT=new Set(['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health']);
+/** Exact public surface: plan catalog, signed webhook, health and the published blog. */
+export function isPublicApi(path:string,method:string):boolean{
+  if(PUBLIC_EXACT.has(path))return true;
+  if(method==='GET'&&(path==='/api/v1/blog'||/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path)))return true;
+  return method==='POST'&&/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
+}
 
 /** Reject private requests before connecting/seeding the legacy runtime.
  * Only the app/DB promise is shared between requests; identity remains local.
@@ -37,14 +46,16 @@ export function createNativeApiHandler(authenticate=authenticateBearer,build=bui
   return async(req:any,res:any)=>{
     normalizeVercelUrl(req);
     res.setHeader('Cache-Control','no-store');
-    for(const name of ['x-auth-sub','x-auth-email','x-auth-email-verified','x-internal-user','x-newhope-gateway-token']) delete req.headers[name];
+    stripIdentityHeaders(req);
     const path=String(req.url||'').split('?')[0];
-    if(!['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health'].includes(path)){
+    if(!isPublicApi(path,String(req.method||'GET'))){
       let principal;
-      try{principal=await authenticate(req);}catch{return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});}
+      try{principal=await authenticate(req);}catch(error){
+        if(error instanceof AuthUnavailableError){res.setHeader('Retry-After','2');return res.status(503).json({ok:false,error:'AUTH_UNAVAILABLE'});}
+        return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+      }
       if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
-      req.headers['x-auth-sub']=principal.subject;
-      if(principal.email) req.headers['x-auth-email']=principal.email;
+      applyPrincipal(req,principal);
     }
     try{
       runtime ??= build().catch(err=>{runtime=undefined;throw err;});

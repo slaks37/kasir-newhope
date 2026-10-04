@@ -18,6 +18,6 @@ export function usePOSSnapshot(){
   return useSyncExternalStore(store.subscribe,store.snapshot,store.snapshot);
 }
 export function useCatalog(){return usePOSFields(['products','categories','selectedCategory','setSelectedCategory','searchQuery','setSearchQuery','bundles','addToCart','settings']);}
-export function useCart(){return usePOSFields(['cart','updateCartQuantity','removeFromCart','clearCart','applyCartItemDiscount','updateCartItemNotes','orderType','setOrderType','selectedCustomer','setSelectedCustomer','selectedTable','setSelectedTable','settings','shift','holdOrder','heldOrders','staffMembers','selectedStaff','setSelectedStaff']);}
+export function useCart(){return usePOSFields(['cart','products','updateCartQuantity','removeFromCart','clearCart','applyCartItemDiscount','updateCartItemNotes','orderType','setOrderType','selectedCustomer','setSelectedCustomer','selectedTable','setSelectedTable','settings','shift','holdOrder','heldOrders','staffMembers','selectedStaff','setSelectedStaff']);}
 export function useReportWorkspace(){return usePOSFields(['syncStatus','forceSync','cloudError','products','shift','shiftHistory','endShift','settings','currentUser','addCashMovement','deleteCashMovement','setInitialCash']);}
 export function useWorkspaceShell(){return usePOSFields(['activeTab','setActiveTab','cart','addToCart','settings','currentUser','hasPermission']);}

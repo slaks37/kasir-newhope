@@ -1,5 +1,5 @@
 // api/_runtime.ts
-import express from "express";
+import express2 from "express";
 
 // services/shared/db.ts
 import fs from "node:fs";
@@ -24,6 +24,10 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
     idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
     connectionTimeoutMillis: 1e4
   };
+}
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
 }
 
 // services/shared/databaseStartup.ts
@@ -91,6 +95,7 @@ async function connectDb(opts) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query("COMMIT");
         return out;
@@ -122,6 +127,11 @@ function supabaseConfig() {
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
+var AuthUnavailableError = class extends Error {
+  constructor() {
+    super("AUTH_UNAVAILABLE");
+  }
+};
 async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -132,12 +142,18 @@ async function authenticateBearer(req) {
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  let upstream;
   try {
-    const upstream = await fetch(`${url}/auth/v1/user`, {
+    upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
       signal: AbortSignal.timeout(5e3)
     });
-    if (!upstream.ok) return null;
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
@@ -576,11 +592,8 @@ async function subscriptionStatus(db, tenantId) {
   const sub = serializeSubscription(s);
   const access = subscriptionAccess(sub);
   const tenant2 = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
-  if (!tenant2.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
-  if (access.status !== s.status && access.status !== "FREE") {
-    await db.query("UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2", [access.status, s.id]).catch(() => {
-    });
-  }
+  if (!tenant2.rows[0]) throw new BillingError(404, "TENANT_NOT_FOUND");
+  if (tenant2.rows[0].is_active === false) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
   const invoices = await db.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100", [tenantId]);
   const startMs = Date.parse(sub.currentPeriodStart);
   const endMs = Date.parse(sub.currentPeriodEnd);
@@ -712,16 +725,15 @@ function isDokuConfigured() {
   return Boolean(clientId && secretKey && !clientId.includes("sandbox_dummy"));
 }
 function getDokuClientId() {
-  return (process.env.DOKU_CLIENT_ID || process.env.DOKU_SANDBOX_CLIENT_ID || "").replace(/["']/g, "").trim();
+  return (process.env.DOKU_CLIENT_ID || "").replace(/["']/g, "").trim();
 }
 function getDokuSecretKey() {
-  return (process.env.DOKU_SECRET_KEY || process.env.DOKU_SANDBOX_SECRET_KEY || "").replace(/["']/g, "").trim();
+  return (process.env.DOKU_SECRET_KEY || "").replace(/["']/g, "").trim();
 }
+var DOKU_API_URLS = /* @__PURE__ */ new Set(["https://api.doku.com", "https://api-sandbox.doku.com"]);
 function getDokuApiUrl() {
   const raw = (process.env.DOKU_API_URL || "https://api.doku.com").replace(/["']/g, "").trim().replace(/\/+$/, "");
-  if (!["https://api.doku.com", "https://api-sandbox.doku.com"].includes(raw)) {
-    throw new Error("DOKU_API_URL_NOT_ALLOWED");
-  }
+  if (!DOKU_API_URLS.has(raw)) throw new Error("DOKU_API_URL_NOT_ALLOWED");
   return raw;
 }
 var DOKU_NOTIFICATION_PATH = "/api/v1/webhooks/doku";
@@ -886,12 +898,18 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/routes.ts
+function coordinate(value, limit) {
+  if (value === null || value === void 0 || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
+}
 function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout) {
   const run = (fn) => async (req, res) => {
     try {
       await fn(req, res);
     } catch (err) {
       if (req.path === DOKU_NOTIFICATION_PATH && err instanceof BillingError) console.warn("[doku] NOTIFICATION_REJECTED", err.message);
+      if (err instanceof AuthUnavailableError) return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
       if (!(err instanceof BillingError)) {
         const diagnostic = err;
         console.error("[billing] INTERNAL_OPERATION_FAILED", { route: req.path, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
@@ -974,7 +992,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
         `INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), Number(b.latitude ?? existing?.latitude) || 0, Number(b.longitude ?? existing?.longitude) || 0, Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
+        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), coordinate(b.latitude ?? existing?.latitude, 90), coordinate(b.longitude ?? existing?.longitude, 180), Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
       );
       return rows[0];
     });
@@ -1054,16 +1072,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       try {
         const inquiry = await checkDokuOrderStatus(inv.invoice_number);
         if (inquiry.ok && inquiry.status === "SUCCESS") {
-          let allowedChannels;
+          let allowedChannels = [];
           try {
             allowedChannels = getDokuAllowedChannels();
           } catch {
-            allowedChannels = ["VIRTUAL_ACCOUNT_BCA"];
           }
-          const rawChannel = inquiry.channelId || inv.quote?.allowedChannels?.[0] || "VIRTUAL_ACCOUNT_BCA";
-          const channel = allowedChannels.includes(rawChannel) ? rawChannel : allowedChannels[0];
-          await reconcilePayment(db, {
-            eventKey: `inquiry-${inv.invoice_number}-${Date.now()}`,
+          const channel = String(inquiry.channelId || "");
+          const issue = !channel || !allowedChannels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : void 0;
+          const result = await reconcilePayment(db, {
+            eventKey: `inquiry-${inv.invoice_number}-${String(inquiry.transactionId || "unknown")}`,
+            validationIssue: issue,
             invoiceNumber: inv.invoice_number,
             reference: String(inquiry.transactionId || `inquiry-${Date.now()}`),
             amount: Number(inv.amount),
@@ -1074,7 +1092,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
             payload: { status: "SUCCESS", channel, source: "INQUIRY" }
           });
           const statusData = await subscriptionStatus(db, tenantId);
-          return res.json({ ok: true, paid: true, reconciled: true, status: statusData.subscription.status, subscription: statusData.subscription });
+          const applied = result.outcome === "APPLIED" || result.outcome === "DUPLICATE";
+          return res.json({
+            ok: true,
+            paid: applied,
+            reconciled: applied,
+            outcome: result.outcome,
+            reason: result.reason,
+            status: applied ? statusData.subscription.status : "PENDING_PAYMENT",
+            subscription: statusData.subscription
+          });
         }
       } catch (err) {
         console.warn("[doku-verify] Inquiry check failed:", err.message);
@@ -2109,7 +2136,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         const db = await getDb();
         let { rows } = await db.query("SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active", [principal.subject]);
         if (!rows[0] && principal.email) {
-          if (!principal.isEmailVerified && process.env.NODE_ENV === "production") {
+          if (!principal.isEmailVerified) {
             return res.status(403).json({
               ok: false,
               error: "EMAIL_VERIFICATION_REQUIRED",
@@ -2117,12 +2144,12 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
             });
           }
           const byEmail = await db.query(
-            "SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active",
+            "SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active AND sso_subject IS NULL",
             [principal.email]
           );
           if (byEmail.rows[0] && isInternalRole(byEmail.rows[0].role)) {
             await db.query(
-              "UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2",
+              "UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2 AND sso_subject IS NULL",
               [principal.subject, byEmail.rows[0].id]
             );
             rows = byEmail.rows;
@@ -2136,13 +2163,14 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
                 const inserted = await db.query(
                   `INSERT INTO internal.internal_users (id, email, full_name, role, sso_subject, is_active)
                    VALUES (gen_random_uuid(), $1, $2, $3, $4, true)
-                   ON CONFLICT (email) DO UPDATE SET sso_subject=$4, role=EXCLUDED.role, is_active=true
+                   ON CONFLICT (email) DO NOTHING
                    RETURNING id, email, full_name, role`,
                   [principal.email, fromPublic.rows[0].full_name || "Administrator", fromPublic.rows[0].role, principal.subject]
                 );
                 rows = inserted.rows;
               }
-            } catch {
+            } catch (error) {
+              if (!["42P01", "42703"].includes(String(error.code))) throw error;
             }
           }
         }
@@ -2180,6 +2208,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         req.environment = "PROVIDER_BO";
         next();
       } catch (err) {
+        if (err instanceof AuthUnavailableError) return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
         next(err);
       }
     };
@@ -2489,9 +2518,17 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
+  const likeWindow = /* @__PURE__ */ new Map();
   app.post(
     "/api/v1/blog/:id/like",
     wrap(async (req, res, db) => {
+      const client = String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").split(",")[0].trim();
+      const now = Date.now(), entry = likeWindow.get(client);
+      if (!entry || entry.resetAt < now) likeWindow.set(client, { count: 1, resetAt: now + 36e5 });
+      else if (++entry.count > 30) return res.status(429).json({ ok: false, error: "TOO_MANY_LIKES" });
+      if (likeWindow.size > 1e4) {
+        for (const [key, value] of likeWindow) if (value.resetAt < now) likeWindow.delete(key);
+      }
       const id = String(req.params.id).trim();
       const { rows } = await db.query(
         `UPDATE public.blog_posts SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count`,
@@ -2689,6 +2726,24 @@ function registerBusinessDirectory(app, db) {
 // services/pos/sync.ts
 import { randomBytes } from "node:crypto";
 
+// services/shared/schemaFeatures.ts
+var FEATURES = {
+  /** migration 0054 / 20261004090200 */
+  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+  /** migration 0055 / 20261004090300 */
+  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+};
+var ABSENT_RECHECK_MS = 6e4;
+var known = /* @__PURE__ */ new Map();
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+
 // services/pos/activity.ts
 var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES2 = [
@@ -2853,12 +2908,12 @@ function registerFinanceRoutes(app, db) {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
       res.json({ ok: true, ...result });
     } catch (error) {
-      const known = error instanceof FinanceError || error instanceof BillingError;
-      if (!known && !(error instanceof FreePlanAccessError)) {
+      const known2 = error instanceof FinanceError || error instanceof BillingError;
+      if (!known2 && !(error instanceof FreePlanAccessError)) {
         const diagnostic = error;
         console.error("[finance] write failed", { route: path, code: diagnostic.code, constraint: diagnostic.constraint, column: diagnostic.column });
       }
-      res.status(known ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
+      res.status(known2 ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known2 || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
     }
   });
   app.get("/api/v1/finance/shift", async (req, res) => {
@@ -3226,6 +3281,43 @@ var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "store_settings"
 ]);
 var ID_RE = /^[^\x00-\x1f\x7f]{1,128}$/;
+var HISTORY_WINDOWS = {
+  inventory_logs: { newest: 2e3 },
+  kds_tickets: { days: 3 },
+  order_operations: { days: 120 },
+  bookings: { days: 180 },
+  carwash_queue: { days: 180 },
+  attendance_logs: { days: 400 }
+};
+var STATE_PAGE_SIZE = 5e3;
+var SCOPE_SQL = (a) => `${a}.tenant_id=$1 AND ((${a}.scope='GLOBAL' AND ${a}.merchant_id IS NULL) OR (${a}.scope=ANY($2::text[]) AND ${a}.merchant_id=$3))
+  AND ($4::text[] IS NULL OR ${a}.kind=ANY($4::text[]))`;
+var WINDOW_SQL = `AND (r.kind <> ALL(ARRAY[${Object.keys(HISTORY_WINDOWS).map((k) => `'${k}'`).join(",")}]::text[])
+  ${Object.entries(HISTORY_WINDOWS).map(([kind, w]) => w.days ? `OR (r.kind='${kind}' AND r.updated_at > now() - interval '${w.days} days')` : `OR (r.kind='${kind}' AND (r.scope,r.record_id) IN (SELECT l.scope,l.record_id FROM pos.shared_state_records l
+        WHERE ${SCOPE_SQL("l")} AND l.kind='${kind}' ORDER BY l.updated_at DESC LIMIT ${w.newest}))`).join("\n  ")})`;
+var encodeCursor = (row) => Buffer.from(JSON.stringify([row.scope, row.kind, row.record_id])).toString("base64url");
+function decodeCursor(raw) {
+  if (typeof raw !== "string" || !raw || raw.length > 600) return null;
+  try {
+    const v = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "string") ? v : null;
+  } catch {
+    return null;
+  }
+}
+var CORE_KINDS = /* @__PURE__ */ new Set([
+  "store_settings",
+  "users",
+  "staff_members",
+  "categories",
+  "products",
+  "bundles",
+  "promo_codes",
+  "stock_items",
+  "tables",
+  "customers",
+  "commission_rules"
+]);
 var StateConflict = class extends Error {
   constructor(kind, recordId) {
     super("STATE_CONFLICT");
@@ -3285,6 +3377,9 @@ function registerSharedStateRoutes(app, db) {
     const kinds = req.query.kinds === void 0 ? null : typeof req.query.kinds === "string" ? [...new Set(req.query.kinds.split(","))] : [];
     if (kinds && (!kinds.length || kinds.length > 25 || kinds.some((kind) => !GLOBAL_KINDS.has(kind) && !SECTOR_KINDS.has(kind))))
       return res.status(400).json({ ok: false, error: "INVALID_STATE_KINDS" });
+    const paged = req.query.paged === "1";
+    const cursor = paged && req.query.cursor !== void 0 ? decodeCursor(req.query.cursor) : null;
+    if (paged && req.query.cursor !== void 0 && !cursor) return res.status(400).json({ ok: false, error: "INVALID_STATE_CURSOR" });
     try {
       const scope = await resolveBusinessScope(db, principal.subject, sector, req.query.businessId);
       if (!scope) return res.json({ ok: true, ready: false, records: [] });
@@ -3295,25 +3390,28 @@ function registerSharedStateRoutes(app, db) {
           [scope.tenantId, scope.merchantId]
         );
         const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
-        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(
+        const stamp = await hasSchemaFeature(c, "sharedStateVersions") ? await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
+          FROM pos.shared_state_versions v WHERE v.tenant_id=$1 AND
+          ((v.scope='GLOBAL' AND v.merchant_key='00000000-0000-0000-0000-000000000000'::uuid) OR (v.scope=ANY($2::text[]) AND v.merchant_key=$3))
+          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`, parameters2) : await c.query(`SELECT md5(COALESCE(string_agg(
           jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
           '|' ORDER BY scope,kind,record_id),'')) AS version
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
           ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
           AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`, parameters2);
         const version = stamp.rows[0].version;
-        if (req.query.knownVersion === version && !req.query.legacyCandidates) return { rows: [], version, unchanged: true };
-        const result = await c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
-          FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
-          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
-          ORDER BY scope,kind,record_id LIMIT 10001`, parameters2);
+        if (req.query.knownVersion === version && !req.query.legacyCandidates && !cursor) return { rows: [], version, unchanged: true };
+        const columns = "r.scope,r.kind,r.record_id,r.value,r.revision,r.deleted,r.updated_at,r.recovery_value,r.quarantine_reason";
+        const result = paged ? await c.query(`SELECT ${columns} FROM pos.shared_state_records r WHERE ${SCOPE_SQL("r")} ${WINDOW_SQL}
+              AND ($5::text IS NULL OR (r.scope,r.kind,r.record_id) > ($5::text,$6::text,$7::text))
+              ORDER BY r.scope,r.kind,r.record_id LIMIT $8`, [...parameters2, cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null, STATE_PAGE_SIZE + 1]) : await c.query(`SELECT ${columns} FROM pos.shared_state_records r WHERE ${SCOPE_SQL("r")} ${WINDOW_SQL}
+              ORDER BY CASE WHEN r.kind=ANY($5::text[]) THEN 0 ELSE 1 END,r.updated_at DESC,r.scope,r.kind,r.record_id LIMIT 10001`, [...parameters2, [...CORE_KINDS]]);
         return { ...result, version, unchanged: false };
       });
       const { rows } = snapshot;
       if (snapshot.unchanged) return res.json({ ok: true, ready: true, unchanged: true, version: snapshot.version, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, records: [] });
       let candidates = [];
-      try {
+      if (!cursor) try {
         const parsed = JSON.parse(String(req.query.legacyCandidates || "[]"));
         if (Array.isArray(parsed) && parsed.length <= 100) candidates = parsed.filter((r) => SECTOR_KINDS.has(r?.kind) && r.kind !== "store_settings" && typeof r.recordId === "string" && ID_RE.test(r.recordId));
       } catch {
@@ -3328,16 +3426,26 @@ function registerSharedStateRoutes(app, db) {
         });
         return result.rows.map((r) => ({ scope: merchant.business_sector, kind: r.kind, recordId: r.record_id, value: r.value }));
       }))).flat();
-      return res.json({ ok: true, ready: true, version: snapshot.version, scopeProof: true, foreignRecords, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
-        scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
-        kind: r.kind,
-        recordId: r.record_id,
-        value: r.value,
-        revision: Number(r.revision),
-        deleted: r.deleted,
-        updatedAt: r.updated_at,
-        ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
-      })) });
+      return res.json({
+        ok: true,
+        ready: true,
+        version: snapshot.version,
+        scopeProof: true,
+        foreignRecords,
+        kinds,
+        business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector },
+        ...paged ? { truncated: false, nextCursor: rows.length > STATE_PAGE_SIZE ? encodeCursor(rows[STATE_PAGE_SIZE - 1]) : null } : { truncated: rows.length > 1e4 },
+        records: rows.slice(0, paged ? STATE_PAGE_SIZE : 1e4).map((r) => ({
+          scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
+          kind: r.kind,
+          recordId: r.record_id,
+          value: r.value,
+          revision: Number(r.revision),
+          deleted: r.deleted,
+          updatedAt: r.updated_at,
+          ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
+        }))
+      });
     } catch (error) {
       if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
@@ -3601,6 +3709,9 @@ function parseReportFilter(query) {
   if (paymentMethod && paymentMethod !== "ALL" && !PAYMENT_METHODS.has(paymentMethod)) throw new ReportRequestError(400, "INVALID_PAYMENT_METHOD");
   const search = stringQuery(query.search, "SEARCH");
   if (search && search.length > 120) throw new ReportRequestError(400, "SEARCH_TOO_LONG");
+  const trendRaw = stringQuery(query.trend, "TREND");
+  const trendDays = trendRaw === null ? null : Number(trendRaw);
+  if (trendDays !== null && (!Number.isInteger(trendDays) || trendDays < 2 || trendDays > 31)) throw new ReportRequestError(400, "INVALID_TREND");
   return {
     outletId,
     merchantId,
@@ -3611,7 +3722,8 @@ function parseReportFilter(query) {
     timezone,
     timezoneExplicit: Boolean(query.timezone),
     paymentMethod: paymentMethod === "ALL" ? null : paymentMethod,
-    search
+    search,
+    trendDays
   };
 }
 async function scopeFor2(db, subject, filter) {
@@ -3739,6 +3851,11 @@ function localDate(timezone) {
   const part = (type) => parts.find((p) => p.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
+function shiftDate(date, days) {
+  const d = /* @__PURE__ */ new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 function cashMovement(row) {
   return {
     id: row.client_event_id || row.id,
@@ -3776,8 +3893,16 @@ async function serverReportSummary(db, subject, filter) {
         FROM pos.transaction_refund_items ri JOIN pos.transaction_refunds rf ON rf.id=ri.refund_id
         WHERE ri.transaction_item_id=i.id AND rf.tenant_id=$1 AND rf.merchant_id=$2) ri ON TRUE
       GROUP BY i.product_name ORDER BY qty DESC,i.product_name LIMIT 5`, params);
-    const daily = await c.query(`${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
-      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`, params);
+    const dailySql = `${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
+      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`;
+    const daily = await c.query(dailySql, params);
+    const trend = filter.trendDays ? await c.query(dailySql, parameters(scope, {
+      ...filter,
+      paymentMethod: null,
+      search: null,
+      from: shiftDate(today, -(filter.trendDays - 1)),
+      to: today
+    })) : null;
     const hourly = await c.query(`${revenueCTE} SELECT extract(hour FROM created_at AT TIME ZONE $6)::int AS hour,
       sum(total_amount) AS revenue FROM revenue GROUP BY 1 ORDER BY 1`, params);
     const statuses = await c.query(`SELECT x.order_status,count(*)::int AS n FROM pos.transactions x
@@ -3850,6 +3975,7 @@ async function serverReportSummary(db, subject, filter) {
         Omset: numeric(hourly.rows.find((row) => numeric(row.hour) === hour)?.revenue)
       })),
       dailySales: daily.rows.map((row) => ({ date: row.date, revenue: numeric(row.revenue), orders: numeric(row.orders), profit: numeric(row.profit) })),
+      ...trend ? { trendDailySales: trend.rows.map((row) => ({ date: row.date, revenue: numeric(row.revenue), orders: numeric(row.orders), profit: numeric(row.profit) })) } : {},
       statusCounts: Object.fromEntries(statuses.rows.map((row) => [row.order_status, numeric(row.n)])),
       cashSummary: cash,
       cashMovements: movements.rows.slice(0, 1e3).map(cashMovement),
@@ -4019,6 +4145,20 @@ var str = (v, max) => {
   return t ? t.slice(0, max) : null;
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
+function invalidTransaction(x) {
+  if (!str(x.clientTxnId, 64) || !Array.isArray(x.items) || !x.items.length) return "INVALID_TRANSACTION";
+  if (!Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal < 0 || x.totalAmount < 0) return "INVALID_AMOUNT";
+  if (Math.abs(x.totalAmount - (x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0))) > 0.02) return "TOTAL_MISMATCH";
+  if (x.items.some((i) => !i || typeof i.productName !== "string" || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice < 0 || !Number.isFinite(i.quantity) || i.quantity <= 0 || i.quantity > 999999999 || Math.abs(i.quantity * 1e3 - Math.round(i.quantity * 1e3)) > 1e-3)) return "INVALID_ITEM";
+  return null;
+}
+function perSaleRejection(error) {
+  if (error instanceof FinanceError) return error.message;
+  const code = String(error?.code || "");
+  if (/^(22|23)/.test(code)) return "REJECTED_BY_DATABASE:" + (error.constraint || code);
+  return null;
+}
+var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -4131,14 +4271,15 @@ function registerSyncRoutes(app, db) {
         detail: `Maksimal ${MAX_BATCH} transaksi per kiriman. Pecah antriannya.`
       });
     }
-    if (!txns.length || txns.some((x) => !x || !str(x.clientTxnId, 64) || !Array.isArray(x.items) || !x.items.length || !Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal < 0 || x.totalAmount < 0 || Math.abs(x.totalAmount - (x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0))) > 0.02 || x.items.some((i) => !i || typeof i.productName !== "string" || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice < 0 || !Number.isFinite(i.quantity) || i.quantity <= 0 || i.quantity > 999999999 || Math.abs(i.quantity * 1e3 - Math.round(i.quantity * 1e3)) > 1e-3)))
+    if (!txns.length || txns.some((x) => !x || typeof x !== "object"))
       return res.status(400).json({ ok: false, error: "INVALID_TRANSACTIONS" });
     try {
       const out = await db.tx(async (c) => {
         const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
+        const storesOutcomes = await hasSchemaFeature(c, "syncReceiptOutcomes");
         if (idemKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate${storesOutcomes ? ", outcomes" : ""} FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
@@ -4147,6 +4288,8 @@ function registerSyncRoutes(app, db) {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
               duplicates: prev.rows[0].rows_duplicate,
+              rejected: prev.rows[0].outcomes?.rejected ?? [],
+              renumbered: prev.rows[0].outcomes?.renumbered ?? [],
               tenantId: null
             };
           }
@@ -4298,9 +4441,9 @@ function registerSyncRoutes(app, db) {
         let accepted = 0;
         let duplicates = 0;
         let voided = 0;
-        for (const x of txns) {
-          const clientId = str(x.clientTxnId, 64);
-          if (!clientId || !Array.isArray(x.items) || !x.items.length) continue;
+        const rejected = [];
+        const renumbered = [];
+        const syncOne = async (x, clientId) => {
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
             str(x.cashierName, 100),
@@ -4316,7 +4459,7 @@ function registerSyncRoutes(app, db) {
           const paymentStatus = str(x.paymentStatus, 20) ?? "PAID";
           const isVoid = paymentStatus === "CANCELLED";
           const orderStatus = isVoid ? "VOIDED" : paymentStatus === "PENDING" ? "PENDING_PAYMENT" : "COMPLETED";
-          const ins = await c.query(
+          const insertSale = (invoiceNumber2) => c.query(
             `INSERT INTO pos.transactions
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
@@ -4343,7 +4486,7 @@ function registerSyncRoutes(app, db) {
               businessId,
               appModule,
               str(x.orderType, 16),
-              str(x.invoiceNumber, 32),
+              invoiceNumber2,
               clientId,
               outletRef(x.shiftId),
               str(x.businessDate, 10) ?? (x.createdAt ? x.createdAt.split("T")[0] : null),
@@ -4353,6 +4496,20 @@ function registerSyncRoutes(app, db) {
               x.createdAt ?? null
             ]
           );
+          let ins;
+          const invoiceNumber = str(x.invoiceNumber, 32);
+          await c.exec("SAVEPOINT sync_invoice");
+          try {
+            ins = await insertSale(invoiceNumber);
+            await c.exec("RELEASE SAVEPOINT sync_invoice");
+          } catch (error) {
+            await c.exec("ROLLBACK TO SAVEPOINT sync_invoice");
+            await c.exec("RELEASE SAVEPOINT sync_invoice");
+            if (error.code !== "23505" || !INVOICE_CONSTRAINTS.has(String(error.constraint)) || !invoiceNumber) throw error;
+            const unique = `${invoiceNumber.slice(0, 22)}-${clientId.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase()}`;
+            ins = await insertSale(unique);
+            if (ins.rows.length) renumbered.push({ clientTxnId: clientId, invoiceNumber: unique });
+          }
           if (!ins.rows.length) {
             duplicates++;
             const original = (await c.query(`SELECT * FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2 FOR UPDATE`, [tenantId, clientId])).rows[0];
@@ -4429,7 +4586,7 @@ function registerSyncRoutes(app, db) {
             }
             if (status !== "CANCELLED" && x.tenders) await applyTenders(c, financialScope, original.id, x.tenders);
             if (status !== "CANCELLED") for (const refund of x.refunds || []) await applyRefund(c, financialScope, original.id, refund);
-            continue;
+            return;
           }
           const txnId = ins.rows[0].id;
           await c.query("UPDATE pos.transactions SET client_shift_id=$2 WHERE id=$1", [txnId, str(x.shiftId, 128)]);
@@ -4507,11 +4664,47 @@ function registerSyncRoutes(app, db) {
           }
           for (const refund of x.refunds || []) await applyRefund(c, financialScope, txnId, refund);
           accepted++;
+        };
+        for (const x of txns) {
+          const clientId = str(x?.clientTxnId, 64) || "(tanpa id)";
+          const invalid = invalidTransaction(x);
+          if (invalid) {
+            rejected.push({ clientTxnId: clientId, error: invalid });
+            continue;
+          }
+          const snapshot = { cashier: new Map(cashierCache), product: new Map(productCache), productCount, accepted, duplicates, voided, renumbered: renumbered.length };
+          await c.exec("SAVEPOINT sync_sale");
+          try {
+            await syncOne(x, clientId);
+            await c.exec("RELEASE SAVEPOINT sync_sale");
+          } catch (error) {
+            await c.exec("ROLLBACK TO SAVEPOINT sync_sale");
+            await c.exec("RELEASE SAVEPOINT sync_sale");
+            cashierCache.clear();
+            for (const [k, v] of snapshot.cashier) cashierCache.set(k, v);
+            productCache.clear();
+            for (const [k, v] of snapshot.product) productCache.set(k, v);
+            productCount = snapshot.productCount;
+            accepted = snapshot.accepted;
+            duplicates = snapshot.duplicates;
+            voided = snapshot.voided;
+            renumbered.length = snapshot.renumbered;
+            const code = perSaleRejection(error);
+            if (!code) throw error;
+            rejected.push({ clientTxnId: clientId, error: code });
+          }
         }
-        if (idemKey) {
+        if (idemKey && storesOutcomes) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
-                                        rows_accepted, rows_duplicate)
+                                        rows_accepted, rows_duplicate, outcomes)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+             ON CONFLICT (idempotency_key) DO NOTHING`,
+            [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
+          );
+        } else if (idemKey && !rejected.length && !renumbered.length) {
+          await c.query(
+            `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (idempotency_key) DO NOTHING`,
             [idemKey, tenantId, businessId, accepted, duplicates]
@@ -4527,10 +4720,10 @@ function registerSyncRoutes(app, db) {
             eventType: "SYNC_BATCH",
             severity: "INFO",
             summary: `Sinkronisasi ${accepted} transaksi dari perangkat kasir`,
-            detail: { accepted, duplicates, batch: txns.length }
+            detail: { accepted, duplicates, rejected: rejected.length, renumbered: renumbered.length, batch: txns.length }
           });
         }
-        return { replayed: false, accepted, duplicates, voided, tenantId };
+        return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
       res.json({ ok: true, ...out });
     } catch (err) {
@@ -4714,13 +4907,33 @@ function normalizeVercelUrl(req) {
   }
 }
 
+// src/server/serverlessBoundary.ts
+import express from "express";
+var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-sub",
+  "x-auth-email",
+  "x-auth-email-verified",
+  "x-internal-user",
+  "x-env-override",
+  "x-newhope-gateway-token"
+];
+function stripIdentityHeaders(req) {
+  for (const key of TRUSTED_IDENTITY_HEADERS) delete req.headers[key];
+}
+function applyPrincipal(req, principal) {
+  stripIdentityHeaders(req);
+  req.headers["x-auth-sub"] = principal.subject;
+  if (principal.email) req.headers["x-auth-email"] = principal.email;
+  if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+}
+
 // api/_runtime.ts
 async function buildRuntime() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL_NOT_CONFIGURED");
   const db = await connectDb({ schema: "billing", max: 2 });
   await pastikanPaket(db, SAAS_PLANS);
-  const app = express();
-  app.use(express.json({ limit: "10mb", verify: (req, _res, buf) => {
+  const app = express2();
+  app.use(express2.json({ limit: "10mb", verify: (req, _res, buf) => {
     req.rawBody = buf;
   } }));
   registerBillingRoutes(app, db);
@@ -4738,23 +4951,32 @@ async function buildRuntime() {
   });
   return app;
 }
+var PUBLIC_EXACT = /* @__PURE__ */ new Set(["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"]);
+function isPublicApi(path, method) {
+  if (PUBLIC_EXACT.has(path)) return true;
+  if (method === "GET" && (path === "/api/v1/blog" || /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path))) return true;
+  return method === "POST" && /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
+}
 function createNativeApiHandler(authenticate = authenticateBearer, build = buildRuntime) {
   let runtime;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
-    for (const name of ["x-auth-sub", "x-auth-email", "x-auth-email-verified", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
+    stripIdentityHeaders(req);
     const path = String(req.url || "").split("?")[0];
-    if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(path)) {
+    if (!isPublicApi(path, String(req.method || "GET"))) {
       let principal;
       try {
         principal = await authenticate(req);
-      } catch {
+      } catch (error) {
+        if (error instanceof AuthUnavailableError) {
+          res.setHeader("Retry-After", "2");
+          return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
+        }
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
       if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-      req.headers["x-auth-sub"] = principal.subject;
-      if (principal.email) req.headers["x-auth-email"] = principal.email;
+      applyPrincipal(req, principal);
     }
     try {
       runtime ??= build().catch((err) => {
@@ -4778,7 +5000,7 @@ async function proxyToGateway(req, res) {
     try {
       if (new URL(base).host === req.headers.host) return void res.status(503).json({ ok: false, error: "GATEWAY_SELF_REFERENCE" });
       const headers = { ...req.headers };
-      for (const key of ["host", "connection", "content-length", "transfer-encoding", "x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete headers[key];
+      for (const key of ["host", "connection", "content-length", "transfer-encoding", ...TRUSTED_IDENTITY_HEADERS]) delete headers[key];
       const isDoku = req.url?.split("?")[0] === "/api/v1/webhooks/doku";
       if (isDoku && req.rawBody === void 0 && req.body !== void 0) return void res.status(400).json({ ok: false, error: "RAW_BODY_REQUIRED" });
       let body = req.rawBody ?? (req.body === void 0 ? void 0 : JSON.stringify(req.body));

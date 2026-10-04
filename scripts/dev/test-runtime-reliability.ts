@@ -9,7 +9,7 @@ import {restoreAuthSession} from '../../src/lib/auth/sessionLifecycle';
 let probes=0;const delays:number[]=[];const unavailable=new Error('fixture unavailable');
 await assert.rejects(waitForDatabase(async()=>{probes++;throw unavailable;},'1',async ms=>{delays.push(ms);}),
   (error:any)=>error.cause===unavailable);
-assert.equal(probes,1);assert.deepEqual(delays,[],'Serverless must not wait through local startup backoff');
+assert.equal(probes,1);assert.equal(delays.length,0,'Serverless must not wait through local startup backoff');
 probes=0;
 await waitForDatabase(async()=>{if(++probes<3)throw unavailable;},'0',async ms=>{delays.push(ms);});
 assert.deepEqual(delays,[250,500]);

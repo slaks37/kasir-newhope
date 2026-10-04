@@ -25,3 +25,13 @@ export function databasePoolLimits(max: number, vercel = process.env.VERCEL) {
     connectionTimeoutMillis: 10_000,
   };
 }
+
+/**
+ * Batas waktu satu statement. Harus lebih pendek dari timeout proxy gateway
+ * (10 dtk) agar query yang ditinggalkan klien benar-benar dibatalkan, bukan
+ * terus berjalan dan menumpuk sampai seluruh service 503.
+ */
+export function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS): number {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : 8_000;
+}

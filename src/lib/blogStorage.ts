@@ -18,14 +18,7 @@ export const INITIAL_BLOG_POSTS: BlogPost[] = [
     },
     readingTimeMinutes: 5,
     tags: ['Bisnis Kafe', 'Kedai Kopi', 'Modal 10 Juta', 'HPP Kopi', 'Tips F&B'],
-    mediaEmbeds: [
-      {
-        id: 'emb-1',
-        type: 'youtube',
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        caption: 'Video Tutorial: Simulasi Menghitung HPP Es Kopi Susu Aren per Cup',
-      },
-    ],
+    mediaEmbeds: [],
     seo: {
       metaTitle: 'Cara Membuka Kafe Modal 10 Juta Sukses & Untung | Blog Harapan Baru',
       metaDescription: 'Panduan lengkap cara memulai bisnis kedai kopi modal 10 juta rupiah. Pelajari perhitungan HPP, pemilihan mesin kopi, dan kontrol resep kasir otomatis.',
@@ -67,8 +60,8 @@ Dengan menggunakan fitur **Resep Bahan Baku (BOM)** di **New Hope POS**, setiap 
 
 ---
 
-## 3. Manfaatkan Pembayaran QRIS Dinamis
-90% pelanggan usia muda di Indonesia lebih memilih membayar menggunakan QRIS. Dengan integrasi QRIS Dinamis di kasir New Hope POS, uang hasil penjualan otomatis cair ke rekening Anda setiap H+1 tanpa risiko salah hitung uang kembalian.
+## 3. Sediakan Pembayaran QRIS
+Banyak pelanggan lebih memilih membayar dengan QRIS. Di New Hope POS, kasir mencatat setiap pembayaran QRIS beserta nomor referensinya (RRN), sehingga rekap shift memisahkan tunai dan QRIS tanpa hitung manual. Pencairan dana mengikuti jadwal bank atau penyedia QRIS toko Anda.
     `,
     isPublished: true,
     isFeatured: true,
@@ -139,7 +132,7 @@ Kasir yang bertugas tidak bisa melihat total uang sistem sebelum mereka menghitu
     id: 'blog-3',
     slug: 'revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin',
     title: 'Revolusi QRIS Dinamis di Kasir POS: Kenapa Transaksi Non-Tunai Wajib untuk UMKM di 2026',
-    excerpt: 'Kupas tuntas keuntungan QRIS Dinamis dibandingkan QRIS Statis stiker meja, kecepatan transaksi kasir, dan rekonsiliasi otomatis cair H+1.',
+    excerpt: 'Kupas tuntas perbedaan QRIS Dinamis dan QRIS Statis stiker meja, serta cara mencatat pembayaran QRIS dengan rapi di kasir.',
     category: 'FinTech & QRIS',
     coverImage: 'https://images.unsplash.com/photo-1556742049-0a67e557b640?auto=format&fit=crop&q=80&w=1200',
     author: {
@@ -152,8 +145,8 @@ Kasir yang bertugas tidak bisa melihat total uang sistem sebelum mereka menghitu
     mediaEmbeds: [],
     seo: {
       metaTitle: 'Keuntungan QRIS Dinamis di Mesin Kasir POS UMKM | Blog Harapan Baru',
-      metaDescription: 'Kenapa pengusaha UMKM harus beralih dari QRIS stiker ke QRIS Dinamis kasir? Simak perbandingannya untuk mencegah penipuan struk palsu dan rekonsiliasi instan.',
-      metaKeywords: ['qris dinamis pos', 'pembayaran digital umkm', 'kasir qris otomatis', 'new hope pos payment'],
+      metaDescription: 'Apa beda QRIS stiker dan QRIS Dinamis untuk kasir UMKM? Simak perbandingannya dan cara mencegah penipuan bukti bayar palsu.',
+      metaKeywords: ['qris dinamis', 'pembayaran digital umkm', 'kasir qris', 'new hope pos payment'],
       canonicalUrl: 'https://kasir.newhope.space/#blog/revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin',
       ogImage: 'https://images.unsplash.com/photo-1556742049-0a67e557b640?auto=format&fit=crop&q=80&w=1200',
     },
@@ -171,11 +164,15 @@ Di era pembayaran serba non-tunai saat ini, menyediakan QRIS adalah keharusan ba
 
 ---
 
-## ✅ Keunggulan QRIS Dinamis di New Hope POS:
-- **Nominal Otomatis:** Barcode QR yang muncul di layar kasir sudah berisi total belanja belanjaan pelanggan.
-- **Deteksi Otomatis Real-time:** Begitu pelanggan selesai scan dan bayar di aplikasi mobile banking / e-wallet apa saja (BCA, Mandiri, GoPay, OVO, ShopeePay, Dana), layar kasir otomatis mendeteksi status **LUNAS (PAID)** dalam 1 detik!
-- **Struk Kasir Langsung Tercetak:** Kasir tidak perlu lagi meminta bukti transfer.
-- **Pencairan H+1 Otomatis:** Dana penjualan otomatis ditransfer ke rekening bank toko Anda setiap pagi.
+## ✅ Keunggulan QRIS Dinamis:
+- **Nominal Otomatis:** QR yang muncul di layar kasir sudah berisi total belanja, jadi pelanggan tidak mengetik nominal.
+- **Konfirmasi dari Penyedia Pembayaran:** Status lunas datang dari payment gateway, bukan dari tangkapan layar pelanggan.
+- **Butuh Integrasi:** QRIS Dinamis memerlukan kerja sama dengan payment gateway, dan biaya MDR tetap berlaku.
+
+---
+
+## 📌 Di New Hope POS saat ini
+New Hope POS mendukung **QRIS statis milik toko**. Kasir mengonfirmasi dana masuk, lalu mencatat nomor referensi (RRN) di transaksi. Rekap shift memisahkan penjualan tunai dan QRIS. QRIS Dinamis dengan deteksi lunas otomatis **belum tersedia** dan ada di peta jalan produk.
     `,
     isPublished: true,
     isFeatured: false,

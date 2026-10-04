@@ -1,53 +1,26 @@
 /**
- * Mengisi database dengan data demo di kelima sektor bisnis.
+ * Mengisi data demo di kelima sektor bisnis LEWAT API ASLI.
  *
- *   npx tsx scripts/db/seed.ts            # isi kalau masih kosong
- *   npx tsx scripts/db/seed.ts --force    # hapus data lama, isi ulang
+ *   npm run dev          # terminal 1 — stack lokal + auth lokal
+ *   npm run db:seed      # terminal 2
  *
- * Salah satu pemilik sengaja menjalankan DUA sektor (kafe + laundry) dengan
- * business_id berbeda. Tanpa itu, kebocoran antar sektor tidak akan pernah
- * terlihat di data demo — dan justru itu yang paling perlu diuji.
+ * Kenapa lewat API, bukan INSERT langsung: seeder lama menulis SQL mentah
+ * mengikuti skema lama (tanpa merchant/outlet/payments) sehingga gagal di
+ * skema sekarang, dan kalaupun berhasil transaksinya tidak terhitung di
+ * laporan. Dengan memakai signup (trigger produksi), /sync/state (katalog),
+ * /sync/transactions (penjualan + pembayaran + kas) dan /sync/activity, data
+ * demo selalu melewati aturan bisnis yang sama dengan kasir sungguhan.
  *
- * Angka acaknya deterministik (LCG dengan benih tetap), jadi dua kali seed
- * menghasilkan angka yang sama dan perbedaan pada layar berarti kode yang
- * berubah, bukan undian yang berbeda.
+ * Akun demo (KHUSUS lokal): demo-<owner>@newhope.local / Demo-pass-123.
+ * Salah satu pemilik menjalankan DUA usaha (kafe + laundry) untuk menguji
+ * pemisahan antar usaha. Angka acak deterministik (LCG benih tetap).
  */
-
 import 'dotenv/config';
-import pg from 'pg';
+import crypto from 'node:crypto';
 
-/**
- * Seeder terhubung lewat jaringan seperti service lain, BUKAN dengan membuka
- * PGlite di dalam prosesnya sendiri. Kalau membuka sendiri, ia akan menjadi
- * penulis kedua atas direktori data yang sama — dan dua penulis pada PGlite
- * berarti salah satu diam-diam kalah.
- *
- * Seeder sengaja login sebagai superuser dengan search_path lintas skema: ia
- * alat operasional, bukan service. Batas skema berlaku untuk service, bukan
- * untuk perkakas yang memang tugasnya menyiapkan seluruh database.
- */
-interface Db {
-  query<T = any>(sql: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number }>;
-  exec(sql: string): Promise<void>;
-}
-
-async function getDb(log: (m: string) => void = () => {}): Promise<Db> {
-  const connectionString =
-    process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
-  const client = new pg.Client({ connectionString });
-  await client.connect();
-  await client.query('SET search_path TO pos, billing, ai, internal, contract, public');
-  log(`🗄️  Database: ${connectionString.replace(/:[^:@/]*@/, ':***@')}`);
-  return {
-    async query(sql, params) {
-      const r = await client.query(sql, params as any[]);
-      return { rows: r.rows, rowCount: r.rowCount ?? r.rows.length };
-    },
-    async exec(sql) {
-      await client.query(sql);
-    },
-  };
-}
+const API = (process.env.SEED_API_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+const AUTH = (process.env.SUPABASE_URL || `http://127.0.0.1:${process.env.DEV_AUTH_PORT || 54321}`).replace(/\/$/, '');
+const PASSWORD = 'Demo-pass-123';
 
 let seed = 20260813;
 const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
@@ -150,262 +123,101 @@ const MERCHANTS: Array<{ owner: string; sector: Sector; name: string; days: numb
   { owner: 'usr-doni',  sector: 'FNB',        name: 'Warung Doni (Vakum)',      days: 60, perDay: [2, 6] },
 ];
 
-const STAFF_BY_SECTOR: Record<Sector, string[]> = {
-  FNB: ['Barista Andi', 'Kasir Mega', 'Chef Bayu'],
-  LAUNDRY: ['Petugas Wati', 'Kasir Lina'],
-  RETAIL: ['Kasir Dewi', 'Gudang Fajar'],
-  CARWASH: ['Teknisi Rudi', 'Kasir Nina'],
-  BARBERSHOP: ['Kapster Yoga', 'Kasir Tari'],
-};
 
 const PAYMENTS = ['CASH', 'QRIS', 'DEBIT', 'GOPAY', 'OVO'] as const;
+const today = () => new Date().toISOString().slice(0, 10);
 
-async function alreadySeeded(db: Db) {
-  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM transactions`);
-  return (rows[0]?.n ?? 0) > 0;
+async function request(token: string | null, method: string, path: string, body?: unknown) {
+  const response = await fetch(API + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) throw new Error(`${method} ${path} -> ${response.status} ${data?.error || ''}`);
+  return data;
 }
 
-async function wipe(db: Db) {
-  // Urutan mengikuti arah foreign key. merchant_activity_log lebih dulu karena
-  // menunjuk transactions.
-  await db.exec(`
-    TRUNCATE merchant_activity_log, sync_receipts, transaction_items, transactions,
-             inventory_logs, product_recipes, products, ingredients,
-             merchant_health_logs, feature_usage_events, daily_merchant_insights,
-             merchant_ai_credits, merchant_targets, ai_query_logs,
-             invoices, subscriptions, users, tenants
-    RESTART IDENTITY CASCADE
-  `);
+async function account(owner: string, first: (typeof MERCHANTS)[number]) {
+  const email = `demo-${owner.replace(/^usr-/, '')}@newhope.local`;
+  const post = (path: string, body: unknown) => fetch(AUTH + path, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: 'dev-local-anon' }, body: JSON.stringify(body) });
+  let response = await post('/auth/v1/token?grant_type=password', { email, password: PASSWORD });
+  if (!response.ok) response = await post('/auth/v1/signup', { email, password: PASSWORD, data: {
+    full_name: owner.replace(/^usr-/, '').replace(/^./, c => c.toUpperCase()), store_name: first.name, business_sector: first.sector, first_outlet_name: `${first.name} — Cabang Utama` } });
+  const session = await response.json();
+  if (!session.access_token) throw new Error(`Login demo ${email} gagal: ${session.msg || response.status}. Apakah \`npm run dev\` sedang berjalan dengan auth lokal?`);
+  return { email, token: session.access_token as string, userId: session.user.id as string };
+}
+
+async function businessFor(token: string, sector: Sector, name: string) {
+  let directory = await request(token, 'GET', '/api/v1/sync/business');
+  let business = directory.businesses.find((b: any) => b.sector === sector);
+  if (!business) {
+    await request(token, 'POST', '/api/v1/sync/business', { intent: 'create', requestKey: crypto.randomUUID(), sector, storeName: name });
+    directory = await request(token, 'GET', '/api/v1/sync/business');
+    business = directory.businesses.find((b: any) => b.sector === sector);
+  }
+  if (!business.outlets.some((o: any) => o.status === 'ACTIVE')) {
+    await request(token, 'POST', '/api/v1/subscription/outlets', { businessId: business.businessId, businessSector: sector, name: `${name} — Cabang Utama` });
+    directory = await request(token, 'GET', '/api/v1/sync/business');
+    business = directory.businesses.find((b: any) => b.sector === sector);
+  }
+  return { businessId: business.businessId as string, transportRef: business.transportRef as string, outletId: business.outlets.find((o: any) => o.status === 'ACTIVE').outletId as string };
 }
 
 async function main() {
-  const force = process.argv.includes('--force');
-  const db = await getDb((m) => console.log(m));
-
-  if (await alreadySeeded(db)) {
-    if (!force) {
-      console.log('\nDatabase sudah berisi data. Pakai --force untuk mengisi ulang.');
-      return;
-    }
-    console.log('\n--force: menghapus data lama…');
-    await wipe(db);
-  }
-
+  console.log(`🗄️  API ${API} · Auth ${AUTH}`);
   const now = Date.now();
   let txnTotal = 0;
-  let itemTotal = 0;
-  let actTotal = 0;
-
   for (const m of MERCHANTS) {
+    const user = await account(m.owner, MERCHANTS.find(x => x.owner === m.owner)!);
+    const biz = await businessFor(user.token, m.sector, m.name);
+    const status = await request(user.token, 'GET', `/api/v1/sync/status?businessId=${encodeURIComponent(biz.transportRef)}`);
+    if (Number(status.synced_transactions || 0) > 0) { console.log(`  ${m.sector.padEnd(11)} ${m.name.padEnd(26)} sudah terisi — dilewati`); continue; }
+
     const cat = CATALOG[m.sector];
-    const businessId = `${m.owner}_${m.sector}`;
+    const products = cat.items.map(([name, category, price, cost, desc], index) => ({
+      id: `demo-${m.sector.toLowerCase()}-${index + 1}`, name, categoryName: category, price, costPrice: cost, description: desc,
+      sku: `${m.sector.slice(0, 3)}-${String(index + 1).padStart(3, '0')}`, unit: m.sector === 'LAUNDRY' && category === 'Kiloan' ? 'kg' : 'pcs',
+      stock: between(20, 80), isAvailable: true,
+    }));
+    await request(user.token, 'POST', '/api/v1/sync/state', { sector: m.sector, businessId: biz.transportRef, outletId: biz.outletId,
+      operations: products.map(value => ({ kind: 'products', recordId: value.id, baseRevision: 0, deleted: false, value })) });
 
-    // external_ref WAJIB diisi. Itu satu-satunya kunci yang menghubungkan
-    // partition key sisi klien (`${userId}_${sector}`) ke baris tenant — dipakai
-    // endpoint sinkronisasi maupun AI Copilot. Tenant tanpa external_ref hanya
-    // terlihat di admin panel dan tidak akan pernah bisa dijangkau copilot.
-    const { rows: tRows } = await db.query(
-      `INSERT INTO tenants (id, name, business_sector, is_active, created_at,
-                            external_ref, owner_user_ref)
-       VALUES (uuidv7(), $1, $2, TRUE, CURRENT_TIMESTAMP - ($3::int || ' days')::interval,
-               $4, $5)
-       RETURNING id`,
-      [m.name, m.sector, m.days + 10, businessId, m.owner]
-    );
-    const tenantId: string = tRows[0].id;
-
-    // Staf — terpisah per sektor, persis seperti di aplikasi.
-    const staffIds: Array<{ id: string; name: string; role: string }> = [];
-    const names = STAFF_BY_SECTOR[m.sector];
-    for (let i = 0; i < names.length; i++) {
-      const role = i === 0 ? 'MANAGER' : 'CASHIER';
-      const { rows } = await db.query(
-        `INSERT INTO users (id, tenant_id, name, username, pin, role)
-         VALUES (uuidv7(), $1, $2, $3, $4, $5) RETURNING id`,
-        [tenantId, names[i], `${m.owner}.${m.sector.toLowerCase()}.${i}`, '0000', role]
-      );
-      staffIds.push({ id: rows[0].id, name: names[i], role });
-    }
-
-    // Katalog produk — juga terpisah per sektor.
-    const productIds: Array<{
-      id: string; name: string; cat: string; price: number; cost: number; desc: string;
-    }> = [];
-    for (const [name, category, price, cost, desc] of cat.items) {
-      const { rows } = await db.query(
-        `INSERT INTO products (id, tenant_id, name, sku, price, cost_price, is_available,
-                               business_sector, business_id, category_name, description,
-                               stock, min_stock_alert, unit, catalog_synced_at)
-         VALUES (uuidv7(), $1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, $10, $11, $12,
-                 CURRENT_TIMESTAMP) RETURNING id`,
-        [
-          tenantId,
-          name,
-          `${m.sector.slice(0, 3)}-${name.replace(/[^A-Za-z]/g, '').slice(0, 6).toUpperCase()}`,
-          price,
-          cost,
-          m.sector,
-          businessId,
-          category,
-          desc,
-          between(0, 80),
-          10,
-          m.sector === 'LAUNDRY' ? 'kg' : 'pcs',
-        ]
-      );
-      productIds.push({ id: rows[0].id, name, cat: category, price, cost, desc });
-    }
-
-    // Langganan.
-    const { rows: planRows } = await db.query(`SELECT id FROM plans ORDER BY tier_level DESC LIMIT 1`);
-    if (planRows.length) {
-      await db.query(
-        `INSERT INTO subscriptions (id, tenant_id, plan_id, status,
-                                    current_period_start, current_period_end)
-         VALUES (uuidv7(), $1, $2, $3,
-                 CURRENT_TIMESTAMP - INTERVAL '15 days', CURRENT_TIMESTAMP + INTERVAL '15 days')`,
-        [tenantId, planRows[0].id, m.name.includes('Vakum') ? 'PAST_DUE' : 'ACTIVE']
-      );
-    }
-
-    // Transaksi harian.
+    const sales: unknown[] = [];
     for (let d = m.days; d >= 0; d--) {
-      // Merchant vakum berhenti total 26 hari lalu.
       if (m.name.includes('Vakum') && d < 26) continue;
-
       const isWeekend = new Date(now - d * 86400000).getDay() % 6 === 0;
       const count = between(m.perDay[0], m.perDay[1]) + (isWeekend ? 4 : 0);
-
       for (let k = 0; k < count; k++) {
-        const staff = pickOne(staffIds);
-        const nItems = between(1, 3);
-        const chosen: typeof productIds = [];
-        for (let z = 0; z < nItems; z++) chosen.push(pickOne(productIds));
-
-        let subtotal = 0;
-        const lines = chosen.map((p) => {
-          const qty = m.sector === 'LAUNDRY' && p.cat === 'Kiloan' ? between(2, 8) : between(1, 3);
-          const total = p.price * qty;
-          subtotal += total;
-          return { p, qty, total };
+        const lines = Array.from({ length: between(1, 3) }, () => pickOne(products)).map((p, i) => {
+          const qty = p.unit === 'kg' ? between(2, 8) : between(1, 3);
+          return { clientItemId: `i${i}`, productRef: p.id, productName: p.name, categoryName: p.categoryName, unitPrice: p.price, unitCost: p.costPrice, quantity: qty, totalPrice: p.price * qty };
         });
-
+        const subtotal = lines.reduce((sum, line) => sum + line.totalPrice, 0);
         const discount = rnd() < 0.18 ? Math.round(subtotal * 0.1) : 0;
         const tax = Math.round((subtotal - discount) * 0.11);
-        const grand = subtotal - discount + tax;
-        const hour = between(8, 21);
-        const minute = between(0, 59);
-        const appModule = pickOne(cat.modules);
-
-        const { rows: xRows } = await db.query(
-          `INSERT INTO transactions
-             (id, tenant_id, cashier_user_id, subtotal, discount_amount, tax_amount,
-              total_amount, payment_method, payment_status, business_sector, business_id,
-              app_module, order_type, invoice_number, created_at)
-           VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'COMPLETED', $8, $9, $10, $11, $12,
-                   (CURRENT_DATE - ($13::int))::timestamptz
-                     + ($14::int || ' hours')::interval + ($15::int || ' minutes')::interval)
-           RETURNING id, created_at`,
-          [
-            tenantId, staff.id, subtotal, discount, tax, grand,
-            pickOne(PAYMENTS), m.sector, businessId, appModule,
-            pickOne(cat.orderTypes),
-            `INV-${m.sector.slice(0, 3)}-${String(txnTotal + 1).padStart(6, '0')}`,
-            d, hour, minute,
-          ]
-        );
-        const txnId: string = xRows[0].id;
-        txnTotal++;
-
-        for (const l of lines) {
-          await db.query(
-            `INSERT INTO transaction_items
-               (id, transaction_id, tenant_id, product_id, product_name, unit_price,
-                quantity, total_price, business_sector, category_name, unit_cost,
-                product_description)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [txnId, tenantId, l.p.id, l.p.name, l.p.price, l.qty, l.total, m.sector,
-             l.p.cat, l.p.cost, l.p.desc]
-          );
-          itemTotal++;
-        }
-
-        // Jejak aktivitas untuk penjualan. Tidak semua dicatat — 1 dari 4 —
-        // supaya log tidak menjadi salinan tabel transaksi.
-        if (rnd() < 0.25) {
-          await db.query(
-            `INSERT INTO merchant_activity_log
-               (merchant_id, tenant_id, business_sector, business_id, app_module,
-                event_type, severity, actor_user_id, actor_name, actor_role,
-                transaction_id, amount_idr, summary, detail, occurred_at)
-             VALUES ($1, $1, $2, $3, $4, 'SALE', 'INFO', $5, $6, $7, $8, $9, $10, $11::jsonb,
-                     (SELECT created_at FROM transactions WHERE id = $8))`,
-            [
-              tenantId, m.sector, businessId, appModule, staff.id, staff.name, staff.role,
-              txnId, grand,
-              `Penjualan ${lines.length} item — ${lines[0].p.name}${lines.length > 1 ? ' dll' : ''}`,
-              JSON.stringify({ items: lines.length, discount, payment: 'COMPLETED' }),
-            ]
-          );
-          actTotal++;
-        }
+        const created = new Date(new Date(now - d * 86400000).setHours(between(8, 21), between(0, 59), 0, 0));
+        if (created.getTime() > now) created.setTime(now - between(1, 120) * 60000);
+        sales.push({ clientTxnId: crypto.randomUUID(), invoiceNumber: `DEMO-${m.sector.slice(0, 3)}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+          cashierRef: user.userId, cashierName: 'Owner', items: lines, subtotal, discountAmount: discount, taxAmount: tax, serviceChargeAmount: 0,
+          totalAmount: subtotal - discount + tax, paymentMethod: pickOne(PAYMENTS), paymentStatus: 'PAID', orderType: pickOne(cat.orderTypes),
+          appModule: pickOne(cat.modules), createdAt: created.toISOString(), businessDate: created.toISOString().slice(0, 10) });
       }
     }
-
-    // Kejadian non-penjualan — inilah yang membuat log ini lebih dari sekadar
-    // salinan tabel transaksi.
-    const events: Array<[string, string, string, string, Record<string, unknown>]> = [
-      ['STOCK_ADJUST', 'INVENTORY', 'NOTICE', `Penyesuaian stok manual ${pickOne(productIds).name}`, { delta: -between(2, 9) }],
-      ['PRICE_CHANGE', 'SETTINGS', 'NOTICE', `Harga ${pickOne(productIds).name} diubah`, { by: 'OWNER' }],
-      ['LOGIN_FAILED', 'AUTH', 'WARNING', 'PIN salah 3x berturut-turut', { attempts: 3 }],
-      ['DISCOUNT_OVERRIDE', 'POS', 'WARNING', 'Diskon manual di atas 25% oleh kasir', { pct: between(26, 45) }],
-      ['STOCK_CRITICAL', 'INVENTORY', 'CRITICAL', `Stok ${pickOne(productIds).name} habis saat jam sibuk`, { remaining: 0 }],
-      ['SHIFT_OPEN', 'SETTINGS', 'INFO', 'Shift pagi dibuka', { cash_float: 200000 }],
-      ['AI_QUERY', 'AI', 'INFO', 'Bertanya ke AI Copilot soal stok kritis', { source: 'RULE', credits: 0 }],
-      ['REPORT_EXPORT', 'REPORTS', 'INFO', 'Ekspor laporan penjualan bulanan', { format: 'csv' }],
-    ];
-
-    for (const [type, mod, sev, summary, detail] of events) {
-      const staff = pickOne(staffIds);
-      await db.query(
-        `INSERT INTO merchant_activity_log
-           (merchant_id, tenant_id, business_sector, business_id, app_module,
-            event_type, severity, actor_user_id, actor_name, actor_role,
-            summary, detail, occurred_at)
-         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
-                 CURRENT_TIMESTAMP - ($12::int || ' hours')::interval)`,
-        [
-          tenantId, m.sector, businessId, mod, type, sev,
-          staff.id, staff.name, staff.role, summary, JSON.stringify(detail),
-          between(1, m.days * 24),
-        ]
-      );
-      actTotal++;
+    for (let i = 0; i < sales.length; i += 200) {
+      const batch = sales.slice(i, i + 200);
+      await request(user.token, 'POST', '/api/v1/sync/transactions', { idempotencyKey: crypto.createHash('sha256').update(JSON.stringify(batch.map((t: any) => t.clientTxnId))).digest('hex'),
+        businessId: biz.transportRef, outletId: biz.outletId, sector: m.sector, storeName: m.name, ownerRef: user.userId, transactions: batch });
     }
-
-    console.log(`  ${m.sector.padEnd(11)} ${m.name.padEnd(26)} business_id=${businessId}`);
+    for (const [eventType, appModule, severity, summary] of [
+      ['STOCK_ADJUST', 'INVENTORY', 'NOTICE', `Penyesuaian stok manual ${pickOne(products).name}`],
+      ['PRICE_CHANGE', 'SETTINGS', 'NOTICE', `Harga ${pickOne(products).name} diubah`],
+      ['DISCOUNT_OVERRIDE', 'POS', 'WARNING', 'Diskon manual di atas 25% oleh kasir'],
+      ['STOCK_CRITICAL', 'INVENTORY', 'CRITICAL', `Stok ${pickOne(products).name} habis saat jam sibuk`],
+    ] as const) {
+      await request(user.token, 'POST', '/api/v1/sync/activity', { businessId: biz.transportRef, appModule, eventType, severity, summary, actorName: 'Owner', actorRole: 'ADMIN' });
+    }
+    txnTotal += sales.length;
+    console.log(`  ${m.sector.padEnd(11)} ${m.name.padEnd(26)} ${String(sales.length).padStart(5)} trx · ${user.email}`);
   }
-
-  console.log(
-    `\nSelesai: ${MERCHANTS.length} merchant, ${txnTotal} transaksi, ${itemTotal} baris item, ${actTotal} kejadian.`
-  );
-
-  const { rows } = await db.query(
-    `SELECT business_sector, COUNT(*)::int AS txn, SUM(total_amount) AS omzet
-       FROM transactions GROUP BY business_sector ORDER BY omzet DESC`
-  );
-  console.log('\nPer sektor:');
-  for (const r of rows) {
-    console.log(
-      `  ${String(r.business_sector).padEnd(11)} ${String(r.txn).padStart(5)} txn   Rp ${Number(r.omzet).toLocaleString('id-ID')}`
-    );
-  }
+  console.log(`\nSelesai: ${txnTotal} transaksi baru. Login demo: demo-<nama>@newhope.local / ${PASSWORD} (hanya lokal). Hari ini: ${today()}`);
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error('\nSEED GAGAL:', err.message);
-    process.exit(1);
-  }
-);
+main().then(() => process.exit(0), error => { console.error('\nSEED GAGAL:', error.message); process.exit(1); });

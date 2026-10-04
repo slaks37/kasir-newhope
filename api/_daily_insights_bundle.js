@@ -32,6 +32,10 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
     connectionTimeoutMillis: 1e4
   };
 }
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
 
 // services/shared/databaseStartup.ts
 async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
@@ -98,6 +102,7 @@ async function connectDb(opts) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query("COMMIT");
         return out;

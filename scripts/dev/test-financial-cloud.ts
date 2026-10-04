@@ -141,7 +141,10 @@ try{
   assert.equal((await db.query('SELECT COUNT(*)::int AS n FROM pos.transactions WHERE tenant_id=$1',[tenant])).rows[0].n,1);
   assert.equal((await get('/api/v1/reports/summary?'+query)).data.cashSummary.cashSales,55000);
   assert.equal((await transactionLog(db,{tenantId:tenant,merchantId:merchant,outletId:outlet,from:'2026-10-01',to:'2026-10-01'})).revenueAmount,55000);
-  const changed=await post('/api/v1/sync/transactions',{...body,transactions:[{...tx,totalAmount:55001,subtotal:55001}]});assert.equal(changed.status,409);
+  const changed=await post('/api/v1/sync/transactions',{...body,transactions:[{...tx,totalAmount:55001,subtotal:55001}]});
+  // Per-sale contract: the edited resend is rejected alone (quarantined on the device) and the ledger is unchanged.
+  assert.equal(changed.status,200);assert.deepEqual(changed.data.rejected,[{clientTxnId:tx.clientTxnId,error:'TRANSACTION_ID_CONFLICT'}]);assert.equal(changed.data.accepted,0);
+  assert.equal((await transactionLog(db,{tenantId:tenant,merchantId:merchant,outletId:outlet,from:'2026-10-01',to:'2026-10-01'})).revenueAmount,55000);
   assert.equal((await get('/api/v1/reports/summary?'+query,'other')).status,403);
   assert.equal((await get('/api/v1/reports/summary?'+query+'&timezone=Mars/Test')).status,400);
   assert.equal((await get('/api/v1/reports/summary?'+query.replace('2026-10-01','2026-02-30'))).status,400);
@@ -190,7 +193,9 @@ try{
   const mixedReport=(await get('/api/v1/reports/summary?'+laterQuery)).data;
   assert.equal(mixedReport.financialSummary.totalNetRevenue,55000);assert.equal(mixedReport.paymentBreakdown.CASH,27500);assert.equal(mixedReport.paymentBreakdown.QRIS,27500);
   assert.equal((await get('/api/v1/reports/transactions?'+laterQuery)).data.transactions[0].paymentTenders.length,2);
-  assert.equal((await post('/api/v1/sync/transactions',{...body,transactions:[{...fullyPaid,tenders:[{...tenderOne,method:'TRANSFER'}]}]})).status,409);
+  const changedTender=await post('/api/v1/sync/transactions',{...body,transactions:[{...fullyPaid,tenders:[{...tenderOne,method:'TRANSFER'}]}]});
+  assert.equal(changedTender.status,200);assert.equal(changedTender.data.accepted,0);
+  assert.equal(changedTender.data.rejected.length,1,'A rewritten tender is quarantined alone, never applied');
   const discountQuery=query.replaceAll('2026-10-01','2026-10-03');
   const discounted={...tx,clientTxnId:'discount-sale',createdAt:'2026-10-03T01:00:00Z',subtotal:100000,discountAmount:30000,taxAmount:7000,serviceChargeAmount:3500,totalAmount:80500,
     items:[{...tx.items[0],clientItemId:'discount-line',unitPrice:50000,totalPrice:70000}]};

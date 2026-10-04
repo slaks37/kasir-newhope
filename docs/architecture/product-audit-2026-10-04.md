@@ -4,6 +4,8 @@ Scope: public website and onboarding, merchant workspace/POS, admin/support, API
 
 Baseline inspected: `3c6de32`. Subsequent changes in this audit require their own successful test and deployment evidence. A local fix is not automatically a production fix.
 
+Integration checkpoint: GitHub main advanced to `54dd124` during the audit. Its 17 stabilization commits are retained, including unified billing handlers, stock edge-case corrections, statement timeouts, paged state/version triggers, offline service worker, public-content corrections, slimmer Auth client, admin identity linking and deployment-order compatibility. DOKU origin validation and the second scheduler had overlapping fixes; the merge keeps one implementation. The existing `.github/workflows/ci.yml` is reused rather than adding a competing QA workflow. Read its [QA report](../qa/2026-10-04-qa-report.md) and [release runbook](../operations/runbook-2026-10-stabilization.md) alongside this addendum; their measurements are not newly measured production latency in this audit.
+
 ## End-to-end map (existing architecture retained)
 
 | Stage | Implementation | Contract |
@@ -57,11 +59,13 @@ The full regression gate exposed an existing failed DOKU test: `getDokuApiUrl` i
 
 ## Regression gates
 
-`npm run verify` provides one reproducible entrypoint for lint, runtime failure handling, workspace, sync, financial reporting, subscriptions, admin security/support, photos, DOKU client, AI, MCP, build and cron contracts. The GitHub workflow runs without production secrets. Production deployment approval/branch protection is a separate configuration, not guaranteed by creating a workflow file.
+`npm run verify` provides one reproducible entrypoint for lint, building native API bundles, runtime failure handling, all existing `npm test` suites and the production build. This retains new main coverage for stock edge cases, service worker, signup, identity, deployment order and notifications as well as workspace/sync/financial/subscription/admin/AI/MCP tests. The GitHub workflow runs without production secrets and checks bundle/source parity. Production deployment approval/branch protection is a separate configuration, not guaranteed by a workflow file.
 
 New regression coverage includes serverless/local startup budgets, no mutation replay on timeout, stale auth restoration after a newer event, migration rollback on DDL/history failure, supported migration-file formats, and absence of the second scheduled GitHub writer.
 
 Local verification on 2026-10-04: the complete `npm run verify` chain exited 0 after the DOKU fix. This includes lint/type-check, isolated regression suites, Vite/service/native-handler build and deployed-bundle cron contract checks. Financial tests deliberately simulate full browser storage, denied access and provider failures; their expected error logs are not production incidents. No real email, provider payment, or database repair was performed in this audit pass.
+
+Post-merge verification also exited 0 against `54dd124` plus this addendum: both frontend and Node TypeScript configurations, new runtime regressions, the complete expanded `npm test`, and production build. The integrated build retains the slimmer Auth-only browser client (shared UI chunk approximately 304 kB before gzip). This is a local build measurement, not a production page-load benchmark.
 
 ## Remaining release risks and acceptance work
 

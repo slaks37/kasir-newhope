@@ -25,6 +25,10 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
     connectionTimeoutMillis: 1e4
   };
 }
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
 
 // services/shared/databaseStartup.ts
 async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
@@ -91,6 +95,7 @@ async function connectDb(opts) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query("COMMIT");
         return out;
@@ -119,6 +124,11 @@ function supabaseConfig() {
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
+var AuthUnavailableError = class extends Error {
+  constructor() {
+    super("AUTH_UNAVAILABLE");
+  }
+};
 async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -129,12 +139,18 @@ async function authenticateBearer(req) {
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  let upstream;
   try {
-    const upstream = await fetch(`${url}/auth/v1/user`, {
+    upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
       signal: AbortSignal.timeout(5e3)
     });
-    if (!upstream.ok) return null;
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);

@@ -137,7 +137,13 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   const [showMobileCartSheet, setShowMobileCartSheet] = useState(false);
   const [completedOrderForReceipt, setCompletedOrderForReceipt] = useState<Order | null>(null);
 
-  const isTabAllowed = hasPermission(activeTab as PermissionFeature);
+  // PIN override membuka satu modul untuk kunjungan ini saja: pindah tab atau ganti user menguncinya lagi.
+  const [navOverride, setNavOverride] = useState<{ tab: string; userId: string } | null>(null);
+  React.useEffect(() => {
+    if (navOverride && (navOverride.tab !== activeTab || navOverride.userId !== currentUser.id)) setNavOverride(null);
+  }, [activeTab, currentUser.id, navOverride]);
+  const isTabAllowed = hasPermission(activeTab as PermissionFeature) ||
+    (navOverride?.tab === activeTab && navOverride.userId === currentUser.id);
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const totalCartAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -440,6 +446,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
           requiredRoles={['ADMIN', 'MANAGER']}
           onClose={() => setShowNavAuthModal(false)}
           onAuthorized={() => {
+            setNavOverride({ tab: activeTab, userId: currentUser.id });
             setShowNavAuthModal(false);
           }}
         />

@@ -8,8 +8,10 @@ const logos = new Map<string, string | null>([['owner_FNB', null], ['other_FNB',
 const owners = new Map([['owner_FNB', 'owner'], ['other_FNB', 'other']]);
 const db = {
   async query(sql: string, params: unknown[] = []) {
-    if (sql.includes('SELECT 1') && sql.includes('internal.merchants')) {
-      return { rows: owners.get(String(params[0])) === params[1] ? [{ '?column?': 1 }] : [], rowCount: 1 };
+    // services/shared/auth.ts canAccessBusiness: ownership is resolved from the merchant row.
+    if (sql.includes('owner_user_ref') && sql.includes('internal.merchants')) {
+      const owner = owners.get(String(params[0]));
+      return { rows: owner ? [{ owner_user_ref: owner, tenant_active: true, merged_into: null, merchant_active: true }] : [], rowCount: owner ? 1 : 0 };
     }
     if (sql.startsWith('SELECT logo_url')) {
       const id = String(params[0]);

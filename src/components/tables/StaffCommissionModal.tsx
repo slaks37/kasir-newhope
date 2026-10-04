@@ -16,6 +16,7 @@ import {
   Coins,
   ArrowRight,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 interface StaffCommissionModalProps {
   isOpen: boolean;
@@ -48,7 +49,7 @@ export const StaffCommissionModal: React.FC<StaffCommissionModalProps> = ({
       fixedCommissionPerService: commissionType === 'FIXED_PER_ORDER' ? rateValue : 0,
       retailCommissionPercent: 5,
     });
-    alert('Aturan komisi staf berhasil diperbarui!');
+    notify('Aturan komisi staf berhasil diperbarui!');
   };
 
   // Calculate commission recap per staff from completed orders

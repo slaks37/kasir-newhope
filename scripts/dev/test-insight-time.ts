@@ -24,7 +24,7 @@ const snapshot: MerchantSnapshot = {
     paid('2026-08-31T23:59:00+07:00', 'previous-month'),
     paid('2026-08-31T17:00:00Z', 'new-month'),
     paid('2026-09-01T00:15:00', 'naive-wib'),
-    { ...paid('2026-09-01T00:20:00+07:00', 'unpaid', 900_000), paymentStatus: 'UNPAID' },
+    { ...paid('2026-09-01T00:20:00+07:00', 'unpaid', 900_000), paymentStatus: 'PENDING' },
     paid('2026-09-01T00:45:00+07:00', 'future-today', 900_000),
     paid('2026-09-02T00:00:00+07:00', 'future-day', 900_000),
     { ...paid('2026-09-01T00:22:00+07:00', 'void'), status: 'VOID' },

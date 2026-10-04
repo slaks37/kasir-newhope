@@ -67,6 +67,7 @@ import {
   getPinLockoutStatus,
   recordFailedPinAttempt,
   resetPinAttempts,
+  DEFAULT_OWNER_PIN,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
 import {useWorkspaceBusiness} from './WorkspaceBusinessContext';
@@ -107,6 +108,7 @@ import {
   INITIAL_COMMISSION_RULES,
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
+import { remainingQuantityByProduct, stockAfterSale } from '../lib/pos/stock';
 import { newId } from '../lib/ids';
 import { migrateLegacyFinancialData, type LegacyMigrationResult } from '../lib/sync/legacyMigration';
 import { enqueueCashCommand, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
@@ -116,6 +118,7 @@ import { moduleForPath } from '../lib/navigation/routes';
 import { refreshCoordinator } from '../lib/sync/refreshCoordinator';
 import { POSDomainProvider,usePOSSnapshot } from './POSDomains';
 import { kindsForModule } from '../lib/sync/moduleKinds';
+import { notify } from '../lib/ui/notify';
 
 export interface POSContextType {
   /**
@@ -481,7 +484,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko',
     username: authUser?.email?.split('@')[0] || 'owner',
     role: 'ADMIN',
-    pin: '1234',
+    pin: DEFAULT_OWNER_PIN,
     email: authUser?.email || '',
     phone: '',
     status: 'ACTIVE',
@@ -605,7 +608,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         throw new Error('FREE_SELECTION_OR_OWNER_REQUIRED');
       }
       if (!sub || subscriptionAccess(sub).accessMode !== 'FULL' || sub.accessMode === 'RESTRICTED') {
-        window.alert('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
+        notify('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
       }
       if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
@@ -850,7 +853,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       onPersistenceError:()=>setSyncStatus(previous=>({...previous,lastError:'CART_DRAFT_NOT_SAVED',failures:Math.max(1,previous.failures)})),
       canAdd:product=>{
         if(isFreePlan(settings.subscription)&&!freeProductAllowed(settings.subscription?.freeSelection,product.id,activeSector)){
-          window.alert('Produk ini tersimpan tetapi terkunci di paket Free. Ubah pilihan 10 produk atau upgrade.');return false;
+          notify('Produk ini tersimpan tetapi terkunci di paket Free. Ubah pilihan 10 produk atau upgrade.');return false;
         }return true;
       },
     });
@@ -1338,7 +1341,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: branch.businessSector || activeSector, isActive: false }),
     });
     const result = await response.json();
-    if (!response.ok || !result.ok) { window.alert(result.error || 'Outlet gagal dinonaktifkan'); return; }
+    if (!response.ok || !result.ok) { notify(result.error || 'Outlet gagal dinonaktifkan'); return; }
     setSettings((prev) => {
       const existing = prev.branches || INITIAL_BRANCHES;
       const updated = existing.map((b) => b.id === branchId ? { ...b, isActive: false } : b);
@@ -1525,7 +1528,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteUser = (userId: string) => {
     if (userId === currentUser.id) {
-      alert('Tidak dapat menghapus akun yang sedang digunakan!');
+      notify('Tidak dapat menghapus akun yang sedang digunakan!');
       return;
     }
     setUsers((prev) => prev.filter((u) => u.id !== userId));
@@ -1742,7 +1745,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try { enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role)); }
     catch (error) {
       setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
-      window.alert('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah; jangan tutup halaman dan hubungi admin.');
+      notify('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah; jangan tutup halaman dan hubungi admin.');
       return null;
     }
 
@@ -1830,7 +1833,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         type: 'SALE',
         quantity: totalQtySold,
         previousStock: p.stock,
-        newStock: Math.max(0, p.stock - totalQtySold),
+        newStock: stockAfterSale(p.stock, totalQtySold),
         reason: `Penjualan ${invoiceNum}`,
         timestamp: logTimestamp,
         user: shift.cashierName,
@@ -1843,7 +1846,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const stockItem = stockItems.find((s) => s.id === p.linkedStockItemId);
         if (stockItem) {
           const alreadyDeducted = rawDeductions.get(stockItem.id) || 0;
-          const previousStock = Math.max(0, stockItem.stock - alreadyDeducted);
+          const previousStock = stockItem.stock - alreadyDeducted;
           rawDeductions.set(stockItem.id, alreadyDeducted + rawDeductQty);
 
           newLogs.push({
@@ -1853,7 +1856,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             type: 'SALE',
             quantity: rawDeductQty,
             previousStock,
-            newStock: Math.max(0, previousStock - rawDeductQty),
+            newStock: stockAfterSale(previousStock, rawDeductQty),
             reason: `Pengurangan Bahan Baku Trx ${invoiceNum} (${p.name})`,
             timestamp: logTimestamp,
             user: shift.cashierName,
@@ -1869,7 +1872,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const stockItem = stockItems.find((s) => s.id === ing.ingredientId);
           if (stockItem) {
             const alreadyDeducted = rawDeductions.get(stockItem.id) || 0;
-            const previousStock = Math.max(0, stockItem.stock - alreadyDeducted);
+            const previousStock = stockItem.stock - alreadyDeducted;
             rawDeductions.set(stockItem.id, alreadyDeducted + rawDeductQty);
 
             newLogs.push({
@@ -1879,7 +1882,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               type: 'SALE',
               quantity: rawDeductQty,
               previousStock,
-              newStock: Math.max(0, previousStock - rawDeductQty),
+              newStock: stockAfterSale(previousStock, rawDeductQty),
               reason: `Pengurangan Resep BOM Trx ${invoiceNum} (${p.name}: ${ing.quantity} ${ing.unit} x ${totalQtySold})`,
               timestamp: logTimestamp,
               user: shift.cashierName,
@@ -1893,7 +1896,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts((prevProducts) =>
       prevProducts.map((p) => {
         const totalQtySold = soldQtyByProduct.get(p.id);
-        return totalQtySold ? { ...p, stock: Math.max(0, p.stock - totalQtySold) } : p;
+        return totalQtySold ? { ...p, stock: stockAfterSale(p.stock, totalQtySold) } : p;
       })
     );
 
@@ -1902,7 +1905,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         prevStockItems.map((s) => {
           const deduct = rawDeductions.get(s.id);
           return deduct
-            ? { ...s, stock: Math.max(0, s.stock - deduct), lastUpdated: logTimestamp }
+            ? { ...s, stock: stockAfterSale(s.stock, deduct), lastUpdated: logTimestamp }
             : s;
         })
       );
@@ -1971,7 +1974,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role));
     } catch (error) {
       setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
-      window.alert('Pembatalan belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
+      notify('Pembatalan belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
       return;
     }
 
@@ -2001,14 +2004,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
-    // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log
-    const returnedQtyByProduct = new Map<string, number>();
-    targetOrder.items.forEach((item) => {
-      returnedQtyByProduct.set(
-        item.productId,
-        (returnedQtyByProduct.get(item.productId) || 0) + item.quantity
-      );
-    });
+    // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log.
+    // Only what the customer still holds: items already refunded were restored then.
+    const returnedQtyByProduct = remainingQuantityByProduct(targetOrder);
 
     const refundTimestamp = new Date().toISOString();
     const refundLogs: InventoryLog[] = [];
@@ -2536,7 +2534,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try { enqueueSync(tenant.businessId,orderToPayload(updatedOrder,currentUser.role)); }
     catch (error) {
       setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
-      window.alert('Pembayaran belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
+      notify('Pembayaran belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
       return null;
     }
     setSyncStatus(getSyncStatus(tenant.businessId));

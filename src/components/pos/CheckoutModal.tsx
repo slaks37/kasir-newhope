@@ -15,6 +15,7 @@ import {
   Bookmark,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { notify } from '../../lib/ui/notify';
 
 export const detectServiceDurationHours = (items: { name: string; itemNotes?: string }[]): number => {
   if (!items || items.length === 0) return 24;
@@ -50,6 +51,17 @@ export const detectServiceDurationHours = (items: { name: string; itemNotes?: st
 
   return minHours !== null ? minHours : 24;
 };
+
+const CHECKOUT_ERRORS: Record<string, string> = {
+  MODULE_CLOUD_STATE_NOT_READY: 'Data toko masih dimuat dari cloud. Tunggu beberapa detik lalu tekan bayar lagi — keranjang tetap tersimpan.',
+  FREE_PRODUCT_LOCKED: 'Ada produk di luar 10 produk pilihan paket Free. Hapus produk itu atau upgrade paket.',
+  TENDER_EXCEEDS_BALANCE: 'Pembayaran melebihi sisa tagihan.',
+  SPLIT_ORDER_NOT_LOADED: 'Pesanan split belum termuat. Tutup lalu buka kembali pesanan.',
+};
+function checkoutErrorMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : String(error);
+  return CHECKOUT_ERRORS[code] ?? `Transaksi belum tersimpan (${code}). Keranjang tidak dihapus; coba lagi.`;
+}
 
 interface CheckoutModalProps {
   onClose: () => void;
@@ -120,6 +132,29 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [dropOffDateIso, setDropOffDateIso] = useState<string>(toDatetimeLocalStr(now));
   const [completionDateIso, setCompletionDateIso] = useState<string>(toDatetimeLocalStr(initialCompletion));
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const processingRef = useRef(false);
+
+  /**
+   * Sale recording is synchronous and local-first; there is nothing to wait for.
+   * Runs once (double-click safe), never after the dialog was dismissed, and
+   * shows any failure to the cashier instead of leaving a spinning button.
+   */
+  const settle = <T,>(record: () => T | null | undefined, onRecorded: (result: T) => void) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setIsProcessing(true);
+    setCheckoutError('');
+    try {
+      const result = record();
+      if (result) onRecorded(result);
+    } catch (error) {
+      setCheckoutError(checkoutErrorMessage(error));
+    } finally {
+      processingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(dialogRef, () => { if (!isProcessing) onClose(); });
 
@@ -170,70 +205,51 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleSavePending = () => {
     if (settings.businessSector === 'LAUNDRY' && !completionDateIso) {
-      alert('Mohon tentukan Tanggal & Jam Selesai / Jadi cucian dari kalender!');
+      notify('Mohon tentukan Tanggal & Jam Selesai / Jadi cucian dari kalender!');
       return;
     }
 
-    setIsProcessing(true);
     const isLaundry = settings.businessSector === 'LAUNDRY';
     const isCarwash = settings.businessSector === 'CARWASH';
     const dropOffIndo = isLaundry ? formatIsoToIndoStr(dropOffDateIso) : undefined;
     const completionIndo = isLaundry ? formatIsoToIndoStr(completionDateIso) : undefined;
 
-    setTimeout(() => {
-      const order = holdOrder(undefined, {
-        dropOffDate: dropOffIndo,
-        completionDate: completionIndo,
-        storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
-        vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
-        vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
-        assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
-      });
-
-      setIsProcessing(false);
+    settle(() => holdOrder(undefined, {
+      dropOffDate: dropOffIndo,
+      completionDate: completionIndo,
+      storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
+      vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
+      vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
+      assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
+    }), order => {
       onClose();
-      if (order) {
-        alert(`Pesanan #${order.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti).`);
-      }
-    }, 400);
+      notify(`Pesanan #${order.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti).`);
+    });
+  };
+
+  const celebrate = (order: Order) => {
+    try { confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } }); } catch { /* decorative only */ }
+    onPaymentSuccess(order);
   };
 
   const handlePay = () => {
     if (paymentMethod === 'CASH' && !isCashSufficient) {
-      alert('Uang tunai yang diterima masih kurang!');
+      notify('Uang tunai yang diterima masih kurang!');
       return;
     }
 
     if (settings.businessSector === 'LAUNDRY' && !completionDateIso) {
-      alert('Mohon pilih Tanggal & Jam Selesai / Jadi cucian dari kalender sebelum bayar!');
+      notify('Mohon pilih Tanggal & Jam Selesai / Jadi cucian dari kalender sebelum bayar!');
       return;
     }
 
-    setIsProcessing(true);
-
     if (pendingOrderToPay) {
-      setTimeout(() => {
-        const order = payPendingOrder(
-          pendingOrderToPay.id,
-          paymentMethod,
-          paymentMethod === 'CASH' ? cashReceivedNumber : undefined,
-          qrisRefInput ? `RRN: ${qrisRefInput}` : undefined
-        );
-
-        setIsProcessing(false);
-
-        if (order) {
-          try {
-            confetti({
-              particleCount: 80,
-              spread: 70,
-              origin: { y: 0.6 },
-            });
-          } catch (e) {}
-
-          onPaymentSuccess(order);
-        }
-      }, 600);
+      settle(() => payPendingOrder(
+        pendingOrderToPay.id,
+        paymentMethod,
+        paymentMethod === 'CASH' ? cashReceivedNumber : undefined,
+        qrisRefInput ? `RRN: ${qrisRefInput}` : undefined
+      ), celebrate);
       return;
     }
 
@@ -244,37 +260,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const dropOffIndo = isLaundry ? formatIsoToIndoStr(dropOffDateIso) : undefined;
     const completionIndo = isLaundry ? formatIsoToIndoStr(completionDateIso) : undefined;
 
-    setTimeout(() => {
-      const order = processPayment(
-        paymentMethod,
-        paymentMethod === 'CASH' ? cashReceivedNumber : undefined,
-        qrisRefInput ? `RRN: ${qrisRefInput}` : undefined,
-        completionIndo,
-        undefined,
-        dropOffIndo,
-        completionIndo,
-        {
-          vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
-          vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
-          assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
-          storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
-        }
-      );
-
-      setIsProcessing(false);
-
-      if (order) {
-        try {
-          confetti({
-            particleCount: 80,
-            spread: 70,
-            origin: { y: 0.6 },
-          });
-        } catch (e) {}
-
-        onPaymentSuccess(order);
+    settle(() => processPayment(
+      paymentMethod,
+      paymentMethod === 'CASH' ? cashReceivedNumber : undefined,
+      qrisRefInput ? `RRN: ${qrisRefInput}` : undefined,
+      completionIndo,
+      undefined,
+      dropOffIndo,
+      completionIndo,
+      {
+        vehiclePlate: isCarwash && vehiclePlateInput ? vehiclePlateInput.toUpperCase().trim() : undefined,
+        vehicleModel: isCarwash ? vehicleModelInput.trim() : undefined,
+        assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
+        storageRack: isLaundry && storageRackInput ? storageRackInput.trim() : undefined,
       }
-    }, 600);
+    ), celebrate);
   };
 
   return (
@@ -704,6 +704,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </button>
             )}
 
+            {checkoutError && <p role="alert" className="mr-auto max-w-xs text-xs font-semibold text-rose-700">{checkoutError}</p>}
             <button
               disabled={isProcessing || (paymentMethod === 'CASH' && !isCashSufficient)}
               onClick={handlePay}

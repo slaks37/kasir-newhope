@@ -521,7 +521,7 @@ export const BlogHarapanBaru: React.FC<BlogHarapanBaruProps> = ({
               Siap Menerapkan Sistem Ini di Usaha Anda?
             </h3>
             <p className="text-xs sm:text-sm text-slate-700 font-medium max-w-xl">
-              Gunakan New Hope POS untuk mengontrol resep bahan baku, terima QRIS Dinamis otomatis cair H+1, dan akses AI Copilot pintar tanpa kartu kredit.
+              Gunakan New Hope POS untuk mengontrol resep bahan baku, mencatat pembayaran tunai & QRIS per shift, dan akses AI Copilot pintar tanpa kartu kredit.
             </p>
             <div className="pt-2 flex flex-wrap gap-3">
               <button

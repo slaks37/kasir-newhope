@@ -19,14 +19,7 @@ async function verify() {
   console.log('   • Database :', v.rows[0].current_database);
   console.log('   • User     :', v.rows[0].current_user);
 
-  // Pastikan rencana SaaS default ada di billing.plans
-  await client.query(`
-    INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, features) VALUES
-      ('plan-basic-monthly',      'Basic Starter',    1, 'MONTHLY', 149000, '[]'::jsonb),
-      ('plan-pro-monthly',        'Pro Growth',       2, 'MONTHLY', 349000, '[]'::jsonb),
-      ('plan-enterprise-monthly', 'Enterprise Ultra', 3, 'MONTHLY', 699000, '[]'::jsonb)
-    ON CONFLICT (id) DO NOTHING;
-  `);
+  // Skrip ini hanya membaca. Katalog paket disinkronkan oleh services/billing (pastikanPaket).
 
   // 2. Skema Domain Terpasang
   const schemas = await client.query(`

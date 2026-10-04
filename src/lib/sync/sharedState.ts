@@ -134,9 +134,20 @@ export class SharedStateSync {
       const candidates=[...this.pending.values()].filter(op=>op.origin==='legacy'&&!this.legacyCheckedKeys.has(keyFor(op.kind,op.recordId))).slice(0,100).map(op=>({kind:op.kind,recordId:op.recordId}));
       const requestedKinds=this.kinds?[...new Set([...this.kinds,...[...this.pending.values()].map(op=>op.kind)])]:undefined;
       const versionKey=requestedKinds?[...requestedKinds].sort().join(','):'*',knownVersion=this.versions.get(versionKey);
-      const response=await fetch(`/api/v1/sync/state?sector=${encodeURIComponent(this.sector)}${this.identity?'&businessId='+encodeURIComponent(this.identity.businessId):''}${requestedKinds?'&kinds='+encodeURIComponent(requestedKinds.join(',')):''}${knownVersion?'&knownVersion='+encodeURIComponent(knownVersion):''}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
-      if(!response.ok)throw Error(`HTTP_${response.status}`);const data=await response.json();if(this.stopped||generation!==this.readGeneration)return;
-      if(!data.ok||!Array.isArray(data.records)||data.truncated)throw Error('STATE_INVALID_RESPONSE');
+      const query=`/api/v1/sync/state?paged=1&sector=${encodeURIComponent(this.sector)}${this.identity?'&businessId='+encodeURIComponent(this.identity.businessId):''}${requestedKinds?'&kinds='+encodeURIComponent(requestedKinds.join(',')):''}${knownVersion?'&knownVersion='+encodeURIComponent(knownVersion):''}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`;
+      // Large catalogs/CRMs arrive in pages; the snapshot is only used once complete.
+      let data:any=null,cursor:string|null=null;const pageRecords:SharedRecord[]=[];
+      for(let page=0;;page++){
+        if(page>=200)throw Error('STATE_TOO_MANY_PAGES');
+        const response:Response=await fetch(query+(cursor?'&cursor='+encodeURIComponent(cursor):''),{cache:'no-store',signal:AbortSignal.timeout(15000)});
+        if(!response.ok)throw Error(`HTTP_${response.status}`);const body:any=await response.json();if(this.stopped||generation!==this.readGeneration)return;
+        if(!body.ok||!Array.isArray(body.records)||body.truncated)throw Error('STATE_INVALID_RESPONSE');
+        // A write between pages changes the version: retry later rather than mix two snapshots.
+        if(data&&body.version!==data.version)throw Error('STATE_CHANGED_DURING_LOAD');
+        data??=body;pageRecords.push(...body.records);
+        if(body.unchanged||!body.nextCursor)break;cursor=body.nextCursor;
+      }
+      data={...data,records:pageRecords};
       if(requestedKinds&&data.records.some((row:SharedRecord)=>!requestedKinds.includes(row.kind)))throw Error('STATE_KIND_SCOPE_INVALID');
       if(!data.ready){this.error='Unit usaha belum disiapkan untuk sinkronisasi';this.emit();return;}
       if(this.identity&&data.business?.businessId!==this.identity.businessId)throw Error('STATE_BUSINESS_SCOPE_INVALID');

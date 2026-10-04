@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+const alerts: string[] = [];
+const target = new EventTarget();
+Object.assign(globalThis, { window: Object.assign(target, { alert: (m: string) => alerts.push(m) }), CustomEvent: globalThis.CustomEvent });
+const { notify, subscribeNotices, inferTone } = await import('../../src/lib/ui/notify');
+
+notify('Pesan sebelum UI siap');
+assert.deepEqual(alerts, ['Pesan sebelum UI siap'], 'Without a mounted Notifier nothing is lost (falls back to alert)');
+const seen: Array<{ message: string; tone: string }> = [];
+const unsubscribe = subscribeNotices(n => seen.push({ message: n.message, tone: n.tone }));
+notify('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah.');
+notify('Mohon pilih tanggal selesai');
+notify('Produk berhasil disimpan');
+notify('Info biasa', 'info');
+assert.deepEqual(seen.map(n => n.tone), ['error', 'warning', 'success', 'info']);
+assert.equal(alerts.length, 1, 'A mounted Notifier never blocks the tab');
+unsubscribe();
+notify('Setelah unmount');
+assert.equal(alerts.at(-1), 'Setelah unmount');
+assert.equal(inferTone('Pop-up terblokir oleh browser'), 'error');
+console.log('PASS: notify never blocks when mounted, never loses a message when not, and infers error/warning/success tones');

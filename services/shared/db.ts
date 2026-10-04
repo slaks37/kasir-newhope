@@ -14,7 +14,7 @@
 
 import fs from 'node:fs';
 import pg from 'pg';
-import { databasePoolLimits, serverlessConnectionString } from './poolConfig';
+import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from './poolConfig';
 import { waitForDatabase } from './databaseStartup';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
@@ -126,6 +126,8 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // Transaction-local: aman untuk transaction pooler dan tidak bocor ke koneksi lain.
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query('COMMIT');
         return out;

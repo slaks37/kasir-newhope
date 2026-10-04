@@ -78,10 +78,13 @@ export async function subscriptionStatus(db: Db, tenantId: string) {
   const sub = serializeSubscription(s);
   const access = subscriptionAccess(sub);
   const tenant = await db.query('SELECT is_active FROM internal.tenants WHERE id=$1',[tenantId]);
-  if (!tenant.rows[0]?.is_active) Object.assign(access,{accessMode:'RESTRICTED',status:'EXPIRED'});
-  if (access.status !== s.status && access.status !== 'FREE') {
-    await db.query('UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2', [access.status, s.id]).catch(() => {});
-  }
+  // A missing row is a lookup failure, never a reason to expire an account.
+  if (!tenant.rows[0]) throw new BillingError(404,'TENANT_NOT_FOUND');
+  if (tenant.rows[0].is_active === false) Object.assign(access,{accessMode:'RESTRICTED',status:'EXPIRED'});
+  // Read-only by design: access is derived from the period dates on every read
+  // (as assertTenantWritable does). Persisting the derived status here used to
+  // write a terminal EXPIRED from a single transient lookup, locking out paying
+  // and trial accounts permanently.
   const invoices = await db.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100',[tenantId]);
   const startMs = Date.parse(sub.currentPeriodStart);
   const endMs = Date.parse(sub.currentPeriodEnd);

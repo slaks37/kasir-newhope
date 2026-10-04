@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
+import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from '../../services/shared/poolConfig';
 
 const session = 'postgresql://svc_pos.project:p%40ss%3Aword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require';
 const transaction = serverlessConnectionString(session, '1');
@@ -20,4 +20,6 @@ for (const unchanged of [
 assert.deepEqual(databasePoolLimits(10,'1'), {max:2,idleTimeoutMillis:5000,connectionTimeoutMillis:10000});
 assert.equal(databasePoolLimits(1,'1').max, 1);
 assert.equal(databasePoolLimits(10,'0').max, 10);
-console.log('PASS serverless transaction pool: endpoint, credentials, local/provider isolation, bounded connections');
+assert.equal(statementTimeoutMs(undefined),8000);assert.equal(statementTimeoutMs('15000'),15000);
+for(const bad of ['0','999','abc','999999','-5'])assert.equal(statementTimeoutMs(bad),8000,bad);
+console.log('PASS serverless transaction pool: endpoint, credentials, local/provider isolation, bounded connections, bounded statement timeout');

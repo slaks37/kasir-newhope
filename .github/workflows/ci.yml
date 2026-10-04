@@ -1,19 +1,18 @@
-name: Product regression gate
+name: CI
+
 on:
   pull_request:
   push:
     branches: [main]
+
 permissions:
   contents: read
-concurrency:
-  group: verify-${{ github.ref }}
-  cancel-in-progress: true
+
 jobs:
   verify:
+    name: Lint, test and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      CI: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,5 +20,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Isolated fixtures; no production credentials and no real email/payments.
-      - run: npm run verify
+      - name: Product gate (lint, isolated tests, SPA and API build)
+        run: npm run verify
+      - name: Committed Vercel bundles match source
+        run: git diff --exit-code -- api/

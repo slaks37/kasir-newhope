@@ -1,6 +1,3 @@
-// src/server/assistantHandler.ts
-import express from "express";
-
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -11,6 +8,11 @@ function supabaseConfig() {
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
+var AuthUnavailableError = class extends Error {
+  constructor() {
+    super("AUTH_UNAVAILABLE");
+  }
+};
 async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -21,12 +23,18 @@ async function authenticateBearer(req) {
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  let upstream;
   try {
-    const upstream = await fetch(`${url}/auth/v1/user`, {
+    upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
       signal: AbortSignal.timeout(5e3)
     });
-    if (!upstream.ok) return null;
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
@@ -85,6 +93,10 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
     idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
     connectionTimeoutMillis: 1e4
   };
+}
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
 }
 
 // services/shared/databaseStartup.ts
@@ -152,6 +164,7 @@ async function connectDb(opts) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query("COMMIT");
         return out;
@@ -5152,6 +5165,9 @@ function registerAssistantRoutes(app, database) {
   );
 }
 
+// src/server/serverlessBoundary.ts
+import express from "express";
+
 // src/server/vercelUrl.ts
 function normalizeVercelUrl(req) {
   if (!req || typeof req.url !== "string") return;
@@ -5182,46 +5198,130 @@ function normalizeVercelUrl(req) {
   }
 }
 
-// src/server/assistantHandler.ts
-var methods = {
-  "/api/v1/assistant/query": "POST",
-  "/api/v1/assistant/credits": "GET",
-  "/api/v1/assistant/quick-chips": "GET",
-  "/api/v1/assistant/audit": "GET",
-  "/api/v1/assistant/group": "GET",
-  "/api/v1/assistant/daily-brief": "GET"
-};
-function createAssistantHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "ai", max: 2 })) {
+// src/server/serverlessBoundary.ts
+var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-sub",
+  "x-auth-email",
+  "x-auth-email-verified",
+  "x-internal-user",
+  "x-env-override",
+  "x-newhope-gateway-token"
+];
+function stripIdentityHeaders(req) {
+  for (const key of TRUSTED_IDENTITY_HEADERS) delete req.headers[key];
+}
+function applyPrincipal(req, principal) {
+  stripIdentityHeaders(req);
+  req.headers["x-auth-sub"] = principal.subject;
+  if (principal.email) req.headers["x-auth-email"] = principal.email;
+  if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+}
+var MAX_RAW_BODY = 1048576;
+async function readRawBody(req) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+  if (typeof req.rawBody === "string") return Buffer.from(req.rawBody, "utf8");
+  if (req.readableEnded || typeof req[Symbol.asyncIterator] !== "function") return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk);
+    size += bytes.length;
+    if (size > MAX_RAW_BODY) throw Object.assign(new Error("BODY_TOO_LARGE"), { status: 413 });
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks);
+}
+function setParsedBody(req, raw) {
+  let parsed = {};
+  try {
+    parsed = JSON.parse(raw.toString("utf8") || "{}");
+  } catch {
+    parsed = {};
+  }
+  req.rawBody = raw;
+  try {
+    Object.defineProperty(req, "body", { value: parsed, writable: true, configurable: true, enumerable: true });
+  } catch {
+    req.body = parsed;
+  }
+}
+function createServerlessBoundary(options, authenticate = authenticateBearer, connect) {
+  const publicRoutes = new Set(options.publicRoutes ?? []);
+  const rawBodyRoutes = new Set(options.rawBodyRoutes ?? []);
   let runtime;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
-    if (!methods[path]) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-    if (req.method !== methods[path]) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
-    const principal = await authenticate(req);
-    if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-    for (const key of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[key];
-    req.headers["x-auth-sub"] = principal.subject;
-    if (principal.email) req.headers["x-auth-email"] = principal.email;
+    if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+    if (publicRoutes.has(path)) {
+      stripIdentityHeaders(req);
+    } else {
+      let principal = null;
+      try {
+        principal = await authenticate(req);
+      } catch (error) {
+        if (error instanceof AuthUnavailableError) {
+          res.setHeader("Retry-After", "2");
+          return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
+        }
+        principal = null;
+      }
+      if (!principal || principal.subject === "local-development") {
+        return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      }
+      applyPrincipal(req, principal);
+    }
+    if (rawBodyRoutes.has(path) && req.method === "POST") {
+      try {
+        const raw = await readRawBody(req);
+        if (!raw) return res.status(400).json({ ok: false, error: "RAW_BODY_REQUIRED" });
+        setParsedBody(req, raw);
+      } catch (error) {
+        return res.status(error.status === 413 ? 413 : 400).json({ ok: false, error: "INVALID_REQUEST_BODY" });
+      }
+    }
     try {
       runtime ??= connect().then((db) => {
         const app = express();
-        const parse = express.json({ limit: "2mb" });
-        app.use((req2, res2, next) => req2.body !== void 0 ? next() : parse(req2, res2, next));
-        registerAssistantRoutes(app, db);
-        app.use((_req, res2) => res2.status(404).json({ ok: false, error: "NOT_FOUND" }));
-        app.use((error, _req, res2, _next) => res2.status(error.type === "entity.too.large" ? 413 : 500).json({ ok: false, error: "ASSISTANT_UNAVAILABLE" }));
+        const parse = express.json({ limit: options.bodyLimit });
+        app.use((request, response, next) => request.body !== void 0 ? next() : parse(request, response, next));
+        options.register(app, db);
+        app.use((_request, response) => response.status(404).json({ ok: false, error: "NOT_FOUND" }));
+        app.use((error, _request, response, _next) => response.status(error?.type === "entity.too.large" ? 413 : 400).json({ ok: false, error: options.invalidRequestError }));
         return app;
       }).catch((error) => {
         runtime = void 0;
         throw error;
       });
       (await runtime)(req, res);
-    } catch {
-      return res.status(503).json({ ok: false, error: "ASSISTANT_UNAVAILABLE" });
+    } catch (error) {
+      const diagnostic = error;
+      console.error(`[${options.name}] runtime unavailable`, { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });
+      return res.status(503).json({ ok: false, error: options.unavailableError });
     }
   };
+}
+
+// src/server/assistantHandler.ts
+var methods = {
+  "/api/v1/assistant/query": ["POST"],
+  "/api/v1/assistant/credits": ["GET"],
+  "/api/v1/assistant/quick-chips": ["GET"],
+  "/api/v1/assistant/audit": ["GET"],
+  "/api/v1/assistant/group": ["GET"],
+  "/api/v1/assistant/daily-brief": ["GET"]
+};
+function createAssistantHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "ai", max: 2 })) {
+  return createServerlessBoundary({
+    name: "assistant",
+    routes: methods,
+    bodyLimit: "2mb",
+    register: registerAssistantRoutes,
+    unavailableError: "ASSISTANT_UNAVAILABLE",
+    invalidRequestError: "INVALID_ASSISTANT_REQUEST"
+  }, authenticate, connect);
 }
 var assistantHandler_default = createAssistantHandler();
 export {

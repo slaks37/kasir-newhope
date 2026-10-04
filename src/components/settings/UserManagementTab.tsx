@@ -3,6 +3,7 @@ import { usePOSFields } from '../../context/POSDomains';
 import { ROLE_PERMISSIONS } from '../../data/rolePermissions';
 import { User, UserRole, PermissionFeature } from '../../types';
 import { newId } from '../../lib/ids';
+import { DEFAULT_OWNER_PIN } from '../../lib/auth/pinSecurity';
 import {
   Users,
   Plus,
@@ -19,6 +20,7 @@ import {
   Save,
   Info,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 export const UserManagementTab: React.FC = () => {
   const { users, currentUser, saveUser, deleteUser } = usePOSFields(["users","currentUser","saveUser","deleteUser"]);
@@ -58,24 +60,33 @@ export const UserManagementTab: React.FC = () => {
   const handleSaveUserForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser.name || !editingUser.username) {
-      alert('Mohon lengkapi Nama dan Username.');
+      notify('Mohon lengkapi Nama dan Username.');
       return;
     }
 
     let finalPin = editingUser.pin;
     if (pinInput) {
       if (pinInput.length !== 4 || !/^\d+$/.test(pinInput)) {
-        alert('PIN harus terdiri dari 4 digit angka (contoh: 1234).');
+        notify('PIN harus terdiri dari 4 digit angka.');
+        return;
+      }
+      if (pinInput === DEFAULT_OWNER_PIN) {
+        notify('PIN 1234 adalah PIN bawaan dan mudah ditebak. Pilih PIN lain.');
         return;
       }
       finalPin = pinInput;
     } else if (!finalPin) {
-      alert('Mohon masukkan PIN 4 digit untuk pengguna baru.');
+      notify('Mohon masukkan PIN 4 digit untuk pengguna baru.');
       return;
     }
 
-    saveUser({ ...editingUser, pin: finalPin } as User);
-    setIsEditing(false);
+    const saved = { ...editingUser, pin: finalPin } as User;
+    // saveUser hashes the PIN asynchronously and may refuse (Free plan, read-only); keep the form open on failure.
+    Promise.resolve().then(() => saveUser(saved)).then(() => setIsEditing(false)).catch((error) => {
+      notify(error instanceof Error && error.message === 'FREE_OWNER_ONLY'
+        ? 'Paket Free hanya mendukung akun pemilik. Upgrade paket untuk menambah staf.'
+        : 'Pengguna belum tersimpan. Coba lagi.');
+    });
   };
 
   const getRoleBadge = (role: UserRole) => {
@@ -249,9 +260,14 @@ export const UserManagementTab: React.FC = () => {
                       <td className="px-4 py-3">{getRoleBadge(user.role)}</td>
 
                       <td className="px-4 py-3">
-                        <span className="bg-slate-100 border border-slate-200 font-mono font-bold px-2.5 py-1 rounded-lg text-slate-800 text-xs">
-                          {user.pin?.startsWith('sha256$') ? '•••• (Tersimpan aman)' : `•••• (${user.pin})`}
-                        </span>
+                        {/* Never render a PIN, even a legacy plaintext one. */}
+                        {user.pin?.startsWith('sha256$') ? (
+                          <span className="bg-slate-100 border border-slate-200 font-mono font-bold px-2.5 py-1 rounded-lg text-slate-800 text-xs">•••• (Tersimpan aman)</span>
+                        ) : (
+                          <span className="bg-amber-50 border border-amber-300 font-bold px-2.5 py-1 rounded-lg text-amber-900 text-xs">
+                            {user.pin === DEFAULT_OWNER_PIN ? '•••• PIN bawaan, segera ganti' : '•••• Belum diamankan, simpan ulang PIN'}
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-4 py-3">
@@ -404,7 +420,7 @@ export const UserManagementTab: React.FC = () => {
                   <input
                     type="password"
                     maxLength={4}
-                    placeholder={editingUser.pin?.startsWith('sha256$') ? '•••• (Kosongkan jika tidak diubah)' : '1234'}
+                    placeholder={editingUser.pin?.startsWith('sha256$') ? '•••• (Kosongkan jika tidak diubah)' : '4 digit angka'}
                     value={pinInput}
                     onChange={(e) => setPinInput(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-amber-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"

@@ -2,6 +2,8 @@
 
 Dokumentasi arsitektur sistem, hirarki multi-tenant (Model B), otentikasi & step-up otorisasi, tata kelola keamanan berlapis (*Defense-in-Depth*), dan aturan emas integritas data (*Golden Rule*).
 
+> **Cara membaca dokumen ini.** Setiap bagian ditandai **[Berjalan]** bila sudah diterapkan di kode, atau **[Rencana]** bila masih arah desain. Revisi 2026-10-04 meluruskan bagian yang sebelumnya menggambarkan rencana seolah sudah berjalan: alur QRIS, step-up PIN, dan alur sinkronisasi.
+
 ---
 
 ## 🌟 Aturan Emas Arsitektur New Hope POS (*The Golden Rule*)
@@ -22,9 +24,9 @@ Dokumentasi arsitektur sistem, hirarki multi-tenant (Model B), otentikasi & step
 ┌────────────────────────────────────────────────────────────────────────┐
 │                              CLIENT TIER                               │
 │        Web POS Terminal (React)  │  Admin Backoffice (React)           │
-│        Offline-first Cache       │  Realtime Analytics Dashboard       │
+│        Offline-first Cache       │  Analytics Dashboard (berkala)      │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ HTTPS / WSS
+                                    │ HTTPS
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                          API GATEWAY TIER                              │
@@ -217,143 +219,151 @@ Item: Latte (Variant: Large, Rp 32.000)
 
 ---
 
-### 💳 2.4 Pemisahan Daur Hidup Pesanan (Order) vs Pembayaran (Payment)
+### 💳 2.4 Pemisahan Daur Hidup Pesanan (Order) vs Pembayaran (Payment) — [Berjalan]
 
-Untuk mendukung *Split Payment*, *Multi-Tender*, *Partial Payment*, dan pencegahan *Fraud* pada pembayaran digital (QRIS/EDC):
+Pesanan dan pembayaran adalah dua daur hidup terpisah, sehingga *split payment*, *multi-tender*, dan pembayaran sebagian bisa dicatat tanpa mengubah pesanannya.
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │             ORDER LIFECYCLE (pos.transactions)         │
 │   OPEN ➔ PENDING_PAYMENT ➔ COMPLETED                   │
-│   (Batal: CANCELLED / VOIDED / REFUNDED)               │
+│   (Batal: CANCELLED / VOIDED; refund = baris terpisah) │
 └───────────────────────────┬────────────────────────────┘
                             │ 1 : N
                             ▼
 ┌────────────────────────────────────────────────────────┐
 │             PAYMENT LIFECYCLE (pos.payments)           │
-│   PENDING ➔ PAID (Verifikasi Webhook / EDC Trace)      │
-│   (Gagal: FAILED / EXPIRED / REFUNDED)                 │
+│   PENDING ➔ PAID / SETTLED                             │
+│   (REFUNDED saat void)                                 │
 └────────────────────────────────────────────────────────┘
 ```
 
-#### Alur Pembayaran Digital Aman (Anti-Fraud QRIS Flow):
-```
-1. Kasir memilih pembayaran QRIS
-    ↓
-2. Backend POS memanggil Payment Gateway (Midtrans / Xendit) ➔ Generate Dynamic QRIS
-    ↓
-3. Pelanggan melakukan scan & bayar via m-Banking / E-Wallet
-    ↓
-4. Payment Gateway mengirimkan Webhook terverifikasi (HMAC Signature & Idempotency Key)
-    ↓
-5. Backend POS memvalidasi Webhook ➔ Membuat record pos.payments (status = PAID)
-    ↓
-6. Order berubah menjadi COMPLETED ➔ Bahan baku BOM otomatis dipotong di gudang cabang
-    ↓
-7. Layar Kasir menerima notifikasi Realtime bahwa transaksi lunas (Struk tercetak)
-```
+Omzet yang diakui (`contract.merchant_revenue`) hanya menghitung pesanan COMPLETED/SETTLED yang **tertutup penuh** oleh pembayaran PAID/SETTLED, dikurangi refund append-only. Void dan cancel tidak dihitung.
 
-- **Prinsip Keamanan Finansial**: Kasir **TIDAK** menjadi penentu status `PAID` untuk transaksi digital (mencegah manipulasi struk/fraud kasir).
-- **VOID vs Status Pembayaran**: `VOID` adalah pembatalan pesanan yang telah lunas (*Order Lifecycle Event*) yang membutuhkan Step-Up Authorization Manager, bukan sekadar status pembayaran.
+#### Pembayaran di kasir — [Berjalan]
+Tunai, **QRIS statis toko**, kartu (EDC), dan transfer **dicatat oleh kasir**. Belum ada integrasi payment gateway untuk transaksi kasir:
+1. Kasir memilih metode, lalu menerima pembayaran dari pelanggan (scan QR toko / EDC / tunai).
+2. Kasir menekan **Konfirmasi Pembayaran**. Penjualan disimpan dulu di antrean perangkat (offline-first), lalu struk tampil.
+3. Antrean dikirim ke `POST /api/v1/sync/transactions`. Server membuat `pos.transactions`, `pos.payments`, dan entri `pos.cash_ledger` (untuk tunai) dalam satu transaksi database.
+
+Artinya status lunas untuk QRIS/EDC **adalah konfirmasi kasir**. Nomor referensi (RRN) bisa diisi manual sebagai bukti.
+
+#### QRIS dinamis + webhook — [Rencana]
+Alur di mana backend membuat QRIS dinamis dan status PAID ditentukan oleh webhook payment gateway (kasir tidak bisa menandai lunas sendiri) **belum dibangun** (desain: [`docs/design/2026-10-keputusan-produk.md` §3](docs/design/2026-10-keputusan-produk.md#3-qris-dinamis-untuk-transaksi-kasir)). Bila dibangun, pola yang wajib dipakai sama dengan webhook DOKU langganan: verifikasi tanda tangan dari byte asli, idempotensi per event, dan rekonsiliasi ke ledger.
+
+#### Langganan SaaS (DOKU Checkout) — [Berjalan]
+1. `POST /api/v1/subscription/checkout`: invoice disimpan **sebelum** memanggil DOKU (kunci idempotensi `requestKey`), lalu pengguna diarahkan ke halaman DOKU.
+2. DOKU mengirim `POST /api/v1/webhooks/doku`. Tanda tangan diverifikasi dari **byte asli** request, lalu channel dicocokkan dengan `DOKU_ALLOWED_CHANNELS`, nominal dengan invoice, dan revisi langganan dengan quote. Hasilnya `APPLIED` atau `REVIEW` (ditinjau support).
+3. `GET /api/v1/subscription/verify` hanya melaporkan lunas bila ledger benar-benar `APPLIED`.
+
+Di Vercel seluruh rute ini dilayani `src/server/billingHandler.ts` → `services/billing`. Tidak ada endpoint simulasi pembayaran.
+
+- **VOID vs status pembayaran**: VOID adalah peristiwa daur hidup pesanan, bukan status pembayaran. VOID memindahkan pesanan ke VOIDED, membalik kas dengan entri `VOID` (bukan menghapus), dan menandai pembayaran REFUNDED.
 
 ---
 
-## 3. Otentikasi vs Step-Up Otorisasi (Manager PIN)
+## 3. Otentikasi vs Step-Up Otorisasi (PIN Supervisor)
 
+**[Berjalan] Di perangkat kasir:**
 ```
-Skenario Kasir Melakukan Tindakan Berisiko Tinggi (mis. VOID Transaksi / Diskon Khusus):
+Pengguna login (Supabase Auth: owner; PIN: staf di perangkat)
+        │
+        ▼
+Aksi berisiko (VOID / refund / diskon khusus)
+        │
+        ▼
+Cek izin peran di klien (mis. 'void_order')
+        │ tidak punya izin
+        ▼
+PIN supervisor dimasukkan di perangkat (hash sha256 + salt; kunci bertahap 30 dtk → 5 mnt setelah 3 kali gagal)
+        │
+        ▼
+Aksi dijalankan; percobaan gagal dicatat di log perangkat
+```
 
-Kasir Login (Supabase Session)
-        │
-        ▼
-Kasir Memilih "Batalkan Transaksi (VOID)"
-        │
-        ▼
-Service Permission Check (Peran: CASHIER tidak memiliki hak VOID langsung)
-        │
-        ▼
-Require Manager Step-Up Authorization
-        │
-        ▼
-Manager Memasukkan PIN Toko (Short-Lived Authorization Grant: 60 Detik)
-        │
-        ▼
-Eksekusi VOID ➔ Catat ke internal.audit_logs dengan Actor Kasir + ApprovedBy Manager
-```
+**Batasan saat ini:** override PIN ditegakkan **di klien**. Hash PIN semua pengguna ikut tersinkron ke setiap perangkat (record `users`), dan PIN 4 digit mudah ditebak dari hash-nya. Server menerima VOID dari principal pemilik akun tanpa bukti persetujuan supervisor. Nama penyetuju kini dicatat di catatan order dan log perangkat, tetapi belum dikirim ke `internal.audit_logs`.
+
+**[Rencana]** Persetujuan supervisor sebagai *grant* berumur pendek yang diverifikasi server, dicatat di `internal.audit_logs` dengan aktor kasir + approver. Lihat [`docs/design/2026-10-keputusan-produk.md` §2](docs/design/2026-10-keputusan-produk.md#2-persetujuan-supervisor-pin-diverifikasi-server).
 
 ---
 
 ## 4. Keamanan Berlapis (*Defense-in-Depth Chain*)
 
-Batas domain tidak hanya bergantung pada izin database, melainkan ditegakkan pada setiap lapisan:
+```
+1. USER                    : Permintaan dari browser kasir / konsol admin
+    ↓
+2. AUTHENTICATION          : Token Supabase diverifikasi ke Auth API (GET /auth/v1/user), bukan payload JWT
+    ↓
+3. BOUNDARY                : Allowlist path+method; header identitas dari browser dibuang;
+                             request anonim ditolak sebelum koneksi database dibuka
+    ↓
+4. CONTEXT RESOLUTION      : Tenant/merchant/outlet diturunkan di SQL dari kepemilikan principal
+                             (ID dari browser tidak dipercaya)
+    ↓
+5. SERVICE AUTHORIZATION   : Admin: keanggotaan internal_users + kapabilitas peran + MFA (aal2)
+                             untuk aksi sensitif. Merchant: hak paket (Free/Trial/berbayar)
+    ↓
+6. DB ROLE ISOLATION       : svc_pos, svc_billing, svc_ai, svc_internal (lintas domain hanya lewat contract.*)
+    ↓
+7. TENANT CONTEXT (RLS)    : app.tenant_id / app.merchant_id di-set per transaksi pada jalur state,
+                             laporan dan sync; browser tidak punya akses SQL langsung
+    ↓
+8. BATAS WAKTU             : statement_timeout per transaksi & per peran (8 dtk)
+```
 
-```
-1. USER                    : Permintaan masuk dari browser kasir / admin
-    ↓
-2. AUTHENTICATION          : Verifikasi JWT / Sesi Supabase Auth yang valid
-    ↓
-3. CONTEXT RESOLUTION      : Penentuan Tenant ID, Merchant ID, dan Outlet ID aktif
-    ↓
-4. SERVICE AUTHORIZATION   : Pengecekan RBAC aplikasi (Apakah peran diizinkan?)
-    ↓
-5. STEP-UP AUTHORIZATION   : PIN Manager untuk aksi berisiko tinggi (VOID, Refund)
-    ↓
-6. DB ROLE ISOLATION       : svc_pos, svc_billing, svc_ai, svc_internal
-    ↓
-7. SCHEMA PERMISSION       : Hanya skema milik domain yang dapat ditulis
-    ↓
-8. TENANT ISOLATION (RLS)  : Enforce WHERE tenant_id = current_tenant di PostgreSQL
-```
+Step-up PIN supervisor ada di lapisan klien. Lihat batasannya di bagian 3.
 
 ---
 
-## 5. Perbedaan Eksplisit: `internal.access_log` vs `ai.query_logs`
+## 5. Perbedaan Eksplisit Log Audit
 
 | Kategori | Tabel | Isi Data | Tujuan |
 |---|---|---|---|
-| **Operator Access Log** | `internal.access_log` | **WHO accessed WHAT**<br>(`internal_user_id`, `merchant_id`, `resource`, `action`, `timestamp`) | Audit kepatuhan operator backoffice/support saat mengakses data privat merchant. |
-| **AI LLM Query Log** | `ai.query_logs` | **WHAT AI request happened**<br>(`merchant_id`, `intent`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms`, `credit_consumed`) | Audit teknis performa model AI, konsumsi kuota kredit, dan diagnostik latensi. |
-| **Platform Audit Log** | `internal.audit_logs` | **BUSINESS EVENT AUDIT**<br>(`domain`, `event_type`, `severity`, `amount_idr`, `summary`, `detail`) | Jejak audit bisnis (VOID transaksi, ganti harga, ubah paket langganan). |
-| **Product Telemetry** | `internal.feature_usage_events` | **FEATURE ADOPTION METRICS**<br>(`feature_name`, `ui_component`, `event_count`) | Analisis produk dan adopsi fitur (tidak dipakai untuk penagihan invoice). |
+| **Operator Access Log** | `internal.internal_access_log` | **WHO accessed WHAT** (`internal_user_id`, `internal_role`, `target_id`, `action`, `resource`, `justification`, `request_id`) | Audit kepatuhan operator backoffice/support saat mengakses data merchant. |
+| **AI LLM Query Log** | `ai.ai_query_logs` | **WHAT AI request happened** (intent, model, token, latensi, kredit) | Audit teknis model AI dan konsumsi kredit. |
+| **Business Event Audit** | `internal.audit_logs` | Peristiwa bisnis (`SYNC_BATCH`, `TRANSACTION_VOID`, perubahan paket, dll.) | Jejak audit bisnis yang dibaca admin. |
+| **Product Telemetry** | `feature_usage_events` | Metrik adopsi fitur | Analisis produk (bukan dasar penagihan). |
 
 ---
 
-## 6. Aliran Data Transaksi Kasir (End-to-End Flow)
+## 6. Aliran Data Transaksi Kasir (End-to-End Flow) — [Berjalan]
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Cashier as Kasir (Terminal Outlet)
-    participant Local as LocalStorage / Queue
-    participant GW as API Gateway
+    participant Local as Antrean perangkat (localStorage)
+    participant API as Boundary API (gateway / Vercel)
     participant POS as pos-service
     participant DB as PostgreSQL (pos, internal, contract)
-    actor Admin as Backoffice (Konsumer)
+    actor Admin as Laporan / Admin / AI
 
-    Note over Cashier, Local: Operasional Kasir (Offline-First di Outlet)
-    Cashier->>Local: Buat Pesanan & Bayar (Cash / QRIS)
-    Local->>Local: Simpan ke antrean sinkronisasi lokal
+    Cashier->>Local: Konfirmasi pembayaran (tersimpan dulu di perangkat)
+    Local->>API: POST /api/v1/sync/transactions (≤200 penjualan + idempotencyKey)
+    API->>API: Verifikasi token, buang header palsu
+    API->>POS: Principal terverifikasi
 
-    Note over Local, POS: Siklus Sinkronisasi Terproteksi (Idempotent)
-    Local->>GW: POST /api/v1/sync/transactions (batch + IdempotencyKey)
-    GW->>POS: Validasi Token & Scope (tenantId, merchantId, outletId)
-    
     rect rgb(240, 248, 255)
-        Note over POS, DB: Transaksi Database Terisolasi (db.tx)
-        POS->>DB: Cek pos.sync_receipts (Idempotency Guard)
-        POS->>DB: INSERT INTO pos.transactions (tenant_id, merchant_id, outlet_id)
-        POS->>DB: INSERT INTO pos.transaction_items
-        POS->>DB: INSERT INTO pos.inventory_logs (Deduction BOM per Outlet)
-        POS->>DB: UPDATE pos.ingredients (Kuantitas Stok Outlet)
-        POS->>DB: INSERT INTO internal.audit_logs (SYNC_BATCH)
-        POS->>DB: Catat pos.sync_receipts
+        Note over POS, DB: Satu transaksi database; SAVEPOINT per penjualan
+        POS->>DB: Replay? baca pos.sync_receipts (hasil per penjualan disimpan)
+        loop setiap penjualan
+            POS->>DB: INSERT pos.transactions (ON CONFLICT client_txn_id = duplikat aman)
+            POS->>DB: INSERT pos.payments, pos.cash_ledger, pos.transaction_items
+            POS->>DB: Potong stok server hanya untuk produk yang terhubung inventory item
+            Note right of POS: Gagal deterministik → rejected[] (penjualan lain tetap masuk).<br/>Nomor struk bentrok → renumbered[]
+        end
+        POS->>DB: INSERT internal.audit_logs (SYNC_BATCH), pos.sync_receipts
     end
 
-    POS-->>GW: { ok: true, accepted: N, duplicates: 0 }
-    GW-->>Local: Konfirmasi Sukses Sinkronisasi
-    Local->>Local: Tandai antrean lokal sebagai tersinkron
+    POS-->>Local: { accepted, duplicates, rejected[], renumbered[] }
+    Local->>Local: Hapus yang terkirim; pindahkan rejected ke karantina (Sync Center)
 
-    Note over DB, Admin: Konsumsi Realtime Tanpa Dual-Write
-    Admin->>DB: SELECT * FROM contract.merchant_revenue / transaction_log / outlet_directory
-    DB-->>Admin: Laporan omzet per Holding, Brand, dan Cabang secara konsisten
+    Admin->>DB: contract.merchant_revenue (satu definisi omzet untuk laporan, admin, AI)
 ```
+
+**Stok produk di kasir** saat ini adalah *state operasional* (`/api/v1/sync/state`, revisi per produk), bukan ledger delta di server. Konsekuensinya:
+- Stok boleh minus (penjualan tidak diblokir; kasir diberi peringatan) agar selisih fisik terlihat dan bisa direkonsiliasi.
+- Void mengembalikan hanya qty yang belum di-refund.
+- Dua perangkat yang menjual produk yang sama bersamaan bisa memicu konflik revisi yang diselesaikan di Sync Center.
+
+**[Rencana]** Stok sebagai ledger delta di server untuk semua produk. Ledger-nya (`pos.inventory_transactions` → `pos.inventory_balances`, per outlet) sudah ada, tetapi hanya terisi untuk produk lama yang ditautkan migrasi 0027. Produk yang dibuat dari kasir belum punya `inventory_item_id`. Desain dan keputusan yang dibutuhkan: [`docs/design/2026-10-keputusan-produk.md` §1](docs/design/2026-10-keputusan-produk.md#1-stok-sebagai-ledger-server).

@@ -135,3 +135,17 @@ BEGIN
         END;
     END IF;
 END $$;
+
+-- Peran bawaan Supabase yang dirujuk migrasi lanjutan (REVOKE ... FROM anon,
+-- authenticated). Di Postgres biasa/PGlite/Docker peran ini belum ada sehingga
+-- instalasi baru berhenti di migrasi 0043. Dibuat NOLOGIN tanpa hak apa pun;
+-- di Supabase peran aslinya sudah ada dan blok ini tidak melakukan apa-apa.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+    END IF;
+  END LOOP;
+END $$;

@@ -4,6 +4,7 @@ import { useCart } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
 import { newId } from '../../lib/ids';
+import { oversoldCartItems } from '../../lib/pos/stock';
 import {
   ShoppingBag,
   Trash2,
@@ -29,6 +30,7 @@ import { SplitBillModal } from './SplitBillModal';
 import { DigitalScaleModal } from './DigitalScaleModal';
 import { UpsellSuggestions } from '../ai/UpsellSuggestions';
 import { useTranslation } from '../../i18n/LanguageContext';
+import { notify } from '../../lib/ui/notify';
 
 interface CartPanelProps {
   onOpenCustomerSelect: () => void;
@@ -67,6 +69,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
     staffMembers,
     selectedStaff,
     setSelectedStaff,
+    products,
   } = useCart();
   const { t } = useTranslation();
 
@@ -96,6 +99,9 @@ export const CartPanel: React.FC<CartPanelProps> = ({
   const taxTotal = settings.enableTax ? Math.round((subtotal * settings.taxRate) / 100) : 0;
   const serviceChargeTotal = settings.enableService ? Math.round((subtotal * settings.serviceRate) / 100) : 0;
   const grandTotal = subtotal + taxTotal + serviceChargeTotal;
+  // Same layout as the receipt: gross subtotal, then the discount, then the total.
+  const grossSubtotal = subtotal + totalDiscount;
+  const oversold = oversoldCartItems(cart, products);
 
   const handleSaveNotes = () => {
     if (editingItemNotes) {
@@ -311,6 +317,11 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h4 className="font-semibold text-sm text-slate-900 leading-snug">{item.name}</h4>
+                  {oversold.has(item.id) && (
+                    <p role="status" className="text-[11px] font-semibold text-amber-800">
+                      Stok tercatat {oversold.get(item.id)} — penjualan ini membuat stok minus. Periksa stok fisik.
+                    </p>
+                  )}
                   {item.variantName && (
                     <span className="text-[11px] font-medium text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mr-1">
                       {item.variantName}
@@ -390,7 +401,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         <div className="space-y-1 text-xs">
           <div className="flex justify-between text-slate-600">
             <span>{t('pos.subtotal')}:</span>
-            <span className="font-mono font-medium">{formatRupiah(subtotal)}</span>
+            <span className="font-mono font-medium">{formatRupiah(grossSubtotal)}</span>
           </div>
 
           {totalDiscount > 0 && (
@@ -456,7 +467,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 } else {
                   const held = holdOrder();
                   if (held) {
-                    alert(
+                    notify(
                       selectedTable
                         ? `Pesanan ${selectedTable.name} berhasil disimpan sebagai transaksi BELUM LUNAS & tiket dikirim ke dapur!`
                         : `Pesanan #${held.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti)!`

@@ -30,9 +30,12 @@ import App from './App';
 import './index.css';
 import './styles/app-theme.css';
 import { normalizeLegacyRoute } from './lib/navigation/workspaceRouter';
+import { registerServiceWorker } from './pwa/serviceWorker';
+import { Notifier } from './components/ui/Notifier';
 
 installAuthenticatedFetch();
 normalizeLegacyRoute();
+registerServiceWorker();
 const McpConnections = lazy(() => import('./components/mcp/McpConnections').then(m => ({ default: m.McpConnections })));
 
 // Do not initialize or persist account-scoped POS state under an anonymous
@@ -52,5 +55,6 @@ createRoot(document.getElementById('root')!).render(
           : <POSSession />}
       </AuthProvider>
     </LanguageProvider>
+    <Notifier />
   </StrictMode>,
 );

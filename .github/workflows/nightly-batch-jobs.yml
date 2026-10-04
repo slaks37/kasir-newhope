@@ -1,5 +1,9 @@
 name: Manual batch diagnostics (dry run)
 
+# Penjadwal resmi adalah Vercel Cron (vercel.json), yang menghormati
+# CRON_ENABLED_JOBS. Workflow ini hanya untuk menjalankan ulang secara manual;
+# jadwal otomatis di sini dulu membuat job yang sama berjalan dua kali per hari
+# dan melewati allowlist job.
 on:
   # Production scheduling: vercel.json + CRON_ENABLED_JOBS only.
   workflow_dispatch:

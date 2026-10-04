@@ -76,6 +76,8 @@ export interface ServerReportSummary {
   topProductsBarData: Array<{ name: string; productId:string; qty: number; revenue: number; profit:number }>;
   areaChartData: Array<{ time: string; Omset: number }>;
   dailySales: Array<{ date: string; revenue: number; orders: number; profit:number }>;
+  /** Present when requested with `trend=N`: trailing N days ending today. */
+  trendDailySales?: Array<{ date: string; revenue: number; orders: number; profit:number }>;
   statusCounts: Record<string, number>;
   cashSummary: CashSummary;
   cashMovements: CashMovement[];

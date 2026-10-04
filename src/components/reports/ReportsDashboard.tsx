@@ -60,6 +60,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { notify } from '../../lib/ui/notify';
 
 export const ReportsDashboard: React.FC = () => {
   const {
@@ -184,11 +185,11 @@ export const ReportsDashboard: React.FC = () => {
     e.preventDefault();
     const amount = Number(cashAmount.replace(/[^0-9]/g, '')) || 0;
     if (amount <= 0) {
-      alert('Mohon masukkan nominal uang yang valid.');
+      notify('Mohon masukkan nominal uang yang valid.');
       return;
     }
     if (!cashDesc.trim()) {
-      alert('Mohon masukkan keterangan atau tujuan transaksi kas.');
+      notify('Mohon masukkan keterangan atau tujuan transaksi kas.');
       return;
     }
 
@@ -211,7 +212,7 @@ export const ReportsDashboard: React.FC = () => {
   const handleConfirmEndShift = async (e: React.FormEvent) => {
     e.preventDefault();
     const actual = Number(actualCashInput) || 0;
-    try {const summary = await endShift(actual);setShiftSummary(summary);}catch(error){alert(error instanceof Error?error.message:'Shift belum ditutup');}
+    try {const summary = await endShift(actual);setShiftSummary(summary);}catch(error){notify(error instanceof Error?error.message:'Shift belum ditutup');}
   };
 
   // Helpers for category badge labels and styling

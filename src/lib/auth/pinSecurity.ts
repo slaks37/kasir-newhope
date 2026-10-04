@@ -11,6 +11,12 @@
  *    - Reset counter otomatis setelah verifikasi sukses.
  */
 
+/**
+ * PIN awal pemilik di setiap perangkat baru. Semua orang bisa menebaknya, jadi UI
+ * menandainya sebagai "PIN bawaan" dan menolaknya sebagai PIN baru.
+ */
+export const DEFAULT_OWNER_PIN = '1234';
+
 const STORAGE_KEY = 'newhope_pin_security_state';
 const MAX_ATTEMPTS = 3;
 const LOCKOUT_TIERS_SEC = [30, 60, 300]; // 30s, 60s, 5m

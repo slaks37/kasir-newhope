@@ -6,6 +6,7 @@ import { Users, UserPlus, Award, Phone, Mail, Search, CheckCircle2, Gift, Upload
 import { newId } from '../../lib/ids';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
 import { useTranslation } from '../../i18n';
+import { notify } from '../../lib/ui/notify';
 
 export const CustomerManager: React.FC = () => {
   const { customers, saveCustomer, settings } = usePOSFields(["customers","saveCustomer","settings"]);
@@ -25,7 +26,7 @@ export const CustomerManager: React.FC = () => {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        alert('Ukuran foto profil maksimal 5MB');
+        notify('Ukuran foto profil maksimal 5MB');
         return;
       }
       const reader = new FileReader();

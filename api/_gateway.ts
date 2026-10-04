@@ -1,5 +1,6 @@
 import { handleNativeApi } from './_runtime';
 import { normalizeVercelUrl } from '../src/server/vercelUrl';
+import { TRUSTED_IDENTITY_HEADERS } from '../src/server/serverlessBoundary';
 
 // When an external gateway is configured, an outage must never switch to a
 // synthetic or independently mutable billing backend.
@@ -10,7 +11,7 @@ export async function proxyToGateway(req:any,res:any):Promise<void>{
     try{
       if(new URL(base).host===req.headers.host) return void res.status(503).json({ok:false,error:'GATEWAY_SELF_REFERENCE'});
       const headers={...req.headers};
-      for(const key of ['host','connection','content-length','transfer-encoding','x-auth-sub','x-auth-email','x-internal-user','x-newhope-gateway-token']) delete headers[key];
+      for(const key of ['host','connection','content-length','transfer-encoding',...TRUSTED_IDENTITY_HEADERS]) delete headers[key];
       const isDoku=req.url?.split('?')[0]==='/api/v1/webhooks/doku';
       if(isDoku && req.rawBody===undefined && req.body!==undefined)return void res.status(400).json({ok:false,error:'RAW_BODY_REQUIRED'});
       let body=req.rawBody ?? (req.body===undefined ? undefined : JSON.stringify(req.body));
