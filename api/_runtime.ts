@@ -30,6 +30,14 @@ async function buildRuntime() {
 import { normalizeVercelUrl } from '../src/server/vercelUrl';
 import { applyPrincipal, stripIdentityHeaders } from '../src/server/serverlessBoundary';
 
+const PUBLIC_EXACT=new Set(['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health']);
+/** Exact public surface: plan catalog, signed webhook, health and the published blog. */
+export function isPublicApi(path:string,method:string):boolean{
+  if(PUBLIC_EXACT.has(path))return true;
+  if(method==='GET'&&(path==='/api/v1/blog'||/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path)))return true;
+  return method==='POST'&&/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
+}
+
 /** Reject private requests before connecting/seeding the legacy runtime.
  * Only the app/DB promise is shared between requests; identity remains local.
  */
@@ -40,7 +48,7 @@ export function createNativeApiHandler(authenticate=authenticateBearer,build=bui
     res.setHeader('Cache-Control','no-store');
     stripIdentityHeaders(req);
     const path=String(req.url||'').split('?')[0];
-    if(!['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health'].includes(path)){
+    if(!isPublicApi(path,String(req.method||'GET'))){
       let principal;
       try{principal=await authenticate(req);}catch{return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});}
       if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});

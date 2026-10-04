@@ -838,6 +838,11 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/routes.ts
+function coordinate(value, limit) {
+  if (value === null || value === void 0 || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
+}
 function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout) {
   const run = (fn) => async (req, res) => {
     try {
@@ -926,7 +931,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
         `INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), Number(b.latitude ?? existing?.latitude) || 0, Number(b.longitude ?? existing?.longitude) || 0, Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
+        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), coordinate(b.latitude ?? existing?.latitude, 90), coordinate(b.longitude ?? existing?.longitude, 180), Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
       );
       return rows[0];
     });

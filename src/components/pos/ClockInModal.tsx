@@ -179,8 +179,11 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
 
   let distanceFromBranchMeters: number | null = null;
   let isWithinRadius = false;
+  // Older outlets were saved with 0,0 when no location was entered; that is "not set", not a place.
+  const branchLocationSet = !!selectedBranch && Number.isFinite(Number(selectedBranch.latitude)) && Number.isFinite(Number(selectedBranch.longitude)) &&
+    selectedBranch.latitude !== null && selectedBranch.longitude !== null && !(Number(selectedBranch.latitude) === 0 && Number(selectedBranch.longitude) === 0);
 
-  if (userCoords && selectedBranch) {
+  if (userCoords && selectedBranch && branchLocationSet) {
     distanceFromBranchMeters = calculateDistanceMeters(
       userCoords.latitude,
       userCoords.longitude,
@@ -248,6 +251,12 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
       if (!userCoords) {
         alert(
           'Akses Presensi Ditolak! Izin lokasi (GPS) wajib diaktifkan pada browser/perangkat Anda untuk melakukan presensi.'
+        );
+        return;
+      }
+      if (!branchLocationSet) {
+        alert(
+          `Lokasi cabang "${selectedBranch.name}" belum diatur, jadi radius presensi tidak bisa diperiksa. Minta owner mengisi titik lokasi outlet di Pengaturan → Outlet.`
         );
         return;
       }

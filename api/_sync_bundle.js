@@ -1005,6 +1005,19 @@ var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "store_settings"
 ]);
 var ID_RE = /^[^\x00-\x1f\x7f]{1,128}$/;
+var CORE_KINDS = /* @__PURE__ */ new Set([
+  "store_settings",
+  "users",
+  "staff_members",
+  "categories",
+  "products",
+  "bundles",
+  "promo_codes",
+  "stock_items",
+  "tables",
+  "customers",
+  "commission_rules"
+]);
 var StateConflict = class extends Error {
   constructor(kind, recordId) {
     super("STATE_CONFLICT");
@@ -1086,7 +1099,9 @@ function registerSharedStateRoutes(app, db) {
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
           ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
           AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
-          ORDER BY scope,kind,record_id LIMIT 10001`, parameters2);
+          -- Catalog/config first, then the newest append-only history. A snapshot
+          -- capped at 10,000 rows must never drop products behind old logs.
+          ORDER BY CASE WHEN kind=ANY($5::text[]) THEN 0 ELSE 1 END,updated_at DESC,scope,kind,record_id LIMIT 10001`, [...parameters2, [...CORE_KINDS]]);
         return { ...result, version, unchanged: false };
       });
       const { rows } = snapshot;

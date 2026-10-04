@@ -86,7 +86,19 @@ try {
   assert.equal(queue.requeueQuarantined(target.businessId, 'q-bad'), true);
   assert.equal(queue.getStatus(target.businessId).pending, 1); assert.equal(queue.getStatus(target.businessId).quarantined, 0);
 
-  // 7. Receipt numbers carry 32 bits of entropy.
+  // 7. A capped state snapshot (10,000 rows) serves products before old history.
+  const auth = { authorization: 'Bearer owner', 'content-type': 'application/json' };
+  const put = await fetch(base + '/api/v1/sync/state', { method: 'POST', headers: auth, body: JSON.stringify({ sector: 'FNB', businessId: owner + '_FNB', outletId: outlet,
+    operations: [{ kind: 'products', recordId: 'prod-keep', baseRevision: 0, deleted: false, value: { id: 'prod-keep', name: 'Produk inti', price: 10000, costPrice: 4000 } }] }) });
+  assert.equal(put.status, 200, await put.clone().text());
+  const scope = (await db.query("SELECT scope FROM pos.shared_state_records WHERE tenant_id=$1 AND record_id='prod-keep'", [tenant])).rows[0].scope;
+  await db.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision,updated_at)
+    SELECT $1,$2,$3,'inventory_logs','log-'||g,jsonb_build_object('id','log-'||g),1,now()-interval '1 day' FROM generate_series(1,10005) g`, [tenant, merchant, scope]);
+  const snapshot = await (await fetch(base + `/api/v1/sync/state?sector=FNB&businessId=${owner}_FNB`, { headers: auth })).json();
+  assert.equal(snapshot.truncated, true);
+  assert.ok(snapshot.records.some((r: any) => r.kind === 'products' && r.recordId === 'prod-keep'), 'Products survive truncation');
+
+  // 8. Receipt numbers carry 32 bits of entropy.
   assert.match(newDocumentNumber('INV', new Date('2026-10-04T00:00:00Z')), /^INV-20261004-[0-9A-F]{8}$/);
-  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, 32-bit receipt numbers');
+  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, products first in capped state snapshots, 32-bit receipt numbers');
 } finally { server.close(); await pg.close(); }

@@ -25,7 +25,7 @@
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",
-    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts",
+    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts",
     "test:client-support": "node --import tsx scripts/dev/test-client-support.ts",
     "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
@@ -51,8 +51,6 @@
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",
-    "@fingerprintjs/fingerprintjs": "^5.2.0",
-    "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.112.3",
     "@tailwindcss/vite": "^4.1.14",
     "@types/canvas-confetti": "^1.9.0",
@@ -61,7 +59,6 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
     "pg": "^8.23.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -80,7 +77,6 @@
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "typescript": "~5.8.2"
   }
 }

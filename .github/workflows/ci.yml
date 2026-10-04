@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint (hygiene + typecheck src, services, api, scripts)
+        run: npm run lint
+      - name: Tests (isolated in-process PostgreSQL, no network)
+        run: npm test
+      - name: Build SPA and services
+        run: npm run build
+      - name: Committed Vercel bundles match source
+        run: git diff --exit-code -- api/

@@ -9,6 +9,13 @@ import { validateFreeBranchSelection, FreePlanAccessError } from './freePlan';
 import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus, activateFreeTrial } from './engine';
 import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
+/** A missing or out-of-range coordinate is stored as NULL ("not set"), never 0 — 0,0 is a real place in the Atlantic. */
+function coordinate(value: unknown, limit: number): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
+}
+
 export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
@@ -90,7 +97,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       const {rows}=await c.query(`INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id,tenantId,merchant.id,String(b.name).trim(),String(b.address ?? existing?.address ?? ''),Number(b.latitude ?? existing?.latitude)||0,Number(b.longitude ?? existing?.longitude)||0,Math.max(1,Number(b.allowedRadiusMeters ?? existing?.radius_meters)||100),b.isActive!==false]);
+        [id,tenantId,merchant.id,String(b.name).trim(),String(b.address ?? existing?.address ?? ''),coordinate(b.latitude ?? existing?.latitude,90),coordinate(b.longitude ?? existing?.longitude,180),Math.max(1,Number(b.allowedRadiusMeters ?? existing?.radius_meters)||100),b.isActive!==false]);
       return rows[0];
     });res.json({ok:true,outlet:result});
   }));

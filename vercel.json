@@ -35,6 +35,14 @@
       "destination": "/api/mcp/metadata"
     },
     {
+      "source": "/api/v1/blog/(.*)",
+      "destination": "/api/admin/[...slug]?__path=/api/v1/blog/$1"
+    },
+    {
+      "source": "/api/v1/blog",
+      "destination": "/api/admin/[...slug]?__path=/api/v1/blog"
+    },
+    {
       "source": "/api/admin/(.*)",
       "destination": "/api/admin/[...slug]?__path=/api/admin/$1"
     },

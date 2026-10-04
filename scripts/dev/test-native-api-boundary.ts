@@ -34,9 +34,12 @@ const denied=response();await authenticated({url:'/api/admin/merchants',method:'
 assert.equal(denied.code,401,'A warm authenticated runtime does not authorize an anonymous request');
 assert.equal(observed.length,2);
 const publicOnly=createNativeApiHandler(async()=>{throw Error('Public route must not require bearer');},async()=>app);
-for(const url of ['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health']){
+for(const url of ['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health','/api/v1/blog','/api/v1/blog/tips-kasir']){
   const res=response();await publicOnly({url,method:'GET',headers:{'x-auth-sub':'forged'}},res);
   assert.equal(res.code,200);assert.equal(observed.at(-1)?.subject,undefined);
+}
+for(const [url,method] of [['/api/v1/blog','POST'],['/api/v1/blog/a/b','GET'],['/api/v1/blog/x/like','GET'],['/api/admin/blog','GET']]){
+  const res=response();await offline({url,method,headers:{}},res);assert.equal(res.code,401,url+' '+method+' stays private');
 }
 let attempts=0;
 const retry=createNativeApiHandler(async()=>({subject:'owner-A'}),async()=>{if(++attempts===1)throw Error('Database offline');return app;});

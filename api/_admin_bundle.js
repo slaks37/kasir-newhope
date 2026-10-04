@@ -887,6 +887,11 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/routes.ts
+function coordinate(value, limit) {
+  if (value === null || value === void 0 || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
+}
 function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout) {
   const run = (fn) => async (req, res) => {
     try {
@@ -975,7 +980,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
         `INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,address,latitude,longitude,radius_meters,is_active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,address=excluded.address,
         latitude=excluded.latitude,longitude=excluded.longitude,radius_meters=excluded.radius_meters,is_active=excluded.is_active RETURNING *`,
-        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), Number(b.latitude ?? existing?.latitude) || 0, Number(b.longitude ?? existing?.longitude) || 0, Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
+        [id, tenantId, merchant.id, String(b.name).trim(), String(b.address ?? existing?.address ?? ""), coordinate(b.latitude ?? existing?.latitude, 90), coordinate(b.longitude ?? existing?.longitude, 180), Math.max(1, Number(b.allowedRadiusMeters ?? existing?.radius_meters) || 100), b.isActive !== false]
       );
       return rows[0];
     });
@@ -2104,7 +2109,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         const db = await getDb();
         let { rows } = await db.query("SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active", [principal.subject]);
         if (!rows[0] && principal.email) {
-          if (!principal.isEmailVerified && process.env.NODE_ENV === "production") {
+          if (!principal.isEmailVerified) {
             return res.status(403).json({
               ok: false,
               error: "EMAIL_VERIFICATION_REQUIRED",
@@ -2112,12 +2117,12 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
             });
           }
           const byEmail = await db.query(
-            "SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active",
+            "SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active AND sso_subject IS NULL",
             [principal.email]
           );
           if (byEmail.rows[0] && isInternalRole(byEmail.rows[0].role)) {
             await db.query(
-              "UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2",
+              "UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2 AND sso_subject IS NULL",
               [principal.subject, byEmail.rows[0].id]
             );
             rows = byEmail.rows;
@@ -2131,13 +2136,14 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
                 const inserted = await db.query(
                   `INSERT INTO internal.internal_users (id, email, full_name, role, sso_subject, is_active)
                    VALUES (gen_random_uuid(), $1, $2, $3, $4, true)
-                   ON CONFLICT (email) DO UPDATE SET sso_subject=$4, role=EXCLUDED.role, is_active=true
+                   ON CONFLICT (email) DO NOTHING
                    RETURNING id, email, full_name, role`,
                   [principal.email, fromPublic.rows[0].full_name || "Administrator", fromPublic.rows[0].role, principal.subject]
                 );
                 rows = inserted.rows;
               }
-            } catch {
+            } catch (error) {
+              if (!["42P01", "42703"].includes(String(error.code))) throw error;
             }
           }
         }
@@ -2484,9 +2490,17 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
+  const likeWindow = /* @__PURE__ */ new Map();
   app.post(
     "/api/v1/blog/:id/like",
     wrap(async (req, res, db) => {
+      const client = String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").split(",")[0].trim();
+      const now = Date.now(), entry = likeWindow.get(client);
+      if (!entry || entry.resetAt < now) likeWindow.set(client, { count: 1, resetAt: now + 36e5 });
+      else if (++entry.count > 30) return res.status(429).json({ ok: false, error: "TOO_MANY_LIKES" });
+      if (likeWindow.size > 1e4) {
+        for (const [key, value] of likeWindow) if (value.resetAt < now) likeWindow.delete(key);
+      }
       const id = String(req.params.id).trim();
       const { rows } = await db.query(
         `UPDATE public.blog_posts SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count`,
@@ -3221,6 +3235,19 @@ var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "store_settings"
 ]);
 var ID_RE = /^[^\x00-\x1f\x7f]{1,128}$/;
+var CORE_KINDS = /* @__PURE__ */ new Set([
+  "store_settings",
+  "users",
+  "staff_members",
+  "categories",
+  "products",
+  "bundles",
+  "promo_codes",
+  "stock_items",
+  "tables",
+  "customers",
+  "commission_rules"
+]);
 var StateConflict = class extends Error {
   constructor(kind, recordId) {
     super("STATE_CONFLICT");
@@ -3302,7 +3329,9 @@ function registerSharedStateRoutes(app, db) {
           FROM pos.shared_state_records WHERE tenant_id=$1 AND
           ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
           AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
-          ORDER BY scope,kind,record_id LIMIT 10001`, parameters2);
+          -- Catalog/config first, then the newest append-only history. A snapshot
+          -- capped at 10,000 rows must never drop products behind old logs.
+          ORDER BY CASE WHEN kind=ANY($5::text[]) THEN 0 ELSE 1 END,updated_at DESC,scope,kind,record_id LIMIT 10001`, [...parameters2, [...CORE_KINDS]]);
         return { ...result, version, unchanged: false };
       });
       const { rows } = snapshot;
@@ -4812,6 +4841,12 @@ async function buildRuntime() {
   });
   return app;
 }
+var PUBLIC_EXACT = /* @__PURE__ */ new Set(["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"]);
+function isPublicApi(path, method) {
+  if (PUBLIC_EXACT.has(path)) return true;
+  if (method === "GET" && (path === "/api/v1/blog" || /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path))) return true;
+  return method === "POST" && /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
+}
 function createNativeApiHandler(authenticate = authenticateBearer, build = buildRuntime) {
   let runtime;
   return async (req, res) => {
@@ -4819,7 +4854,7 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
     res.setHeader("Cache-Control", "no-store");
     stripIdentityHeaders(req);
     const path = String(req.url || "").split("?")[0];
-    if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(path)) {
+    if (!isPublicApi(path, String(req.method || "GET"))) {
       let principal;
       try {
         principal = await authenticate(req);

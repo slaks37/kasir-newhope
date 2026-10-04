@@ -67,7 +67,9 @@ interface AdminRequest extends express.Request {
 }
 
 // Membership is provisioned explicitly with a verified Supabase user subject.
-// No demo identities or email-based elevation are created at service startup.
+// No demo identities are created at service startup. A first sign-in may link an
+// existing, still-unbound internal user by VERIFIED email; linking never changes
+// a role and never reactivates a disabled administrator.
 export async function ensureInternalUsers(_db: Db): Promise<void> {}
 
 async function recordAccess(db: Db, who: InternalIdentity, action: string, resource: string,
@@ -93,8 +95,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         const db=await getDb();
         let {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
         if(!rows[0] && principal.email) {
-          // Hanya izinkan linking akun admin jika email terverifikasi (mencegah unverified email takeover)
-          if (!principal.isEmailVerified && process.env.NODE_ENV === 'production') {
+          // Linking by email requires a verified email in every environment (prevents unverified email takeover).
+          if (!principal.isEmailVerified) {
             return res.status(403).json({
               ok: false,
               error: 'EMAIL_VERIFICATION_REQUIRED',
@@ -102,12 +104,13 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
             });
           }
           const byEmail = await db.query(
-            'SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active',
+            'SELECT id,email,full_name,role FROM internal.internal_users WHERE LOWER(email)=LOWER($1) AND is_active AND sso_subject IS NULL',
             [principal.email]
           );
           if (byEmail.rows[0] && isInternalRole(byEmail.rows[0].role)) {
+            // Bind only an unbound row; an admin already linked to another identity is never re-bound.
             await db.query(
-              'UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2',
+              'UPDATE internal.internal_users SET sso_subject=$1, updated_at=NOW() WHERE id=$2 AND sso_subject IS NULL',
               [principal.subject, byEmail.rows[0].id]
             );
             rows = byEmail.rows;
@@ -121,14 +124,15 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
                 const inserted = await db.query(
                   `INSERT INTO internal.internal_users (id, email, full_name, role, sso_subject, is_active)
                    VALUES (gen_random_uuid(), $1, $2, $3, $4, true)
-                   ON CONFLICT (email) DO UPDATE SET sso_subject=$4, role=EXCLUDED.role, is_active=true
+                   ON CONFLICT (email) DO NOTHING
                    RETURNING id, email, full_name, role`,
                   [principal.email, fromPublic.rows[0].full_name || 'Administrator', fromPublic.rows[0].role, principal.subject]
                 );
                 rows = inserted.rows;
               }
-            } catch {
-              // Ignore if public.admin_users does not exist
+            } catch (error) {
+              // public.admin_users is an optional legacy import source; a missing table/column means "no source".
+              if (!['42P01', '42703'].includes(String((error as { code?: string }).code))) throw error;
             }
           }
         }
@@ -532,9 +536,16 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     })
   );
 
+  // Likes are public and cosmetic; bound them per client address so they cannot be inflated by a script.
+  const likeWindow = new Map<string, { count: number; resetAt: number }>();
   app.post(
     '/api/v1/blog/:id/like',
     wrap(async (req, res, db) => {
+      const client = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+      const now = Date.now(), entry = likeWindow.get(client);
+      if (!entry || entry.resetAt < now) likeWindow.set(client, { count: 1, resetAt: now + 3_600_000 });
+      else if (++entry.count > 30) return res.status(429).json({ ok: false, error: 'TOO_MANY_LIKES' });
+      if (likeWindow.size > 10_000) for (const [key, value] of likeWindow) if (value.resetAt < now) likeWindow.delete(key);
       const id = String(req.params.id).trim();
       const { rows } = await db.query(
         `UPDATE public.blog_posts SET likes_count = likes_count + 1 WHERE id = $1 RETURNING likes_count`,
