@@ -25,6 +25,10 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
     connectionTimeoutMillis: 1e4
   };
 }
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
 
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
@@ -75,6 +79,7 @@ async function connectDb(opts) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
         const out = await fn(wrap(client));
         await client.query("COMMIT");
         return out;
@@ -4012,6 +4017,20 @@ var str = (v, max) => {
   return t ? t.slice(0, max) : null;
 };
 var outletRef = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
+function invalidTransaction(x) {
+  if (!str(x.clientTxnId, 64) || !Array.isArray(x.items) || !x.items.length) return "INVALID_TRANSACTION";
+  if (!Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal < 0 || x.totalAmount < 0) return "INVALID_AMOUNT";
+  if (Math.abs(x.totalAmount - (x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0))) > 0.02) return "TOTAL_MISMATCH";
+  if (x.items.some((i) => !i || typeof i.productName !== "string" || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice < 0 || !Number.isFinite(i.quantity) || i.quantity <= 0 || i.quantity > 999999999 || Math.abs(i.quantity * 1e3 - Math.round(i.quantity * 1e3)) > 1e-3)) return "INVALID_ITEM";
+  return null;
+}
+function perSaleRejection(error) {
+  if (error instanceof FinanceError) return error.message;
+  const code = String(error?.code || "");
+  if (/^(22|23)/.test(code)) return "REJECTED_BY_DATABASE:" + (error.constraint || code);
+  return null;
+}
+var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -4124,14 +4143,14 @@ function registerSyncRoutes(app, db) {
         detail: `Maksimal ${MAX_BATCH} transaksi per kiriman. Pecah antriannya.`
       });
     }
-    if (!txns.length || txns.some((x) => !x || !str(x.clientTxnId, 64) || !Array.isArray(x.items) || !x.items.length || !Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal < 0 || x.totalAmount < 0 || Math.abs(x.totalAmount - (x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0))) > 0.02 || x.items.some((i) => !i || typeof i.productName !== "string" || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice < 0 || !Number.isFinite(i.quantity) || i.quantity <= 0 || i.quantity > 999999999 || Math.abs(i.quantity * 1e3 - Math.round(i.quantity * 1e3)) > 1e-3)))
+    if (!txns.length || txns.some((x) => !x || typeof x !== "object"))
       return res.status(400).json({ ok: false, error: "INVALID_TRANSACTIONS" });
     try {
       const out = await db.tx(async (c) => {
         const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
         if (idemKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate, outcomes FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
@@ -4140,6 +4159,8 @@ function registerSyncRoutes(app, db) {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
               duplicates: prev.rows[0].rows_duplicate,
+              rejected: prev.rows[0].outcomes?.rejected ?? [],
+              renumbered: prev.rows[0].outcomes?.renumbered ?? [],
               tenantId: null
             };
           }
@@ -4291,9 +4312,9 @@ function registerSyncRoutes(app, db) {
         let accepted = 0;
         let duplicates = 0;
         let voided = 0;
-        for (const x of txns) {
-          const clientId = str(x.clientTxnId, 64);
-          if (!clientId || !Array.isArray(x.items) || !x.items.length) continue;
+        const rejected = [];
+        const renumbered = [];
+        const syncOne = async (x, clientId) => {
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
             str(x.cashierName, 100),
@@ -4309,7 +4330,7 @@ function registerSyncRoutes(app, db) {
           const paymentStatus = str(x.paymentStatus, 20) ?? "PAID";
           const isVoid = paymentStatus === "CANCELLED";
           const orderStatus = isVoid ? "VOIDED" : paymentStatus === "PENDING" ? "PENDING_PAYMENT" : "COMPLETED";
-          const ins = await c.query(
+          const insertSale = (invoiceNumber2) => c.query(
             `INSERT INTO pos.transactions
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
@@ -4336,7 +4357,7 @@ function registerSyncRoutes(app, db) {
               businessId,
               appModule,
               str(x.orderType, 16),
-              str(x.invoiceNumber, 32),
+              invoiceNumber2,
               clientId,
               outletRef(x.shiftId),
               str(x.businessDate, 10) ?? (x.createdAt ? x.createdAt.split("T")[0] : null),
@@ -4346,6 +4367,20 @@ function registerSyncRoutes(app, db) {
               x.createdAt ?? null
             ]
           );
+          let ins;
+          const invoiceNumber = str(x.invoiceNumber, 32);
+          await c.exec("SAVEPOINT sync_invoice");
+          try {
+            ins = await insertSale(invoiceNumber);
+            await c.exec("RELEASE SAVEPOINT sync_invoice");
+          } catch (error) {
+            await c.exec("ROLLBACK TO SAVEPOINT sync_invoice");
+            await c.exec("RELEASE SAVEPOINT sync_invoice");
+            if (error.code !== "23505" || !INVOICE_CONSTRAINTS.has(String(error.constraint)) || !invoiceNumber) throw error;
+            const unique = `${invoiceNumber.slice(0, 22)}-${clientId.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase()}`;
+            ins = await insertSale(unique);
+            if (ins.rows.length) renumbered.push({ clientTxnId: clientId, invoiceNumber: unique });
+          }
           if (!ins.rows.length) {
             duplicates++;
             const original = (await c.query(`SELECT * FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2 FOR UPDATE`, [tenantId, clientId])).rows[0];
@@ -4422,7 +4457,7 @@ function registerSyncRoutes(app, db) {
             }
             if (status !== "CANCELLED" && x.tenders) await applyTenders(c, financialScope, original.id, x.tenders);
             if (status !== "CANCELLED") for (const refund of x.refunds || []) await applyRefund(c, financialScope, original.id, refund);
-            continue;
+            return;
           }
           const txnId = ins.rows[0].id;
           await c.query("UPDATE pos.transactions SET client_shift_id=$2 WHERE id=$1", [txnId, str(x.shiftId, 128)]);
@@ -4500,14 +4535,43 @@ function registerSyncRoutes(app, db) {
           }
           for (const refund of x.refunds || []) await applyRefund(c, financialScope, txnId, refund);
           accepted++;
+        };
+        for (const x of txns) {
+          const clientId = str(x?.clientTxnId, 64) || "(tanpa id)";
+          const invalid = invalidTransaction(x);
+          if (invalid) {
+            rejected.push({ clientTxnId: clientId, error: invalid });
+            continue;
+          }
+          const snapshot = { cashier: new Map(cashierCache), product: new Map(productCache), productCount, accepted, duplicates, voided, renumbered: renumbered.length };
+          await c.exec("SAVEPOINT sync_sale");
+          try {
+            await syncOne(x, clientId);
+            await c.exec("RELEASE SAVEPOINT sync_sale");
+          } catch (error) {
+            await c.exec("ROLLBACK TO SAVEPOINT sync_sale");
+            await c.exec("RELEASE SAVEPOINT sync_sale");
+            cashierCache.clear();
+            for (const [k, v] of snapshot.cashier) cashierCache.set(k, v);
+            productCache.clear();
+            for (const [k, v] of snapshot.product) productCache.set(k, v);
+            productCount = snapshot.productCount;
+            accepted = snapshot.accepted;
+            duplicates = snapshot.duplicates;
+            voided = snapshot.voided;
+            renumbered.length = snapshot.renumbered;
+            const code = perSaleRejection(error);
+            if (!code) throw error;
+            rejected.push({ clientTxnId: clientId, error: code });
+          }
         }
         if (idemKey) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
-                                        rows_accepted, rows_duplicate)
-             VALUES ($1, $2, $3, $4, $5)
+                                        rows_accepted, rows_duplicate, outcomes)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates]
+            [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
           );
         }
         if (accepted > 0) {
@@ -4520,10 +4584,10 @@ function registerSyncRoutes(app, db) {
             eventType: "SYNC_BATCH",
             severity: "INFO",
             summary: `Sinkronisasi ${accepted} transaksi dari perangkat kasir`,
-            detail: { accepted, duplicates, batch: txns.length }
+            detail: { accepted, duplicates, rejected: rejected.length, renumbered: renumbered.length, batch: txns.length }
           });
         }
-        return { replayed: false, accepted, duplicates, voided, tenantId };
+        return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
       res.json({ ok: true, ...out });
     } catch (err) {

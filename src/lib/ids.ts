@@ -58,6 +58,8 @@ export function newDocumentNumber(prefix = 'INV', now: Date = new Date()): strin
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  const suffix = newUuid().replace(/-/g, '').slice(0, 4).toUpperCase();
+  // 8 hex = 32 bit per tenant per hari. Dengan 4 hex (16 bit) peluang bentrok
+  // sudah ±38% per hari pada 250 transaksi; server tetap menomori ulang bila bentrok.
+  const suffix = newUuid().replace(/-/g, '').slice(-8).toUpperCase();
   return `${prefix}-${y}${m}${d}-${suffix}`;
 }

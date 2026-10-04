@@ -28,6 +28,7 @@ import type { Order, BusinessSector } from '../../types';
 import { legacyFinancialHolds } from './legacyHold';
 
 const QUEUE_PREFIX = 'newhope_sync_queue_';
+const QUARANTINE_PREFIX = 'newhope_sync_quarantine_';
 const META_PREFIX = 'newhope_sync_meta_';
 const MIGRATION_ACK_PREFIX = 'newhope_legacy_financial_ack_';
 
@@ -89,6 +90,30 @@ export interface SyncStatus {
   /** Percobaan gagal berturut-turut. 0 berarti sehat. */
   failures: number;
   inFlight: boolean;
+  /** Penjualan yang ditolak server (data tidak valid/bentrok). Tidak menahan antrean. */
+  quarantined?: number;
+}
+
+export interface QuarantinedSale { txn: SyncPayloadTxn; error: string; at: string }
+
+export function readQuarantine(businessId: string): QuarantinedSale[] {
+  try { const rows = JSON.parse(localStorage.getItem(QUARANTINE_PREFIX + businessId) || '[]'); return Array.isArray(rows) ? rows : []; }
+  catch { return []; }
+}
+
+function writeQuarantine(businessId: string, rows: QuarantinedSale[]) {
+  localStorage.setItem(QUARANTINE_PREFIX + businessId, JSON.stringify(rows));
+}
+
+/** Kirim ulang penjualan dari karantina (mis. setelah pemetaan outlet/produk diperbaiki). */
+export function requeueQuarantined(businessId: string, clientTxnId: string): boolean {
+  const rows = readQuarantine(businessId);
+  const row = rows.find(entry => entry.txn.clientTxnId === clientTxnId);
+  if (!row) return false;
+  const queue = readQueue(businessId);
+  if (!queue.some(txn => txn.clientTxnId === clientTxnId)) writeQueue(businessId, [...queue, row.txn]);
+  writeQuarantine(businessId, rows.filter(entry => entry.txn.clientTxnId !== clientTxnId));
+  return true;
 }
 
 type SyncMeta = Omit<SyncStatus, 'pending' | 'inFlight'>;
@@ -264,7 +289,7 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
 
 export function getStatus(businessId: string, inFlight = false): SyncStatus {
   const meta = readMeta(businessId);
-  try { return { ...meta, pending: readQueue(businessId).length, inFlight }; }
+  try { return { ...meta, pending: readQueue(businessId).length, inFlight, quarantined: readQuarantine(businessId).length }; }
   catch(error) { return { ...meta, pending: 1,
     lastError:error instanceof Error && error.message==='LOCAL_QUEUE_CORRUPT'?'LOCAL_QUEUE_CORRUPT':'LOCAL_QUEUE_READ_FAILED',
     failures:Math.max(1,meta.failures), inFlight }; }
@@ -554,7 +579,16 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     // Transaksi yang masuk antrian SELAMA pengiriman berlangsung harus tetap
     // tinggal, jadi antrian dibaca ulang, bukan memakai `all` yang sudah basi.
     const current = readQueue(businessId);
-    acknowledgeLegacyTransactions(businessId, batch);
+    // Penjualan yang ditolak server dipindah ke karantina — tetap tersimpan utuh
+    // dan terlihat di Sync Center — agar tidak menahan penjualan berikutnya.
+    const rejected = new Map<string, string>((Array.isArray(data.rejected) ? data.rejected : [])
+      .map((row: { clientTxnId: string; error: string }) => [row.clientTxnId, row.error]));
+    if (rejected.size) {
+      const at = new Date().toISOString();
+      const kept = readQuarantine(businessId).filter(row => !rejected.has(row.txn.clientTxnId));
+      writeQuarantine(businessId, [...kept, ...batch.filter(t => rejected.has(t.clientTxnId)).map(txn => ({ txn, error: rejected.get(txn.clientTxnId)!, at }))]);
+    }
+    acknowledgeLegacyTransactions(businessId, batch.filter(t => !rejected.has(t.clientTxnId)));
     const sent = new Map(batch.map((t) => [t.clientTxnId, financialPayloadFingerprint(t)]));
     writeQueue(
       businessId,

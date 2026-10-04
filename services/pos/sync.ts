@@ -124,6 +124,27 @@ const str = (v: unknown, max: number): string | null => {
 const outletRef = (value: unknown): string | null => typeof value === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 
+
+/** Per-sale validation. Returns a rejection code, or null when the sale is well formed. */
+export function invalidTransaction(x: SyncTxn): string | null {
+  if (!str(x.clientTxnId, 64) || !Array.isArray(x.items) || !x.items.length) return 'INVALID_TRANSACTION';
+  if (!Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal < 0 || x.totalAmount < 0) return 'INVALID_AMOUNT';
+  if (Math.abs(x.totalAmount - (x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0))) > 0.02) return 'TOTAL_MISMATCH';
+  if (x.items.some(i => !i || typeof i.productName !== 'string' || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice < 0 ||
+    !Number.isFinite(i.quantity) || i.quantity <= 0 || i.quantity > 999999999 || Math.abs(i.quantity * 1000 - Math.round(i.quantity * 1000)) > 0.001)) return 'INVALID_ITEM';
+  return null;
+}
+
+/** Deterministic per-sale failures are quarantined; anything else fails the batch so it is retried. */
+function perSaleRejection(error: unknown): string | null {
+  if (error instanceof FinanceError) return error.message;
+  const code = String((error as { code?: string })?.code || '');
+  if (/^(22|23)/.test(code)) return 'REJECTED_BY_DATABASE:' + ((error as { constraint?: string }).constraint || code);
+  return null;
+}
+
+const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
+
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -252,10 +273,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         detail: `Maksimal ${MAX_BATCH} transaksi per kiriman. Pecah antriannya.`,
       });
     }
-    if(!txns.length || txns.some(x=>!x || !str(x.clientTxnId,64) || !Array.isArray(x.items) || !x.items.length ||
-      !Number.isFinite(x.subtotal) || !Number.isFinite(x.totalAmount) || x.subtotal<0 || x.totalAmount<0 ||
-      Math.abs(x.totalAmount-(x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0)))>0.02 ||
-      x.items.some(i=>!i || typeof i.productName!=='string' || !i.productName.trim() || !Number.isFinite(i.unitPrice) || i.unitPrice<0 || !Number.isFinite(i.quantity) || i.quantity<=0 || i.quantity>999999999 || Math.abs(i.quantity*1000-Math.round(i.quantity*1000))>0.001)))
+    // Only a malformed envelope rejects the whole batch. One bad sale must never
+    // hold every later sale from this device hostage (see invalidTransaction).
+    if(!txns.length || txns.some(x=>!x || typeof x!=='object'))
       return res.status(400).json({ok:false,error:'INVALID_TRANSACTIONS'});
 
     try {
@@ -264,7 +284,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
         if (idemKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate, outcomes FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
@@ -273,6 +293,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
               duplicates: prev.rows[0].rows_duplicate,
+              rejected: prev.rows[0].outcomes?.rejected ?? [],
+              renumbered: prev.rows[0].outcomes?.renumbered ?? [],
               tenantId: null as string | null,
             };
           }
@@ -446,10 +468,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         let accepted = 0;
         let duplicates = 0;
         let voided = 0;
+        const rejected: Array<{ clientTxnId: string; error: string }> = [];
+        const renumbered: Array<{ clientTxnId: string; invoiceNumber: string }> = [];
 
-        for (const x of txns) {
-          const clientId = str(x.clientTxnId, 64);
-          if (!clientId || !Array.isArray(x.items) || !x.items.length) continue;
+        const syncOne = async (x: SyncTxn, clientId: string) => {
 
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
@@ -471,7 +493,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           const isVoid = paymentStatus === 'CANCELLED';
           const orderStatus = isVoid ? 'VOIDED' : (paymentStatus === 'PENDING' ? 'PENDING_PAYMENT' : 'COMPLETED');
 
-          const ins = await c.query(
+          const insertSale = (invoiceNumber: string | null) => c.query(
             `INSERT INTO pos.transactions
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
@@ -498,7 +520,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               businessId,
               appModule,
               str(x.orderType, 16),
-              str(x.invoiceNumber, 32),
+              invoiceNumber,
               clientId,
               outletRef(x.shiftId),
               str(x.businessDate, 10) ?? (x.createdAt ? x.createdAt.split('T')[0] : null),
@@ -508,6 +530,19 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               x.createdAt ?? null,
             ]
           );
+          // A receipt number collision (two devices, same short number) must not
+          // lose the sale: keep it under a disambiguated number and report it.
+          let ins;
+          const invoiceNumber = str(x.invoiceNumber, 32);
+          await c.exec('SAVEPOINT sync_invoice');
+          try { ins = await insertSale(invoiceNumber); await c.exec('RELEASE SAVEPOINT sync_invoice'); }
+          catch (error) {
+            await c.exec('ROLLBACK TO SAVEPOINT sync_invoice'); await c.exec('RELEASE SAVEPOINT sync_invoice');
+            if ((error as { code?: string }).code !== '23505' || !INVOICE_CONSTRAINTS.has(String((error as { constraint?: string }).constraint)) || !invoiceNumber) throw error;
+            const unique = `${invoiceNumber.slice(0, 22)}-${clientId.replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`;
+            ins = await insertSale(unique);
+            if (ins.rows.length) renumbered.push({ clientTxnId: clientId, invoiceNumber: unique });
+          }
 
           // Tidak ada baris kembali = sudah pernah masuk. Ini jalur yang
           // menyelamatkan omzet, bukan kasus tepi.
@@ -617,7 +652,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             }
             if(status!=='CANCELLED'&&x.tenders)await applyTenders(c,financialScope,original.id,x.tenders);
             if(status!=='CANCELLED')for(const refund of x.refunds||[])await applyRefund(c,financialScope,original.id,refund);
-            continue;
+            return;
           }
 
           const txnId: string = ins.rows[0].id;
@@ -709,15 +744,35 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
           for(const refund of x.refunds||[])await applyRefund(c,financialScope,txnId,refund);
           accepted++;
+        };
+
+        for (const x of txns) {
+          const clientId = str(x?.clientTxnId, 64) || '(tanpa id)';
+          const invalid = invalidTransaction(x);
+          if (invalid) { rejected.push({ clientTxnId: clientId, error: invalid }); continue; }
+          // Caches and counters are restored with the savepoint so a rejected sale
+          // leaves no trace (e.g. a product row it created) behind.
+          const snapshot = { cashier: new Map(cashierCache), product: new Map(productCache), productCount, accepted, duplicates, voided, renumbered: renumbered.length };
+          await c.exec('SAVEPOINT sync_sale');
+          try { await syncOne(x, clientId); await c.exec('RELEASE SAVEPOINT sync_sale'); }
+          catch (error) {
+            await c.exec('ROLLBACK TO SAVEPOINT sync_sale'); await c.exec('RELEASE SAVEPOINT sync_sale');
+            cashierCache.clear(); for (const [k, v] of snapshot.cashier) cashierCache.set(k, v);
+            productCache.clear(); for (const [k, v] of snapshot.product) productCache.set(k, v);
+            productCount = snapshot.productCount; accepted = snapshot.accepted; duplicates = snapshot.duplicates; voided = snapshot.voided; renumbered.length = snapshot.renumbered;
+            const code = perSaleRejection(error);
+            if (!code) throw error;
+            rejected.push({ clientTxnId: clientId, error: code });
+          }
         }
 
         if (idemKey) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
-                                        rows_accepted, rows_duplicate)
-             VALUES ($1, $2, $3, $4, $5)
+                                        rows_accepted, rows_duplicate, outcomes)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates]
+            [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
           );
         }
 
@@ -731,11 +786,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             eventType: 'SYNC_BATCH',
             severity: 'INFO',
             summary: `Sinkronisasi ${accepted} transaksi dari perangkat kasir`,
-            detail: { accepted, duplicates, batch: txns.length },
+            detail: { accepted, duplicates, rejected: rejected.length, renumbered: renumbered.length, batch: txns.length },
           });
         }
 
-        return { replayed: false, accepted, duplicates, voided, tenantId };
+        return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
 
       res.json({ ok: true, ...out });

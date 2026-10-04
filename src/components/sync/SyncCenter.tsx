@@ -2,6 +2,16 @@ import React,{useEffect,useRef,useState} from 'react';
 import {usePOSFields} from '../../context/POSDomains';
 import {LegacyRecoveryPanel} from './LegacyRecoveryPanel';
 import {operationalRecovery,recoveryGroups} from '../../lib/sync/operationalRecovery';
+import {readQuarantine,requeueQuarantined} from '../../lib/sync/queue';
+import {formatRupiah} from '../../utils/formatters';
+
+const QUARANTINE_REASON:Record<string,string>={
+  TOTAL_MISMATCH:'Total tidak sama dengan subtotal − diskon + pajak + layanan.',
+  INVALID_ITEM:'Ada item dengan harga/jumlah tidak valid.',
+  INVALID_AMOUNT:'Nominal transaksi tidak valid.',
+  INVALID_TRANSACTION:'Data transaksi tidak lengkap.',
+  TRANSACTION_ID_CONFLICT:'ID transaksi ini sudah tercatat di cloud dengan nilai berbeda (diedit setelah terkirim).',
+};
 
 /** The only user-facing recovery surface. Header only opens this center. */
 export function SyncCenter(){
@@ -13,6 +23,8 @@ export function SyncCenter(){
   let backups:ReturnType<typeof operationalRecovery>=[];
   try{backups=operationalRecovery(syncCenter.owner||syncCenter.businessId.replace(/_(FNB|LAUNDRY|RETAIL|CARWASH|BARBERSHOP)$/,''),settings.businessSector||'FNB',syncCenter.operationalNamespace);}catch{}
   const protectedRecords=recoveryGroups(backups);
+  const [quarantine,setQuarantine]=useState(()=>readQuarantine(syncCenter.businessId));
+  const retrySale=(clientTxnId:string)=>{requeueQuarantined(syncCenter.businessId,clientTxnId);setQuarantine(readQuarantine(syncCenter.businessId));forceSync();};
   const resolve=async(kind:string,recordId:string,choice:'server'|'local')=>{
     setBusy(kind+recordId);try{await resolveOperationalConflict(kind,recordId,choice);}finally{setBusy('');}
   };
@@ -33,6 +45,15 @@ export function SyncCenter(){
       <section className="mt-4 rounded-xl border p-3"><h3 className="font-bold">Keuangan · {syncCenter.financialPending} menunggu</h3>
         <p className="text-sm text-slate-600">Transaksi, kas, void dan refund memakai ledger server. Pilihan data operasional tidak mengubah ledger.</p>
         <LegacyRecoveryPanel />
+        {quarantine.length>0&&<div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
+          <p className="font-semibold text-rose-900">{quarantine.length} penjualan ditolak cloud dan disimpan terpisah</p>
+          <p className="text-sm text-rose-800">Penjualan lain tetap terkirim. Data asli tersimpan utuh di perangkat ini; jangan hapus data browser.</p>
+          <ul className="mt-2 space-y-2 text-sm">{quarantine.map(row=><li key={row.txn.clientTxnId} className="rounded-lg bg-white p-2">
+            <p className="font-semibold">{row.txn.invoiceNumber||row.txn.clientTxnId} · {formatRupiah(row.txn.totalAmount)} · {new Date(row.txn.createdAt||row.at).toLocaleString('id-ID')}</p>
+            <p className="text-slate-600">{QUARANTINE_REASON[row.error]||`Ditolak server: ${row.error}`}</p>
+            <button onClick={()=>retrySale(row.txn.clientTxnId)} className="mt-1 rounded-lg border px-3 py-1">Kirim ulang</button>
+          </li>)}</ul>
+        </div>}
       </section>
       <section className="mt-4 rounded-xl border p-3"><h3 className="font-bold">Operasional · {syncCenter.operationalPending} menunggu · {syncCenter.operationalConflicts.length} konflik</h3>
         <p className="text-sm text-slate-600">Produk, pelanggan, meja dan setting. Satu konflik tidak menahan record lain.</p>
