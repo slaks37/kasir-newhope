@@ -5,6 +5,13 @@ import {waitForDatabase} from '../../services/shared/databaseStartup';
 import {applyAtomicMigration,migrationBody} from '../../services/db-server/atomicMigration';
 import {withRequestDeadline,RequestDeadlineError} from '../../src/lib/requestDeadline';
 import {restoreAuthSession} from '../../src/lib/auth/sessionLifecycle';
+import {supportWhatsAppUrl} from '../../src/config/publicSupport';
+
+for(const missing of [undefined,'','6281234567890','081234','https://evil.test','+123;bad'])
+  assert.equal(supportWhatsAppUrl(missing,'Help'),null,'Never send users to an unconfigured/demo recipient');
+assert.equal(supportWhatsAppUrl('+12025550123','Help & info'),'https://wa.me/12025550123?text=Help%20%26%20info');
+const landing=fs.readFileSync('src/components/home/HomePage.tsx','utf8');
+assert(!landing.includes('6281234567890'));assert(!landing.includes('mengikuti total belanja'));
 
 let probes=0;const delays:number[]=[];const unavailable=new Error('fixture unavailable');
 await assert.rejects(waitForDatabase(async()=>{probes++;throw unavailable;},'1',async ms=>{delays.push(ms);}),

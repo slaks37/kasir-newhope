@@ -69,6 +69,8 @@ Post-merge verification also exited 0 against `54dd124` plus this addendum: both
 
 ## Remaining release risks and acceptance work
 
+Post-deployment public-page inspection found one remaining dynamic-QRIS sentence and a placeholder WhatsApp recipient. The follow-up removes both: QRIS copy requires checking the provider's receipt of funds; support links require an explicitly configured `VITE_SUPPORT_WHATSAPP` and otherwise lead to the local help section. No recipient is invented. The official support number remains an owner configuration item.
+
 1. **Inventory consistency:** client-visible stock still needs authoritative per-outlet balance hydration and concurrent-device reconciliation. Do not advertise all stock as live/server-confirmed yet.
 2. **Staff identity:** kiosk profiles are not independent employee Auth accounts. A membership migration needs explicit server-side permissions and session revocation tests.
 3. **Database TLS:** fallback encryption currently does not verify server certificates without `PGSSLROOTCERT`. Configure/validate the actual CA before removing fallback; do not break production by guessing certificates.
