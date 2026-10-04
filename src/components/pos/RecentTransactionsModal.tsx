@@ -184,9 +184,11 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
     document.body.removeChild(link);
   };
 
-  const executeVoidTransaction = () => {
+  const executeVoidTransaction = (approvedBy?: string) => {
     if (!voidingOrder) return;
-    const finalReason = customReason.trim() || voidReason;
+    const reason = customReason.trim() || voidReason;
+    // Penyetuju override ikut tercatat di catatan order dan log stok perangkat.
+    const finalReason = approvedBy ? `${reason} (disetujui ${approvedBy})` : reason;
     voidOrder(voidingOrder.id, finalReason);
     setVoidingOrder(null);
     setVoidReason('Salah Input Menu / Kasir');
@@ -724,7 +726,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
           requiredRoles={['ADMIN', 'MANAGER']}
           onClose={() => setShowAuthModal(false)}
           onAuthorized={(role, name) => {
-            executeVoidTransaction();
+            executeVoidTransaction(`${name}, ${role}`);
           }}
         />
       )}
