@@ -249,7 +249,7 @@ Tunai, **QRIS statis toko**, kartu (EDC), dan transfer **dicatat oleh kasir**. B
 Artinya status lunas untuk QRIS/EDC **adalah konfirmasi kasir**. Nomor referensi (RRN) bisa diisi manual sebagai bukti.
 
 #### QRIS dinamis + webhook — [Rencana]
-Alur di mana backend membuat QRIS dinamis dan status PAID ditentukan oleh webhook payment gateway (kasir tidak bisa menandai lunas sendiri) **belum dibangun**. Bila dibangun, pola yang wajib dipakai sama dengan webhook DOKU langganan: verifikasi tanda tangan dari byte asli, idempotensi per event, dan rekonsiliasi ke ledger.
+Alur di mana backend membuat QRIS dinamis dan status PAID ditentukan oleh webhook payment gateway (kasir tidak bisa menandai lunas sendiri) **belum dibangun** (desain: [`docs/design/2026-10-keputusan-produk.md` §3](docs/design/2026-10-keputusan-produk.md#3-qris-dinamis-untuk-transaksi-kasir)). Bila dibangun, pola yang wajib dipakai sama dengan webhook DOKU langganan: verifikasi tanda tangan dari byte asli, idempotensi per event, dan rekonsiliasi ke ledger.
 
 #### Langganan SaaS (DOKU Checkout) — [Berjalan]
 1. `POST /api/v1/subscription/checkout`: invoice disimpan **sebelum** memanggil DOKU (kunci idempotensi `requestKey`), lalu pengguna diarahkan ke halaman DOKU.
@@ -281,9 +281,9 @@ PIN supervisor dimasukkan di perangkat (hash sha256 + salt; kunci bertahap 30 dt
 Aksi dijalankan; percobaan gagal dicatat di log perangkat
 ```
 
-**Batasan saat ini:** override PIN ditegakkan **di klien**. Server menerima VOID dari principal pemilik akun tanpa bukti persetujuan supervisor, dan jejak persetujuan belum dikirim ke `internal.audit_logs`.
+**Batasan saat ini:** override PIN ditegakkan **di klien**. Hash PIN semua pengguna ikut tersinkron ke setiap perangkat (record `users`), dan PIN 4 digit mudah ditebak dari hash-nya. Server menerima VOID dari principal pemilik akun tanpa bukti persetujuan supervisor. Nama penyetuju kini dicatat di catatan order dan log perangkat, tetapi belum dikirim ke `internal.audit_logs`.
 
-**[Rencana]** Persetujuan supervisor sebagai *grant* berumur pendek yang diverifikasi server, dicatat di `internal.audit_logs` dengan aktor kasir + approver.
+**[Rencana]** Persetujuan supervisor sebagai *grant* berumur pendek yang diverifikasi server, dicatat di `internal.audit_logs` dengan aktor kasir + approver. Lihat [`docs/design/2026-10-keputusan-produk.md` §2](docs/design/2026-10-keputusan-produk.md#2-persetujuan-supervisor-pin-diverifikasi-server).
 
 ---
 
@@ -366,4 +366,4 @@ sequenceDiagram
 - Void mengembalikan hanya qty yang belum di-refund.
 - Dua perangkat yang menjual produk yang sama bersamaan bisa memicu konflik revisi yang diselesaikan di Sync Center.
 
-**[Rencana]** Stok sebagai ledger delta di server (`pos.inventory_transactions` sudah ada untuk produk yang terhubung inventory item) untuk semua produk.
+**[Rencana]** Stok sebagai ledger delta di server untuk semua produk. Ledger-nya (`pos.inventory_transactions` → `pos.inventory_balances`, per outlet) sudah ada, tetapi hanya terisi untuk produk lama yang ditautkan migrasi 0027. Produk yang dibuat dari kasir belum punya `inventory_item_id`. Desain dan keputusan yang dibutuhkan: [`docs/design/2026-10-keputusan-produk.md` §1](docs/design/2026-10-keputusan-produk.md#1-stok-sebagai-ledger-server).

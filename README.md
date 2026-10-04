@@ -61,6 +61,10 @@ Bundle `api/_*_bundle.js` di-commit karena Vercel menjalankannya apa adanya. Ban
 ### Sinkronisasi kasir
 - **Transaksi** (`POST /api/v1/sync/transactions`): batch idempoten. Setiap penjualan diterima atau ditolak **sendiri-sendiri**. Penjualan yang ditolak (total tidak cocok, diedit setelah terkirim, dst.) masuk **karantina** di Sync Center dan tidak menahan penjualan lain. Nomor struk yang bentrok antar perangkat dinomori ulang, tidak ditolak.
 - **State operasional** (`/api/v1/sync/state`): produk, kategori, pelanggan, meja, setting, dll. dengan revisi per record (konflik ditampilkan, tidak ditimpa diam-diam).
+  - Snapshot dimuat per halaman 5.000 record (`?paged=1&cursor=…`). Bila data berubah di tengah pemuatan, klien mengulang dari awal, sehingga snapshot tidak pernah setengah lama setengah baru.
+  - Polling hanya membaca `pos.shared_state_versions`, yang dinaikkan trigger setiap kali record berubah. Tidak ada lagi pemindaian seluruh baris.
+  - Riwayat hanya dikirim jendela terbarunya (mis. 2.000 log stok terakhir, tiket dapur 3 hari, operasi order 120 hari; lihat `HISTORY_WINDOWS`). Baris lama tetap di database untuk audit dan laporan.
+- **Refresh saat offline**: build produksi memasang service worker (`src/pwa/serviceWorker.ts`) yang menyimpan `index.html` dan file `/assets/*` ber-hash. API, `/admin`, dan Supabase tidak pernah melewatinya. Data offline (antrean penjualan, snapshot toko) tetap disimpan aplikasi di `localStorage`.
 - **Kas & refund**: outbox keuangan terpisah dengan ledger yang tidak bisa diubah (koreksi = entri pembalik).
 
 ### Pembayaran
@@ -111,7 +115,7 @@ Database di sini adalah PostgreSQL 18 sungguhan. **Belum diuji end-to-end di lin
 - **Merchant**: Supabase Auth. Server memverifikasi token ke Auth API, bukan mempercayai payload JWT.
 - **Konsol internal**: Supabase Auth + keanggotaan `internal.internal_users` + **MFA (aal2)** untuk aksi sensitif. Penautan akun admin lewat email hanya untuk email terverifikasi dan akun yang belum terikat. Penautan tidak pernah mengubah role atau mengaktifkan ulang admin yang dinonaktifkan.
 - **Browser tidak punya akses SQL langsung** ke data bisnis. Semua lewat API (`docs/security/restrict-browser-rls-policies.sql`).
-- Override PIN supervisor di kasir (mis. void tanpa izin `void_order`) dijalankan di perangkat dan dicatat di log perangkat. Belum ada penegakan sisi server.
+- Override PIN supervisor di kasir (mis. void tanpa izin `void_order`) diverifikasi **di perangkat**. Nama penyetuju dicatat di catatan order dan log perangkat. Belum ada penegakan sisi server, dan hash PIN ikut tersinkron ke perangkat. Usulan perbaikannya ada di [dokumen keputusan produk §2](docs/design/2026-10-keputusan-produk.md).
 
 ---
 
@@ -128,6 +132,7 @@ AI Copilot: Layer aturan dan analitik berjalan tanpa kunci. Pertanyaan terbuka m
 - [`Dokumentasi.md`](Dokumentasi.md): arsitektur, hierarki data, alur kasir end-to-end
 - [`docs/operations/runbook-2026-10-stabilization.md`](docs/operations/runbook-2026-10-stabilization.md): langkah rilis perbaikan Oktober 2026 dan pemeriksaan pasca-rilis
 - [`docs/qa/2026-10-04-qa-report.md`](docs/qa/2026-10-04-qa-report.md): hasil QA (logic, data, performa, load) dan status perbaikannya
+- [`docs/design/2026-10-keputusan-produk.md`](docs/design/2026-10-keputusan-produk.md): tiga keputusan produk yang menunggu jawaban (stok ledger, PIN server, QRIS dinamis)
 - [`docs/cloud-financial-architecture.md`](docs/cloud-financial-architecture.md): ledger keuangan
 - [`docs/operations/sync-center-repair.md`](docs/operations/sync-center-repair.md): pemulihan data sinkronisasi
 - [`docs/smart-assistant-architecture.md`](docs/smart-assistant-architecture.md): arsitektur AI Copilot
