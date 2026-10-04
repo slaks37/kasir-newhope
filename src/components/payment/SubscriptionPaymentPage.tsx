@@ -921,7 +921,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Buka kasir dan nikmati seluruh fitur Tier Pro, transaksi, resep bahan baku, QRIS dinamis, dan AI Copilot selama 45 hari tanpa biaya.
+                Buka kasir dan nikmati seluruh fitur Tier Pro, transaksi, resep bahan baku, pencatatan QRIS, dan AI Copilot selama 45 hari tanpa biaya.
               </p>
             </div>
           ) : (

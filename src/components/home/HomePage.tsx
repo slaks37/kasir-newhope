@@ -162,8 +162,8 @@ const features = [
   },
   {
     icon: QrCode,
-    title: "QRIS dinamis",
-    copy: "Nominal pembayaran mengikuti total belanja pelanggan.",
+    title: "QRIS toko",
+    copy: "Catat pembayaran QRIS beserta nomor referensinya; rekap shift memisahkan tunai dan QRIS.",
   },
   {
     icon: Package,
@@ -220,7 +220,7 @@ const faqs = [
   },
   {
     q: "Bagaimana pencairan QRIS?",
-    a: "Dana masuk ke rekening merchant sesuai jadwal dan ketentuan penyedia pembayaran yang terhubung. Tim kami dapat membantu memeriksa proses aktivasi, biaya, dan jadwal pencairannya.",
+    a: "Pelanggan membayar ke QRIS milik toko Anda dari bank atau penyedia pembayaran Anda, sehingga pencairan dan biayanya mengikuti ketentuan penyedia tersebut. New Hope POS mencatat pembayaran dan tidak memegang dana.",
   },
   {
     q: "Apakah data lama dapat dipindahkan?",
