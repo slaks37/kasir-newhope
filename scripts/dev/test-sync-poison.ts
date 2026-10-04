@@ -94,11 +94,36 @@ try {
   const scope = (await db.query("SELECT scope FROM pos.shared_state_records WHERE tenant_id=$1 AND record_id='prod-keep'", [tenant])).rows[0].scope;
   await db.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision,updated_at)
     SELECT $1,$2,$3,'inventory_logs','log-'||g,jsonb_build_object('id','log-'||g),1,now()-interval '1 day' FROM generate_series(1,10005) g`, [tenant, merchant, scope]);
-  const snapshot = await (await fetch(base + `/api/v1/sync/state?sector=FNB&businessId=${owner}_FNB`, { headers: auth })).json();
-  assert.equal(snapshot.truncated, true);
-  assert.ok(snapshot.records.some((r: any) => r.kind === 'products' && r.recordId === 'prod-keep'), 'Products survive truncation');
+  // Legacy single-response mode: history is windowed (newest 2,000 logs) so the snapshot is complete, not truncated.
+  const legacy = await (await fetch(base + `/api/v1/sync/state?sector=FNB&businessId=${owner}_FNB`, { headers: auth })).json();
+  assert.equal(legacy.truncated, false, 'Windowed history keeps the snapshot loadable');
+  assert.equal(legacy.records.filter((r: any) => r.kind === 'inventory_logs').length, 2000);
+  assert.ok(legacy.records.some((r: any) => r.kind === 'products' && r.recordId === 'prod-keep'), 'Products survive');
+  assert.equal(Number((await db.query("SELECT count(*)::int n FROM pos.shared_state_records WHERE tenant_id=$1 AND kind='inventory_logs'", [tenant])).rows[0].n), 10005, 'History is never deleted from the database');
+
+  // Paged mode: a catalog larger than one page arrives completely, page by page.
+  await db.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision)
+    SELECT $1,$2,$3,'products','bulk-'||lpad(g::text,5,'0'),jsonb_build_object('id','bulk-'||lpad(g::text,5,'0'),'name','P'||g,'price',1000,'costPrice',500),1 FROM generate_series(1,7000) g`, [tenant, merchant, scope]);
+  const pages: any[] = []; let cursor: string | null = null;
+  do {
+    const page: any = await (await fetch(base + `/api/v1/sync/state?paged=1&sector=FNB&businessId=${owner}_FNB${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, { headers: auth })).json();
+    assert.equal(page.truncated, false); pages.push(page); cursor = page.nextCursor;
+  } while (cursor);
+  assert.ok(pages.length >= 2, 'More than one page');
+  assert.ok(pages.every(p => p.version === pages[0].version), 'One consistent version across pages');
+  const all = pages.flatMap(p => p.records);
+  assert.equal(all.filter((r: any) => r.kind === 'products').length, 7001);
+  assert.equal(new Set(all.map((r: any) => r.kind + '/' + r.recordId)).size, all.length, 'No duplicates across pages');
+
+  // Version: unchanged without writes, changes after any write (trigger-maintained).
+  const known = pages[0].version;
+  const same = await (await fetch(base + `/api/v1/sync/state?paged=1&sector=FNB&businessId=${owner}_FNB&knownVersion=${known}`, { headers: auth })).json();
+  assert.equal(same.unchanged, true);
+  await db.query("UPDATE pos.shared_state_records SET quarantine_reason='TEST' WHERE tenant_id=$1 AND record_id='bulk-00001'", [tenant]);
+  const after = await (await fetch(base + `/api/v1/sync/state?paged=1&sector=FNB&businessId=${owner}_FNB&knownVersion=${known}`, { headers: auth })).json();
+  assert.notEqual(after.version, known, 'Even a repair UPDATE without a revision bump changes the version');
 
   // 8. Receipt numbers carry 32 bits of entropy.
   assert.match(newDocumentNumber('INV', new Date('2026-10-04T00:00:00Z')), /^INV-20261004-[0-9A-F]{8}$/);
-  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, products first in capped state snapshots, 32-bit receipt numbers');
+  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, windowed history and paged state snapshots with trigger versions, 32-bit receipt numbers');
 } finally { server.close(); await pg.close(); }

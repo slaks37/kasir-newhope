@@ -1005,6 +1005,30 @@ var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "store_settings"
 ]);
 var ID_RE = /^[^\x00-\x1f\x7f]{1,128}$/;
+var HISTORY_WINDOWS = {
+  inventory_logs: { newest: 2e3 },
+  kds_tickets: { days: 3 },
+  order_operations: { days: 120 },
+  bookings: { days: 180 },
+  carwash_queue: { days: 180 },
+  attendance_logs: { days: 400 }
+};
+var STATE_PAGE_SIZE = 5e3;
+var SCOPE_SQL = (a) => `${a}.tenant_id=$1 AND ((${a}.scope='GLOBAL' AND ${a}.merchant_id IS NULL) OR (${a}.scope=ANY($2::text[]) AND ${a}.merchant_id=$3))
+  AND ($4::text[] IS NULL OR ${a}.kind=ANY($4::text[]))`;
+var WINDOW_SQL = `AND (r.kind <> ALL(ARRAY[${Object.keys(HISTORY_WINDOWS).map((k) => `'${k}'`).join(",")}]::text[])
+  ${Object.entries(HISTORY_WINDOWS).map(([kind, w]) => w.days ? `OR (r.kind='${kind}' AND r.updated_at > now() - interval '${w.days} days')` : `OR (r.kind='${kind}' AND (r.scope,r.record_id) IN (SELECT l.scope,l.record_id FROM pos.shared_state_records l
+        WHERE ${SCOPE_SQL("l")} AND l.kind='${kind}' ORDER BY l.updated_at DESC LIMIT ${w.newest}))`).join("\n  ")})`;
+var encodeCursor = (row) => Buffer.from(JSON.stringify([row.scope, row.kind, row.record_id])).toString("base64url");
+function decodeCursor(raw) {
+  if (typeof raw !== "string" || !raw || raw.length > 600) return null;
+  try {
+    const v = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "string") ? v : null;
+  } catch {
+    return null;
+  }
+}
 var CORE_KINDS = /* @__PURE__ */ new Set([
   "store_settings",
   "users",
@@ -1077,6 +1101,9 @@ function registerSharedStateRoutes(app, db) {
     const kinds = req.query.kinds === void 0 ? null : typeof req.query.kinds === "string" ? [...new Set(req.query.kinds.split(","))] : [];
     if (kinds && (!kinds.length || kinds.length > 25 || kinds.some((kind) => !GLOBAL_KINDS.has(kind) && !SECTOR_KINDS.has(kind))))
       return res.status(400).json({ ok: false, error: "INVALID_STATE_KINDS" });
+    const paged = req.query.paged === "1";
+    const cursor = paged && req.query.cursor !== void 0 ? decodeCursor(req.query.cursor) : null;
+    if (paged && req.query.cursor !== void 0 && !cursor) return res.status(400).json({ ok: false, error: "INVALID_STATE_CURSOR" });
     try {
       const scope = await resolveBusinessScope(db, principal.subject, sector, req.query.businessId);
       if (!scope) return res.json({ ok: true, ready: false, records: [] });
@@ -1087,27 +1114,23 @@ function registerSharedStateRoutes(app, db) {
           [scope.tenantId, scope.merchantId]
         );
         const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
-        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(
-          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
-          '|' ORDER BY scope,kind,record_id),'')) AS version
-          FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
-          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`, parameters2);
+        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
+          FROM pos.shared_state_versions v WHERE v.tenant_id=$1 AND
+          ((v.scope='GLOBAL' AND v.merchant_key='00000000-0000-0000-0000-000000000000'::uuid) OR (v.scope=ANY($2::text[]) AND v.merchant_key=$3))
+          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`, parameters2);
         const version = stamp.rows[0].version;
-        if (req.query.knownVersion === version && !req.query.legacyCandidates) return { rows: [], version, unchanged: true };
-        const result = await c.query(`SELECT scope,kind,record_id,value,revision,deleted,updated_at,recovery_value,quarantine_reason
-          FROM pos.shared_state_records WHERE tenant_id=$1 AND
-          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
-          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))
-          -- Catalog/config first, then the newest append-only history. A snapshot
-          -- capped at 10,000 rows must never drop products behind old logs.
-          ORDER BY CASE WHEN kind=ANY($5::text[]) THEN 0 ELSE 1 END,updated_at DESC,scope,kind,record_id LIMIT 10001`, [...parameters2, [...CORE_KINDS]]);
+        if (req.query.knownVersion === version && !req.query.legacyCandidates && !cursor) return { rows: [], version, unchanged: true };
+        const columns = "r.scope,r.kind,r.record_id,r.value,r.revision,r.deleted,r.updated_at,r.recovery_value,r.quarantine_reason";
+        const result = paged ? await c.query(`SELECT ${columns} FROM pos.shared_state_records r WHERE ${SCOPE_SQL("r")} ${WINDOW_SQL}
+              AND ($5::text IS NULL OR (r.scope,r.kind,r.record_id) > ($5::text,$6::text,$7::text))
+              ORDER BY r.scope,r.kind,r.record_id LIMIT $8`, [...parameters2, cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null, STATE_PAGE_SIZE + 1]) : await c.query(`SELECT ${columns} FROM pos.shared_state_records r WHERE ${SCOPE_SQL("r")} ${WINDOW_SQL}
+              ORDER BY CASE WHEN r.kind=ANY($5::text[]) THEN 0 ELSE 1 END,r.updated_at DESC,r.scope,r.kind,r.record_id LIMIT 10001`, [...parameters2, [...CORE_KINDS]]);
         return { ...result, version, unchanged: false };
       });
       const { rows } = snapshot;
       if (snapshot.unchanged) return res.json({ ok: true, ready: true, unchanged: true, version: snapshot.version, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, records: [] });
       let candidates = [];
-      try {
+      if (!cursor) try {
         const parsed = JSON.parse(String(req.query.legacyCandidates || "[]"));
         if (Array.isArray(parsed) && parsed.length <= 100) candidates = parsed.filter((r) => SECTOR_KINDS.has(r?.kind) && r.kind !== "store_settings" && typeof r.recordId === "string" && ID_RE.test(r.recordId));
       } catch {
@@ -1122,16 +1145,26 @@ function registerSharedStateRoutes(app, db) {
         });
         return result.rows.map((r) => ({ scope: merchant.business_sector, kind: r.kind, recordId: r.record_id, value: r.value }));
       }))).flat();
-      return res.json({ ok: true, ready: true, version: snapshot.version, scopeProof: true, foreignRecords, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector }, truncated: rows.length > 1e4, records: rows.slice(0, 1e4).map((r) => ({
-        scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
-        kind: r.kind,
-        recordId: r.record_id,
-        value: r.value,
-        revision: Number(r.revision),
-        deleted: r.deleted,
-        updatedAt: r.updated_at,
-        ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
-      })) });
+      return res.json({
+        ok: true,
+        ready: true,
+        version: snapshot.version,
+        scopeProof: true,
+        foreignRecords,
+        kinds,
+        business: { businessId: scope.merchantId, tenantId: scope.tenantId, name: scope.businessName, sector },
+        ...paged ? { truncated: false, nextCursor: rows.length > STATE_PAGE_SIZE ? encodeCursor(rows[STATE_PAGE_SIZE - 1]) : null } : { truncated: rows.length > 1e4 },
+        records: rows.slice(0, paged ? STATE_PAGE_SIZE : 1e4).map((r) => ({
+          scope: r.scope === "GLOBAL" ? "GLOBAL" : sector,
+          kind: r.kind,
+          recordId: r.record_id,
+          value: r.value,
+          revision: Number(r.revision),
+          deleted: r.deleted,
+          updatedAt: r.updated_at,
+          ...r.recovery_value ? { recoveryValue: r.recovery_value, quarantineReason: r.quarantine_reason } : {}
+        }))
+      });
     } catch (error) {
       if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
