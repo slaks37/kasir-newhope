@@ -67,6 +67,7 @@ import {
   getPinLockoutStatus,
   recordFailedPinAttempt,
   resetPinAttempts,
+  DEFAULT_OWNER_PIN,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
 import {useWorkspaceBusiness} from './WorkspaceBusinessContext';
@@ -483,7 +484,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko',
     username: authUser?.email?.split('@')[0] || 'owner',
     role: 'ADMIN',
-    pin: '1234',
+    pin: DEFAULT_OWNER_PIN,
     email: authUser?.email || '',
     phone: '',
     status: 'ACTIVE',

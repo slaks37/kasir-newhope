@@ -41,18 +41,21 @@ Ketiga item ini tidak bisa diselesaikan hanya dengan memperbaiki kode, karena ma
 ### Kondisi sekarang
 - Record `users` bersifat GLOBAL (`GLOBAL_KINDS`) dan berisi hash PIN setiap pengguna. Record ini **dikirim ke setiap perangkat** dan disimpan di `localStorage`.
 - PIN 4 digit di-hash SHA-256 dengan salt (`src/lib/auth/pinSecurity.ts`). Dengan hanya 10.000 kemungkinan, siapa pun yang membuka DevTools di perangkat kasir bisa menemukan PIN manajer dalam waktu kurang dari satu detik. Penghitung lockout juga ada di `localStorage` dan bisa dihapus.
+- PIN owner (peran ADMIN) **tidak pernah tersinkron**, karena server hanya menerima record `users` berperan MANAGER/CASHIER. Akibatnya PIN owner bersifat per perangkat, dengan nilai bawaan `1234` di setiap perangkat baru (`DEFAULT_OWNER_PIN`). Di toko yang belum menggantinya, kasir mana pun bisa menyetujui void sendiri dengan `1234`. Mengganti PIN di satu perangkat tidak mengubah perangkat lain.
 - Void dikirim ke server sebagai `CANCELLED` **tanpa alasan dan tanpa penyetuju**. Server menerima perpindahan ke CANCELLED dari perangkat mana pun dan mencatat `actorRole` dari klaim klien.
-- Sudah diperbaiki di stabilisasi: override PIN di modul terkunci kini benar-benar membuka modul, dan nama penyetuju void tercatat di catatan order serta log stok perangkat (belum di server).
+- Sudah diperbaiki di stabilisasi: override PIN di modul terkunci kini benar-benar membuka modul; nama penyetuju void tercatat di catatan order dan log stok perangkat (belum di server); layar pengguna tidak lagi menampilkan PIN teks biasa, menandai "PIN bawaan, segera ganti", dan menolak `1234` sebagai PIN baru.
 
 ### Rekomendasi
 1. `POST /api/v1/approvals { action, subjectRef, approverUserId, pin }`. Server memverifikasi PIN terhadap hash yang **hanya ada di server** (scrypt/argon2), dengan rate limit per tenant dan perangkat, lalu mengembalikan grant bertanda tangan HMAC: `{action, subjectRef, approver, exp: 5 menit}`.
 2. Payload void/refund menyertakan grant. `sync/transactions` menolak per-penjualan (masuk karantina, bukan menahan antrean) perpindahan ke CANCELLED atau refund tanpa grant valid bila pelaku tidak punya izin `void_order`/`refund`. Penyetuju dan alasan disimpan di `pos.transactions` dan `internal.audit_logs`.
 3. Hash PIN berhenti dikirim ke perangkat. Ganti user di kasir memakai endpoint yang sama (`action: SWITCH_USER`). PIN dinaikkan ke 6 digit.
+4. PIN owner disimpan di server (terikat ke akun Auth pemilik, bukan record `users` yang bisa ditulis perangkat), sehingga berlaku sama di semua perangkat. Owner wajib membuat PIN pada override pertama; `1234` tidak lagi menjadi bawaan.
 
 ### Perlu diputuskan
 - **Aksi mana yang butuh persetujuan?** Kandidat: void, refund, diskon di atas X%, ubah harga, buka laci kas tanpa transaksi.
 - **Kebijakan offline**: (a) void/refund wajib online (rekomendasi, paling aman), atau (b) boleh offline tetapi ditandai `UNVERIFIED_APPROVAL` dan wajib ditinjau owner di laporan.
 - **Ganti user saat offline**: apakah kasir boleh berganti user tanpa internet? Bila ya, perlu PIN lokal terpisah yang tidak bisa menyetujui aksi sensitif.
+- **PIN bawaan owner**: boleh langsung diblokir untuk override sebelum fitur server selesai? Rekomendasi: ya. Owner yang masih memakai `1234` diminta membuat PIN baru saat override pertama. Dampaknya satu langkah tambahan bagi toko yang belum pernah mengganti PIN.
 
 ---
 
