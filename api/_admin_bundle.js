@@ -3658,6 +3658,9 @@ function parseReportFilter(query) {
   if (paymentMethod && paymentMethod !== "ALL" && !PAYMENT_METHODS.has(paymentMethod)) throw new ReportRequestError(400, "INVALID_PAYMENT_METHOD");
   const search = stringQuery(query.search, "SEARCH");
   if (search && search.length > 120) throw new ReportRequestError(400, "SEARCH_TOO_LONG");
+  const trendRaw = stringQuery(query.trend, "TREND");
+  const trendDays = trendRaw === null ? null : Number(trendRaw);
+  if (trendDays !== null && (!Number.isInteger(trendDays) || trendDays < 2 || trendDays > 31)) throw new ReportRequestError(400, "INVALID_TREND");
   return {
     outletId,
     merchantId,
@@ -3668,7 +3671,8 @@ function parseReportFilter(query) {
     timezone,
     timezoneExplicit: Boolean(query.timezone),
     paymentMethod: paymentMethod === "ALL" ? null : paymentMethod,
-    search
+    search,
+    trendDays
   };
 }
 async function scopeFor2(db, subject, filter) {
@@ -3796,6 +3800,11 @@ function localDate(timezone) {
   const part = (type) => parts.find((p) => p.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
+function shiftDate(date, days) {
+  const d = /* @__PURE__ */ new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 function cashMovement(row) {
   return {
     id: row.client_event_id || row.id,
@@ -3833,8 +3842,16 @@ async function serverReportSummary(db, subject, filter) {
         FROM pos.transaction_refund_items ri JOIN pos.transaction_refunds rf ON rf.id=ri.refund_id
         WHERE ri.transaction_item_id=i.id AND rf.tenant_id=$1 AND rf.merchant_id=$2) ri ON TRUE
       GROUP BY i.product_name ORDER BY qty DESC,i.product_name LIMIT 5`, params);
-    const daily = await c.query(`${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
-      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`, params);
+    const dailySql = `${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
+      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`;
+    const daily = await c.query(dailySql, params);
+    const trend = filter.trendDays ? await c.query(dailySql, parameters(scope, {
+      ...filter,
+      paymentMethod: null,
+      search: null,
+      from: shiftDate(today, -(filter.trendDays - 1)),
+      to: today
+    })) : null;
     const hourly = await c.query(`${revenueCTE} SELECT extract(hour FROM created_at AT TIME ZONE $6)::int AS hour,
       sum(total_amount) AS revenue FROM revenue GROUP BY 1 ORDER BY 1`, params);
     const statuses = await c.query(`SELECT x.order_status,count(*)::int AS n FROM pos.transactions x
@@ -3907,6 +3924,7 @@ async function serverReportSummary(db, subject, filter) {
         Omset: numeric(hourly.rows.find((row) => numeric(row.hour) === hour)?.revenue)
       })),
       dailySales: daily.rows.map((row) => ({ date: row.date, revenue: numeric(row.revenue), orders: numeric(row.orders), profit: numeric(row.profit) })),
+      ...trend ? { trendDailySales: trend.rows.map((row) => ({ date: row.date, revenue: numeric(row.revenue), orders: numeric(row.orders), profit: numeric(row.profit) })) } : {},
       statusCounts: Object.fromEntries(statuses.rows.map((row) => [row.order_status, numeric(row.n)])),
       cashSummary: cash,
       cashMovements: movements.rows.slice(0, 1e3).map(cashMovement),

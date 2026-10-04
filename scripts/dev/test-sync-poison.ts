@@ -123,7 +123,14 @@ try {
   const after = await (await fetch(base + `/api/v1/sync/state?paged=1&sector=FNB&businessId=${owner}_FNB&knownVersion=${known}`, { headers: auth })).json();
   assert.notEqual(after.version, known, 'Even a repair UPDATE without a revision bump changes the version');
 
-  // 8. Receipt numbers carry 32 bits of entropy.
+  // 8. One dashboard request carries "today" plus the trailing 7-day trend.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+  const dash = await (await fetch(base + `/api/v1/reports/summary?outletId=${outlet}&from=${today}&to=${today}&trend=7`, { headers: auth })).json();
+  assert.equal(dash.ok, true, JSON.stringify(dash));
+  assert.ok(Array.isArray(dash.trendDailySales) && dash.trendDailySales.some((d: any) => d.date === today && d.orders === dash.financialSummary.totalOrders));
+  assert.equal((await fetch(base + `/api/v1/reports/summary?outletId=${outlet}&trend=40`, { headers: auth })).status, 400);
+
+  // 9. Receipt numbers carry 32 bits of entropy.
   assert.match(newDocumentNumber('INV', new Date('2026-10-04T00:00:00Z')), /^INV-20261004-[0-9A-F]{8}$/);
-  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, windowed history and paged state snapshots with trigger versions, 32-bit receipt numbers');
+  console.log('PASS: per-sale accept/reject, quarantined edits, renumbered receipt collisions, replay-stable outcomes, client quarantine and requeue, windowed history and paged state snapshots with trigger versions, single-request dashboard trend, 32-bit receipt numbers');
 } finally { server.close(); await pg.close(); }

@@ -81,9 +81,9 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [timeFilter, setTimeFilter] = useState<'TODAY' | '7DAYS' | '30DAYS'>('TODAY');
 
+  // One summary request: the selected period plus the trailing 7-day chart (trend=7).
   const report=useServerReport({outletId:settings.activeBranchId,sector:activeSector,
-    from:calendarDate('Asia/Jakarta',timeFilter==='7DAYS'?-6:timeFilter==='30DAYS'?-29:0),to:calendarDate()});
-  const trend=useServerReport({outletId:settings.activeBranchId,sector:activeSector,from:calendarDate('Asia/Jakarta',-6),to:calendarDate()},false);
+    from:calendarDate('Asia/Jakarta',timeFilter==='7DAYS'?-6:timeFilter==='30DAYS'?-29:0),to:calendarDate(),trend:'7'});
   const orders=report.transactions;
   const financialMetrics=report.summary?.overview;
 
@@ -103,7 +103,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
     [tables]
   );
 
-  const last7DaysData=(trend.summary?.dailySales||[]).map(row=>({label:row.date,date:row.date,sales:row.revenue,profit:row.profit,count:row.orders}));
+  const last7DaysData=(report.summary?.trendDailySales||[]).map(row=>({label:row.date,date:row.date,sales:row.revenue,profit:row.profit,count:row.orders}));
 
   const maxDailySales = useMemo(
     () => Math.max(...last7DaysData.map((d) => d.sales), 100000),
@@ -134,7 +134,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
 
   if(!financialMetrics)return <div className="p-8 space-y-4" role={report.error?'alert':'status'}>
     <h1 className="text-2xl font-black">Ringkasan Usaha</h1><p>{report.error||'Memuat data cloud…'}</p>
-    <button onClick={forceSync} className="rounded-xl bg-amber-400 p-3 font-bold">Muat ulang</button>
+    <button onClick={report.retry} className="rounded-xl bg-amber-400 p-3 font-bold">Muat ulang</button>
   </div>;
   return (
     <div className="nh-overview flex-1 min-w-0 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">

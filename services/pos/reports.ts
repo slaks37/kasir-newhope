@@ -27,6 +27,8 @@ interface ReportFilter {
   timezoneExplicit?: boolean;
   paymentMethod: string | null;
   search: string | null;
+  /** Optional trailing N-day daily series (2–31) returned alongside the period. */
+  trendDays?: number | null;
 }
 
 function stringQuery(value: unknown, name: string): string | null {
@@ -67,8 +69,11 @@ export function parseReportFilter(query: Request['query']): ReportFilter {
   if (paymentMethod && paymentMethod !== 'ALL' && !PAYMENT_METHODS.has(paymentMethod)) throw new ReportRequestError(400, 'INVALID_PAYMENT_METHOD');
   const search = stringQuery(query.search, 'SEARCH');
   if (search && search.length > 120) throw new ReportRequestError(400, 'SEARCH_TOO_LONG');
+  const trendRaw = stringQuery(query.trend, 'TREND');
+  const trendDays = trendRaw === null ? null : Number(trendRaw);
+  if (trendDays !== null && (!Number.isInteger(trendDays) || trendDays < 2 || trendDays > 31)) throw new ReportRequestError(400, 'INVALID_TREND');
   return { outletId, merchantId, tenantId, sector, from, to, timezone, timezoneExplicit:Boolean(query.timezone),
-    paymentMethod: paymentMethod === 'ALL' ? null : paymentMethod, search };
+    paymentMethod: paymentMethod === 'ALL' ? null : paymentMethod, search, trendDays };
 }
 
 async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<ReportScope> {
@@ -180,6 +185,10 @@ function localDate(timezone: string): string {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
+function shiftDate(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10);
+}
+
 function cashMovement(row: any): CashMovement {
   return { id:row.client_event_id || row.id, type:numeric(row.amount) < 0 ? 'CASH_OUT' : 'CASH_IN',
     category:row.category || (row.event_type==='OPENING'?'MODAL_AWAL':numeric(row.amount)<0?'PENGELUARAN_LAIN':'PENDAPATAN_LAIN'),
@@ -213,8 +222,12 @@ export async function serverReportSummary(db: Db, subject: string, filter: Repor
         FROM pos.transaction_refund_items ri JOIN pos.transaction_refunds rf ON rf.id=ri.refund_id
         WHERE ri.transaction_item_id=i.id AND rf.tenant_id=$1 AND rf.merchant_id=$2) ri ON TRUE
       GROUP BY i.product_name ORDER BY qty DESC,i.product_name LIMIT 5`, params);
-    const daily = await c.query(`${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
-      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`, params);
+    const dailySql = `${revenueCTE} SELECT to_char(created_at AT TIME ZONE $6,'YYYY-MM-DD') AS date,
+      sum(total_amount) AS revenue,SUM(total_amount-net_tax_amount-cogs_amount) AS profit,count(*)::int AS orders FROM revenue GROUP BY 1 ORDER BY 1`;
+    const daily = await c.query(dailySql, params);
+    // One request serves a dashboard that shows "today" plus a trailing trend chart.
+    const trend = filter.trendDays ? await c.query(dailySql, parameters(scope, { ...filter, paymentMethod: null, search: null,
+      from: shiftDate(today, -(filter.trendDays - 1)), to: today })) : null;
     const hourly = await c.query(`${revenueCTE} SELECT extract(hour FROM created_at AT TIME ZONE $6)::int AS hour,
       sum(total_amount) AS revenue FROM revenue GROUP BY 1 ORDER BY 1`, params);
     const statuses = await c.query(`SELECT x.order_status,count(*)::int AS n FROM pos.transactions x
@@ -253,6 +266,7 @@ export async function serverReportSummary(db: Db, subject: string, filter: Repor
       areaChartData:Array.from({length:24},(_,hour)=>({time:`${String(hour).padStart(2,'0')}:00`,
         Omset:numeric(hourly.rows.find(row=>numeric(row.hour)===hour)?.revenue)})),
       dailySales:daily.rows.map(row=>({date:row.date,revenue:numeric(row.revenue),orders:numeric(row.orders),profit:numeric(row.profit)})),
+      ...(trend?{trendDailySales:trend.rows.map(row=>({date:row.date,revenue:numeric(row.revenue),orders:numeric(row.orders),profit:numeric(row.profit)}))}:{}),
       statusCounts:Object.fromEntries(statuses.rows.map(row=>[row.order_status,numeric(row.n)])),
       cashSummary:cash,cashMovements:movements.rows.slice(0,1000).map(cashMovement),cashMovementsTruncated:movements.rows.length>1000 };
   });
