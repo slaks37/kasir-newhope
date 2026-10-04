@@ -6,6 +6,7 @@ import {
   updateBlogPost,
   deleteBlogPost,
 } from '../../lib/blogStorage';
+import { BLOG_CATEGORIES } from '../../lib/blog/categories';
 import { api } from '../api';
 import { newId } from '../../lib/ids';
 import {
@@ -32,15 +33,7 @@ import {
 } from 'lucide-react';
 import { notify } from '../../lib/ui/notify';
 
-const CATEGORIES: BlogCategory[] = [
-  'Tips Bisnis & Strategi',
-  'Panduan Kasir & POS',
-  'FinTech & QRIS',
-  'Kuliner & F&B',
-  'Laundry & Jasa',
-  'Ritel & Minimarket',
-  'Kisah Sukses UMKM',
-];
+const CATEGORIES: BlogCategory[] = [...BLOG_CATEGORIES];
 
 export const BlogManagement: React.FC = () => {
   const [posts, setPosts] = useState<BlogPost[]>([]);
@@ -104,7 +97,7 @@ export const BlogManagement: React.FC = () => {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)+/g, '');
       setSlug(generatedSlug);
-      setMetaTitle(`${newTitle} | Blog Harapan Baru`);
+      setMetaTitle(newTitle);
     }
   };
 
@@ -202,10 +195,10 @@ export const BlogManagement: React.FC = () => {
       tags: tagsArray.length > 0 ? tagsArray : ['UMKM', 'New Hope POS'],
       mediaEmbeds,
       seo: {
-        metaTitle: metaTitle.trim() || `${title} | Blog Harapan Baru`,
+        metaTitle: metaTitle.trim() || title,
         metaDescription: metaDescription.trim() || excerpt.trim(),
         metaKeywords: keywordsArray.length > 0 ? keywordsArray : tagsArray,
-        canonicalUrl: `https://newhopepos.com/#blog/${slug.trim()}`,
+        canonicalUrl: `${window.location.origin}/blog/${slug.trim()}`,
         ogImage: coverImage.trim(),
       },
       isPublished,
@@ -258,7 +251,7 @@ export const BlogManagement: React.FC = () => {
             <BookOpen className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-slate-900">CMS Blog Harapan Baru</h1>
+            <h1 className="text-xl font-black text-slate-900">CMS Blog New Hope POS</h1>
             <p className="text-xs text-slate-500">
               Kelola artikel edukasi, panduan kasir, optimasi SEO Google, dan sematan media.
             </p>
@@ -267,7 +260,7 @@ export const BlogManagement: React.FC = () => {
 
         <div className="flex items-center space-x-3">
           <a
-            href="/#blog"
+            href="/blog"
             target="_blank"
             rel="noreferrer"
             className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer"
