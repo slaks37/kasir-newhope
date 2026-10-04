@@ -441,8 +441,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <a href="#faq" onClick={navClose}>
                   Pertanyaan umum
                 </a>
-                <a href="#blog" onClick={navClose}>
-                  Blog Harapan Baru
+                <a href="/blog" onClick={navClose}>
+                  Blog New Hope POS
                 </a>
                 <a href="#hardware" onClick={navClose}>
                   Perangkat kasir
@@ -1234,14 +1234,14 @@ export const HomePage: React.FC<HomePageProps> = ({
             <a href={ONBOARDING || '#faq'} target={ONBOARDING ? '_blank' : undefined} rel="noreferrer">
               {ONBOARDING ? 'Bantuan input produk' : 'Panduan bantuan'}
             </a>
-            <a href="#blog">Blog Harapan Baru</a>
-            <a href="#blog/cara-membuka-kafe-modal-10-juta-sukses">
+            <a href="/blog">Blog New Hope POS</a>
+            <a href="/blog/cara-membuka-kafe-modal-10-juta-sukses">
               Panduan membuka kafe
             </a>
-            <a href="#blog/rahasia-sukses-bisnis-laundry-kiloan-omset-puluhan-juta">
+            <a href="/blog/rahasia-sukses-bisnis-laundry-kiloan-omset-puluhan-juta">
               Tips usaha laundry
             </a>
-            <a href="#blog/revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin">
+            <a href="/blog/revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin">
               Panduan QRIS
             </a>
           </div>

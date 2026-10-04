@@ -35,6 +35,30 @@
       "destination": "/api/mcp/metadata"
     },
     {
+      "source": "/blog",
+      "destination": "/api/admin/[...slug]?__path=/blog"
+    },
+    {
+      "source": "/blog/(.*)",
+      "destination": "/api/admin/[...slug]?__path=/blog/$1"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/admin/[...slug]?__path=/sitemap.xml"
+    },
+    {
+      "source": "/rss.xml",
+      "destination": "/api/admin/[...slug]?__path=/rss.xml"
+    },
+    {
+      "source": "/api/v1/blog-automation/(.*)",
+      "destination": "/api/admin/[...slug]?__path=/api/v1/blog-automation/$1"
+    },
+    {
+      "source": "/api/v1/blog-automation",
+      "destination": "/api/admin/[...slug]?__path=/api/v1/blog-automation"
+    },
+    {
       "source": "/api/v1/blog/(.*)",
       "destination": "/api/admin/[...slug]?__path=/api/v1/blog/$1"
     },
