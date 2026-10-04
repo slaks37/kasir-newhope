@@ -107,6 +107,7 @@ import {
   INITIAL_COMMISSION_RULES,
 } from '../data/initialData';
 import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
+import { remainingQuantityByProduct, stockAfterSale } from '../lib/pos/stock';
 import { newId } from '../lib/ids';
 import { migrateLegacyFinancialData, type LegacyMigrationResult } from '../lib/sync/legacyMigration';
 import { enqueueCashCommand, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
@@ -1830,7 +1831,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         type: 'SALE',
         quantity: totalQtySold,
         previousStock: p.stock,
-        newStock: Math.max(0, p.stock - totalQtySold),
+        newStock: stockAfterSale(p.stock, totalQtySold),
         reason: `Penjualan ${invoiceNum}`,
         timestamp: logTimestamp,
         user: shift.cashierName,
@@ -1843,7 +1844,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const stockItem = stockItems.find((s) => s.id === p.linkedStockItemId);
         if (stockItem) {
           const alreadyDeducted = rawDeductions.get(stockItem.id) || 0;
-          const previousStock = Math.max(0, stockItem.stock - alreadyDeducted);
+          const previousStock = stockItem.stock - alreadyDeducted;
           rawDeductions.set(stockItem.id, alreadyDeducted + rawDeductQty);
 
           newLogs.push({
@@ -1853,7 +1854,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             type: 'SALE',
             quantity: rawDeductQty,
             previousStock,
-            newStock: Math.max(0, previousStock - rawDeductQty),
+            newStock: stockAfterSale(previousStock, rawDeductQty),
             reason: `Pengurangan Bahan Baku Trx ${invoiceNum} (${p.name})`,
             timestamp: logTimestamp,
             user: shift.cashierName,
@@ -1869,7 +1870,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const stockItem = stockItems.find((s) => s.id === ing.ingredientId);
           if (stockItem) {
             const alreadyDeducted = rawDeductions.get(stockItem.id) || 0;
-            const previousStock = Math.max(0, stockItem.stock - alreadyDeducted);
+            const previousStock = stockItem.stock - alreadyDeducted;
             rawDeductions.set(stockItem.id, alreadyDeducted + rawDeductQty);
 
             newLogs.push({
@@ -1879,7 +1880,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               type: 'SALE',
               quantity: rawDeductQty,
               previousStock,
-              newStock: Math.max(0, previousStock - rawDeductQty),
+              newStock: stockAfterSale(previousStock, rawDeductQty),
               reason: `Pengurangan Resep BOM Trx ${invoiceNum} (${p.name}: ${ing.quantity} ${ing.unit} x ${totalQtySold})`,
               timestamp: logTimestamp,
               user: shift.cashierName,
@@ -1893,7 +1894,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts((prevProducts) =>
       prevProducts.map((p) => {
         const totalQtySold = soldQtyByProduct.get(p.id);
-        return totalQtySold ? { ...p, stock: Math.max(0, p.stock - totalQtySold) } : p;
+        return totalQtySold ? { ...p, stock: stockAfterSale(p.stock, totalQtySold) } : p;
       })
     );
 
@@ -1902,7 +1903,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         prevStockItems.map((s) => {
           const deduct = rawDeductions.get(s.id);
           return deduct
-            ? { ...s, stock: Math.max(0, s.stock - deduct), lastUpdated: logTimestamp }
+            ? { ...s, stock: stockAfterSale(s.stock, deduct), lastUpdated: logTimestamp }
             : s;
         })
       );
@@ -2001,14 +2002,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSyncStatus(getSyncStatus(tenant.businessId));
     void runSync(syncTarget);
 
-    // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log
-    const returnedQtyByProduct = new Map<string, number>();
-    targetOrder.items.forEach((item) => {
-      returnedQtyByProduct.set(
-        item.productId,
-        (returnedQtyByProduct.get(item.productId) || 0) + item.quantity
-      );
-    });
+    // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log.
+    // Only what the customer still holds: items already refunded were restored then.
+    const returnedQtyByProduct = remainingQuantityByProduct(targetOrder);
 
     const refundTimestamp = new Date().toISOString();
     const refundLogs: InventoryLog[] = [];

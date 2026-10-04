@@ -162,7 +162,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Invoice: <span className="font-mono font-bold text-slate-700">{order.id}</span> •{' '}
+                Invoice: <span className="font-mono font-bold text-slate-700">{order.invoiceNumber || order.id}</span> •{' '}
                 {order.customer?.name ? `${t('pos.customerSelect')}: ${order.customer.name}` : t('pos.walkInCustomer')}
               </p>
             </div>
@@ -222,7 +222,8 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
                               </span>
                             )}
                             <span className="font-mono font-bold text-slate-700">
-                              @{formatRupiah(item.unitPrice)}
+                              @{formatRupiah(item.quantity ? item.totalPrice / item.quantity : item.unitPrice)}
+                              {item.discountAmount > 0 && <span className="ml-1 text-slate-400 line-through">{formatRupiah(item.unitPrice)}</span>}
                             </span>
                           </div>
                         </div>
@@ -236,6 +237,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
                           <div className="flex items-center space-x-2 shrink-0">
                             <button
                               type="button"
+                              aria-label={`Kurangi jumlah retur ${item.name}`}
                               onClick={() => handleQtyChange(item.id, -1, maxRefundable)}
                               disabled={selectedQty <= 0}
                               className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold"
@@ -249,6 +251,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
 
                             <button
                               type="button"
+                              aria-label={`Tambah jumlah retur ${item.name}`}
                               onClick={() => handleQtyChange(item.id, 1, maxRefundable)}
                               disabled={selectedQty >= maxRefundable}
                               className="w-7 h-7 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-950 font-bold"

@@ -581,11 +581,8 @@ async function subscriptionStatus(db, tenantId) {
   const sub = serializeSubscription(s);
   const access = subscriptionAccess(sub);
   const tenant2 = await db.query("SELECT is_active FROM internal.tenants WHERE id=$1", [tenantId]);
-  if (!tenant2.rows[0]?.is_active) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
-  if (access.status !== s.status && access.status !== "FREE") {
-    await db.query("UPDATE billing.subscriptions SET status=$1, updated_at=now() WHERE id=$2", [access.status, s.id]).catch(() => {
-    });
-  }
+  if (!tenant2.rows[0]) throw new BillingError(404, "TENANT_NOT_FOUND");
+  if (tenant2.rows[0].is_active === false) Object.assign(access, { accessMode: "RESTRICTED", status: "EXPIRED" });
   const invoices = await db.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100", [tenantId]);
   const startMs = Date.parse(sub.currentPeriodStart);
   const endMs = Date.parse(sub.currentPeriodEnd);

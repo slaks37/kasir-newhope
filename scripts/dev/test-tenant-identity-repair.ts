@@ -56,7 +56,7 @@ await pg.exec('DROP INDEX internal.uq_tenant_canonical_owner');
 const guarded=await fixture(false);
 await pg.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,revision) VALUES($1,$1,'RETAIL','tables','valuable-local', '{}'::jsonb,1)",[guarded.old]);
 await assert.rejects(()=>pg.transaction(async tx=>{await tx.exec(repair);}),/REQUIRES_MANUAL_REVIEW/);
-assert.equal((await pg.query('SELECT merged_into FROM internal.tenants WHERE id=$1',[guarded.old])).rows[0].merged_into,null);
+assert.equal((await pg.query<any>('SELECT merged_into FROM internal.tenants WHERE id=$1',[guarded.old])).rows[0].merged_into,null);
 assert.equal((await pg.query('SELECT * FROM pos.shared_state_records WHERE tenant_id=$1',[guarded.old])).rows.length,1);
 await pg.query('DELETE FROM pos.shared_state_records WHERE tenant_id=$1',[guarded.old]);
 await pg.query("INSERT INTO pos.users(id,tenant_id,name,username,pin) VALUES($1,$2,'Owner','owner','original')",[guarded.owner,guarded.old]);

@@ -408,7 +408,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
                     <div className="flex items-center space-x-2.5">
                       <span className="font-mono font-extrabold text-slate-900 text-sm bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-lg">
-                        {order.id}
+                        {order.invoiceNumber || order.id}
                       </span>
 
                       <span className="text-xs text-slate-500 font-mono flex items-center space-x-1">
@@ -629,7 +629,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
                 <h4 className="font-extrabold text-base text-rose-900">
                   {t('recentTransactions.confirmVoid')}
                 </h4>
-                <p className="text-xs text-rose-700 font-mono font-bold">{voidingOrder.id}</p>
+                <p className="text-xs text-rose-700 font-mono font-bold">{voidingOrder.invoiceNumber || voidingOrder.id}</p>
               </div>
             </div>
 

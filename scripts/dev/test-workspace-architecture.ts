@@ -92,8 +92,8 @@ await pause(280);assert.equal(runs,1,'An in-flight resource cannot overlap after
 release();await pause(15);
 window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('online'));
 await pause(280);assert.equal(runs,2,'A focus/visibility/online burst produces one refresh');
-release();await pause(15);document.hidden=true;window.dispatchEvent(new Event('focus'));await pause(280);
-assert.equal(runs,2,'Hidden read jobs stay paused');unsubscribe();document.hidden=false;
+release();await pause(15);(document as any).hidden=true;window.dispatchEvent(new Event('focus'));await pause(280);
+assert.equal(runs,2,'Hidden read jobs stay paused');unsubscribe();(document as any).hidden=false;
 const changes=new RefreshCoordinator();let sales=0,outlets=0,finishSales:()=>void=()=>{};
 const offSales=changes.register('sales',{interval:100000,events:['financial-updated'],run:async()=>{sales++;await new Promise<void>(resolve=>{finishSales=resolve;});}});
 const offOutlets=changes.register('outlets',{interval:100000,events:['outlets-updated'],run:async()=>{outlets++;}});

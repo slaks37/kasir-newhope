@@ -27,7 +27,7 @@ const wrap=(runner:any):Db=>({query:async(sql,params)=>{
 const db=wrap(pg),now=Math.floor(Date.now()/1000);
 const subjects={admin:randomUUID(),support:randomUUID(),growth:randomUUID(),merchant:randomUUID()};
 const owner=randomUUID(),client=randomUUID(),synthetic=randomUUID(),other=randomUUID();
-const verifiedOwners=new Set([owner]);
+const verifiedOwners=new Set<string>([owner]);
 const provider:ClientSupportProvider={get configured(){return configured;},async ownerEmail(subject){lookup.push(subject);await authGate;return unverified?null:verifiedOwners.has(subject)?'verified-owner@test.invalid':null;},async sendReset(email){if(rejectProvider)throw new Error('PRIVATE_PROVIDER_DETAIL');sent.push(email);}};
 const principals:Record<string,AuthPrincipal>={
   admin:{subject:subjects.admin,aal:'aal2',mfaVerifiedAt:now},

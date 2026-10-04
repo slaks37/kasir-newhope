@@ -18,7 +18,7 @@ Object.defineProperty(globalThis,'fetch',{value:async (_url:string,options?:{bod
   const body=JSON.parse(options.body),operation=body.operations[0];
   if(operation.baseRevision!==(record?.revision||0))return {ok:false,status:409,json:async()=>({ok:false,error:'STATE_CONFLICT',kind:operation.kind,recordId:operation.recordId})};
   record={revision:(record?.revision||0)+1,value:operation.value};
-  return {ok:true,json:async()=>({ok:true,versions:[{kind:operation.kind,recordId:operation.recordId,revision:record.revision}]})};
+  return {ok:true,json:async()=>({ok:true,versions:[{kind:operation.kind,recordId:operation.recordId,revision:record!.revision}]})};
 },configurable:true});
 
 let statusA:any,statusB:any;

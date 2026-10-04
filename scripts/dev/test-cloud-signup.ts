@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerCloudAccount } from '../../src/lib/auth/cloudSignup';
 
-const input = { email: 'test@example.invalid', password: 'test-only-password', fullName: 'Owner', storeName: 'Test', sector: 'FNB', redirectTo: 'https://example.invalid' };
+const input = { email: 'test@example.invalid', password: 'test-only-password', fullName: 'Owner', storeName: 'Test', sector: 'FNB', firstOutletName: 'Cabang Utama', secondOutletName: '', redirectTo: 'https://example.invalid' };
 let calls = 0;
 let response: any = { data: { user: { id: 'test' }, session: null }, error: null };
 const client: any = { auth: { signUp: async (args: any) => {
   calls++;
   assert.equal(args.email, input.email);
   assert.equal(args.options.emailRedirectTo, input.redirectTo);
-  assert.deepEqual(Object.keys(args.options.data).sort(), ['business_sector', 'full_name', 'store_name']);
+  assert.deepEqual(Object.keys(args.options.data).sort(), ['business_sector', 'first_outlet_name', 'full_name', 'second_outlet_name', 'store_name']);
   return response;
 } } };
 assert.deepEqual(await registerCloudAccount(client, input), { error: null, session: null, requiresEmailConfirmation: true });

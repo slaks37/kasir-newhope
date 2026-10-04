@@ -31,7 +31,7 @@ const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => se
 const base = 'http://127.0.0.1:' + (server.address() as any).port;
 const sale = (id: string, invoice: string, total = 20000) => ({ clientTxnId: id, invoiceNumber: invoice, cashierRef: owner, cashierName: 'Owner', subtotal: total, totalAmount: total,
   paymentMethod: 'CASH', paymentStatus: 'PAID', createdAt: new Date().toISOString(), items: [{ clientItemId: 'l1', productRef: 'p1', productName: 'Kopi', unitPrice: total, unitCost: 5000, quantity: 1, totalPrice: total }] });
-const send = async (transactions: unknown[], idempotencyKey = randomUUID()) => {
+const send = async (transactions: unknown[], idempotencyKey: string = randomUUID()) => {
   const response = await fetch(base + '/api/v1/sync/transactions', { method: 'POST', headers: { authorization: 'Bearer owner', 'content-type': 'application/json' },
     body: JSON.stringify({ idempotencyKey, businessId: owner + '_FNB', sector: 'FNB', outletId: outlet, storeName: 'Poison fixture', transactions }) });
   return { status: response.status, data: await response.json() };

@@ -42,7 +42,7 @@ Object.defineProperty(globalThis,'fetch',{value:async(_url:string,options?:any)=
   return {ok:true,json:async()=>({ok:true,ready:true,business:{businessId,sector:'LAUNDRY'},kinds:['products'],records:[{scope:'LAUNDRY',kind:'products',recordId:'same-product',revision,deleted:false,value:{id:'same-product',name:'Laundry product',price,costPrice:10}}]})};
 },configurable:true});
 const make=()=>{
-  const state=new SharedStateSync(owner,'LAUNDRY',value=>{rows=value;state.prime('products',value.filter(r=>!r.deleted).map(r=>r.value));},value=>{status=value;},identity);
+  const state=new SharedStateSync(owner,'LAUNDRY',value=>{rows=value;state.prime('products',value.filter(r=>!r.deleted).map(r=>r.value) as object[]);},value=>{status=value;},identity);
   state.setKinds(['products']);return state;
 };
 const first=make();await first.refresh(true);assert.equal(status.ready,true);first.stop();
