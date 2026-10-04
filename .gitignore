@@ -22,3 +22,6 @@ scratch-*
 .claude/settings.local.json
 
 .vercel
+
+# Secret JWT auth lokal (services/dev-auth). Khusus pengembangan.
+.dev-auth-secret

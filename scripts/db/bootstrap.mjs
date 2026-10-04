@@ -24,11 +24,12 @@ const ROOT = process.cwd();
 const MIGRATION_DIR = join(ROOT, 'migrations');
 
 /** Base schemas first, then numbered migrations in order. */
-const ORDER = ['schema_hybrid_pos.sql', 'schema.sql'];
+// Same order as services/db-server/migrate.ts: compat shim, then base schemas.
+const ORDER = ['migrations/0001_compat.sql', 'schema.sql', 'schema_hybrid_pos.sql'];
 
 function migrationFiles() {
   const numbered = readdirSync(MIGRATION_DIR)
-    .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+    .filter((f) => /^\d{4}_.*\.sql$/.test(f) && f !== '0001_compat.sql')
     .sort();
   return [
     ...ORDER.map((f) => ({ name: f, path: join(ROOT, f) })),

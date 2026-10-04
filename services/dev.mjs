@@ -12,10 +12,26 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import process from 'node:process';
+import 'dotenv/config';
+
+/*
+ * Tanpa proyek Supabase, jalankan Supabase Auth lokal (services/dev-auth) agar
+ * login, onboarding, laporan dan keuangan bisa dipakai ujung ke ujung — dengan
+ * jalur verifikasi token yang sama seperti produksi. Token gateway dibuat acak
+ * per sesi dev bila belum diisi.
+ */
+const AUTH_LOKAL = process.env.NODE_ENV !== 'production' && !process.env.SUPABASE_URL && !process.env.VITE_SUPABASE_URL;
+if (AUTH_LOKAL) {
+  const url = `http://127.0.0.1:${process.env.DEV_AUTH_PORT || 54321}`;
+  Object.assign(process.env, { SUPABASE_URL: url, VITE_SUPABASE_URL: url, SUPABASE_ANON_KEY: 'dev-local-anon', VITE_SUPABASE_ANON_KEY: 'dev-local-anon' });
+}
+if (!process.env.INTERNAL_GATEWAY_TOKEN) process.env.INTERNAL_GATEWAY_TOKEN = randomBytes(24).toString('hex');
 
 const WARNA = {
   'db-server': '\x1b[35m',
+  'dev-auth': '\x1b[93m',
   migrate: '\x1b[90m',
   pos: '\x1b[36m',
   ai: '\x1b[33m',
@@ -145,6 +161,10 @@ async function main() {
     return;
   }
 
+  if (AUTH_LOKAL) {
+    jalankan('dev-auth', ['services/dev-auth/index.ts']);
+  }
+
   console.log('[dev] 3/3 service…');
   jalankan('pos', ['services/pos/index.ts']);
   jalankan('ai', ['services/ai/index.ts']);
@@ -167,7 +187,8 @@ async function main() {
   }
 
   jalankan('gateway', ['services/gateway/index.ts']);
-  console.log('\n[dev] semua siap → http://localhost:3000 (kasir) · /admin (internal)\n');
+  console.log('\n[dev] semua siap → http://localhost:3000 (kasir) · /admin (internal)');
+  if (AUTH_LOKAL) console.log('[dev] Auth lokal aktif: daftar akun baru di /register, atau `npm run db:seed` untuk akun demo.\n');
 }
 
 main().catch((err) => {
