@@ -37,6 +37,7 @@ export interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  restoreError: boolean;
   /** True kalau Supabase env vars sudah terisi. */
   configured: boolean;
   signInWithGoogle: () => Promise<{ error: AuthError | null }>;
@@ -120,6 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [restoreError,setRestoreError]=useState(false);
   React.useLayoutEffect(()=>{
     setReadScope(user?.id||'anonymous');
     if(user?.id)try{claimCheckoutIntent(user.id);}catch{/* Form hints never block authentication. */}
@@ -147,8 +149,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>receive(session));
         return()=>subscription.unsubscribe();
       },
-      session=>{setSession(session);setUser(session?.user??null);setLoading(false);},
-      error=>{console.warn('[auth] Session restoration failed:',error);setLoading(false);}
+      session=>{setSession(session);setUser(session?.user??null);setRestoreError(false);setLoading(false);},
+      error=>{console.warn('[auth] Session restoration failed:',error);setRestoreError(true);setLoading(false);}
     );
   }, []);
 
@@ -299,6 +301,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         session,
         loading,
+        restoreError,
         configured: isSupabaseConfigured,
         signInWithGoogle,
         signInWithEmail,

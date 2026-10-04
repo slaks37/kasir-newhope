@@ -2,17 +2,19 @@
 
 Sistem kasir multi-sektor untuk **Kafe/Resto, Laundry, Ritel, Carwash, dan Barbershop**, dengan AI Copilot, langganan SaaS (DOKU), dan konsol internal untuk penyedia SaaS.
 
-Kasir bekerja **offline-first**: penjualan disimpan dulu di perangkat lalu disinkronkan ke PostgreSQL. Laporan, admin, dan AI membaca angka yang sama dari ledger server.
+**Sumber kebenaran keuangan adalah PostgreSQL.** Kasir menyimpan penjualan ke durable outbox perangkat sebelum pengiriman otomatis agar gangguan jaringan tidak menghilangkan transaksi. Data pending belum menjadi transaksi terkonfirmasi server. Laporan, admin, dan analisis keuangan server membaca ledger yang sama, bukan menjumlahkan snapshot order lokal.
 
 ---
 
 ## Menjalankan secara lokal
 
 ```bash
-npm install
+npm ci
 npm run dev        # database + migrasi + auth lokal + 5 service
 npm run db:seed    # (terminal kedua) 6 merchant demo, ±3.500 transaksi
 ```
+
+Gunakan database pengembangan khusus. Jangan menjalankan seed/reset atau bootstrap demo terhadap database pelanggan; periksa `DATABASE_URL` sebelum menjalankan perintah database.
 
 Buka `http://localhost:3000` (kasir) dan `http://localhost:3000/admin` (konsol internal).
 
@@ -40,7 +42,7 @@ gateway :3000  ──┬─ pos        :3101  skema pos       transaksi, katalog
 
 Gateway memverifikasi token Supabase (`GET /auth/v1/user`) lalu meneruskan principal ke service dengan `INTERNAL_GATEWAY_TOKEN`. Service menolak request yang tidak datang dari gateway. Header identitas dari browser selalu dibuang.
 
-**2. Vercel (produksi saat ini)**: SPA statis + fungsi serverless di `api/`. Setiap fungsi adalah *boundary* kecil (`src/server/serverlessBoundary.ts`) dengan urutan: allowlist path/method → autentikasi → buang header palsu → baru membuka koneksi DB. Request anonim tidak pernah menyentuh database.
+**2. Vercel (produksi saat ini)**: SPA statis + fungsi serverless di `api/`. Setiap fungsi adalah *boundary* kecil (`src/server/serverlessBoundary.ts`) dengan urutan: allowlist path/method → autentikasi → buang header palsu → baru membuka koneksi DB. Request anonim ke API privat ditolak sebelum membuka database. Rute publik yang diizinkan (misalnya blog), webhook bertanda tangan, dan cron memiliki kontrak autentikasi masing-masing.
 
 | Path | Entry | Isi |
 |---|---|---|
@@ -53,7 +55,7 @@ Gateway memverifikasi token Supabase (`GET /auth/v1/user`) lalu meneruskan princ
 Bundle `api/_*_bundle.js` di-commit karena Vercel menjalankannya apa adanya. Bangun ulang dengan `npm run build:api`; CI menolak PR yang bundle-nya basi.
 
 ### Batas data
-- Setiap service login sebagai perannya sendiri (`svc_pos`, `svc_ai`, …). Lintas domain hanya lewat view `contract.*`.
+- Role koneksi dan grant database menegakkan batas akses (`svc_pos`, `svc_ai`, …); opsi `schema` tidak mengganti role. Runtime yang berbagi `DATABASE_URL` juga berbagi hak akses role itu. Permukaan baca lintas domain menggunakan view `contract.*`.
 - Omzet di laporan, admin, dan AI berasal dari satu view kanonik: `contract.merchant_revenue`.
 - Hierarki **tenant (pemilik) → merchant (unit usaha) → outlet (cabang)**. Laporan selalu di-scope ke outlet milik pemilik yang login.
 - Batas waktu query: `SET LOCAL statement_timeout` per transaksi + default per peran service (8 dtk, `DB_STATEMENT_TIMEOUT_MS`), di bawah timeout gateway 10 dtk.
@@ -62,7 +64,7 @@ Bundle `api/_*_bundle.js` di-commit karena Vercel menjalankannya apa adanya. Ban
 - **Transaksi** (`POST /api/v1/sync/transactions`): batch idempoten. Setiap penjualan diterima atau ditolak **sendiri-sendiri**. Penjualan yang ditolak (total tidak cocok, diedit setelah terkirim, dst.) masuk **karantina** di Sync Center dan tidak menahan penjualan lain. Nomor struk yang bentrok antar perangkat dinomori ulang, tidak ditolak.
 - **State operasional** (`/api/v1/sync/state`): produk, kategori, pelanggan, meja, setting, dll. dengan revisi per record (konflik ditampilkan, tidak ditimpa diam-diam).
   - Snapshot dimuat per halaman 5.000 record (`?paged=1&cursor=…`). Bila data berubah di tengah pemuatan, klien mengulang dari awal, sehingga snapshot tidak pernah setengah lama setengah baru.
-  - Polling hanya membaca `pos.shared_state_versions`, yang dinaikkan trigger setiap kali record berubah. Tidak ada lagi pemindaian seluruh baris.
+  - Polling hanya membaca `pos.shared_state_versions`, yang dinaikkan trigger setiap kali record berubah. Jalur ini memerlukan migrasi versi state; kompatibilitas sebelum migrasi memakai fallback query lama.
   - Riwayat hanya dikirim jendela terbarunya (mis. 2.000 log stok terakhir, tiket dapur 3 hari, operasi order 120 hari; lihat `HISTORY_WINDOWS`). Baris lama tetap di database untuk audit dan laporan.
 - **Refresh saat offline**: build produksi memasang service worker (`src/pwa/serviceWorker.ts`) yang menyimpan `index.html` dan file `/assets/*` ber-hash. API, `/admin`, dan Supabase tidak pernah melewatinya. Data offline (antrean penjualan, snapshot toko) tetap disimpan aplikasi di `localStorage`.
 - **Kas & refund**: outbox keuangan terpisah dengan ledger yang tidak bisa diubah (koreksi = entri pembalik).
@@ -82,7 +84,8 @@ Bundle `api/_*_bundle.js` di-commit karena Vercel menjalankannya apa adanya. Ban
 | `npm run db:reset` | Hapus database lokal |
 | `npm run db:migrate` | Terapkan migrasi ke `DATABASE_URL` |
 | `npm run lint` | Hygiene + typecheck `src`, `services`, `api`, `scripts` |
-| `npm test` | Seluruh suite test (PostgreSQL in-process, tanpa jaringan) |
+| `npm test` | Suite lintas modul (PostgreSQL terisolasi, HTTP localhost/mocked; tanpa produksi) |
+| `npm run verify` | Lint, API bundles, tes runtime + seluruh suite, lalu build produksi |
 | `npm run build` | SPA + service + bundle Vercel |
 | `npm run build:api` | Hanya bundle Vercel `api/_*_bundle.js` |
 
@@ -90,9 +93,13 @@ Bundle `api/_*_bundle.js` di-commit karena Vercel menjalankannya apa adanya. Ban
 
 ## Menyambung ke PostgreSQL sungguhan (Supabase, RDS, Neon)
 
-Isi `DATABASE_URL` di `.env`, lalu `npm run db:migrate` dan `npm run dev`.
+Untuk database pengembangan khusus, isi `DATABASE_URL` di `.env`, lalu `npm run db:migrate` dan `npm run dev`. Untuk produksi, gunakan runbook, backup, staging dan pemeriksaan role runtime; jangan mengandalkan bootstrap lokal sebagai prosedur rilis.
 
 Untuk Supabase, pakai **Session pooler** (port 5432) untuk migrasi dan service jangka panjang. Fungsi Vercel otomatis memakai transaction pooler (6543), karena pengaturan sesi yang dipakai bersifat lokal per transaksi.
+
+Migrator menyimpan perubahan skema dan catatan migrasi dalam satu transaksi; wrapper `BEGIN`/`COMMIT` pada artefak maintenance yang didukung dilepas oleh runner. Runtime HTTP Vercel hanya mencoba satu probe koneksi, sedangkan orkestrator lokal tetap mempunyai backoff.
+
+TLS tanpa `PGSSLROOTCERT` masih menggunakan fallback tanpa verifikasi sertifikat. Konfigurasikan CA yang benar sebelum mengklaim koneksi memverifikasi identitas server.
 
 Instalasi Postgres non-Supabase didukung: `migrations/0001_compat.sql` menyediakan `uuidv7()` untuk Postgres < 18 dan membuat peran `anon`/`authenticated`/`service_role` (NOLOGIN, tanpa hak) yang dirujuk migrasi lanjutan.
 
@@ -123,11 +130,14 @@ Database di sini adalah PostgreSQL 18 sungguhan. **Belum diuji end-to-end di lin
 
 Salin `.env.example` menjadi `.env`. Setiap variabel dijelaskan di sana.
 
-AI Copilot: Layer aturan dan analitik berjalan tanpa kunci. Pertanyaan terbuka memakai `AGNES_API_KEY` (utama) atau `DEEPSEEK_API_KEY` (cadangan).
+AI Copilot: Layer aturan dan analitik tidak memerlukan kunci provider, tetapi tetap mengikuti entitlement paket; Free tidak membuka AI. Pertanyaan terbuka memakai `AGNES_API_KEY` (utama) atau `DEEPSEEK_API_KEY` (cadangan).
 
 ---
 
 ## Dokumentasi
+
+- [`docs/architecture/product-audit-2026-10-04.md`](docs/architecture/product-audit-2026-10-04.md): audit tambahan startup, query admin, migrasi atomik, pengujian dan batasan rilis
+- [`docs/online-first-progress.md`](docs/online-first-progress.md): otoritas data, antrean, dan batasan sinkronisasi
 
 - [`Dokumentasi.md`](Dokumentasi.md): arsitektur, hierarki data, alur kasir end-to-end
 - [`docs/operations/runbook-2026-10-stabilization.md`](docs/operations/runbook-2026-10-stabilization.md): langkah rilis perbaikan Oktober 2026 dan pemeriksaan pasca-rilis

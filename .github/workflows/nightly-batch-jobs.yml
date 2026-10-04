@@ -1,26 +1,29 @@
-name: Nightly Batch Analytics & Operations Jobs
+name: Manual batch diagnostics (dry run)
 
 # Penjadwal resmi adalah Vercel Cron (vercel.json), yang menghormati
 # CRON_ENABLED_JOBS. Workflow ini hanya untuk menjalankan ulang secara manual;
 # jadwal otomatis di sini dulu membuat job yang sama berjalan dua kali per hari
 # dan melewati allowlist job.
 on:
+  # Production scheduling: vercel.json + CRON_ENABLED_JOBS only.
   workflow_dispatch:
     inputs:
       job_name:
-        description: 'Pilih job untuk dijalankan secara manual'
+        description: 'Diagnosis tanpa menyimpan hasil atau mengirim email'
         required: true
-        default: 'all'
+        default: 'insights'
         type: choice
         options:
-          - all
           - insights
           - health
           - billing
 
+permissions:
+  contents: read
+
 jobs:
   run-batch-analytics:
-    name: Execute Batch Jobs
+    name: Diagnose Batch Jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -38,21 +41,20 @@ jobs:
         run: npm ci
 
       - name: Run Daily Insights Job
-        if: ${{ inputs.job_name == 'all' || inputs.job_name == 'insights' }}
+        if: inputs.job_name == 'insights'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npm run batch:insights
+        run: npm run batch:insights:dry
 
       - name: Run Merchant Health Job
-        if: ${{ inputs.job_name == 'all' || inputs.job_name == 'health' }}
+        if: inputs.job_name == 'health'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANALYTICS_DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL || secrets.DATABASE_URL }}
-        run: npm run batch:health
+        run: npm run batch:health:dry
 
       - name: Run Billing Reminders Job
-        if: ${{ inputs.job_name == 'all' || inputs.job_name == 'billing' }}
+        if: inputs.job_name == 'billing'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: npm run batch:billing

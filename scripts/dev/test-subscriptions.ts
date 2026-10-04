@@ -146,6 +146,13 @@ async function main(){
   assert.equal(account.businesses.reduce((total:number,row:any)=>total+row.active_outlets,0),account.outlet_count,'Admin counts the same account-wide active outlets');
   const businessSearch=await (await fetch(url+'/api/admin/subscriptions?search=Another%20Laundry',{headers:{authorization:'Bearer test-admin'}})).json();
   assert.equal(businessSearch.rows.length,1);assert.equal(businessSearch.rows[0].id,tenant,'Search by business finds its owning subscription account');
+  assert.deepEqual(businessSearch.summary,subscriptionReport.summary,'Search does not silently change platform totals');
+  const emptyPage=await (await fetch(url+'/api/admin/subscriptions?offset=9999&limit=1',{headers:{authorization:'Bearer test-admin'}})).json();
+  assert.equal(emptyPage.rows.length,0);assert.equal(emptyPage.total,subscriptionReport.total);
+  assert.deepEqual(emptyPage.summary,subscriptionReport.summary,'Pagination does not change aggregates');
+  const facts=(await db.query('SELECT min(created_at) first,max(created_at) last FROM contract.merchant_revenue WHERE tenant_id=$1',[tenant])).rows[0];
+  const iso=(value:any)=>value?new Date(value).toISOString():null;
+  assert.equal(iso(account.first_transaction_at),iso(facts.first));assert.equal(iso(account.last_transaction_at),iso(facts.last));
   const expiredTrial=randomUUID();
   await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Expired trial','expired-trial-owner')",[expiredTrial]);
   const expiredSubscription=await ensureSubscription(db,expiredTrial);

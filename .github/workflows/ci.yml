@@ -20,11 +20,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Lint (hygiene + typecheck src, services, api, scripts)
-        run: npm run lint
-      - name: Tests (isolated in-process PostgreSQL, no network)
-        run: npm test
-      - name: Build SPA and services
-        run: npm run build
+      - name: Product gate (lint, isolated tests, SPA and API build)
+        run: npm run verify
       - name: Committed Vercel bundles match source
         run: git diff --exit-code -- api/

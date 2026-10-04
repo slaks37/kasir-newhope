@@ -39,6 +39,7 @@ import {
 } from "../../data/businessPresets";
 import { formatRupiah } from "../../utils/formatters";
 import { findSaaSPlan } from "../../config/saasPlans";
+import { supportWhatsAppUrl } from '../../config/publicSupport';
 
 // Harga landing selalu dibaca dari katalog yang sama dengan billing.
 const PLUS = findSaaSPlan("plan-plus-monthly")!;
@@ -62,10 +63,10 @@ interface HomePageProps {
   isStandaloneLanding?: boolean;
 }
 
-const WHATSAPP =
-  "https://wa.me/6281234567890?text=Halo%20Tim%20New%20Hope%20POS,%20saya%20ingin%20konsultasi%20paket%20kasir%20dan%20coba%20demo";
-const ONBOARDING =
-  "https://wa.me/6281234567890?text=Halo%20Tim%20New%20Hope%20POS,%20saya%20mau%20dibantu%20input%20menu%20dan%20coba%20demo%20kasir";
+const WHATSAPP = supportWhatsAppUrl(import.meta.env.VITE_SUPPORT_WHATSAPP,
+  'Halo Tim New Hope POS, saya ingin konsultasi paket kasir dan coba demo');
+const ONBOARDING = supportWhatsAppUrl(import.meta.env.VITE_SUPPORT_WHATSAPP,
+  'Halo Tim New Hope POS, saya mau dibantu input menu dan coba demo kasir');
 
 const sectors = [
   {
@@ -228,7 +229,9 @@ const faqs = [
   },
   {
     q: "Bagaimana bantuan jika kasir bermasalah?",
-    a: "Hubungi tim melalui WhatsApp dengan penjelasan kendala, perangkat, dan pesan kesalahan yang muncul. Tim akan membantu pemeriksaan dan langkah penanganan berikutnya.",
+    a: ONBOARDING
+      ? "Hubungi tim melalui WhatsApp dengan penjelasan kendala, perangkat, dan pesan kesalahan yang muncul. Jangan kirim password, PIN, atau token."
+      : "Catat kendala, perangkat, dan pesan kesalahan yang muncul. Kontak bantuan resmi belum ditampilkan; jangan kirim password, PIN, atau token ke nomor yang belum diverifikasi.",
   },
 ];
 const plans = [
@@ -448,12 +451,12 @@ export const HomePage: React.FC<HomePageProps> = ({
                   Kalkulator usaha
                 </a>
                 <a
-                  href={ONBOARDING}
-                  target="_blank"
+                  href={ONBOARDING || '#faq'}
+                  target={ONBOARDING ? '_blank' : undefined}
                   rel="noreferrer"
                   onClick={navClose}
                 >
-                  Bantuan input produk
+                  {ONBOARDING ? 'Bantuan input produk' : 'Panduan bantuan'}
                 </a>
               </div>
             </details>
@@ -600,8 +603,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               <span className="nh-card-number">01 / Pelayanan</span>
               <h3>Transaksi dan QRIS</h3>
               <p>
-                Terima pesanan dan pembayaran dalam satu alur. Nominal QRIS
-                mengikuti total belanja, lalu struk siap dibagikan.
+                Catat pembayaran melalui QRIS milik toko. Periksa penerimaan
+                dana di aplikasi penyedia QRIS sebelum menandai pesanan lunas.
               </p>
             </article>
             <article>
@@ -850,8 +853,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               </div>
               <a
                 className="nh-text-link"
-                href={ONBOARDING}
-                target="_blank"
+                href={ONBOARDING || '#faq'}
+                target={ONBOARDING ? '_blank' : undefined}
                 rel="noreferrer"
               >
                 Cek kompatibilitas perangkat
@@ -1052,13 +1055,13 @@ export const HomePage: React.FC<HomePageProps> = ({
               Mulai dari perangkat, data produk, hingga penggunaan sehari-hari.
             </p>
             <a
-              href={ONBOARDING}
-              target="_blank"
+              href={ONBOARDING || '#faq'}
+              target={ONBOARDING ? '_blank' : undefined}
               rel="noreferrer"
               className="nh-text-link"
             >
               <MessageCircle size={20} />
-              Hubungi tim New Hope
+              {ONBOARDING ? 'Hubungi tim New Hope' : 'Lihat panduan bantuan'}
               <ArrowUpRight size={17} />
             </a>
           </div>
@@ -1094,12 +1097,12 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
             <a
               className="nh-button nh-button-secondary"
-              href={WHATSAPP}
-              target="_blank"
+              href={WHATSAPP || '#faq'}
+              target={WHATSAPP ? '_blank' : undefined}
               rel="noreferrer"
             >
               <MessageCircle size={19} />
-              Konsultasi via WhatsApp
+              {WHATSAPP ? 'Konsultasi via WhatsApp' : 'Lihat panduan bantuan'}
             </a>
           </div>
           <span className="nh-final-note">
@@ -1228,8 +1231,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           <div>
             <strong>Bantuan & inspirasi</strong>
             <a href="#faq">Pertanyaan umum</a>
-            <a href={ONBOARDING} target="_blank" rel="noreferrer">
-              Bantuan input produk
+            <a href={ONBOARDING || '#faq'} target={ONBOARDING ? '_blank' : undefined} rel="noreferrer">
+              {ONBOARDING ? 'Bantuan input produk' : 'Panduan bantuan'}
             </a>
             <a href="/blog">Blog New Hope POS</a>
             <a href="/blog/cara-membuka-kafe-modal-10-juta-sukses">

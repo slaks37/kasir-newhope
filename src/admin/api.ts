@@ -6,6 +6,7 @@
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {coalescedRead} from '../lib/sync/refreshCoordinator';
+import {withRequestDeadline,RequestDeadlineError} from '../lib/requestDeadline';
 
 const IDENTITY_KEY = 'nhpos_internal_identity';
 
@@ -192,7 +193,7 @@ export const sejak = (iso: unknown): string => {
 };
 
 /* -------------------------------------------------------------------------- */
-/* SAMPLE DATA FOR BACKOFFICE CONSOLE                                         */
+/* AUTHENTICATED BACKOFFICE REQUESTS                                           */
 /* -------------------------------------------------------------------------- */
 
 
@@ -203,9 +204,9 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   const query=new URLSearchParams();
   for(const [key,value] of Object.entries(params || {})) if(value!==undefined && value!==null && value!=='') query.set(key,String(value));
   const target='/api/admin/'+path+(query.size?'?'+query:'');
-  const run=async()=>{
+  const run=()=>withRequestDeadline(async signal=>{
   const response=await fetch(target,
-    {method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   const contentType=response.headers.get('content-type') || '';
   let result:any=null;
   if(contentType.includes('application/json')) {
@@ -243,7 +244,13 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     throw new ApiError(response.status,result.error || 'API_ERROR',supportErrors[result.error]||result.detail||result.error||'Permintaan gagal.');
   }
   return result;
-  };
+  }).catch(error=>{
+    if(error instanceof RequestDeadlineError)throw new ApiError(504,'REQUEST_TIMEOUT',
+      body||method&&method!=='GET'
+        ?'Respons belum diterima. Tindakan mungkin sudah diproses; periksa data dan riwayat sebelum mengirim ulang.'
+        :'Server belum merespons tepat waktu. Coba muat ulang daftar; data tidak dihapus.');
+    throw error;
+  });
   // Reuse the existing in-flight read coordinator, not a second cache. Exact
   // session isolation also prevents an MFA refresh from joining an old read.
   // Nothing persists; writes/justified private reads are never coalesced.

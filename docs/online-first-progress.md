@@ -1,31 +1,40 @@
-# Online-first migration — verification record
+# Online-first — implementation and verification boundaries
 
-## Implemented
+Reviewed 2026-10-04. This replaces the old progress summary; historical trial capacities and empty-production observations are not current account facts.
 
-- Authenticated owner ID scopes client storage, business IDs and all server sync calls. Selecting another cashier profile no longer changes the store identity.
-- Operational records (products, categories, tables, customers, orders, shifts, staff, local role profiles, stock items/logs, bookings, KDS, payroll and other POS collections) use an owner/sector-scoped server store. A per-record durable outbox survives reloads; accepted writes have revisions and an admin-visible audit event. Polling runs every six seconds, on focus and after reconnect.
-- Stale edits receive a conflict instead of overwriting another device. The owner can keep the server version (with a local recovery copy) or explicitly rebase the local edit. One unresolved conflict holds the batch for review.
-- Catalog writes use explicit versioned product mutations and tombstones; the legacy full-snapshot endpoint no longer retires omitted products. Product metadata is mirrored into `pos.products`. Stock is **not** overwritten in the normalized ledger by catalog sync.
-- Migration `0043_shared_pos_state.sql` / Supabase `20260930121546_shared_pos_state.sql` creates dedicated storage with RLS, tenant/merchant policy and `svc_pos`-only access. The handler sets transaction-local scope before reading/writing.
-- Financial transactions still use the idempotent normalized ledger, not an order UI snapshot. Admin revenue/profit come from that ledger. The trial outlet cap and queued Carwash sales remain unchanged.
-- A sale for an inventory-linked product now prepares a primary stock location when a new outlet has none, and writes stock movement against the transaction's outlet. Voids restore stock to that original outlet, including when submitted from another active branch.
-- Receipt and return receipt printing use an isolated iframe with loaded styles/images/fonts and surfaced browser errors. Chrome print preview rendered a 30-line fixture through the footer.
-- The cloud outlet gate now blocks a new checkout while outlet capacity cannot be verified or the active outlet has not been selected. Pending Carwash sales remain in their original queue; entitlement rejection pauses automatic retries until the outlet changes.
-- A completed sale, void, or payment of a previously held order first persists its financial event to the durable outbox. A full/corrupt browser store now fails visibly instead of reporting success or overwriting recoverable queue bytes. Paying a held order also submits the normalized transaction for admin reporting.
+## Sources of truth
 
-## Remaining limitations and decisions
+| Domain | Authority | Device role |
+|---|---|---|
+| Sales, void, refund | Normalized server transactions and compensating records | Durable idempotent outbox and recovery snapshot |
+| Cash movements | Server cash ledger | Temporary pending commands |
+| Revenue and reports | Server reporting / canonical contract views | Render server result; never sum operational orders as revenue |
+| Product, category, table, customer metadata | Scoped versioned shared state, domain projection | Cache and one active pending operation per scoped record |
+| Identity / outlet / plan | Verified server membership, directory, canonical entitlement policy | Selection hint and bounded offline bootstrap |
 
-- Local cashier profiles are an owner-authenticated kiosk role mechanism, not independently authenticated employee accounts. A real employee membership model would need separate Auth identities and server-side role enforcement.
-- Operational changes propagate on polling rather than live push. A conflict needs human resolution; it cannot be silently auto-merged.
-- Stock quantities shown in the client can still conflict across simultaneous devices; the normalized inventory ledger remains authoritative. Reconciliation/hydration of per-outlet inventory balances is a separate step before claiming fully accurate live stock.
-- Old cashier-specific storage and transaction queues are preserved. They are not automatically reassigned to an owner; recovery requires reviewing their identity and business scope.
-- F&B and Laundry occupy both trial outlet slots. Carwash stays deferred and its two queued sales must not be sent as another branch or discarded. They can sync only after an outlet slot is freed or capacity is upgraded.
-- Production acceptance is still pending: the last read-only check found zero normalized transactions and zero shared operational records. This matches the deferred Carwash outlet, not proof that a two-device sale has reached admin. A real sale on an active outlet and a second-device readback must be verified before claiming cloud-first completion.
-- Successful checkouts can still be queued locally during a transient server failure; the UI must distinguish cloud-confirmed from pending for a strict online-first guarantee. Operational collections still use local cache and full-state polling, and customer/attendance/payroll retain separate legacy mirror writes. These are follow-up migration steps, not solved by adding a load balancer.
-- Epson TM-T82 Bluetooth on Windows + Chrome has **not** been physically tested; the owner has no printer available yet. Browser print preview does not prove driver, pairing or physical output.
+## Implemented paths
 
-## Checks
+- Startup verifies authentication, account/business identity, plan and active outlet before mounting the selected POS namespace.
+- Business switching cancels outgoing hydration. Owner/business/sector identity scopes cache and pending records; another cashier profile does not become another account owner.
+- Automatic background refresh handles relevant modules, focus and reconnect through the existing coordinator. Sync Center is the single user-facing inspection surface; routine successful sync does not need a manual button.
+- Wrong-sector operational records are quarantined with recoverable data. Conflicting operations are handled per record, not by rolling back an unrelated whole batch. New edits replace the pending operation for that scoped record.
+- Financial queues remain separate internally and are never automatically discarded. Legacy records with uncertain owner/outlet or different financial versions remain blocked for explicit review.
+- Catalog projections do not overwrite normalized stock balances. Product photos travel through the existing versioned product field with payload limits.
+- Server reporting and admin share financial sources. Displayed capacity comes from one account policy; business count and active/licensed outlet count are distinct.
+- Connection probes fail promptly in serverless rather than using local startup backoff. Admin request deadlines do not retry writes whose server outcome may be unknown.
 
-`npm run lint`, `npm run test:subscriptions`, `node --import tsx scripts/dev/test-shared-state-client.ts`, `node --import tsx scripts/dev/test-sync-boundary.ts`, `npm run build`.
+## Real limitations — do not advertise as completed
 
-Browser-only synthetic print fixture: `scripts/dev/receipt-print-fixture.html`. It contains no client credentials and performs no backend writes.
+- Client stock displays still need authoritative per-outlet balance hydration and concurrent-device reconciliation. Ledger correctness alone does not prove every displayed quantity is current.
+- Cashier role profiles are owner-authenticated kiosk roles, not independently authenticated employee memberships.
+- Same-sector multi-business provisioning depends on the corresponding server migration/capability. A disabled capability must not be bypassed in the UI.
+- Unknown legacy financial ownership cannot be repaired by guessing, deleting browser storage, or changing transaction outlet IDs.
+- Automatic sync is polling/event-triggered, not a guarantee of instant push delivery or successful transmission while offline.
+- Physical Epson TM-T82 Bluetooth printing on Windows/Chrome remains untested. Browser print preview cannot prove pairing, driver, or hardware output.
+- Isolated two-device tests are regression evidence, not a substitute for a consented real-device production acceptance test.
+
+## Verification
+
+`npm run verify` exercises workspace/hydration, durable outboxes, conflict quarantine, financial/server reporting, subscription/admin policy, support, product images, DOKU, AI, MCP and build/cron entrypoints.
+
+Production data repair must be scoped, backed up and separately verified. The 2026-10-04 legacy layout repair retained wrong-sector operational snapshots and did not alter financial ledger data. No further production data cleanup is implied by this document.

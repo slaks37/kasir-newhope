@@ -30,6 +30,22 @@ function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
   return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
 }
 
+// services/shared/databaseStartup.ts
+async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const attempts = vercel === "1" ? 1 : 15;
+  let cause;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await probe();
+      return;
+    } catch (error) {
+      cause = error;
+    }
+    if (attempt + 1 < attempts) await sleep(Math.min(250 * 2 ** attempt, 3e3));
+  }
+  throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -58,7 +74,7 @@ async function connectDb(opts) {
   pool.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
-  await withRetry(async () => {
+  await waitForDatabase(async () => {
     const probe = await pool.connect();
     probe.release();
   }).catch(async (error) => {
@@ -96,22 +112,6 @@ async function connectDb(opts) {
     }
   });
   return wrap(pool);
-}
-async function withRetry(fn, attempts = 15) {
-  let lastErr = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      await fn();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const wait = Math.min(250 * 2 ** i, 3e3);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-  const failure = new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
-  failure.cause = lastErr;
-  throw failure;
 }
 
 // services/billing/routes.ts
@@ -2304,14 +2304,29 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
   }));
   app.get("/api/admin/subscriptions", guard("VIEW_MERCHANT_HEALTH"), wrap(async (req, res, db) => {
     const search = String(req.query.search || "").trim().toLowerCase().slice(0, 100);
-    const { rows } = await db.query(`SELECT t.id,t.name,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
+    const { rows } = await db.query(`WITH accounts AS MATERIALIZED (
+      SELECT id,name,created_at,is_active FROM internal.tenants
+      WHERE merged_into IS NULL ORDER BY created_at DESC,id LIMIT 10001
+    ), outlet_facts AS (
+      SELECT o.tenant_id,count(*)::int AS outlet_count FROM internal.outlets o
+      JOIN accounts a ON a.id=o.tenant_id WHERE o.is_active GROUP BY o.tenant_id
+    ), revenue_facts AS (
+      SELECT r.tenant_id,min(r.created_at) AS first_transaction_at,max(r.created_at) AS last_transaction_at
+      FROM contract.merchant_revenue r JOIN accounts a ON a.id=r.tenant_id GROUP BY r.tenant_id
+    ), paid_accounts AS (
+      SELECT DISTINCT i.tenant_id FROM billing.invoices i JOIN accounts a ON a.id=i.tenant_id
+      WHERE i.payment_status='PAID' AND i.reconciliation_status='APPLIED'
+    ), matching_businesses AS (
+      SELECT DISTINCT m.tenant_id FROM internal.merchants m JOIN accounts a ON a.id=m.tenant_id
+      WHERE $1<>'' AND position($1 in lower(m.name))>0
+    ) SELECT t.id,t.name,t.created_at,t.is_active,s.id AS subscription_id,s.plan_id,
       s.status,s.current_period_start,s.current_period_end,s.grace_period_end,s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,to_jsonb(s)->'free_selection' AS free_selection,
-      (SELECT count(*)::int FROM internal.outlets o WHERE o.tenant_id=t.id AND o.is_active) AS outlet_count,
-      (SELECT min(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS first_transaction_at,
-      (SELECT max(r.created_at) FROM contract.merchant_revenue r WHERE r.tenant_id=t.id) AS last_transaction_at,
-      EXISTS(SELECT 1 FROM billing.invoices i WHERE i.tenant_id=t.id AND i.payment_status='PAID' AND i.reconciliation_status='APPLIED') AS converted,
-      EXISTS(SELECT 1 FROM internal.merchants m WHERE m.tenant_id=t.id AND position($1 in lower(m.name))>0) AS matches_business
-      FROM internal.tenants t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id WHERE t.merged_into IS NULL ORDER BY t.created_at DESC LIMIT 10001`, [search]);
+      coalesce(o.outlet_count,0)::int AS outlet_count,r.first_transaction_at,r.last_transaction_at,
+      p.tenant_id IS NOT NULL AS converted,m.tenant_id IS NOT NULL AS matches_business
+      FROM accounts t LEFT JOIN billing.subscriptions s ON s.tenant_id=t.id
+      LEFT JOIN outlet_facts o ON o.tenant_id=t.id LEFT JOIN revenue_facts r ON r.tenant_id=t.id
+      LEFT JOIN paid_accounts p ON p.tenant_id=t.id LEFT JOIN matching_businesses m ON m.tenant_id=t.id
+      ORDER BY t.created_at DESC,t.id`, [search]);
     if (rows.length > 1e4) return res.status(503).json({ ok: false, error: "SUBSCRIPTION_REPORT_REQUIRES_PAGINATED_AGGREGATION" });
     const all = rows.map((r) => {
       const { subscription: access, capacity } = accountSubscription(r, r.subscription_id ? r : null, r.outlet_count);
