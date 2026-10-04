@@ -7,14 +7,15 @@
  * Postgres), di produksi Postgres asli. Kodenya tidak tahu bedanya, dan memang
  * tidak perlu tahu.
  *
- * BATAS SKEMA. Setiap service login sebagai perannya sendiri dengan search_path
- * yang hanya memuat skema miliknya dan `contract`. Menyentuh tabel service lain
- * bukan gagal saat code review — gagal di Postgres, dengan pesan yang jelas.
+ * BATAS SKEMA. Hak akses berasal dari role pada connection string dan grant
+ * database, bukan parameter `schema`. Query menyebut skema secara eksplisit.
+ * Runtime yang berbagi DATABASE_URL juga berbagi hak akses role tersebut.
  */
 
 import fs from 'node:fs';
 import pg from 'pg';
 import { databasePoolLimits, serverlessConnectionString } from './poolConfig';
+import { waitForDatabase } from './databaseStartup';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
 // skor risiko kita memang mau angka, dan nilainya jauh di bawah batas aman
@@ -32,7 +33,7 @@ export interface Db {
 }
 
 export interface DbOptions {
-  /** Skema milik service ini. Diletakkan pertama di search_path. */
+  /** Domain label only; SQL must qualify schemas. Credentials/grants enforce access. */
   schema: string;
   connectionString?: string;
   max?: number;
@@ -103,7 +104,7 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
     console.error('[db] koneksi idle bermasalah:', err.message);
   });
 
-  await withRetry(async () => {
+  await waitForDatabase(async () => {
     const probe = await pool.connect();
     probe.release();
   }).catch(async error=>{
@@ -141,29 +142,4 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
   });
 
   return wrap(pool);
-}
-
-/**
- * Menunggu database siap.
- *
- * Service dan database menyala bersamaan. Tanpa percobaan ulang, service yang
- * kebetulan lebih cepat akan mati saat boot dan orkestrator harus
- * menghidupkannya lagi — riuh, lambat, dan terlihat seperti kegagalan padahal
- * hanya soal urutan.
- */
-async function withRetry(fn: () => Promise<void>, attempts = 15): Promise<void> {
-  let lastErr: Error | null = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      await fn();
-      return;
-    } catch (err) {
-      lastErr = err as Error;
-      const wait = Math.min(250 * 2 ** i, 3000);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-  const failure=new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
-  (failure as Error & {cause:unknown}).cause=lastErr;
-  throw failure;
 }

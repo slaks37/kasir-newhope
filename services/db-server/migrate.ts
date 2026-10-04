@@ -15,6 +15,7 @@ import { ringkasTujuanDb, ringkasEnv } from '../shared/env';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { applyAtomicMigration } from './atomicMigration';
 
 const MIGRATIONS = [
   // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
@@ -97,10 +98,7 @@ async function main() {
     try {
       // Satu file, satu transaksi. Migrasi yang gagal di tengah tidak boleh
       // meninggalkan skema setengah jadi.
-      await client.query('BEGIN');
-      await client.query(sql);
-      await client.query('INSERT INTO public.schema_migrations (filename) VALUES ($1)', [file]);
-      await client.query('COMMIT');
+      await applyAtomicMigration(client, file, sql);
       console.log(`  OK     ${file} (${Date.now() - t0}ms)`);
       applied++;
     } catch (err) {

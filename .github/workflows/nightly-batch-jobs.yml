@@ -1,25 +1,25 @@
-name: Nightly Batch Analytics & Operations Jobs
+name: Manual batch diagnostics (dry run)
 
 on:
-  schedule:
-    # Runs daily at 01:00 UTC (08:00 WIB)
-    - cron: '0 1 * * *'
+  # Production scheduling: vercel.json + CRON_ENABLED_JOBS only.
   workflow_dispatch:
     inputs:
       job_name:
-        description: 'Pilih job untuk dijalankan secara manual'
+        description: 'Diagnosis tanpa menyimpan hasil atau mengirim email'
         required: true
-        default: 'all'
+        default: 'insights'
         type: choice
         options:
-          - all
           - insights
           - health
           - billing
 
+permissions:
+  contents: read
+
 jobs:
   run-batch-analytics:
-    name: Execute Batch Jobs
+    name: Diagnose Batch Jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -30,28 +30,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install Dependencies
         run: npm ci
 
       - name: Run Daily Insights Job
-        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'insights' }}
+        if: inputs.job_name == 'insights'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npm run batch:insights
+        run: npm run batch:insights:dry
 
       - name: Run Merchant Health Job
-        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'health' }}
+        if: inputs.job_name == 'health'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANALYTICS_DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL || secrets.DATABASE_URL }}
-        run: npm run batch:health
+        run: npm run batch:health:dry
 
       - name: Run Billing Reminders Job
-        if: ${{ github.event_name == 'schedule' || inputs.job_name == 'all' || inputs.job_name == 'billing' }}
+        if: inputs.job_name == 'billing'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: npm run batch:billing

@@ -1,6 +1,6 @@
 # New Hope Intelligence — implementation and rollout notes
 
-Updated: 2026-09-21. The AI implementation and private database migration are deployed; daily cron activation and signed-in live-provider verification remain pending as detailed below.
+Historical implementation/rollout record: 2026-09-21. Deployment IDs, secret-entry status, quotas and bundle measurements below describe that checkpoint, not a current production health report. For the current architecture and remaining acceptance work, see [the 2026-10-04 product audit](architecture/product-audit-2026-10-04.md). Consult the current plan configuration and member wallet enforcement for effective entitlements; do not use an old default as a promise of unlimited AI.
 
 ## User story and boundaries
 
@@ -55,7 +55,7 @@ node scripts/batch/daily-insights.mjs --dry-run --business <business-ref> --limi
 
 Dry-run uses read-only transactions and writes no cache, wallet, business or provider data. Normal CLI runs write only derived cache/status documents. The old `--input`, `--window`, and `--lead-time` overrides are rejected so the CLI cannot silently diverge from the app.
 
-## Production rollout status
+## Historical production rollout status (2026-09-21)
 
 - GitHub `main` at `e7efea6` deployed successfully on Vercel (`dpl_CwohtDXyj1RexhviNkM6661EucAX`, Production, READY) at `https://kasir.newhope.space`.
 - Supabase project `fqxrhumsgigcgjtlbfuo` received migration `20260920140212` (`business_intelligence_private_cache_and_member_wallet`). Preflight found no orphan identities or duplicate member wallets. Eight wallet rows, total balance 508, and four audit rows were preserved; audit foreign-key deletion remains `SET NULL`.

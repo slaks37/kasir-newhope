@@ -993,6 +993,22 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
   };
 }
 
+// services/shared/databaseStartup.ts
+async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const attempts = vercel === "1" ? 1 : 15;
+  let cause;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await probe();
+      return;
+    } catch (error) {
+      cause = error;
+    }
+    if (attempt + 1 < attempts) await sleep(Math.min(250 * 2 ** attempt, 3e3));
+  }
+  throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -1021,7 +1037,7 @@ async function connectDb(opts) {
   pool.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
-  await withRetry(async () => {
+  await waitForDatabase(async () => {
     const probe = await pool.connect();
     probe.release();
   }).catch(async (error) => {
@@ -1058,22 +1074,6 @@ async function connectDb(opts) {
     }
   });
   return wrap(pool);
-}
-async function withRetry(fn, attempts = 15) {
-  let lastErr = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      await fn();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const wait = Math.min(250 * 2 ** i, 3e3);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-  const failure = new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
-  failure.cause = lastErr;
-  throw failure;
 }
 
 // services/billing/routes.ts
@@ -1132,10 +1132,10 @@ function getDokuSecretKey() {
 }
 function getDokuApiUrl() {
   const raw = (process.env.DOKU_API_URL || "https://api.doku.com").replace(/["']/g, "").trim().replace(/\/+$/, "");
-  if (raw.includes("sandbox")) {
-    return "https://api-sandbox.doku.com";
+  if (!["https://api.doku.com", "https://api-sandbox.doku.com"].includes(raw)) {
+    throw new Error("DOKU_API_URL_NOT_ALLOWED");
   }
-  return "https://api.doku.com";
+  return raw;
 }
 var DOKU_NOTIFICATION_PATH = "/api/v1/webhooks/doku";
 function getDokuAllowedChannels() {

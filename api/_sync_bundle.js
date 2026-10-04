@@ -106,6 +106,22 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
   };
 }
 
+// services/shared/databaseStartup.ts
+async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const attempts = vercel === "1" ? 1 : 15;
+  let cause;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await probe();
+      return;
+    } catch (error) {
+      cause = error;
+    }
+    if (attempt + 1 < attempts) await sleep(Math.min(250 * 2 ** attempt, 3e3));
+  }
+  throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -134,7 +150,7 @@ async function connectDb(opts) {
   pool.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
-  await withRetry(async () => {
+  await waitForDatabase(async () => {
     const probe = await pool.connect();
     probe.release();
   }).catch(async (error) => {
@@ -171,22 +187,6 @@ async function connectDb(opts) {
     }
   });
   return wrap(pool);
-}
-async function withRetry(fn, attempts = 15) {
-  let lastErr = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      await fn();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const wait = Math.min(250 * 2 ** i, 3e3);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-  const failure = new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`);
-  failure.cause = lastErr;
-  throw failure;
 }
 
 // services/pos/businessDirectory.ts

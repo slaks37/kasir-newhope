@@ -59,10 +59,12 @@ export function getDokuSecretKey(): string {
 
 export function getDokuApiUrl(): string {
   const raw = (process.env.DOKU_API_URL || 'https://api.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
-  if (raw.includes('sandbox')) {
-    return 'https://api-sandbox.doku.com';
+  // Never turn an invalid/test endpoint into a production payment request.
+  // Match the complete origin, not a substring in a host/path/query.
+  if (!['https://api.doku.com','https://api-sandbox.doku.com'].includes(raw)) {
+    throw new Error('DOKU_API_URL_NOT_ALLOWED');
   }
-  return 'https://api.doku.com';
+  return raw;
 }
 
 export const DOKU_NOTIFICATION_PATH = '/api/v1/webhooks/doku';

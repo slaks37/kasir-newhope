@@ -1,127 +1,72 @@
 # New Hope POS
 
-Sistem kasir multi-sektor untuk **Kafe/Resto, Laundry, Ritel, Carwash, dan Barbershop**, dengan AI Copilot dan konsol internal untuk penyedia SaaS.
+POS multi-sektor untuk Kafe/Resto, Laundry, Ritel, Carwash, dan Barbershop, dengan konsol admin SaaS dan analisis bisnis.
 
-Dibangun sebagai **lima microservice** di atas satu PostgreSQL dengan skema terpisah per domain.
+**Status produk dan batasan:** baca [audit menyeluruh](docs/architecture/product-audit-2026-10-04.md). Adanya halaman, tombol, atau tes fixture bukan bukti semua integrasi produksi sudah tervalidasi.
 
----
+## Arsitektur yang digunakan
 
-## Menjalankan
+- React/Vite: halaman publik, autentikasi, workspace POS, dan aplikasi admin yang dimuat terpisah.
+- Supabase Auth memverifikasi identitas. Backend memeriksa membership, tenant, bisnis, outlet, dan entitlement. Admin juga memerlukan role internal dan MFA.
+- PostgreSQL adalah sumber transaksi, refund/void, cash ledger, dan laporan. Shared operational state menyimpan versi produk/kategori/meja/customer; tabel domain adalah proyeksi, bukan pemilik identitas kedua.
+- Perangkat menyimpan cache, draft, recovery snapshot, dan outbox tahan-reload. Financial outbox tidak dihapus otomatis. Data salah sektor dikarantina, bukan dipindahkan diam-diam.
+- Pengembangan menjalankan gateway dan layanan POS, AI, billing, backoffice. Produksi Vercel memakai native API handlers/bundles; jangan menganggap kelima proses lokal berjalan identik di Vercel.
+- SQL menyebut skema secara eksplisit. Pemisahan akses ditentukan oleh role/grant koneksi database; opsi `schema` sendiri **tidak** membuat isolasi role.
 
-```bash
-npm install
+Tidak ada React Query, Zustand, atau Redux kedua: identitas memakai Context yang ada, state terpilih memakai store yang ada, dan refresh/coalescing memakai coordinator yang sama.
+
+## Menjalankan lokal
+
+Gunakan database pengembangan khusus. Jangan menyalin kredensial produksi ke lingkungan demo.
+
+```sh
+npm ci
 npm run dev
 ```
 
-Buka `http://localhost:3000` (kasir) dan `http://localhost:3000/admin` (konsol internal).
-
-Satu perintah itu menyalakan database, menjalankan migrasi sampai selesai, lalu kelima service. Tidak perlu Docker — database pengembangan memakai PGlite yang menyajikan protokol wire PostgreSQL, jadi setiap service terhubung lewat driver `pg` biasa persis seperti menghadapi Postgres sungguhan.
-
-Mengisi data contoh (6 merchant, ±3.600 transaksi di kelima sektor):
-
-```bash
-npm run db:reseed
-```
-
----
-
-## Arsitektur
-
-```
-gateway :3000  ──┬─ pos        :3101  skema pos       transaksi, katalog, sinkronisasi
-  SPA + routing  ├─ ai         :3102  skema ai        copilot, LLM, kredit
-                 ├─ billing    :3103  skema billing   langganan, faktur, webhook
-                 └─ backoffice :3104  skema internal  konsol penyedia
-                        ↓
-                 contract.*  ← 13 view, satu-satunya permukaan lintas service
-```
-
-### Batas antar service ditegakkan database, bukan kesepakatan
-
-Setiap service login sebagai perannya sendiri. Menyentuh tabel milik service lain ditolak PostgreSQL:
-
-```
-svc_ai  → ai.merchant_ai_credits     BOLEH
-svc_ai  → contract.merchant_revenue  BOLEH
-svc_ai  → pos.transactions           DITOLAK: permission denied for schema pos
-```
-
-Yang dibagikan hanya view di skema `contract`. Pemilik boleh mengubah bentuk tabelnya kapan saja selama view-nya utuh, dan perubahan yang merusak ketahuan saat migrasi — bukan saat service lain error di produksi.
-
-### Angka yang sama di semua tempat
-
-AI Copilot dan admin panel melaporkan omzet yang identik karena keduanya **wajib** membaca `contract.merchant_revenue`. ai-service bahkan tidak punya hak baca ke `pos.transactions`. Kesamaan itu bersifat struktural, bukan hasil disiplin menjaga dua potongan SQL tetap sama.
-
----
-
-## Perintah
+POS: `http://localhost:3000`; admin: `http://localhost:3000/admin`.
+Orkestrator lokal menjalankan PGlite wire server, migrasi, lalu layanan. Periksa target `DATABASE_URL` sebelum menjalankan perintah database.
 
 | Perintah | Kegunaan |
 |---|---|
-| `npm run dev` | Jalankan seluruh sistem (database + migrasi + 5 service) |
-| `npm run db:migrate` | Terapkan migrasi saja |
-| `npm run db:reseed` | Isi ulang data contoh |
-| `npm run db:reset` | Hapus database lokal lalu isi ulang dari nol |
-| `npm run lint` | Type-check + pemeriksa higiene sumber |
-| `npm run smoke` | Regresi 47 intent AI Copilot |
-| `npm run build` | Bangun SPA dan kelima service |
+| `npm run lint` | Higiene sumber dan type-check |
+| `npm run verify` | Regresi lintas modul, build, dan kontrak cron |
+| `npm run test:runtime` | Deadline request, pemulihan auth, rollback migrasi |
+| `npm run build` | SPA, layanan lokal, dan native API bundles |
+| `npm run db:migrate` | Migrasi pada target yang sudah diperiksa |
+| `npm run db:seed` / `db:reseed` / `db:reset` | **Hanya demo lokal**; dapat mengisi ulang/menghapus data |
 
----
+Jangan menjalankan seed/reset atau seluruh bootstrap demo pada database pelanggan. Migrasi produksi harus ditinjau, diuji pada salinan staging, dicadangkan, lalu diperiksa dengan role runtime yang sebenarnya.
 
-## Menyambung ke PostgreSQL sungguhan (Supabase, RDS, Neon)
+## Aturan bisnis
 
-Isi `DATABASE_URL` di `.env`, lalu:
+- Trial 45 hari; setelah habis menjadi Free: satu outlet yang dipilih owner, maksimal 10 produk, satu akun owner, AI nonaktif. Data berlebih tetap disimpan.
+- Plus/Pro, periode bulanan/tahunan, kapasitas outlet dan add-on mengikuti [konfigurasi paket](src/config/saasPlans.ts) dan [kebijakan akses](src/config/subscriptionPolicy.ts). Jumlah bisnis bukan jumlah outlet berlisensi.
+- DOKU Checkout memerlukan konfigurasi server. Redirect browser tidak membuktikan pembayaran berhasil; settlement mengikuti verifikasi dan rekonsiliasi server.
+- AI deterministik tidak memakai token provider tetapi tetap tunduk pada entitlement. Analisis DeepSeek berbayar memerlukan persetujuan dan wallet member di server. Kredit aplikasi bukan batas biaya provider yang presisi.
+- Reset password dikirim ke email owner yang terverifikasi. Admin tidak dapat membaca password, mengganti identitas owner sembarangan, atau melewati MFA.
 
-```bash
-npm run db:migrate
-npm run dev
-```
+## Koneksi dan operasi produksi
 
-Kode service tidak berubah sama sekali. Yang berubah hanya satu variabel — itu memang tujuan lapisan `services/shared/db.ts`.
+Rahasia database, Supabase service role, DOKU, Resend, DeepSeek, dan cron harus server-only, bukan variabel `VITE_`. Variabel browser Supabase hanya URL dan public/anon key.
 
-### Supabase
+Runtime Vercel mengalihkan endpoint Supabase **shared pooler** port 5432 ke mode transaksi 6543, mempertahankan host/credential. Query tidak bergantung pada session `search_path`; scope RLS memakai transaksi lokal. Migrator memakai koneksi tersendiri, bukan runtime HTTP. Lihat [pool config](services/shared/poolConfig.ts).
 
-Ambil connection string dari **Dashboard → Project Settings → Database**, pilih **Session pooler** (port 5432).
+Untuk TLS terverifikasi, konfigurasi `PGSSLROOTCERT` dengan CA yang sesuai. Fallback TLS lama tanpa verifikasi sertifikat masih ada; enkripsi saja bukan bukti verifikasi identitas server.
 
-Jangan pakai Transaction pooler (6543): ia tidak mempertahankan state sesi, sehingga `SET ROLE` dan migrasi bertransaksi panjang gagal dengan cara yang sulit ditelusuri. Direct connection juga bisa, tapi Supabase kini menyediakannya lewat IPv6 saja — banyak jaringan rumah dan CI belum bisa menjangkaunya.
+Penjadwalan produksi mempunyai satu otoritas: `vercel.json`, dilindungi `CRON_SECRET` dan `CRON_ENABLED_JOBS`. Workflow GitHub batch hanya manual/dry-run. Jangan mengaktifkan pengiriman pengingat atau job lain tanpa peninjauan dampak.
 
-**Satu hal yang harus ada:** `migrations/0001_compat.sql`. Fungsi `uuidv7()` yang dipakai migrasi 0005 dan 0006 adalah **bawaan PostgreSQL 18**, sedangkan Supabase masih di 15–17. Tanpa penambal itu, seluruh migrasi berhenti di tengah jalan dan database tertinggal setengah jadi. Penambalnya otomatis dilewati bila `uuidv7()` bawaan sudah ada.
-
----
-
-## Produksi (Docker)
-
-```bash
-docker compose up --build
-```
-
-Di sini database-nya PostgreSQL 18 sungguhan, bukan PGlite.
-
-> **Belum diuji.** `docker-compose.yml` dan `Dockerfile` ditulis lengkap dengan healthcheck dan `depends_on: service_healthy`, tapi belum pernah dijalankan. Yang terbukti bekerja adalah `npm run dev`.
-
-### Sebelum menyalakan di domain sungguhan
-
-**Konsol internal belum punya autentikasi.** Identitas dikirim lewat header `x-internal-user` tanpa kata sandi. Aman selama hanya di localhost — **wajib diganti SSO** sebelum `admin.domainanda.com` menyala. Kolom `internal_users.sso_subject` sudah disiapkan untuk menampung subject claim-nya.
-
-**Jalur simulasi pembayaran harus tertutup.** `/api/v1/subscription/simulate-payment` otomatis menolak saat `NODE_ENV=production`; jangan pernah mengaktifkan `ALLOW_SIMULATED_PAYMENT`.
-
----
-
-## Konfigurasi
-
-Salin `.env.example` menjadi `.env` dan isi seperlunya.
-
-`DEEPSEEK_API_KEY` bersifat opsional. Tanpa kunci itu, jalur deterministik AI Copilot tetap berjalan penuh dan gratis; hanya pertanyaan strategis terbuka yang nonaktif.
-
----
+Workflow `Product regression gate` memeriksa PR dan push main. Ini belum berarti branch protection atau deployment gate Vercel sudah dikonfigurasi; keduanya perlu diverifikasi terpisah.
 
 ## Dokumentasi
 
-- [`docs/erd.md`](docs/erd.md) — ERD 24 tabel dalam 5 domain
-- [`docs/smart-assistant-architecture.md`](docs/smart-assistant-architecture.md) — arsitektur AI Copilot tiga lapis
-
----
+- [Peta produk, root cause, dan prioritas sisa](docs/architecture/product-audit-2026-10-04.md)
+- [Workspace dan isolasi bisnis](docs/architecture/workspace-refactor.md)
+- [Online-first: sumber data dan batasan](docs/online-first-progress.md)
+- [Keamanan customer support](docs/security/client-support.md)
+- [AI intelligence dan catatan rollout bertanggal](docs/ai-intelligence.md)
+- [ERD historis](docs/erd.md) — cocokkan dengan migrasi terbaru, bukan jumlah tabel lama.
 
 ## Lisensi
 
-[Apache License 2.0](LICENSE) — bebas dipakai, diubah, dan didistribusikan, termasuk untuk keperluan komersial, selama pemberitahuan hak cipta dan lisensi dipertahankan. Termasuk pemberian lisensi paten eksplisit dari kontributor.
+[Apache License 2.0](LICENSE).
