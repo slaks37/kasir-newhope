@@ -19,6 +19,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
+import { notify } from '../../lib/ui/notify';
 
 const CARWASH_STAGES: { key: CarwashStage; label: string; color: string }[] = [
   { key: 'ANTRIAN_BAY', label: 'Antrean Bay', color: 'border-slate-300 bg-slate-50' },
@@ -96,7 +97,7 @@ export const CarwashPipelineView: React.FC = () => {
 
   const handleSendWaAlert = (item: CarwashQueueItem) => {
     if (!item.customerPhone) {
-      alert('Nomor HP pelanggan belum tercatat.');
+      notify('Nomor HP pelanggan belum tercatat.');
       return;
     }
     const cleanPhone = item.customerPhone.replace(/\D/g, '').replace(/^0/, '62');

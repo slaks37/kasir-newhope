@@ -14,6 +14,7 @@ import {
   Activity,
   Sliders,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 interface DigitalScaleModalProps {
   isOpen: boolean;
@@ -109,7 +110,7 @@ export const DigitalScaleModal: React.FC<DigitalScaleModalProps> = ({ isOpen, on
 
   const handleApplyWeight = () => {
     if (netWeight <= 0) {
-      alert('Berat timbangan harus lebih dari 0 kg.');
+      notify('Berat timbangan harus lebih dari 0 kg.');
       return;
     }
 

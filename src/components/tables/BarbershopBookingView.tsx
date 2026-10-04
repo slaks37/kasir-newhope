@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { StaffCommissionModal } from './StaffCommissionModal';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
+import { notify } from '../../lib/ui/notify';
 
 export const BarbershopBookingView: React.FC = () => {
   const {
@@ -121,7 +122,7 @@ export const BarbershopBookingView: React.FC = () => {
     }
     // 3. Update booking status to IN_PROGRESS
     updateBookingStatus(booking.id, 'IN_PROGRESS');
-    alert(`Pelanggan ${booking.customerName} telah check-in ke kasir dengan Stylist ${booking.staffName || booking.staffMemberName}!`);
+    notify(`Pelanggan ${booking.customerName} telah check-in ke kasir dengan Stylist ${booking.staffName || booking.staffMemberName}!`);
   };
 
   return (

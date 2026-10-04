@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { formatRupiah } from '../../utils/formatters';
 import { useTranslation } from '../../i18n/LanguageContext';
+import { notify } from '../../lib/ui/notify';
 
 interface ProductGridProps {
   onSelectProduct: (product: Product) => void;
@@ -151,7 +152,7 @@ export const ProductGrid: React.FC<ProductGridProps> = React.memo(({ onSelectPro
       setBarcodeInput('');
       setShowBarcodeModal(false);
     } else {
-      alert(`Produk dengan Barcode/SKU '${barcodeInput}' tidak ditemukan.`);
+      notify(`Produk dengan Barcode/SKU '${barcodeInput}' tidak ditemukan.`);
     }
   };
 

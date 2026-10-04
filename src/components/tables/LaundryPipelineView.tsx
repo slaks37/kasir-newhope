@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { WhatsAppLifecycleCenter } from '../whatsapp/WhatsAppLifecycleCenter';
 import { CheckoutModal } from '../pos/CheckoutModal';
+import { notify } from '../../lib/ui/notify';
 
 const LAUNDRY_STAGES: { key: LaundryStage; label: string; icon: any; color: string }[] = [
   { key: 'ANTRIAN', label: 'Antrean Masuk', icon: Clock, color: 'border-slate-300 bg-slate-50' },
@@ -69,7 +70,7 @@ export const LaundryPipelineView: React.FC = () => {
   const handleOpenWaNotification = (order: Order) => {
     const phone = order.customer?.phone || '';
     if (!phone) {
-      alert('Nomor telepon pelanggan belum tercatat.');
+      notify('Nomor telepon pelanggan belum tercatat.');
       return;
     }
     const cleanPhone = phone.replace(/\D/g, '').replace(/^0/, '62');

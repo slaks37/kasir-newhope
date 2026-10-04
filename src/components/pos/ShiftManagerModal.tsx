@@ -22,6 +22,7 @@ import {
   Calendar,
   Sparkles,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 interface ShiftManagerModalProps {
   onClose: () => void;
@@ -55,7 +56,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
   const handleStartShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCashierName.trim()) return;
-    try { await startShift(newCashierName.trim(), newInitialCash || 0); } catch(error) { alert(error instanceof Error?error.message:'Shift belum dapat dibuka'); }
+    try { await startShift(newCashierName.trim(), newInitialCash || 0); } catch(error) { notify(error instanceof Error?error.message:'Shift belum dapat dibuka'); }
   };
 
   const handleEndShiftSubmit = async (e: React.FormEvent) => {
@@ -63,7 +64,7 @@ export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose })
     try {
     const closed = await endShift(actualCashNum, shiftNotes);
     setClosingSuccessShift(closed);
-    } catch(error) { alert(error instanceof Error?error.message:'Shift belum dapat ditutup'); }
+    } catch(error) { notify(error instanceof Error?error.message:'Shift belum dapat ditutup'); }
   };
 
   return (

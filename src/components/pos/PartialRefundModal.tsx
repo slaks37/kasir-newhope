@@ -18,6 +18,7 @@ import {
   Receipt,
   FileText,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 interface PartialRefundModalProps {
   order: Order;
@@ -89,7 +90,7 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
 
   const handleProcessRefund = () => {
     if (itemsToRefund.length === 0) {
-      alert(t('refund.selectItemsPrompt'));
+      notify(t('refund.selectItemsPrompt'));
       return;
     }
 
@@ -104,15 +105,15 @@ export const PartialRefundModal: React.FC<PartialRefundModalProps> = ({
         setCompletedRefund(result);
         if (onRefundSuccess) onRefundSuccess(result);
       } else {
-        alert(t('common.error'));
+        notify(t('common.error'));
       }
-      } catch(error) { setIsProcessing(false); alert(error instanceof Error?error.message:t('common.error')); }
+      } catch(error) { setIsProcessing(false); notify(error instanceof Error?error.message:t('common.error')); }
     }, 400);
   };
 
   const handlePrintReturnReceipt = () => {
     void printReceiptImages('thermal-return-receipt').catch(error => {
-      alert(error instanceof Error ? error.message : 'Gagal membuka cetak nota retur.');
+      notify(error instanceof Error ? error.message : 'Gagal membuka cetak nota retur.');
     });
   };
 

@@ -21,6 +21,7 @@ import {
   Eye,
   FileText,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 interface RawMaterialReceiptScannerModalProps {
   isOpen: boolean;
@@ -346,7 +347,7 @@ export const RawMaterialReceiptScannerModal: React.FC<RawMaterialReceiptScannerM
   // Save / Apply items to stock
   const handleSaveToInventory = () => {
     if (scannedItems.length === 0) {
-      alert('Tidak ada item yang dapat disimpan. Tambahkan minimal 1 bahan baku!');
+      notify('Tidak ada item yang dapat disimpan. Tambahkan minimal 1 bahan baku!');
       return;
     }
 

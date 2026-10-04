@@ -1,5 +1,6 @@
 import { Order, StoreSettings, Product } from '../types';
 import { formatRupiah, formatDateTime } from './formatters';
+import { notify } from '../lib/ui/notify';
 
 interface ExportReportOptions {
   orders: Order[];
@@ -398,7 +399,7 @@ export function exportOrdersToPDF({
 
   const printWindow = window.open('', '_blank', 'width=1150,height=850');
   if (!printWindow) {
-    alert('Pop-up terblokir oleh browser. Harap izinkan pop-up untuk mencetak / menyimpan PDF.');
+    notify('Pop-up terblokir oleh browser. Harap izinkan pop-up untuk mencetak / menyimpan PDF.');
     return;
   }
 

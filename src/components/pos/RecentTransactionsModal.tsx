@@ -30,6 +30,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { PinAuthorizationModal } from '../auth/PinAuthorizationModal';
+import { notify } from '../../lib/ui/notify';
 
 interface RecentTransactionsModalProps {
   onClose: () => void;
@@ -124,7 +125,7 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
 
   const handleDownloadCSV = () => {
     if (filteredOrders.length === 0) {
-      alert('Tidak ada data transaksi untuk diexport.');
+      notify('Tidak ada data transaksi untuk diexport.');
       return;
     }
 

@@ -19,6 +19,7 @@ import {
   Save,
   Info,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 export const UserManagementTab: React.FC = () => {
   const { users, currentUser, saveUser, deleteUser } = usePOSFields(["users","currentUser","saveUser","deleteUser"]);
@@ -58,19 +59,19 @@ export const UserManagementTab: React.FC = () => {
   const handleSaveUserForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser.name || !editingUser.username) {
-      alert('Mohon lengkapi Nama dan Username.');
+      notify('Mohon lengkapi Nama dan Username.');
       return;
     }
 
     let finalPin = editingUser.pin;
     if (pinInput) {
       if (pinInput.length !== 4 || !/^\d+$/.test(pinInput)) {
-        alert('PIN harus terdiri dari 4 digit angka (contoh: 1234).');
+        notify('PIN harus terdiri dari 4 digit angka (contoh: 1234).');
         return;
       }
       finalPin = pinInput;
     } else if (!finalPin) {
-      alert('Mohon masukkan PIN 4 digit untuk pengguna baru.');
+      notify('Mohon masukkan PIN 4 digit untuk pengguna baru.');
       return;
     }
 

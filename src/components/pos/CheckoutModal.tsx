@@ -15,6 +15,7 @@ import {
   Bookmark,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { notify } from '../../lib/ui/notify';
 
 export const detectServiceDurationHours = (items: { name: string; itemNotes?: string }[]): number => {
   if (!items || items.length === 0) return 24;
@@ -204,7 +205,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleSavePending = () => {
     if (settings.businessSector === 'LAUNDRY' && !completionDateIso) {
-      alert('Mohon tentukan Tanggal & Jam Selesai / Jadi cucian dari kalender!');
+      notify('Mohon tentukan Tanggal & Jam Selesai / Jadi cucian dari kalender!');
       return;
     }
 
@@ -222,7 +223,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       assignedCrew: isCarwash && assignedCrewInput.length > 0 ? assignedCrewInput : undefined,
     }), order => {
       onClose();
-      alert(`Pesanan #${order.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti).`);
+      notify(`Pesanan #${order.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti).`);
     });
   };
 
@@ -233,12 +234,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handlePay = () => {
     if (paymentMethod === 'CASH' && !isCashSufficient) {
-      alert('Uang tunai yang diterima masih kurang!');
+      notify('Uang tunai yang diterima masih kurang!');
       return;
     }
 
     if (settings.businessSector === 'LAUNDRY' && !completionDateIso) {
-      alert('Mohon pilih Tanggal & Jam Selesai / Jadi cucian dari kalender sebelum bayar!');
+      notify('Mohon pilih Tanggal & Jam Selesai / Jadi cucian dari kalender sebelum bayar!');
       return;
     }
 

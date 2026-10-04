@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { BUSINESS_PRESETS } from '../../data/businessPresets';
 import { useTranslation } from '../../i18n/LanguageContext';
+import { notify } from '../../lib/ui/notify';
 
 interface ClockInModalProps {
   onClose: () => void;
@@ -249,19 +250,19 @@ export const ClockInModal: React.FC<ClockInModalProps> = ({ onClose }) => {
 
     if (!activeRecord && settings.geofenceEnforcement === 'STRICT' && !isBypassed) {
       if (!userCoords) {
-        alert(
+        notify(
           'Akses Presensi Ditolak! Izin lokasi (GPS) wajib diaktifkan pada browser/perangkat Anda untuk melakukan presensi.'
         );
         return;
       }
       if (!branchLocationSet) {
-        alert(
+        notify(
           `Lokasi cabang "${selectedBranch.name}" belum diatur, jadi radius presensi tidak bisa diperiksa. Minta owner mengisi titik lokasi outlet di Pengaturan → Outlet.`
         );
         return;
       }
       if (!isWithinRadius) {
-        alert(
+        notify(
           `Akses Presensi Ditolak! Anda berada ${distanceFromBranchMeters} meter dari cabang "${selectedBranch.name}" (Maksimal Radius Toleransi: ${selectedBranch.allowedRadiusMeters} meter).`
         );
         return;

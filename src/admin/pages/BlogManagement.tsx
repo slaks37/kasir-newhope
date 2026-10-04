@@ -30,6 +30,7 @@ import {
   Clock,
   Layers,
 } from 'lucide-react';
+import { notify } from '../../lib/ui/notify';
 
 const CATEGORIES: BlogCategory[] = [
   'Tips Bisnis & Strategi',
@@ -171,7 +172,7 @@ export const BlogManagement: React.FC = () => {
   const handleSavePost = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !slug.trim()) {
-      alert('Judul artikel dan Slug URL wajib diisi.');
+      notify('Judul artikel dan Slug URL wajib diisi.');
       return;
     }
 

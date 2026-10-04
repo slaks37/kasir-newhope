@@ -36,6 +36,7 @@ import {
   Camera,
 } from 'lucide-react';
 import { RawMaterialReceiptScannerModal } from './RawMaterialReceiptScannerModal';
+import { notify } from '../../lib/ui/notify';
 
 const DESCRIPTION_MAX = 300;
 
@@ -458,7 +459,7 @@ export const InventoryManager: React.FC = () => {
   const handleAddIngredientRow = () => {
     const defaultStock = stockItems[0];
     if (!defaultStock) {
-      alert('Tambahkan bahan baku di tab "Bahan Baku & Mentah" terlebih dahulu!');
+      notify('Tambahkan bahan baku di tab "Bahan Baku & Mentah" terlebih dahulu!');
       return;
     }
 
@@ -607,7 +608,7 @@ export const InventoryManager: React.FC = () => {
   const handleSaveBundleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!bundleName || bundleItemsList.length === 0) {
-      alert('Nama paket dan minimal 1 produk penyusun harus diisi!');
+      notify('Nama paket dan minimal 1 produk penyusun harus diisi!');
       return;
     }
 

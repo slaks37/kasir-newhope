@@ -30,6 +30,7 @@ import { SplitBillModal } from './SplitBillModal';
 import { DigitalScaleModal } from './DigitalScaleModal';
 import { UpsellSuggestions } from '../ai/UpsellSuggestions';
 import { useTranslation } from '../../i18n/LanguageContext';
+import { notify } from '../../lib/ui/notify';
 
 interface CartPanelProps {
   onOpenCustomerSelect: () => void;
@@ -466,7 +467,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                 } else {
                   const held = holdOrder();
                   if (held) {
-                    alert(
+                    notify(
                       selectedTable
                         ? `Pesanan ${selectedTable.name} berhasil disimpan sebagai transaksi BELUM LUNAS & tiket dikirim ke dapur!`
                         : `Pesanan #${held.orderNumber} berhasil disimpan sebagai transaksi BELUM LUNAS (Bayar Nanti)!`

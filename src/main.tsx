@@ -31,6 +31,7 @@ import './index.css';
 import './styles/app-theme.css';
 import { normalizeLegacyRoute } from './lib/navigation/workspaceRouter';
 import { registerServiceWorker } from './pwa/serviceWorker';
+import { Notifier } from './components/ui/Notifier';
 
 installAuthenticatedFetch();
 normalizeLegacyRoute();
@@ -54,5 +55,6 @@ createRoot(document.getElementById('root')!).render(
           : <POSSession />}
       </AuthProvider>
     </LanguageProvider>
+    <Notifier />
   </StrictMode>,
 );
