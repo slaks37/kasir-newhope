@@ -479,6 +479,24 @@ async function assertTenantWritable(db, tenantId) {
   if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
 }
 
+// services/shared/schemaFeatures.ts
+var FEATURES = {
+  /** migration 0054 / 20261004090200 */
+  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+  /** migration 0055 / 20261004090300 */
+  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+};
+var ABSENT_RECHECK_MS = 6e4;
+var known = /* @__PURE__ */ new Map();
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+
 // services/pos/activity.ts
 var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES = [
@@ -643,12 +661,12 @@ function registerFinanceRoutes(app, db) {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
       res.json({ ok: true, ...result });
     } catch (error) {
-      const known = error instanceof FinanceError || error instanceof BillingError;
-      if (!known && !(error instanceof FreePlanAccessError)) {
+      const known2 = error instanceof FinanceError || error instanceof BillingError;
+      if (!known2 && !(error instanceof FreePlanAccessError)) {
         const diagnostic = error;
         console.error("[finance] write failed", { route: path, code: diagnostic.code, constraint: diagnostic.constraint, column: diagnostic.column });
       }
-      res.status(known ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
+      res.status(known2 ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known2 || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
     }
   });
   app.get("/api/v1/finance/shift", async (req, res) => {
@@ -1125,10 +1143,15 @@ function registerSharedStateRoutes(app, db) {
           [scope.tenantId, scope.merchantId]
         );
         const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
-        const stamp = await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
+        const stamp = await hasSchemaFeature(c, "sharedStateVersions") ? await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
           FROM pos.shared_state_versions v WHERE v.tenant_id=$1 AND
           ((v.scope='GLOBAL' AND v.merchant_key='00000000-0000-0000-0000-000000000000'::uuid) OR (v.scope=ANY($2::text[]) AND v.merchant_key=$3))
-          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`, parameters2);
+          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`, parameters2) : await c.query(`SELECT md5(COALESCE(string_agg(
+          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
+          '|' ORDER BY scope,kind,record_id),'')) AS version
+          FROM pos.shared_state_records WHERE tenant_id=$1 AND
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`, parameters2);
         const version = stamp.rows[0].version;
         if (req.query.knownVersion === version && !req.query.legacyCandidates && !cursor) return { rows: [], version, unchanged: true };
         const columns = "r.scope,r.kind,r.record_id,r.value,r.revision,r.deleted,r.updated_at,r.recovery_value,r.quarantine_reason";
@@ -2006,9 +2029,10 @@ function registerSyncRoutes(app, db) {
     try {
       const out = await db.tx(async (c) => {
         const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
+        const storesOutcomes = await hasSchemaFeature(c, "syncReceiptOutcomes");
         if (idemKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate, outcomes FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate${storesOutcomes ? ", outcomes" : ""} FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
@@ -2423,13 +2447,20 @@ function registerSyncRoutes(app, db) {
             rejected.push({ clientTxnId: clientId, error: code });
           }
         }
-        if (idemKey) {
+        if (idemKey && storesOutcomes) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
                                         rows_accepted, rows_duplicate, outcomes)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
             [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
+          );
+        } else if (idemKey && !rejected.length && !renumbered.length) {
+          await c.query(
+            `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (idempotency_key) DO NOTHING`,
+            [idemKey, tenantId, businessId, accepted, duplicates]
           );
         }
         if (accepted > 0) {

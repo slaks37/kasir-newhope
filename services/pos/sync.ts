@@ -23,6 +23,7 @@ import { randomBytes } from 'node:crypto';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { freePlanState, assertFreeScope, resolveFreeSyncScope, FreePlanAccessError } from '../billing/freePlan';
 import type { Db } from '../shared/db';
+import { hasSchemaFeature } from '../shared/schemaFeatures';
 import { applyTenders } from './tenders';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
@@ -282,9 +283,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       const out = await db.tx(async (c) => {
         const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef,sector);
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
+        const storesOutcomes = await hasSchemaFeature(c, 'syncReceiptOutcomes');
         if (idemKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate, outcomes FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            `SELECT business_id, rows_accepted, rows_duplicate${storesOutcomes ? ', outcomes' : ''} FROM pos.sync_receipts WHERE idempotency_key = $1`,
             [idemKey]
           );
           if (prev.rows.length) {
@@ -766,13 +768,23 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           }
         }
 
-        if (idemKey) {
+        if (idemKey && storesOutcomes) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id,
                                         rows_accepted, rows_duplicate, outcomes)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
             [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
+          );
+        } else if (idemKey && !rejected.length && !renumbered.length) {
+          // Before migration 0054 a receipt cannot carry per-sale outcomes. Store it only when
+          // there are none; otherwise a lost-ACK replay re-runs the batch (accepted sales become
+          // duplicates, rejected ones are rejected again) instead of reporting them as accepted.
+          await c.query(
+            `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (idempotency_key) DO NOTHING`,
+            [idemKey, tenantId, businessId, accepted, duplicates]
           );
         }
 

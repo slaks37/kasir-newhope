@@ -9,9 +9,11 @@ Berlaku untuk dua PR bertumpuk. Topologi produksi: **Vercel + Supabase**.
 
 PR 2 dibangun di atas PR 1. Keduanya boleh dirilis bersamaan atau berurutan, tetapi **jangan PR 2 tanpa PR 1**.
 
-> ⚠️ **Urutan wajib: database dulu, baru kode.**
-> - PR 1 membaca kolom `pos.sync_receipts.outcomes`. Tanpa migrasinya, setiap sinkronisasi transaksi gagal 500.
-> - PR 2 membaca tabel `pos.shared_state_versions`. Tanpa migrasinya, setiap polling state perangkat gagal 500.
+> **Urutan yang disarankan: database dulu, baru kode.** Kode tetap aman bila ter-deploy lebih dulu (`services/shared/schemaFeatures.ts`, diuji `test-deploy-order`), dan memakai migrasi begitu diterapkan (paling lambat 1 menit, tanpa redeploy):
+> - Tanpa kolom `pos.sync_receipts.outcomes` (0054): sinkron per-penjualan tetap jalan. Batch yang punya penjualan ditolak tidak disimpan sebagai receipt, sehingga kiriman ulang dieksekusi ulang dan penolakannya tetap dilaporkan.
+> - Tanpa tabel `pos.shared_state_versions` (0055): polling state memakai hash seluruh record seperti versi lama. Hasilnya benar, tetapi lebih berat di database.
+>
+> Migrasi tetap harus diterapkan. Mode fallback hanya jaring pengaman.
 
 ---
 

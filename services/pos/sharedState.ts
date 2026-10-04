@@ -8,6 +8,7 @@ import { writeActivity, SECTORS } from './activity';
 import { ORDER_OPERATION_FIELDS } from '../../src/lib/sync/orderOperations';
 import { operationalScopeIssue } from '../../src/lib/sync/operationalScope';
 import {projectLabor} from './laborProjection';
+import { hasSchemaFeature } from '../shared/schemaFeatures';
 
 const SECTOR_SET = new Set<string>(SECTORS);
 const GLOBAL_KINDS = new Set(['users', 'staff_members']);
@@ -122,10 +123,18 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
           [scope.tenantId,scope.merchantId]);
         const parameters=[scope.tenantId,[sector,'BUSINESS:'+scope.merchantId],scope.merchantId,kinds];
         // Version rows are bumped by trigger on every change (migration 0055): no full scan per poll.
-        const stamp=await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
+        // Until that migration is applied, fall back to hashing the records themselves.
+        const stamp=await hasSchemaFeature(c,'sharedStateVersions')
+          ? await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
           FROM pos.shared_state_versions v WHERE v.tenant_id=$1 AND
           ((v.scope='GLOBAL' AND v.merchant_key='00000000-0000-0000-0000-000000000000'::uuid) OR (v.scope=ANY($2::text[]) AND v.merchant_key=$3))
-          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`,parameters);
+          AND ($4::text[] IS NULL OR v.kind=ANY($4::text[]))`,parameters)
+          : await c.query(`SELECT md5(COALESCE(string_agg(
+          jsonb_build_array(scope,kind,record_id,revision,deleted,updated_at,quarantine_reason)::text,
+          '|' ORDER BY scope,kind,record_id),'')) AS version
+          FROM pos.shared_state_records WHERE tenant_id=$1 AND
+          ((scope='GLOBAL' AND merchant_id IS NULL) OR (scope=ANY($2::text[]) AND merchant_id=$3))
+          AND ($4::text[] IS NULL OR kind=ANY($4::text[]))`,parameters);
         const version=stamp.rows[0].version as string;
         // Legacy scope proofs need their records even when the snapshot did not
         // change. Version validation never replaces owner/merchant authorization.
