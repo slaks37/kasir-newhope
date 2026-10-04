@@ -24,7 +24,7 @@ import {
   resolveEnvironment,
 } from '../lib/rbac/environments';
 import type { Db } from '../../services/shared/db';
-import { authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
+import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import * as repo from './repo';
@@ -169,7 +169,10 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         }
         if(requiresAudit(capability)) await recordAccess(db,who,capability,req.path,target,reason,req.ip || null,req);
         req.internal=who;req.adminPrincipal=principal;req.environment='PROVIDER_BO';next();
-      }catch(err){ next(err); }
+      }catch(err){
+        if(err instanceof AuthUnavailableError) return res.status(503).json({ok:false,error:'AUTH_UNAVAILABLE'});
+        next(err);
+      }
     };
   }
 

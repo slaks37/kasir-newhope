@@ -28,6 +28,15 @@ function supabaseConfig() {
   return { url, apiKey };
 }
 
+/**
+ * Auth API tidak bisa dijangkau (timeout, jaringan, 5xx, 429). Ini BUKAN bukti
+ * token tidak sah: boundary menjawab 503 agar klien mencoba lagi, bukan 401 yang
+ * membuat kasir terkunci seolah aksesnya dicabut.
+ */
+export class AuthUnavailableError extends Error {
+  constructor() { super('AUTH_UNAVAILABLE'); }
+}
+
 /** Verifikasi token ke Auth API; payload JWT yang belum diverifikasi tidak dipakai. */
 export async function authenticateBearer(req: Request): Promise<AuthPrincipal | null> {
   const authorization = firstHeader(req.headers.authorization);
@@ -42,12 +51,19 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
     return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
   }
 
+  let upstream: Awaited<ReturnType<typeof fetch>>;
   try {
-    const upstream = await fetch(`${url}/auth/v1/user`, {
+    upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
       signal: AbortSignal.timeout(5_000),
     });
-    if (!upstream.ok) return null;
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+
+  try {
     const user = (await upstream.json()) as {
       id?: unknown;
       email?: unknown;
@@ -76,7 +92,14 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
 
 /** Dipasang di gateway sebelum proxying semua route yang membutuhkan sesi. */
 export async function requireGatewayAuthentication(req: Request, res: Response, next: NextFunction) {
-  const principal = await authenticateBearer(req);
+  let principal: AuthPrincipal | null;
+  try {
+    principal = await authenticateBearer(req);
+  } catch (error) {
+    if (!(error instanceof AuthUnavailableError)) throw error;
+    res.setHeader('Retry-After', '2');
+    return res.status(503).json({ ok: false, error: 'AUTH_UNAVAILABLE' });
+  }
   if (!principal) {
     return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
   }

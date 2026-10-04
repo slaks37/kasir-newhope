@@ -1,7 +1,7 @@
 import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
-import { authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import { AuthUnavailableError, authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
 import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { isFreePlan } from '../../src/config/freePlanPolicy';
@@ -20,6 +20,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
       if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
+      if (err instanceof AuthUnavailableError) return res.status(503).json({ok:false,error:'AUTH_UNAVAILABLE'});
       if (!(err instanceof BillingError)){
         const diagnostic=err as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[billing] INTERNAL_OPERATION_FAILED',{route:req.path,code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});

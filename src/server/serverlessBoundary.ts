@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
+import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import type { Db } from '../../services/shared/db';
 import { normalizeVercelUrl } from './vercelUrl';
 
@@ -88,7 +88,13 @@ export function createServerlessBoundary(
       stripIdentityHeaders(req);
     } else {
       let principal: AuthPrincipal | null = null;
-      try { principal = await authenticate(req); } catch { principal = null; }
+      try { principal = await authenticate(req); } catch (error) {
+        if (error instanceof AuthUnavailableError) {
+          res.setHeader('Retry-After', '2');
+          return res.status(503).json({ ok: false, error: 'AUTH_UNAVAILABLE' });
+        }
+        principal = null;
+      }
       if (!principal || principal.subject === 'local-development') {
         return res.status(401).json({ ok: false, error: 'AUTHENTICATION_REQUIRED' });
       }

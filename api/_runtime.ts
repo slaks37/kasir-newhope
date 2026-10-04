@@ -3,7 +3,7 @@ import { connectDb } from '../services/shared/db';
 import { registerBillingRoutes } from '../services/billing/routes';
 import { registerAdminRoutes } from '../src/server/adminRoutes';
 import { registerSyncRoutes } from '../services/pos/sync';
-import { authenticateBearer } from '../services/shared/auth';
+import { AuthUnavailableError, authenticateBearer } from '../services/shared/auth';
 import { pastikanPaket } from '../services/billing/store';
 import { SAAS_PLANS } from '../src/config/saasPlans';
 
@@ -50,7 +50,10 @@ export function createNativeApiHandler(authenticate=authenticateBearer,build=bui
     const path=String(req.url||'').split('?')[0];
     if(!isPublicApi(path,String(req.method||'GET'))){
       let principal;
-      try{principal=await authenticate(req);}catch{return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});}
+      try{principal=await authenticate(req);}catch(error){
+        if(error instanceof AuthUnavailableError){res.setHeader('Retry-After','2');return res.status(503).json({ok:false,error:'AUTH_UNAVAILABLE'});}
+        return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+      }
       if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
       applyPrincipal(req,principal);
     }

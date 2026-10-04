@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type { Request } from 'express';
-import { authenticateBearer } from '../../services/shared/auth';
+import { AuthUnavailableError, authenticateBearer, requireGatewayAuthentication } from '../../services/shared/auth';
 import { adminSecurityError } from '../../src/server/adminSecurity';
 
 async function main() {
@@ -34,11 +34,23 @@ async function main() {
     validToken=token({...claims,sub:'different-subject'});assert.equal(await authenticateBearer(request(validToken)),null);
     validToken=token({...claims,exp:now-1});assert.equal(await authenticateBearer(request(validToken)),null);
     validToken='malformed';assert.equal(await authenticateBearer(request(validToken)),null);
+    // An Auth outage is not an invalid token: callers must answer 503 (retry), never 401 (access revoked).
+    validToken=token(claims);
+    for(const outage of [async()=>{throw new TypeError('fetch failed');},async()=>new Response('{}',{status:503}),async()=>new Response('{}',{status:500}),async()=>new Response('{}',{status:429})] as Array<typeof fetch>){
+      globalThis.fetch=outage;
+      await assert.rejects(authenticateBearer(request(validToken)),AuthUnavailableError);
+      let status=0,body:any,retryAfter='';let nextCalled=false;
+      const res:any={setHeader:(k:string,v:string)=>{if(k==='Retry-After')retryAfter=v;},status(n:number){status=n;return this;},json(b:any){body=b;return this;}};
+      await requireGatewayAuthentication(request(validToken),res,()=>{nextCalled=true;});
+      assert.deepEqual([status,body?.error,retryAfter,nextCalled],[503,'AUTH_UNAVAILABLE','2',false]);
+    }
+    globalThis.fetch=async()=>new Response(JSON.stringify({error:'invalid token'}),{status:401});
+    assert.equal(await authenticateBearer(request(validToken)),null,'A token rejected by Auth stays a 401');
     const realSubject=randomUUID();
     assert.equal(adminSecurityError({subject:realSubject,aal:'aal1'},'GET'),'MFA_REQUIRED','Real UUID administrators must not bypass MFA');
     assert.equal(adminSecurityError({subject:realSubject,aal:'aal2',mfaVerifiedAt:now-601},'POST',now*1000),'REAUTH_REQUIRED');
     assert.equal(adminSecurityError({subject:realSubject,aal:'aal2',mfaVerifiedAt:now},'POST',now*1000),null);
-    console.log('PASS: Auth validation precedes claims; forged/expired/mismatched tokens denied; user_metadata and token refresh cannot satisfy MFA freshness');
+    console.log('PASS: Auth validation precedes claims; forged/expired/mismatched tokens denied; Auth outages are 503 not 401; user_metadata and token refresh cannot satisfy MFA freshness');
   } finally {
     globalThis.fetch=originalFetch;
     keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});

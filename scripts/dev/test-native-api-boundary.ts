@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type {Express} from 'express';
 import {createNativeApiHandler} from '../../api/_runtime';
+import {AuthUnavailableError} from '../../services/shared/auth';
 
 function response(){
   return {code:200,body:undefined as any,headers:{} as Record<string,string>,
@@ -41,8 +42,11 @@ for(const url of ['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/hea
 for(const [url,method] of [['/api/v1/blog','POST'],['/api/v1/blog/a/b','GET'],['/api/v1/blog/x/like','GET'],['/api/admin/blog','GET']]){
   const res=response();await offline({url,method,headers:{}},res);assert.equal(res.code,401,url+' '+method+' stays private');
 }
+const authDown=createNativeApiHandler(async()=>{throw new AuthUnavailableError();},async()=>{builds++;return app;});
+const unavailable=response();await authDown({url:'/api/admin/me',method:'GET',headers:{authorization:'Bearer A'}},unavailable);
+assert.deepEqual([unavailable.code,unavailable.body.error,unavailable.headers['Retry-After']],[503,'AUTH_UNAVAILABLE','2'],'Auth outage is retryable, not a revoked session');
 let attempts=0;
 const retry=createNativeApiHandler(async()=>({subject:'owner-A'}),async()=>{if(++attempts===1)throw Error('Database offline');return app;});
 const failed=response();await retry({url:'/api/admin/me',method:'GET',headers:{}},failed);assert.equal(failed.code,503);
 const recovered=response();await retry({url:'/api/admin/me',method:'GET',headers:{}},recovered);assert.equal(recovered.code,200);assert.equal(attempts,2);
-console.log('PASS: native admin/private API authenticates before DB initialization; exact public allowlist, forged-header rejection, account-isolated warm runtime and startup retry');
+console.log('PASS: native admin/private API authenticates before DB initialization; exact public allowlist, forged-header rejection, Auth outage 503, account-isolated warm runtime and startup retry');

@@ -127,6 +127,11 @@ function supabaseConfig() {
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
+var AuthUnavailableError = class extends Error {
+  constructor() {
+    super("AUTH_UNAVAILABLE");
+  }
+};
 async function authenticateBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -137,12 +142,18 @@ async function authenticateBearer(req) {
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  let upstream;
   try {
-    const upstream = await fetch(`${url}/auth/v1/user`, {
+    upstream = await fetch(`${url}/auth/v1/user`, {
       headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
       signal: AbortSignal.timeout(5e3)
     });
-    if (!upstream.ok) return null;
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
     const user = await upstream.json();
     if (typeof user.id !== "string" || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
@@ -898,6 +909,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       await fn(req, res);
     } catch (err) {
       if (req.path === DOKU_NOTIFICATION_PATH && err instanceof BillingError) console.warn("[doku] NOTIFICATION_REJECTED", err.message);
+      if (err instanceof AuthUnavailableError) return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
       if (!(err instanceof BillingError)) {
         const diagnostic = err;
         console.error("[billing] INTERNAL_OPERATION_FAILED", { route: req.path, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
@@ -2181,6 +2193,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         req.environment = "PROVIDER_BO";
         next();
       } catch (err) {
+        if (err instanceof AuthUnavailableError) return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
         next(err);
       }
     };
@@ -4909,7 +4922,11 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
       let principal;
       try {
         principal = await authenticate(req);
-      } catch {
+      } catch (error) {
+        if (error instanceof AuthUnavailableError) {
+          res.setHeader("Retry-After", "2");
+          return res.status(503).json({ ok: false, error: "AUTH_UNAVAILABLE" });
+        }
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
       if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });

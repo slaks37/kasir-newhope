@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createSyncHandler } from '../../src/server/syncHandler';
 import { createBillingHandler } from '../../src/server/billingHandler';
+import { AuthUnavailableError } from '../../services/shared/auth';
 import { Readable } from 'node:stream';
 let connections=0;
 const handler=createSyncHandler(async()=>null,async()=>{connections++;throw new Error('Unexpected database connection');});
@@ -27,6 +28,14 @@ for(const [url,method,status] of [
   const response={setHeader(){},status(n:number){actual=n;return this;},json(){return this;}};
   await handler({url,method,headers:{'x-auth-sub':'forged-owner','x-internal-user':'admin','x-newhope-gateway-token':'forged'}},response);
   assert.equal(actual,status,url);
+}
+assert.equal(connections,0);
+for (const make of [createSyncHandler, createBillingHandler]) {
+  const authDown=make(async()=>{throw new AuthUnavailableError();},async()=>{connections++;throw new Error('Unexpected DB access');});
+  let code=0,error='';
+  await authDown({url:make===createSyncHandler?'/api/v1/sync/state':'/api/v1/subscription/status',method:'GET',headers:{authorization:'Bearer x'}},
+    {setHeader(){},status(n:number){code=n;return this;},json(b:any){error=b.error;return this;}});
+  assert.deepEqual([code,error],[503,'AUTH_UNAVAILABLE'],'Auth outage on the serverless boundary is retryable, not 401');
 }
 assert.equal(connections,0);
 const billing=createBillingHandler(async()=>null,async()=>{connections++;throw new Error('Unexpected DB access');});
@@ -69,4 +78,4 @@ const publicBilling=createBillingHandler(async()=>{throw new Error('Public route
   assert.ok(Buffer.isBuffer(stream.rawBody)&&stream.rawBody.equals(raw),'Raw webhook bytes are preserved');
   assert.equal(code,401);assert.equal(body.error,'INVALID_WEBHOOK_SIGNATURE');
 }
-console.log('PASS: POS boundary rejects anonymous/forged identity, wrong method and admin paths before DB access; billing entry serves plans/checkout/verify/webhook from services/billing with raw webhook bytes');
+console.log('PASS: POS boundary rejects anonymous/forged identity, wrong method and admin paths before DB access, answers 503 on Auth outage; billing entry serves plans/checkout/verify/webhook from services/billing with raw webhook bytes');
