@@ -1,6 +1,3 @@
-// src/server/syncHandler.ts
-import express from "express";
-
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -2446,6 +2443,9 @@ function registerSyncRoutes(app, db) {
   });
 }
 
+// src/server/serverlessBoundary.ts
+import express from "express";
+
 // src/server/vercelUrl.ts
 function normalizeVercelUrl(req) {
   if (!req || typeof req.url !== "string") return;
@@ -2476,6 +2476,108 @@ function normalizeVercelUrl(req) {
   }
 }
 
+// src/server/serverlessBoundary.ts
+var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-sub",
+  "x-auth-email",
+  "x-auth-email-verified",
+  "x-internal-user",
+  "x-env-override",
+  "x-newhope-gateway-token"
+];
+function stripIdentityHeaders(req) {
+  for (const key of TRUSTED_IDENTITY_HEADERS) delete req.headers[key];
+}
+function applyPrincipal(req, principal) {
+  stripIdentityHeaders(req);
+  req.headers["x-auth-sub"] = principal.subject;
+  if (principal.email) req.headers["x-auth-email"] = principal.email;
+  if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+}
+var MAX_RAW_BODY = 1048576;
+async function readRawBody(req) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+  if (typeof req.rawBody === "string") return Buffer.from(req.rawBody, "utf8");
+  if (req.readableEnded || typeof req[Symbol.asyncIterator] !== "function") return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk);
+    size += bytes.length;
+    if (size > MAX_RAW_BODY) throw Object.assign(new Error("BODY_TOO_LARGE"), { status: 413 });
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks);
+}
+function setParsedBody(req, raw) {
+  let parsed = {};
+  try {
+    parsed = JSON.parse(raw.toString("utf8") || "{}");
+  } catch {
+    parsed = {};
+  }
+  req.rawBody = raw;
+  try {
+    Object.defineProperty(req, "body", { value: parsed, writable: true, configurable: true, enumerable: true });
+  } catch {
+    req.body = parsed;
+  }
+}
+function createServerlessBoundary(options, authenticate = authenticateBearer, connect) {
+  const publicRoutes = new Set(options.publicRoutes ?? []);
+  const rawBodyRoutes = new Set(options.rawBodyRoutes ?? []);
+  let runtime;
+  return async (req, res) => {
+    normalizeVercelUrl(req);
+    res.setHeader("Cache-Control", "no-store");
+    const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
+    if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+    if (publicRoutes.has(path)) {
+      stripIdentityHeaders(req);
+    } else {
+      let principal = null;
+      try {
+        principal = await authenticate(req);
+      } catch {
+        principal = null;
+      }
+      if (!principal || principal.subject === "local-development") {
+        return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      }
+      applyPrincipal(req, principal);
+    }
+    if (rawBodyRoutes.has(path) && req.method === "POST") {
+      try {
+        const raw = await readRawBody(req);
+        if (!raw) return res.status(400).json({ ok: false, error: "RAW_BODY_REQUIRED" });
+        setParsedBody(req, raw);
+      } catch (error) {
+        return res.status(error.status === 413 ? 413 : 400).json({ ok: false, error: "INVALID_REQUEST_BODY" });
+      }
+    }
+    try {
+      runtime ??= connect().then((db) => {
+        const app = express();
+        const parse = express.json({ limit: options.bodyLimit });
+        app.use((request, response, next) => request.body !== void 0 ? next() : parse(request, response, next));
+        options.register(app, db);
+        app.use((_request, response) => response.status(404).json({ ok: false, error: "NOT_FOUND" }));
+        app.use((error, _request, response, _next) => response.status(error?.type === "entity.too.large" ? 413 : 400).json({ ok: false, error: options.invalidRequestError }));
+        return app;
+      }).catch((error) => {
+        runtime = void 0;
+        throw error;
+      });
+      (await runtime)(req, res);
+    } catch (error) {
+      const diagnostic = error;
+      console.error(`[${options.name}] runtime unavailable`, { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });
+      return res.status(503).json({ ok: false, error: options.unavailableError });
+    }
+  };
+}
+
 // src/server/syncHandler.ts
 var allowedMethods = {
   "/api/v1/sync/business": ["GET", "POST"],
@@ -2498,38 +2600,14 @@ var allowedMethods = {
   "/api/v1/finance/shift/close": ["POST"]
 };
 function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
-  let runtime;
-  return async (req, res) => {
-    normalizeVercelUrl(req);
-    res.setHeader("Cache-Control", "no-store");
-    const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
-    if (!Object.hasOwn(allowedMethods, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
-    if (!allowedMethods[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
-    const principal = await authenticate(req);
-    if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-    for (const key of ["x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[key];
-    req.headers["x-auth-sub"] = principal.subject;
-    if (principal.email) req.headers["x-auth-email"] = principal.email;
-    try {
-      runtime ??= connect().then((db) => {
-        const app = express();
-        const parseJson = express.json({ limit: "10mb" });
-        app.use((req2, res2, next) => req2.body !== void 0 ? next() : parseJson(req2, res2, next));
-        registerSyncRoutes(app, db);
-        app.use((_req, res2) => res2.status(404).json({ ok: false, error: "NOT_FOUND" }));
-        app.use((error, _req, res2, _next) => res2.status(error.type === "entity.too.large" ? 413 : 400).json({ ok: false, error: "INVALID_SYNC_REQUEST" }));
-        return app;
-      }).catch((error) => {
-        runtime = void 0;
-        throw error;
-      });
-      (await runtime)(req, res);
-    } catch (error) {
-      const diagnostic = error;
-      console.error("[sync] runtime unavailable", { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });
-      return res.status(503).json({ ok: false, error: "SYNC_UNAVAILABLE" });
-    }
-  };
+  return createServerlessBoundary({
+    name: "sync",
+    routes: allowedMethods,
+    bodyLimit: "10mb",
+    register: registerSyncRoutes,
+    unavailableError: "SYNC_UNAVAILABLE",
+    invalidRequestError: "INVALID_SYNC_REQUEST"
+  }, authenticate, connect);
 }
 var syncHandler_default = createSyncHandler();
 export {

@@ -47,10 +47,11 @@ const log = (...a) => console.log(...a);
 const SEED_SQL = `
 -- Plans are static config, not tenant data — their ids stay readable by design
 -- (see THE RULE in 0005). schema.sql creates the table but seeds no rows.
+-- Mirrors src/config/saasPlans.ts (the single price source); services overwrite on boot.
 INSERT INTO plans (id, name, tier_level, billing_cycle, price_idr, features) VALUES
-  ('plan-basic-monthly',      'Basic Starter',    1, 'MONTHLY', 149000, '[]'::jsonb),
-  ('plan-pro-monthly',        'Pro Growth',       2, 'MONTHLY', 349000, '[]'::jsonb),
-  ('plan-enterprise-monthly', 'Enterprise Ultra', 3, 'MONTHLY', 699000, '[]'::jsonb)
+  ('plan-free',         'Free Trial 45 Hari', 1, 'MONTHLY',      0, '[]'::jsonb),
+  ('plan-plus-monthly', 'Tier Plus',          2, 'MONTHLY',  99000, '[]'::jsonb),
+  ('plan-pro-monthly',  'Tier Pro',           3, 'MONTHLY', 299000, '[]'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO tenants (id, name, business_sector, created_at) VALUES
@@ -71,7 +72,7 @@ INSERT INTO subscriptions (id, tenant_id, plan_id, status, current_period_start,
      CURRENT_TIMESTAMP - INTERVAL '10 days', CURRENT_TIMESTAMP + INTERVAL '20 days'),
   (legacy_uuid('sub-kopi'),    legacy_uuid('tenant-kopi'),    'plan-pro-monthly',   'PAST_DUE',
      CURRENT_TIMESTAMP - INTERVAL '40 days', CURRENT_TIMESTAMP - INTERVAL '10 days'),
-  (legacy_uuid('sub-laundry'), legacy_uuid('tenant-laundry'), 'plan-basic-monthly', 'EXPIRED',
+  (legacy_uuid('sub-laundry'), legacy_uuid('tenant-laundry'), 'plan-plus-monthly', 'EXPIRED',
      CURRENT_TIMESTAMP - INTERVAL '70 days', CURRENT_TIMESTAMP - INTERVAL '40 days')
 ON CONFLICT (id) DO NOTHING;
 

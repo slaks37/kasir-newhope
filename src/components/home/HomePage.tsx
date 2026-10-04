@@ -38,6 +38,13 @@ import {
   type BusinessSector,
 } from "../../data/businessPresets";
 import { formatRupiah } from "../../utils/formatters";
+import { findSaaSPlan } from "../../config/saasPlans";
+
+// Harga landing selalu dibaca dari katalog yang sama dengan billing.
+const PLUS = findSaaSPlan("plan-plus-monthly")!;
+const PRO = findSaaSPlan("plan-pro-monthly")!;
+const extraOutletNote = (plan: typeof PLUS) =>
+  `Extra outlet ${formatRupiah(plan.extraOutletPriceIdr ?? 0)}/bulan (${formatRupiah(plan.extraOutletYearlyIdr ?? 0)}/bulan bila tahunan)`;
 import {
   BrandMark,
   CashierDemo,
@@ -244,14 +251,14 @@ const plans = [
     id: "plan-plus-monthly",
     name: "Tier Plus",
     desc: "Untuk usaha yang mulai bertumbuh.",
-    monthly: 99000,
-    yearly: 79200,
+    monthly: PLUS.priceIdr,
+    yearly: PLUS.priceYearlyIdr ?? PLUS.priceIdr,
     features: [
       "Hingga 2 outlet · produk tidak terbatas",
       "Kasir, QRIS & struk digital",
       "Inventori dan workflow sektor dasar",
       "Pelanggan, shift, kas & laporan omzet",
-      "Extra outlet mulai Rp 63.360/bulan",
+      extraOutletNote(PLUS),
     ],
     cta: "Pilih Tier Plus",
   },
@@ -259,14 +266,14 @@ const plans = [
     id: "plan-pro-monthly",
     name: "Tier Pro",
     desc: "Kontrol lebih lengkap untuk banyak cabang.",
-    monthly: 299000,
-    yearly: 248170,
+    monthly: PRO.priceIdr,
+    yearly: PRO.priceYearlyIdr ?? PRO.priceIdr,
     features: [
       "Hingga 4 outlet · produk tak terbatas",
       "Multi-location, transfer stok & recursive BOM",
       "Smart Labor, payroll & workflow vertikal lengkap",
       "Advanced AI & laporan gabungan antar-outlet",
-      "Extra outlet mulai Rp 63.360/bulan",
+      extraOutletNote(PRO),
     ],
     cta: "Pilih Tier Pro",
   },

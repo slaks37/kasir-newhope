@@ -1,5 +1,5 @@
 // api/_runtime.ts
-import express from "express";
+import express2 from "express";
 
 // services/shared/db.ts
 import fs from "node:fs";
@@ -712,17 +712,16 @@ function isDokuConfigured() {
   return Boolean(clientId && secretKey && !clientId.includes("sandbox_dummy"));
 }
 function getDokuClientId() {
-  return (process.env.DOKU_CLIENT_ID || process.env.DOKU_SANDBOX_CLIENT_ID || "").replace(/["']/g, "").trim();
+  return (process.env.DOKU_CLIENT_ID || "").replace(/["']/g, "").trim();
 }
 function getDokuSecretKey() {
-  return (process.env.DOKU_SECRET_KEY || process.env.DOKU_SANDBOX_SECRET_KEY || "").replace(/["']/g, "").trim();
+  return (process.env.DOKU_SECRET_KEY || "").replace(/["']/g, "").trim();
 }
+var DOKU_API_URLS = /* @__PURE__ */ new Set(["https://api.doku.com", "https://api-sandbox.doku.com"]);
 function getDokuApiUrl() {
   const raw = (process.env.DOKU_API_URL || "https://api.doku.com").replace(/["']/g, "").trim().replace(/\/+$/, "");
-  if (raw.includes("sandbox")) {
-    return "https://api-sandbox.doku.com";
-  }
-  return "https://api.doku.com";
+  if (!DOKU_API_URLS.has(raw)) throw new Error("DOKU_API_URL_NOT_ALLOWED");
+  return raw;
 }
 var DOKU_NOTIFICATION_PATH = "/api/v1/webhooks/doku";
 function getDokuAllowedChannels() {
@@ -1054,16 +1053,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       try {
         const inquiry = await checkDokuOrderStatus(inv.invoice_number);
         if (inquiry.ok && inquiry.status === "SUCCESS") {
-          let allowedChannels;
+          let allowedChannels = [];
           try {
             allowedChannels = getDokuAllowedChannels();
           } catch {
-            allowedChannels = ["VIRTUAL_ACCOUNT_BCA"];
           }
-          const rawChannel = inquiry.channelId || inv.quote?.allowedChannels?.[0] || "VIRTUAL_ACCOUNT_BCA";
-          const channel = allowedChannels.includes(rawChannel) ? rawChannel : allowedChannels[0];
-          await reconcilePayment(db, {
-            eventKey: `inquiry-${inv.invoice_number}-${Date.now()}`,
+          const channel = String(inquiry.channelId || "");
+          const issue = !channel || !allowedChannels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : void 0;
+          const result = await reconcilePayment(db, {
+            eventKey: `inquiry-${inv.invoice_number}-${String(inquiry.transactionId || "unknown")}`,
+            validationIssue: issue,
             invoiceNumber: inv.invoice_number,
             reference: String(inquiry.transactionId || `inquiry-${Date.now()}`),
             amount: Number(inv.amount),
@@ -1074,7 +1073,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
             payload: { status: "SUCCESS", channel, source: "INQUIRY" }
           });
           const statusData = await subscriptionStatus(db, tenantId);
-          return res.json({ ok: true, paid: true, reconciled: true, status: statusData.subscription.status, subscription: statusData.subscription });
+          const applied = result.outcome === "APPLIED" || result.outcome === "DUPLICATE";
+          return res.json({
+            ok: true,
+            paid: applied,
+            reconciled: applied,
+            outcome: result.outcome,
+            reason: result.reason,
+            status: applied ? statusData.subscription.status : "PENDING_PAYMENT",
+            subscription: statusData.subscription
+          });
         }
       } catch (err) {
         console.warn("[doku-verify] Inquiry check failed:", err.message);
@@ -4699,13 +4707,33 @@ function normalizeVercelUrl(req) {
   }
 }
 
+// src/server/serverlessBoundary.ts
+import express from "express";
+var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-sub",
+  "x-auth-email",
+  "x-auth-email-verified",
+  "x-internal-user",
+  "x-env-override",
+  "x-newhope-gateway-token"
+];
+function stripIdentityHeaders(req) {
+  for (const key of TRUSTED_IDENTITY_HEADERS) delete req.headers[key];
+}
+function applyPrincipal(req, principal) {
+  stripIdentityHeaders(req);
+  req.headers["x-auth-sub"] = principal.subject;
+  if (principal.email) req.headers["x-auth-email"] = principal.email;
+  if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+}
+
 // api/_runtime.ts
 async function buildRuntime() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL_NOT_CONFIGURED");
   const db = await connectDb({ schema: "billing", max: 2 });
   await pastikanPaket(db, SAAS_PLANS);
-  const app = express();
-  app.use(express.json({ limit: "10mb", verify: (req, _res, buf) => {
+  const app = express2();
+  app.use(express2.json({ limit: "10mb", verify: (req, _res, buf) => {
     req.rawBody = buf;
   } }));
   registerBillingRoutes(app, db);
@@ -4728,7 +4756,7 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
-    for (const name of ["x-auth-sub", "x-auth-email", "x-auth-email-verified", "x-internal-user", "x-newhope-gateway-token"]) delete req.headers[name];
+    stripIdentityHeaders(req);
     const path = String(req.url || "").split("?")[0];
     if (!["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"].includes(path)) {
       let principal;
@@ -4738,8 +4766,7 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
       if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
-      req.headers["x-auth-sub"] = principal.subject;
-      if (principal.email) req.headers["x-auth-email"] = principal.email;
+      applyPrincipal(req, principal);
     }
     try {
       runtime ??= build().catch((err) => {
@@ -4763,7 +4790,7 @@ async function proxyToGateway(req, res) {
     try {
       if (new URL(base).host === req.headers.host) return void res.status(503).json({ ok: false, error: "GATEWAY_SELF_REFERENCE" });
       const headers = { ...req.headers };
-      for (const key of ["host", "connection", "content-length", "transfer-encoding", "x-auth-sub", "x-auth-email", "x-internal-user", "x-newhope-gateway-token"]) delete headers[key];
+      for (const key of ["host", "connection", "content-length", "transfer-encoding", ...TRUSTED_IDENTITY_HEADERS]) delete headers[key];
       const isDoku = req.url?.split("?")[0] === "/api/v1/webhooks/doku";
       if (isDoku && req.rawBody === void 0 && req.body !== void 0) return void res.status(400).json({ ok: false, error: "RAW_BODY_REQUIRED" });
       let body = req.rawBody ?? (req.body === void 0 ? void 0 : JSON.stringify(req.body));

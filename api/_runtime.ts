@@ -28,6 +28,7 @@ async function buildRuntime() {
   return app;
 }
 import { normalizeVercelUrl } from '../src/server/vercelUrl';
+import { applyPrincipal, stripIdentityHeaders } from '../src/server/serverlessBoundary';
 
 /** Reject private requests before connecting/seeding the legacy runtime.
  * Only the app/DB promise is shared between requests; identity remains local.
@@ -37,14 +38,13 @@ export function createNativeApiHandler(authenticate=authenticateBearer,build=bui
   return async(req:any,res:any)=>{
     normalizeVercelUrl(req);
     res.setHeader('Cache-Control','no-store');
-    for(const name of ['x-auth-sub','x-auth-email','x-auth-email-verified','x-internal-user','x-newhope-gateway-token']) delete req.headers[name];
+    stripIdentityHeaders(req);
     const path=String(req.url||'').split('?')[0];
     if(!['/api/v1/subscription/plans','/api/v1/webhooks/doku','/api/health'].includes(path)){
       let principal;
       try{principal=await authenticate(req);}catch{return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});}
       if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
-      req.headers['x-auth-sub']=principal.subject;
-      if(principal.email) req.headers['x-auth-email']=principal.email;
+      applyPrincipal(req,principal);
     }
     try{
       runtime ??= build().catch(err=>{runtime=undefined;throw err;});

@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_admin_bundle.js && esbuild src/server/subscriptionDispatcher.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_subscription_bundle.js && esbuild src/server/dokuHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_doku_bundle.js && esbuild src/server/billingRemindersHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_billing_reminders_bundle.js && esbuild src/server/merchantHealthHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_merchant_health_bundle.js && esbuild src/server/syncHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_sync_bundle.js && esbuild src/server/assistantHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_assistant_bundle.js && esbuild src/server/dailyInsightsHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_daily_insights_bundle.js",
+    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
-    "postbuild": "esbuild src/server/mcpHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/_mcp_bundle.js",
     "test:mcp": "node --import tsx scripts/dev/test-mcp.ts",
     "clean": "rm -rf dist server.js",
     "lint": "npm run hygiene && tsc --noEmit",
@@ -45,7 +44,8 @@
     "start:pos": "node dist/services/pos/index.js",
     "start:ai": "node dist/services/ai/index.js",
     "start:billing": "node dist/services/billing/index.js",
-    "start:backoffice": "node dist/services/backoffice/index.js"
+    "start:backoffice": "node dist/services/backoffice/index.js",
+    "build:api": "esbuild src/server/adminHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_admin_bundle.js && esbuild src/server/subscriptionDispatcher.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_subscription_bundle.js && esbuild src/server/dokuHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_doku_bundle.js && esbuild src/server/billingRemindersHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_billing_reminders_bundle.js && esbuild src/server/merchantHealthHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_merchant_health_bundle.js && esbuild src/server/syncHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_sync_bundle.js && esbuild src/server/assistantHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_assistant_bundle.js && esbuild src/server/dailyInsightsHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_daily_insights_bundle.js && esbuild src/server/mcpHandler.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=api/_mcp_bundle.js"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

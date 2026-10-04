@@ -49,20 +49,23 @@ export function isDokuConfigured(): boolean {
   return Boolean(clientId && secretKey && !clientId.includes('sandbox_dummy'));
 }
 
+// DOKU_SANDBOX_* hanya untuk alat bukti sandbox (scripts/batch/doku-sandbox-evidence.ts),
+// tidak pernah menjadi cadangan kredensial checkout.
 export function getDokuClientId(): string {
-  return (process.env.DOKU_CLIENT_ID || process.env.DOKU_SANDBOX_CLIENT_ID || '').replace(/["']/g, '').trim();
+  return (process.env.DOKU_CLIENT_ID || '').replace(/["']/g, '').trim();
 }
 
 export function getDokuSecretKey(): string {
-  return (process.env.DOKU_SECRET_KEY || process.env.DOKU_SANDBOX_SECRET_KEY || '').replace(/["']/g, '').trim();
+  return (process.env.DOKU_SECRET_KEY || '').replace(/["']/g, '').trim();
 }
 
+const DOKU_API_URLS = new Set(['https://api.doku.com', 'https://api-sandbox.doku.com']);
+
+/** Hanya dua host resmi. Salah ketik tidak boleh diam-diam mengarah ke produksi. */
 export function getDokuApiUrl(): string {
   const raw = (process.env.DOKU_API_URL || 'https://api.doku.com').replace(/["']/g, '').trim().replace(/\/+$/, '');
-  if (raw.includes('sandbox')) {
-    return 'https://api-sandbox.doku.com';
-  }
-  return 'https://api.doku.com';
+  if (!DOKU_API_URLS.has(raw)) throw new Error('DOKU_API_URL_NOT_ALLOWED');
+  return raw;
 }
 
 export const DOKU_NOTIFICATION_PATH = '/api/v1/webhooks/doku';
