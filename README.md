@@ -142,6 +142,7 @@ AI Copilot: Layer aturan dan analitik tidak memerlukan kunci provider, tetapi te
 - [`Dokumentasi.md`](Dokumentasi.md): arsitektur, hierarki data, alur kasir end-to-end
 - [`docs/operations/runbook-2026-10-stabilization.md`](docs/operations/runbook-2026-10-stabilization.md): langkah rilis perbaikan Oktober 2026 dan pemeriksaan pasca-rilis
 - [`docs/qa/2026-10-04-qa-report.md`](docs/qa/2026-10-04-qa-report.md): hasil QA (logic, data, performa, load) dan status perbaikannya
+- [`docs/blog/automation.md`](docs/blog/automation.md): blog server-rendered, SEO, dan API/MCP otomasi artikel
 - [`docs/design/2026-10-keputusan-produk.md`](docs/design/2026-10-keputusan-produk.md): tiga keputusan produk yang menunggu jawaban (stok ledger, PIN server, QRIS dinamis)
 - [`docs/cloud-financial-architecture.md`](docs/cloud-financial-architecture.md): ledger keuangan
 - [`docs/operations/sync-center-repair.md`](docs/operations/sync-center-repair.md): pemulihan data sinkronisasi

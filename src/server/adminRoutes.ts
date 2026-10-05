@@ -25,6 +25,7 @@ import {
 } from '../lib/rbac/environments';
 import type { Db } from '../../services/shared/db';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
+import { registerBlogRoutes } from './blogRoutes';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import { registerAdminIntegrationRoutes } from './adminIntegrations';
@@ -82,6 +83,7 @@ async function recordAccess(db: Db, who: InternalIdentity, action: string, resou
 }
 
 export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider): void {
+  registerBlogRoutes(app, getDb);
   app.use('/api/admin',(req:AdminRequest,res,next)=>{
     const forwarded=String(req.headers['x-request-id'] || '');
     const trusted=process.env.INTERNAL_GATEWAY_TOKEN && req.headers['x-newhope-gateway-token']===process.env.INTERNAL_GATEWAY_TOKEN;

@@ -58,6 +58,7 @@ const ROUTES: Array<{ prefix: string; target: string; name: keyof typeof SERVICE
   { prefix: '/api/v1/transactions', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/analytics', target: SERVICE_URL.pos, name: 'pos' },
   { prefix: '/api/v1/blog', target: SERVICE_URL.backoffice, name: 'backoffice' },
+  { prefix: '/api/v1/blog-automation', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/admin', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/internal', target: SERVICE_URL.backoffice, name: 'backoffice' },
   { prefix: '/api/v1/auth', target: SERVICE_URL.billing, name: 'billing' },
@@ -89,6 +90,8 @@ function isPublicApi(url: string): boolean {
   const p = url.split('?')[0];
   if (PUBLIC_API_PATHS.has(p)) return true;
   if (p === '/api/v1/blog' || p.startsWith('/api/v1/blog/')) return true;
+  // Authenticated by its own API key inside backoffice, not by a user session.
+  if (p === '/api/v1/blog-automation' || p.startsWith('/api/v1/blog-automation/')) return true;
   return false;
 }
 
@@ -326,6 +329,19 @@ app.get('/api/health', async (_req, res) => {
 /** Keadaan breaker, untuk menjawab "kenapa 503 padahal service-nya hidup?". */
 app.get('/api/breakers', (_req, res) => {
   res.json({ ok: true, breakers: Object.values(breakers).map((b) => b.ringkasan()) });
+});
+
+// Server-rendered blog pages live in backoffice (same code as the Vercel admin function).
+app.get(['/blog', '/blog/:slug', '/sitemap.xml', '/rss.xml'], async (req, res) => {
+  try {
+    const headers: Record<string, string> = { 'x-forwarded-host': String(req.headers.host || ''), 'x-forwarded-proto': req.protocol };
+    if (process.env.INTERNAL_GATEWAY_TOKEN) headers['x-newhope-gateway-token'] = process.env.INTERNAL_GATEWAY_TOKEN;
+    const upstream = await fetch(SERVICE_URL.backoffice + req.originalUrl, { headers, redirect: 'manual', signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
+    for (const name of ['content-type', 'cache-control', 'location']) { const value = upstream.headers.get(name); if (value) res.setHeader(name, value); }
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    res.status(503).type('text/plain').send('Blog sedang tidak tersedia.');
+  }
 });
 
 app.get('/api/environment', (req, res) => {

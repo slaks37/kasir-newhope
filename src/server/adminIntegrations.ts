@@ -11,11 +11,16 @@ export function integrationProviders(env: NodeJS.ProcessEnv = process.env) {
     { id: 'supabase', name: 'Supabase', purpose: 'Database dan autentikasi akun', configured: configured('DATABASE_URL') && (configured('SUPABASE_URL','SUPABASE_ANON_KEY') || configured('VITE_SUPABASE_URL','VITE_SUPABASE_ANON_KEY')), dashboard: 'https://supabase.com/dashboard/project/fqxrhumsgigcgjtlbfuo', note: 'Status berdasarkan konfigurasi server; bukan pemeriksaan uptime.' },
     { id: 'doku', name: 'DOKU', purpose: 'Pembayaran langganan', configured: configured('DOKU_CLIENT_ID','DOKU_SECRET_KEY'), dashboard: 'https://dashboard.doku.com/', note: (env.DOKU_API_URL || 'https://api.doku.com').includes('api-sandbox') ? 'Mode sandbox; bukan pembayaran produksi.' : 'Endpoint produksi; periksa aktivasi channel di dashboard DOKU.' },
     { id: 'resend', name: 'Resend', purpose: 'Email bantuan akun dan billing', configured: configured('RESEND_API_KEY'), dashboard: 'https://resend.com/api-keys', note: 'Keberadaan kunci tidak memastikan domain pengirim telah diverifikasi.' },
+    { id: 'blog', name: 'Blog automation', purpose: 'REST API dan MCP penerbitan artikel', configured: String(env.BLOG_API_KEYS || '').split(',').some(key=>key.trim().length>=24), dashboard: 'https://vercel.com/slaks37s-projects/kasir-newhope/settings/environment-variables', note: 'Key BLOG_API_KEYS hanya untuk blog. Berbeda dari OAuth read-only data POS; koneksi agen tidak tercatat sebagai koneksi owner MCP.' },
     { id: 'deepseek', name: 'DeepSeek', purpose: 'Analisis AI berbayar', configured: configured('DEEPSEEK_API_KEY'), dashboard: 'https://platform.deepseek.com/api_keys', note: 'Penggunaan mengikuti batas akun dan paket di layanan AI.' },
     { id: 'agnes', name: 'Agnes AI', purpose: 'Penyedia AI alternatif', configured: configured('AGNES_API_KEY'), dashboard: 'https://apihub.agnes-ai.com/', note: 'Status hanya konfigurasi; pilihan model mengikuti layanan AI.' },
   ];
 }
 export const INTEGRATION_API_CATALOG = [
+  { method: 'GET', path: '/api/v1/blog-automation/guide', auth: 'Bearer API key blog', purpose: 'Panduan otomasi artikel' },
+  { method: 'POST', path: '/api/v1/blog-automation/validate', auth: 'Bearer API key blog', purpose: 'Validasi artikel tanpa menyimpan' },
+  { method: 'POST', path: '/api/v1/blog-automation/posts', auth: 'Bearer API key blog; dapat menerbitkan artikel', purpose: 'Buat artikel (publish:false untuk draft)' },
+  { method: 'POST', path: '/api/v1/blog-automation/mcp', auth: 'Bearer API key blog; bukan OAuth POS', purpose: 'MCP editorial untuk automation agent' },
   { method: 'GET', path: '/api/v1/subscription/plans', auth: 'Publik', purpose: 'Katalog paket' },
   { method: 'GET', path: '/api/v1/subscription/status', auth: 'Bearer JWT akun owner', purpose: 'Langganan dan kapasitas akun' },
   { method: 'GET', path: '/api/v1/sync/business', auth: 'Bearer JWT akun owner', purpose: 'Bisnis dan outlet akun' },

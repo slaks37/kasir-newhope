@@ -7,7 +7,7 @@
  *
  *  - Navigasi (halaman kasir): network-first, fallback ke index.html tersimpan.
  *  - /assets/* (nama ber-hash, tidak pernah berubah): cache-first.
- *  - TIDAK PERNAH: /api/*, /admin*, request non-GET, domain lain (Supabase, CDN).
+ *  - TIDAK PERNAH: /api/*, /admin*, /blog*, sitemap/RSS, request non-GET, domain lain (Supabase, CDN).
  *  - Versi baru menunggu sampai semua tab lama ditutup (tanpa skipWaiting), agar
  *    satu tab tidak memuat campuran chunk dari dua build.
  */
@@ -21,6 +21,8 @@ function route(request) {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return 'network';
   if (url.pathname.startsWith('/api/') || url.pathname === '/api' || url.pathname.startsWith('/admin') || url.pathname === '/sw.js') return 'network';
+  // Server-rendered pages: never cached as the app shell.
+  if (url.pathname === '/blog' || url.pathname.startsWith('/blog/') || url.pathname === '/sitemap.xml' || url.pathname === '/rss.xml') return 'network';
   if (request.mode === 'navigate') return 'shell';
   if (url.pathname.startsWith('/assets/')) return 'asset';
   return 'network';

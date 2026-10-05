@@ -749,12 +749,12 @@ function generateDigest(body) {
   const content = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   return crypto.createHash("sha256").update(content).digest("base64");
 }
-function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest, secretKey) {
+function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest2, secretKey) {
   const componentSignature = `Client-Id:${clientId}
 Request-Id:${requestId}
 Request-Timestamp:${requestTimestamp}
 Request-Target:${requestTarget}
-Digest:${digest}`;
+Digest:${digest2}`;
   const hmac = crypto.createHmac("sha256", secretKey);
   hmac.update(componentSignature, "utf8");
   const hmacBase64 = hmac.digest("base64");
@@ -780,13 +780,13 @@ async function createDokuCheckout(payload) {
   const requestId = crypto.randomUUID();
   const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
   const requestTarget = "/checkout/v1/payment";
-  const digest = generateDigest(payload);
+  const digest2 = generateDigest(payload);
   const signature = generateSignature(
     clientId,
     requestId,
     requestTimestamp,
     requestTarget,
-    digest,
+    digest2,
     secretKey
   );
   const response = await fetch(`${apiUrl}${requestTarget}`, {
@@ -878,13 +878,13 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
   const time = Date.parse(requestTimestamp);
   if (!Number.isFinite(time) || new Date(time).toISOString().replace(".000Z", "Z") !== requestTimestamp.replace(".000Z", "Z")) return false;
   if (time > now + 5 * 6e4 || now - time > 13 * 60 * 6e4) return false;
-  const digest = generateDigest(rawBody);
+  const digest2 = generateDigest(rawBody);
   const expectedSignature = generateSignature(
     clientId,
     requestId,
     requestTimestamp,
     requestTarget,
-    digest,
+    digest2,
     secretKey
   );
   try {
@@ -1150,7 +1150,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -1227,6 +1227,785 @@ var AUDITED_CAPABILITIES = [
 ];
 function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
+}
+
+// src/server/blogRoutes.ts
+import { createHash, randomUUID as randomUUID3, timingSafeEqual } from "node:crypto";
+
+// src/lib/blog/categories.ts
+var BLOG_CATEGORIES = [
+  "Tips Bisnis & Strategi",
+  "Panduan Kasir & POS",
+  "FinTech & QRIS",
+  "Kuliner & F&B",
+  "Laundry & Jasa",
+  "Ritel & Minimarket",
+  "Kisah Sukses UMKM"
+];
+var isBlogCategory = (value) => typeof value === "string" && BLOG_CATEGORIES.includes(value);
+function slugify(value) {
+  return value.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/&/g, " dan ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96).replace(/-+$/g, "");
+}
+var CATEGORY_SLUGS = {
+  "Tips Bisnis & Strategi": "tips-bisnis",
+  "Panduan Kasir & POS": "panduan-kasir",
+  "FinTech & QRIS": "fintech-qris",
+  "Kuliner & F&B": "kuliner-fnb",
+  "Laundry & Jasa": "laundry-jasa",
+  "Ritel & Minimarket": "ritel-minimarket",
+  "Kisah Sukses UMKM": "kisah-sukses"
+};
+var categorySlug = (category) => isBlogCategory(category) ? CATEGORY_SLUGS[category] : slugify(category);
+var categoryFromSlug = (slug) => BLOG_CATEGORIES.find((category) => categorySlug(category) === slug) ?? null;
+
+// src/lib/blog/markdown.ts
+import { Marked } from "marked";
+var escapeHtml = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+var safeUrl = (href, images = false) => {
+  const value = href.trim();
+  if (images) return /^https:\/\//i.test(value) ? value : null;
+  return /^(https?:\/\/|mailto:|\/(?!\/)|#)/i.test(value) ? value : null;
+};
+var plain = (html) => html.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+function normalizeArticleMarkdown(markdown, title = "") {
+  let text3 = String(markdown || "").replace(/\r\n?/g, "\n");
+  if (!text3.includes("\n") && text3.includes("\\n")) text3 = text3.replace(/\\n/g, "\n");
+  text3 = text3.trim();
+  const first = /^#\s+(.+)\n?/.exec(text3);
+  if (first && title && similar(first[1], title)) text3 = text3.slice(first[0].length).trim();
+  return text3.replace(/^#\s+/gm, "## ");
+}
+function similar(a, b) {
+  const x = slugify(a), y = slugify(b);
+  return !!x && !!y && (x === y || y.startsWith(x) || x.startsWith(y));
+}
+function renderArticle(markdown, title = "") {
+  const source = normalizeArticleMarkdown(markdown, title);
+  const headings = [];
+  const used = /* @__PURE__ */ new Map();
+  const marked = new Marked({ gfm: true, breaks: false });
+  marked.use({
+    renderer: {
+      html({ text: text3 }) {
+        return escapeHtml(text3);
+      },
+      heading({ tokens, depth }) {
+        const inner = this.parser.parseInline(tokens);
+        const level = Math.min(Math.max(depth, 2), 4);
+        const text3 = plain(inner);
+        const base = slugify(text3) || "bagian";
+        const n = (used.get(base) ?? 0) + 1;
+        used.set(base, n);
+        const id = n > 1 ? `${base}-${n}` : base;
+        if (level === 2 || level === 3) headings.push({ level, text: text3, id });
+        return `<h${level} id="${id}">${inner}</h${level}>
+`;
+      },
+      link({ href, title: linkTitle, tokens }) {
+        const inner = this.parser.parseInline(tokens);
+        const url = safeUrl(href);
+        if (!url) return inner;
+        const external = /^https?:\/\//i.test(url) && !/^https?:\/\/(www\.)?kasir\.newhope\.space/i.test(url);
+        return `<a href="${escapeHtml(url)}"${linkTitle ? ` title="${escapeHtml(linkTitle)}"` : ""}${external ? ' rel="noopener nofollow" target="_blank"' : ""}>${inner}</a>`;
+      },
+      image({ href, title: imageTitle, text: text3 }) {
+        const url = safeUrl(href, true);
+        if (!url) return "";
+        const caption = imageTitle || text3;
+        return `<figure><img src="${escapeHtml(url)}" alt="${escapeHtml(text3 || "")}" loading="lazy" decoding="async">${caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ""}</figure>`;
+      },
+      table(token) {
+        const cell = (c) => this.parser.parseInline(c.tokens);
+        const head = token.header.map((c) => `<th>${cell(c)}</th>`).join("");
+        const body = token.rows.map((r) => `<tr>${r.map((c) => `<td>${cell(c)}</td>`).join("")}</tr>`).join("");
+        return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+`;
+      }
+    }
+  });
+  const html = marked.parse(source, { async: false });
+  const words = plain(html).split(/\s+/).filter(Boolean).length;
+  return { html, headings, words };
+}
+var readingMinutes = (words) => Math.max(1, Math.round(words / 200));
+
+// src/lib/blog/articleInput.ts
+var ARTICLE_RULES = {
+  title: [20, 100],
+  excerpt: [80, 300],
+  metaDescription: [70, 170],
+  metaTitleMax: 70,
+  minWords: 500,
+  recommendedWords: 900,
+  minH2: 3,
+  maxTags: 8,
+  maxFaq: 8
+};
+var FORBIDDEN_CLAIMS = [
+  [/cair(?:kan)?\s+(?:otomatis\s+)?h\s*\+\s*1|pencairan\s+h\s*\+\s*1/i, "Klaim pencairan H+1 tidak boleh: dana QRIS mengikuti penyedia milik merchant."],
+  [/(?:new hope|kasir)[^.\n]{0,80}(?:deteksi|mendeteksi)[^.\n]{0,40}(?:lunas|paid)\s+otomatis|lunas\s+otomatis[^.\n]{0,60}new hope/i, "Klaim deteksi lunas otomatis tidak boleh: QRIS dinamis belum tersedia."],
+  [/tanpa\s+biaya\s+admin|mdr\s*0\s*%/i, "Klaim tanpa biaya admin / MDR 0% tidak boleh dipakai."],
+  [/dijamin\s+(?:untung|laris|omzet|omset)|garansi\s+(?:omzet|omset|untung)/i, "Janji hasil usaha yang dijamin tidak boleh dipakai."]
+];
+var text = (value, max) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+var between = (value, [min, max]) => value.length >= min && value.length <= max;
+var httpsUrl = (value) => typeof value === "string" && /^https:\/\/[^\s"'<>]+$/i.test(value.trim()) ? value.trim() : "";
+function checkArticle(input) {
+  const errors = [], warnings = [];
+  const title = text(input.title, 160);
+  const excerpt = text(input.excerpt, 400);
+  const content = typeof input.content === "string" ? input.content : "";
+  const slug = slugify(text(input.slug, 120) || title);
+  const seoIn = input.seo && typeof input.seo === "object" ? input.seo : {};
+  const authorIn = input.author && typeof input.author === "object" ? input.author : {};
+  if (!between(title, ARTICLE_RULES.title)) errors.push(`title harus ${ARTICLE_RULES.title[0]}\u2013${ARTICLE_RULES.title[1]} karakter (sekarang ${title.length}).`);
+  if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) errors.push("slug tidak valid: hanya huruf kecil, angka dan tanda hubung.");
+  if (!between(excerpt, ARTICLE_RULES.excerpt)) errors.push(`excerpt harus ${ARTICLE_RULES.excerpt[0]}\u2013${ARTICLE_RULES.excerpt[1]} karakter (sekarang ${excerpt.length}).`);
+  if (!isBlogCategory(input.category)) errors.push(`category harus salah satu dari: ${BLOG_CATEGORIES.join(", ")}.`);
+  if (content.length > 12e4) errors.push("content melebihi 120.000 karakter.");
+  const rendered = renderArticle(content, title);
+  const h2 = rendered.headings.filter((h) => h.level === 2).length, h3 = rendered.headings.filter((h) => h.level === 3).length;
+  if (rendered.words < ARTICLE_RULES.minWords) errors.push(`content terlalu tipis: ${rendered.words} kata (minimal ${ARTICLE_RULES.minWords}).`);
+  else if (rendered.words < ARTICLE_RULES.recommendedWords) warnings.push(`content ${rendered.words} kata; ${ARTICLE_RULES.recommendedWords}+ kata biasanya lebih kompetitif.`);
+  if (h2 < ARTICLE_RULES.minH2) errors.push(`content butuh minimal ${ARTICLE_RULES.minH2} subjudul H2 (## ...), sekarang ${h2}.`);
+  if (/^#\s+/m.test(content)) warnings.push("H1 (# ...) di dalam content diubah menjadi H2; judul halaman memakai field title.");
+  if (/<\s*(script|iframe|style)/i.test(content)) warnings.push("HTML mentah (script/iframe/style) tidak dirender dan tampil sebagai teks.");
+  for (const [pattern, message] of FORBIDDEN_CLAIMS) if (pattern.test(`${title}
+${excerpt}
+${content}`)) errors.push(message);
+  const metaTitle = text(seoIn.metaTitle, 120) || title;
+  if (metaTitle.length > ARTICLE_RULES.metaTitleMax) warnings.push(`seo.metaTitle ${metaTitle.length} karakter; Google biasanya memotong di atas \xB1${ARTICLE_RULES.metaTitleMax}.`);
+  let metaDescription = text(seoIn.metaDescription, 300);
+  if (!metaDescription) metaDescription = excerpt.length > 160 ? excerpt.slice(0, 157).replace(/\s+\S*$/, "") + "\u2026" : excerpt;
+  else if (!between(metaDescription, ARTICLE_RULES.metaDescription)) errors.push(`seo.metaDescription harus ${ARTICLE_RULES.metaDescription[0]}\u2013${ARTICLE_RULES.metaDescription[1]} karakter.`);
+  const tags = Array.isArray(input.tags) ? [...new Set(input.tags.map((t) => text(t, 40)).filter(Boolean))] : [];
+  if (tags.length > ARTICLE_RULES.maxTags) errors.push(`tags maksimal ${ARTICLE_RULES.maxTags}.`);
+  const keywords = Array.isArray(seoIn.keywords) ? [...new Set(seoIn.keywords.map((k) => text(k, 60)).filter(Boolean))].slice(0, 10) : tags;
+  const focusKeyword = text(seoIn.focusKeyword, 60);
+  if (focusKeyword) {
+    const k = focusKeyword.toLowerCase();
+    if (!title.toLowerCase().includes(k)) warnings.push("focusKeyword tidak ada di title.");
+    if (!rendered.headings.some((h) => h.text.toLowerCase().includes(k))) warnings.push("focusKeyword tidak ada di subjudul mana pun.");
+    if (!metaDescription.toLowerCase().includes(k)) warnings.push("focusKeyword tidak ada di meta description.");
+  }
+  const coverImage = httpsUrl(input.coverImage);
+  if (input.coverImage && !coverImage) errors.push("coverImage harus URL https.");
+  if (!coverImage) warnings.push("Tanpa coverImage, pratinjau di Google/WhatsApp memakai gambar bawaan.");
+  const faqIn = Array.isArray(input.faq) ? input.faq : [];
+  if (faqIn.length > ARTICLE_RULES.maxFaq) errors.push(`faq maksimal ${ARTICLE_RULES.maxFaq} pertanyaan.`);
+  const faq = faqIn.slice(0, ARTICLE_RULES.maxFaq).map((item) => ({ question: text(item?.question, 200), answer: text(item?.answer, 800) }));
+  if (faq.some((f) => f.question.length < 10 || f.answer.length < 20)) errors.push("Setiap faq butuh question (\u226510 karakter) dan answer (\u226520 karakter).");
+  const avatar = httpsUrl(authorIn.avatar);
+  const record = {
+    slug,
+    title,
+    excerpt,
+    content: content.trim(),
+    category: isBlogCategory(input.category) ? input.category : BLOG_CATEGORIES[0],
+    tags,
+    coverImage,
+    isFeatured: input.isFeatured === true,
+    isPublished: input.publish !== false,
+    readingTimeMinutes: readingMinutes(rendered.words),
+    author: { name: text(authorIn.name, 80) || "Tim Editorial New Hope POS", role: text(authorIn.role, 80) || "Editor", avatar },
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, faq }
+  };
+  return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
+}
+
+// src/server/blogPages.ts
+var GTM_ID = "GTM-WD7T7WSF";
+var BLOG_NAME = "Blog New Hope POS";
+var BLOG_PAGE_SIZE = 12;
+function siteUrl() {
+  const raw = process.env.PUBLIC_SITE_URL || process.env.PUBLIC_APP_URL || "https://kasir.newhope.space";
+  return raw.replace(/\/+$/, "");
+}
+var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+var json = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
+var date = (iso2) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso2));
+var postUrl = (slug) => `${siteUrl()}/blog/${slug}`;
+var DEFAULT_IMAGE = "/retail-store.jpg";
+var image = (post) => post.coverImage || DEFAULT_IMAGE;
+var absolute = (url) => url.startsWith("http") ? url : siteUrl() + url;
+var STYLE = `
+:root{--bg:#fafaf7;--surface:#fff;--ink:#1c1917;--muted:#57534e;--soft:#78716c;--line:#e7e5e4;--brand:#f5b82e;--brand-ink:#78350f;--brand-soft:#fef3c7;--radius:14px;--max:1120px;--read:720px;color-scheme:light}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 "Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:inherit}img{max-width:100%;height:auto;display:block}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 20px}
+.skip{position:absolute;left:-999px}.skip:focus{left:16px;top:12px;background:#fff;padding:8px 12px;z-index:10}
+.site-header{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.site-header .wrap{display:flex;align-items:center;gap:16px;height:64px}
+.brand{white-space:nowrap;display:flex;align-items:center;gap:10px;text-decoration:none;font-weight:800;letter-spacing:-.01em}
+.brand-mark{width:32px;height:32px;border-radius:9px;background:var(--brand);display:grid;place-items:center;font-size:15px;color:#1c1917}
+.brand small{display:block;font-weight:600;color:var(--soft);font-size:12px;line-height:1.2}
+.site-nav{margin-left:auto;display:flex;align-items:center;gap:6px}
+.site-nav a{text-decoration:none;font-weight:600;font-size:14px;padding:8px 12px;border-radius:10px;color:var(--muted)}
+.site-nav a:hover{background:#f5f5f4;color:var(--ink)}
+.btn{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--brand);color:#1c1917!important;font-weight:800;border-radius:11px;padding:10px 16px;text-decoration:none;font-size:14px}
+.btn:hover{filter:brightness(.96)}
+.page-header{padding:44px 0 24px}
+.eyebrow{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--brand-ink);background:var(--brand-soft);padding:4px 10px;border-radius:999px;text-decoration:none}
+h1{font-size:clamp(30px,4.4vw,46px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 12px}
+.lead{font-size:18px;color:var(--muted);max-width:680px;margin:0}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 20px;scrollbar-width:none}
+.chip{flex:none;text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.chip[aria-current=page]{background:var(--ink);border-color:var(--ink);color:#fff}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;padding-bottom:36px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;text-decoration:none;transition:box-shadow .15s,transform .15s}
+.card:hover{box-shadow:0 10px 30px rgba(28,25,23,.08);transform:translateY(-2px)}
+.card img{aspect-ratio:16/9;object-fit:cover;width:100%;background:#f5f5f4}
+.card-body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:8px;flex:1}
+.card h2,.card h3{font-size:18px;line-height:1.35;margin:0;letter-spacing:-.01em}
+.card p{margin:0;color:var(--muted);font-size:15px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.meta{font-size:13px;color:var(--soft);display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.cat{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--brand-ink)}
+.feature{display:grid;grid-template-columns:1.25fr 1fr;margin-bottom:26px}
+.feature img{aspect-ratio:auto;height:100%;min-height:280px}
+.feature .card-body{padding:28px;justify-content:center}.feature h2{font-size:26px}
+.pager{display:flex;justify-content:center;gap:10px;padding:0 0 48px}
+.empty{padding:40px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius);margin-bottom:48px}
+.crumbs{font-size:14px;color:var(--soft);display:flex;gap:6px;flex-wrap:wrap}.crumbs a{text-decoration:none;color:var(--muted)}.crumbs a:hover{text-decoration:underline}
+.byline{display:flex;align-items:center;gap:12px;margin-top:20px}.byline img,.avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--brand-soft);display:grid;place-items:center;font-weight:800;color:var(--brand-ink)}
+.byline strong{display:block;font-size:15px}
+.cover{margin:8px 0 34px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line)}
+.cover img{width:100%;aspect-ratio:16/8;object-fit:cover}
+.layout{display:grid;grid-template-columns:minmax(0,var(--read)) 260px;gap:56px;justify-content:center;padding-bottom:40px}
+.toc{position:sticky;top:88px;align-self:start;font-size:14px;border-left:2px solid var(--line);padding-left:16px}
+.toc strong{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);margin-bottom:8px}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}.toc a{text-decoration:none;color:var(--muted)}.toc a:hover{color:var(--ink)}.toc .h3{padding-left:12px}
+.prose{font-size:18px;line-height:1.75}
+.prose h2{font-size:27px;line-height:1.25;letter-spacing:-.015em;margin:44px 0 12px;scroll-margin-top:84px}
+.prose h3{font-size:21px;line-height:1.3;margin:30px 0 8px;scroll-margin-top:84px}.prose h4{font-size:18px;margin:24px 0 6px}
+.prose p{margin:0 0 18px}.prose ul,.prose ol{margin:0 0 20px;padding-left:24px}.prose li{margin:6px 0}
+.prose a{color:#92400e;text-decoration:underline;text-underline-offset:3px}
+.prose blockquote{margin:24px 0;padding:14px 20px;border-left:4px solid var(--brand);background:var(--brand-soft);border-radius:0 10px 10px 0;color:#44403c}
+.prose blockquote p:last-child{margin:0}
+.prose hr{border:0;border-top:1px solid var(--line);margin:36px 0}
+.prose code{background:#f5f5f4;padding:2px 6px;border-radius:6px;font-size:.9em}
+.prose pre{background:#1c1917;color:#fafaf9;padding:16px;border-radius:10px;overflow:auto;font-size:14px}
+.prose figure{margin:28px 0}.prose figure img{border-radius:10px}.prose figcaption{font-size:14px;color:var(--soft);margin-top:8px;text-align:center}
+.table-wrap{overflow-x:auto;margin:0 0 22px;border:1px solid var(--line);border-radius:10px}
+.prose table{border-collapse:collapse;width:100%;font-size:15px}.prose th,.prose td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.prose th{background:#f5f5f4;font-weight:700}
+.video{position:relative;aspect-ratio:16/9;margin:28px 0;border-radius:10px;overflow:hidden;background:#000}.video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.section{margin-top:44px;padding-top:28px;border-top:1px solid var(--line)}
+.section>h2{font-size:24px;margin:0 0 14px}
+.faq details{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 18px;margin-bottom:10px}
+.faq summary{font-weight:700;cursor:pointer}.faq details p{margin:10px 0 0;color:var(--muted)}
+.author-box{display:flex;gap:16px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+.tags{display:flex;flex-wrap:wrap;gap:8px}.tags span{font-size:13px;background:#f5f5f4;border-radius:999px;padding:5px 12px;color:var(--muted)}
+.cta{background:#1c1917;color:#fafaf9;border-radius:var(--radius);padding:28px;display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.cta h2{margin:0 0 6px;font-size:22px}.cta p{margin:0;color:#d6d3d1}
+.related{padding:12px 0 56px}.related>h2{font-size:24px;margin:0 0 18px}
+.site-footer{border-top:1px solid var(--line);background:var(--surface);padding:28px 0;font-size:14px;color:var(--soft)}
+.site-footer .wrap{display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:space-between}.site-footer a{color:var(--muted);text-decoration:none;margin-right:16px}
+@media (max-width:960px){.grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:minmax(0,1fr)}.toc{display:none}.feature{grid-template-columns:1fr}.feature img{min-height:0;aspect-ratio:16/9}}
+@media (max-width:640px){.wrap{padding:0 16px}.grid{grid-template-columns:1fr}.site-nav a:not(.btn){display:none}.brand small{display:none}.wide{display:none}.brand{font-size:15px}.page-header{padding:28px 0 16px}.prose{font-size:17px}.prose h2{font-size:23px}.cover img{aspect-ratio:16/9}}
+`;
+function document(opts) {
+  return `<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${esc(opts.title)}</title>
+<meta name="description" content="${esc(opts.description)}">
+<link rel="canonical" href="${esc(opts.canonical)}">
+<meta name="robots" content="${opts.robots || "index,follow,max-image-preview:large"}">
+<meta property="og:site_name" content="New Hope POS">
+<meta property="og:locale" content="id_ID">
+<meta property="og:type" content="${opts.type || "website"}">
+<meta property="og:title" content="${esc(opts.title)}">
+<meta property="og:description" content="${esc(opts.description)}">
+<meta property="og:url" content="${esc(opts.canonical)}">
+<meta property="og:image" content="${esc(absolute(opts.image || DEFAULT_IMAGE))}">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/rss+xml" title="${BLOG_NAME}" href="${siteUrl()}/rss.xml">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#F5B82E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+${opts.extraHead || ""}
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${GTM_ID}');</script>
+${opts.jsonLd.map((item) => `<script type="application/ld+json">${json(item)}</script>`).join("\n")}
+<style>${STYLE}</style>
+</head>
+<body>
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<a class="skip" href="#konten">Lewati ke konten</a>
+<header class="site-header"><div class="wrap">
+  <a class="brand" href="/blog"><span class="brand-mark" aria-hidden="true">NH</span><span>${BLOG_NAME}<small>Panduan usaha & kasir untuk UMKM</small></span></a>
+  <nav class="site-nav" aria-label="Navigasi utama"><a href="/">Beranda</a><a href="/blog">Artikel</a><a href="/login">Masuk</a><a class="btn" href="/register">Coba gratis<span class="wide"> 45 hari</span></a></nav>
+</div></header>
+<main id="konten">${opts.body}</main>
+<footer class="site-footer"><div class="wrap">
+  <div><a href="/">New Hope POS</a><a href="/blog">Blog</a><a href="/rss.xml">RSS</a></div>
+  <div>\xA9 ${(/* @__PURE__ */ new Date()).getFullYear()} New Hope POS \xB7 Aplikasi kasir untuk UMKM Indonesia</div>
+</div></footer>
+</body>
+</html>`;
+}
+function card(post, heading = "h2", featured = false) {
+  return `<a class="card${featured ? " feature" : ""}" href="/blog/${esc(post.slug)}">
+  <img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? "eager" : "lazy"}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">
+  <div class="card-body">
+    <span class="cat">${esc(post.category)}</span>
+    <${heading}>${esc(post.title)}</${heading}>
+    <p>${esc(post.excerpt)}</p>
+    <div class="meta"><time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time><span aria-hidden="true">\xB7</span><span>${post.readingTimeMinutes} menit baca</span></div>
+  </div>
+</a>`;
+}
+function renderBlogIndex(posts, opts = {}) {
+  const category = opts.category ? categoryFromSlug(opts.category) : null;
+  if (opts.category && !category) return { status: 404, html: renderNotFound() };
+  const filtered = category ? posts.filter((p) => p.category === category) : posts;
+  const pages = Math.max(1, Math.ceil(filtered.length / BLOG_PAGE_SIZE));
+  const page2 = Math.min(Math.max(1, opts.page || 1), pages);
+  if ((opts.page || 1) > pages && filtered.length) return { status: 404, html: renderNotFound() };
+  const slice = filtered.slice((page2 - 1) * BLOG_PAGE_SIZE, page2 * BLOG_PAGE_SIZE);
+  const featured = page2 === 1 && !category ? slice[0] : void 0;
+  const rest = featured ? slice.slice(1) : slice;
+  const query = (p) => {
+    const q = new URLSearchParams();
+    if (category) q.set("kategori", categorySlug(category));
+    if (p > 1) q.set("halaman", String(p));
+    const s = q.toString();
+    return "/blog" + (s ? "?" + s : "");
+  };
+  const title = category ? `${category} \u2014 ${BLOG_NAME}` : `${BLOG_NAME}: Panduan Usaha, Kasir & Keuangan UMKM`;
+  const description = category ? `Artikel ${category.toLowerCase()} untuk pemilik usaha: panduan praktis, contoh hitungan, dan tips operasional dari New Hope POS.` : "Panduan praktis untuk pemilik kafe, laundry, ritel, carwash, dan barbershop: hitung HPP, kelola stok, kasir, dan keuangan usaha.";
+  const chips = [
+    `<a class="chip" href="/blog"${!category ? ' aria-current="page"' : ""}>Semua</a>`,
+    ...BLOG_CATEGORIES.map((c) => `<a class="chip" href="/blog?kategori=${categorySlug(c)}"${c === category ? ' aria-current="page"' : ""}>${esc(c)}</a>`)
+  ].join("");
+  const body = `<div class="wrap">
+  <header class="page-header">
+    <span class="eyebrow">${category ? "Kategori" : "Blog"}</span>
+    <h1>${esc(category || "Panduan usaha & kasir untuk UMKM")}</h1>
+    <p class="lead">${esc(description)}</p>
+  </header>
+  <nav class="chips" aria-label="Kategori">${chips}</nav>
+  ${slice.length === 0 ? `<p class="empty">Belum ada artikel${category ? " di kategori ini" : ""}.</p>` : ""}
+  ${featured ? card(featured, "h2", true) : ""}
+  ${rest.length ? `<section class="grid" aria-label="Daftar artikel">${rest.map((p) => card(p)).join("")}</section>` : ""}
+  ${pages > 1 ? `<nav class="pager" aria-label="Halaman">${page2 > 1 ? `<a class="chip" rel="prev" href="${query(page2 - 1)}">\u2190 Sebelumnya</a>` : ""}<span class="chip" aria-current="page">Halaman ${page2} dari ${pages}</span>${page2 < pages ? `<a class="chip" rel="next" href="${query(page2 + 1)}">Berikutnya \u2192</a>` : ""}</nav>` : ""}
+</div>`;
+  const canonical = siteUrl() + query(page2);
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "Blog",
+      name: BLOG_NAME,
+      url: `${siteUrl()}/blog`,
+      description,
+      publisher: { "@type": "Organization", name: "New Hope POS", url: siteUrl() },
+      blogPost: slice.map((p) => ({ "@type": "BlogPosting", headline: p.title, url: postUrl(p.slug), datePublished: p.createdAt, dateModified: p.updatedAt, image: absolute(image(p)) }))
+    },
+    breadcrumbs([{ name: "Beranda", url: siteUrl() + "/" }, { name: "Blog", url: `${siteUrl()}/blog` }, ...category ? [{ name: category, url: canonical }] : []])
+  ];
+  return { status: 200, html: document({ title, description, canonical, jsonLd, body, extraHead: [page2 > 1 ? `<link rel="prev" href="${siteUrl() + query(page2 - 1)}">` : "", page2 < pages ? `<link rel="next" href="${siteUrl() + query(page2 + 1)}">` : ""].join("") }) };
+}
+var cleanTitle = (value) => value.replace(/\s*[|–—-]\s*(blog\s+harapan\s+baru|warta\s+harapan\s+baru|blog\s+new\s+hope(\s+pos)?|new\s+hope\s+pos)\b.*$/i, "").trim();
+var breadcrumbs = (items) => ({
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: items.map((item, i) => ({ "@type": "ListItem", position: i + 1, name: item.name, item: item.url }))
+});
+function youtubeId(url = "") {
+  const m = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/.exec(url);
+  return m ? m[1] : null;
+}
+function renderBlogPost(post, related) {
+  const article = renderArticle(post.content, post.title);
+  const canonical = postUrl(post.slug);
+  const title = `${cleanTitle(post.seo.metaTitle || "") || post.title} | ${BLOG_NAME}`;
+  const description = post.seo.metaDescription || post.excerpt;
+  const faq = (post.seo.faq || []).filter((f) => f?.question && f?.answer);
+  const toc = article.headings.length >= 3 ? `<aside class="toc" aria-label="Daftar isi"><strong>Daftar isi</strong><ol>${article.headings.map((h) => `<li class="h${h.level}"><a href="#${h.id}">${esc(h.text)}</a></li>`).join("")}${faq.length ? '<li class="h2"><a href="#faq">Pertanyaan umum</a></li>' : ""}</ol></aside>` : "<aside></aside>";
+  const videos = post.mediaEmbeds.map((e) => ({ id: youtubeId(e.url), caption: e.caption })).filter((v) => v.id).map((v) => `<figure><div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}" title="${esc(v.caption || post.title)}" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe></div>${v.caption ? `<figcaption>${esc(v.caption)}</figcaption>` : ""}</figure>`).join("");
+  const initials = post.author.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const avatar = post.author.avatar ? `<img src="${esc(post.author.avatar)}" alt="" width="44" height="44" loading="lazy">` : `<span class="avatar" aria-hidden="true">${esc(initials)}</span>`;
+  const updated = post.updatedAt && new Date(post.updatedAt).getTime() - new Date(post.createdAt).getTime() > 864e5;
+  const body = `<article>
+  <div class="wrap">
+    <header class="page-header" style="max-width:860px">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/blog">Blog</a><span aria-hidden="true">\u203A</span><a href="/blog?kategori=${categorySlug(post.category)}">${esc(post.category)}</a></nav>
+      <h1>${esc(post.title)}</h1>
+      <p class="lead">${esc(post.excerpt)}</p>
+      <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} \xB7 <time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time>${updated ? ` \xB7 diperbarui <time datetime="${esc(post.updatedAt)}">${date(post.updatedAt)}</time>` : ""} \xB7 ${post.readingTimeMinutes} menit baca</span></div></div>
+    </header>
+    ${post.coverImage ? `<figure class="cover"><img src="${esc(post.coverImage)}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="600" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'"></figure>` : ""}
+    <div class="layout">
+      <div>
+        <div class="prose">${article.html}${videos}</div>
+        ${faq.length ? `<section class="section faq" id="faq"><h2>Pertanyaan umum</h2>${faq.map((f) => `<details><summary>${esc(f.question)}</summary><p>${esc(f.answer)}</p></details>`).join("")}</section>` : ""}
+        ${post.tags.length ? `<div class="section tags" aria-label="Tag">${post.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
+        <section class="section"><div class="author-box">${avatar}<div><strong>${esc(post.author.name)}</strong><div class="meta">${esc(post.author.role)}</div><p style="margin:8px 0 0;color:var(--muted)">Ditulis untuk ${BLOG_NAME}. Punya pertanyaan tentang usaha Anda? Coba New Hope POS gratis dan hubungi tim kami.</p></div></div></section>
+        <section class="section"><div class="cta"><div><h2>Rapikan kasir dan laporan usaha Anda</h2><p>Coba New Hope POS gratis 45 hari, tanpa kartu kredit.</p></div><a class="btn" href="/register">Mulai gratis</a></div></section>
+      </div>
+      ${toc}
+    </div>
+  </div>
+</article>
+${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terkait</h2><div class="grid">${related.map((p) => card(p, "h3")).join("")}</div></div></section>` : ""}`;
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: post.title,
+      description,
+      image: [absolute(image(post))],
+      datePublished: post.createdAt,
+      dateModified: post.updatedAt,
+      inLanguage: "id-ID",
+      mainEntityOfPage: canonical,
+      articleSection: post.category,
+      keywords: (post.seo.metaKeywords || post.tags).join(", "),
+      wordCount: article.words,
+      author: { "@type": "Person", name: post.author.name, jobTitle: post.author.role },
+      publisher: { "@type": "Organization", name: "New Hope POS", url: siteUrl(), logo: { "@type": "ImageObject", url: `${siteUrl()}/favicon.svg` } }
+    },
+    breadcrumbs([{ name: "Beranda", url: siteUrl() + "/" }, { name: "Blog", url: `${siteUrl()}/blog` }, { name: post.category, url: `${siteUrl()}/blog?kategori=${categorySlug(post.category)}` }, { name: post.title, url: canonical }])
+  ];
+  if (faq.length) jsonLd.push({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: faq.map((f) => ({ "@type": "Question", name: f.question, acceptedAnswer: { "@type": "Answer", text: f.answer } })) });
+  return document({
+    title,
+    description,
+    canonical,
+    image: image(post),
+    type: "article",
+    jsonLd,
+    body,
+    extraHead: `<meta property="article:published_time" content="${esc(post.createdAt)}"><meta property="article:modified_time" content="${esc(post.updatedAt)}"><meta property="article:section" content="${esc(post.category)}">`
+  });
+}
+function renderNotFound() {
+  return document({
+    title: `Artikel tidak ditemukan | ${BLOG_NAME}`,
+    description: "Halaman yang Anda cari tidak ada.",
+    canonical: `${siteUrl()}/blog`,
+    robots: "noindex,follow",
+    jsonLd: [],
+    body: `<div class="wrap"><header class="page-header"><span class="eyebrow">404</span><h1>Artikel tidak ditemukan</h1><p class="lead">Artikel mungkin sudah dipindahkan atau belum diterbitkan.</p><p><a class="btn" href="/blog">Lihat semua artikel</a></p></header></div>`
+  });
+}
+function renderSitemap(posts) {
+  const base = siteUrl();
+  const latest = posts.reduce((m, p) => p.updatedAt > m ? p.updatedAt : m, "2026-10-01T00:00:00.000Z");
+  const urls = [
+    { loc: `${base}/`, lastmod: latest, priority: "1.0" },
+    { loc: `${base}/blog`, lastmod: latest, priority: "0.9" },
+    ...BLOG_CATEGORIES.filter((c) => posts.some((p) => p.category === c)).map((c) => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: "0.6" })),
+    ...posts.map((p) => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: "0.8", image: p.coverImage }))
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod.slice(0, 10)}</lastmod><priority>${u.priority}</priority>${"image" in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ""}</url>`).join("\n")}
+</urlset>`;
+}
+function renderRss(posts) {
+  const base = siteUrl();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+<title>${BLOG_NAME}</title><link>${base}/blog</link><description>Panduan usaha, kasir, dan keuangan untuk UMKM Indonesia.</description><language>id</language>
+<atom:link href="${base}/rss.xml" rel="self" type="application/rss+xml"/>
+${posts.slice(0, 30).map((p) => `<item><title>${esc(p.title)}</title><link>${postUrl(p.slug)}</link><guid isPermaLink="true">${postUrl(p.slug)}</guid><pubDate>${new Date(p.createdAt).toUTCString()}</pubDate><category>${esc(p.category)}</category><description>${esc(p.excerpt)}</description></item>`).join("\n")}
+</channel></rss>`;
+}
+
+// src/server/blogRoutes.ts
+var COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
+  reading_time_minutes, tags, media_embeds, seo, is_published, is_featured, created_at, updated_at`;
+var PAGE_CACHE = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400";
+var parseJson = (value, fallback) => {
+  if (value && typeof value === "object") return value;
+  try {
+    return typeof value === "string" ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+function rowToPublicPost(r) {
+  const iso2 = (v) => v ? new Date(v).toISOString() : (/* @__PURE__ */ new Date(0)).toISOString();
+  return {
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    excerpt: r.excerpt || "",
+    content: r.content || "",
+    category: r.category,
+    coverImage: r.cover_image || "",
+    author: { name: r.author_name || "Tim Editorial New Hope POS", role: r.author_role || "Editor", avatar: r.author_avatar || "" },
+    readingTimeMinutes: Number(r.reading_time_minutes || 5),
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    isFeatured: Boolean(r.is_featured),
+    mediaEmbeds: parseJson(r.media_embeds, []),
+    seo: parseJson(r.seo, {}),
+    isPublished: Boolean(r.is_published),
+    createdAt: iso2(r.created_at),
+    updatedAt: iso2(r.updated_at)
+  };
+}
+var isMissingStore = (error) => ["42P01", "42501"].includes(String(error?.code));
+async function publishedPosts(db) {
+  const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true ORDER BY is_featured DESC, created_at DESC LIMIT 2000`);
+  return rows.map(rowToPublicPost);
+}
+function registerBlogRoutes(app, getDb) {
+  const page2 = (fn) => async (req, res) => {
+    try {
+      await fn(req, res, await getDb());
+    } catch (error) {
+      console.error(`[blog] ${req.method} ${req.path}:`, error.message, error.code ?? "");
+      if (isMissingStore(error) && req.path === "/blog") {
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).type("html").send(renderBlogIndex([]).html);
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.status(503).type("html").send(renderNotFound().replace("Artikel tidak ditemukan", "Blog sedang tidak tersedia"));
+    }
+  };
+  app.get("/blog", page2(async (req, res, db) => {
+    const pageNumber = Number.parseInt(String(req.query.halaman || "1"), 10);
+    const result = renderBlogIndex(await publishedPosts(db), { category: req.query.kategori ? String(req.query.kategori) : null, page: Number.isFinite(pageNumber) ? pageNumber : 1 });
+    res.setHeader("Cache-Control", result.status === 200 ? PAGE_CACHE : "no-store");
+    res.status(result.status).type("html").send(result.html);
+  }));
+  app.get("/blog/:slug", page2(async (req, res, db) => {
+    const slug = String(req.params.slug).toLowerCase();
+    if (slug !== req.params.slug) return res.redirect(301, `/blog/${slug}`);
+    const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE slug = $1 AND is_published = true`, [slug]);
+    if (!rows.length) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(404).type("html").send(renderNotFound());
+    }
+    const post = rowToPublicPost(rows[0]);
+    const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
+      ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
+    void db.query("UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1", [post.id]).catch(() => {
+    });
+    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.type("html").send(renderBlogPost(post, related));
+  }));
+  app.get("/sitemap.xml", page2(async (_req, res, db) => {
+    let posts = [];
+    try {
+      posts = await publishedPosts(db);
+    } catch (error) {
+      if (!isMissingStore(error)) throw error;
+    }
+    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.type("application/xml").send(renderSitemap(posts));
+  }));
+  app.get("/rss.xml", page2(async (_req, res, db) => {
+    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.type("application/rss+xml").send(renderRss(await publishedPosts(db)));
+  }));
+  registerBlogAutomation(app, getDb);
+}
+var BlogApiError = class extends Error {
+  constructor(status, code, details) {
+    super(code);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+};
+var digest = (value) => createHash("sha256").update(value).digest();
+function apiKeyValid(req) {
+  const configured = String(process.env.BLOG_API_KEYS || "").split(",").map((k) => k.trim()).filter((k) => k.length >= 24);
+  if (!configured.length) throw new BlogApiError(503, "BLOG_API_NOT_CONFIGURED");
+  const header = String(req.headers.authorization || "");
+  const presented = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() || String(req.headers["x-api-key"] || "").trim();
+  if (!presented) return false;
+  const given = digest(presented);
+  return configured.some((key) => timingSafeEqual(digest(key), given));
+}
+var writeWindow = /* @__PURE__ */ new Map();
+var BLOG_WRITES_PER_HOUR = 120;
+function allowWrite(req) {
+  const key = createHash("sha256").update(String(req.headers.authorization || req.headers["x-api-key"] || "")).digest("hex").slice(0, 16);
+  const now = Date.now(), entry = writeWindow.get(key);
+  if (!entry || entry.resetAt < now) {
+    writeWindow.set(key, { count: 1, resetAt: now + 36e5 });
+    return;
+  }
+  if (++entry.count > BLOG_WRITES_PER_HOUR) throw new BlogApiError(429, "BLOG_WRITE_RATE_LIMITED");
+}
+var summary = (p) => ({
+  slug: p.slug,
+  title: p.title,
+  category: p.category,
+  excerpt: p.excerpt,
+  isPublished: p.isPublished,
+  isFeatured: p.isFeatured,
+  url: `${siteUrl()}/blog/${p.slug}`,
+  readingTimeMinutes: p.readingTimeMinutes,
+  createdAt: p.createdAt,
+  updatedAt: p.updatedAt
+});
+var full = (p) => ({ ...summary(p), content: p.content, tags: p.tags, coverImage: p.coverImage, author: p.author, seo: p.seo });
+function createBlogAutomation(getDb) {
+  async function listPosts(args) {
+    const db = await getDb();
+    const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200), offset = Math.max(Number(args.offset) || 0, 0);
+    const status = args.status === "draft" ? false : args.status === "all" ? null : true;
+    const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts
+      WHERE ($1::boolean IS NULL OR is_published = $1) AND ($2::text IS NULL OR category = $2)
+      ORDER BY created_at DESC LIMIT $3 OFFSET $4`, [status, args.category || null, limit, offset]);
+    return { posts: rows.map(rowToPublicPost).map(summary), limit, offset };
+  }
+  async function getPost(slug) {
+    const db = await getDb();
+    const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE slug = $1`, [String(slug || "")]);
+    if (!rows.length) throw new BlogApiError(404, "POST_NOT_FOUND");
+    return { post: full(rowToPublicPost(rows[0])) };
+  }
+  function validate(input) {
+    const check = checkArticle(input);
+    return { ok: check.ok, errors: check.errors, warnings: check.warnings, stats: check.stats, slug: check.record?.slug };
+  }
+  async function save(input, mode, pathSlug) {
+    const check = checkArticle(mode === "update" ? { ...input, slug: input.slug ?? pathSlug } : input);
+    if (!check.ok || !check.record) throw new BlogApiError(422, "ARTICLE_REJECTED", { errors: check.errors, warnings: check.warnings, stats: check.stats });
+    const record = check.record;
+    const db = await getDb();
+    return db.tx(async (c) => {
+      const existing = mode === "update" ? (await c.query("SELECT id, seo FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
+      if (mode === "update" && !existing) throw new BlogApiError(404, "POST_NOT_FOUND");
+      const clash = (await c.query(
+        `SELECT slug FROM public.blog_posts WHERE (slug = $1 OR lower(title) = lower($2)) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
+        [record.slug, record.title, existing?.id ?? null]
+      )).rows[0];
+      if (clash) throw new BlogApiError(409, clash.slug === record.slug ? "SLUG_ALREADY_EXISTS" : "TITLE_ALREADY_EXISTS", { slug: clash.slug });
+      const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage || void 0, source: "automation" };
+      const values = [
+        record.slug,
+        record.title,
+        record.excerpt,
+        record.content,
+        record.category,
+        record.coverImage || null,
+        record.author.name,
+        record.author.role,
+        record.author.avatar || null,
+        record.readingTimeMinutes,
+        record.tags,
+        JSON.stringify(seo),
+        record.isPublished,
+        record.isFeatured
+      ];
+      const { rows } = existing ? await c.query(`UPDATE public.blog_posts SET slug=$1,title=$2,excerpt=$3,content=$4,category=$5,cover_image=$6,author_name=$7,author_role=$8,
+            author_avatar=$9,reading_time_minutes=$10,tags=$11,seo=$12::jsonb,is_published=$13,is_featured=$14,updated_at=CURRENT_TIMESTAMP
+            WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
+            reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
+            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID3()]);
+      console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
+      return { post: summary(rowToPublicPost(rows[0])), warnings: check.warnings, stats: check.stats };
+    });
+  }
+  async function unpublish(slug) {
+    const db = await getDb();
+    const { rows } = await db.query(`UPDATE public.blog_posts SET is_published = false, updated_at = CURRENT_TIMESTAMP WHERE slug = $1 RETURNING ${COLUMNS}`, [String(slug || "")]);
+    if (!rows.length) throw new BlogApiError(404, "POST_NOT_FOUND");
+    return { post: summary(rowToPublicPost(rows[0])) };
+  }
+  const guide = () => ({
+    categories: BLOG_CATEGORIES,
+    rules: ARTICLE_RULES,
+    format: {
+      content: "Markdown. Jangan tulis judul (# ...) di content; judul memakai field title. Struktur: paragraf pembuka \u2192 beberapa bagian ## (H2) dengan ### (H3) bila perlu \u2192 penutup. Gunakan daftar, tabel, dan > kutipan untuk poin penting.",
+      required: ["title", "excerpt", "content", "category"],
+      optional: ["slug", "tags", "coverImage", "coverAlt", "author{name,role,avatar}", "seo{metaTitle,metaDescription,focusKeyword,keywords[]}", "faq[{question,answer}]", "isFeatured", "publish (default true)"]
+    }
+  });
+  return { listPosts, getPost, validate, create: (input) => save(input, "create"), update: (slug, input) => save(input, "update", slug), unpublish, guide };
+}
+var ARTICLE_SCHEMA = {
+  type: "object",
+  required: ["title", "excerpt", "content", "category"],
+  properties: {
+    title: { type: "string", description: `${ARTICLE_RULES.title[0]}\u2013${ARTICLE_RULES.title[1]} karakter` },
+    slug: { type: "string", description: "Opsional; dibuat dari title bila kosong" },
+    excerpt: { type: "string", description: `Ringkasan ${ARTICLE_RULES.excerpt[0]}\u2013${ARTICLE_RULES.excerpt[1]} karakter (tampil di bawah judul)` },
+    content: { type: "string", description: `Markdown tanpa H1, minimal ${ARTICLE_RULES.minWords} kata dan ${ARTICLE_RULES.minH2} subjudul ##` },
+    category: { type: "string", enum: [...BLOG_CATEGORIES] },
+    tags: { type: "array", items: { type: "string" }, maxItems: ARTICLE_RULES.maxTags },
+    coverImage: { type: "string", description: "URL https gambar sampul (1200\xD7600 disarankan)" },
+    coverAlt: { type: "string" },
+    author: { type: "object", properties: { name: { type: "string" }, role: { type: "string" }, avatar: { type: "string" } } },
+    seo: { type: "object", properties: { metaTitle: { type: "string" }, metaDescription: { type: "string" }, focusKeyword: { type: "string" }, keywords: { type: "array", items: { type: "string" } } } },
+    faq: { type: "array", maxItems: ARTICLE_RULES.maxFaq, items: { type: "object", required: ["question", "answer"], properties: { question: { type: "string" }, answer: { type: "string" } } } },
+    isFeatured: { type: "boolean" },
+    publish: { type: "boolean", description: "Default true: langsung terbit bila lolos validasi" }
+  }
+};
+var BLOG_MCP_TOOLS = [
+  { name: "blog_guide", description: "Kategori, aturan kualitas, dan format penulisan artikel. Panggil sebelum menulis.", inputSchema: { type: "object", properties: {} } },
+  { name: "list_posts", description: "Daftar artikel (judul, slug, URL, status).", inputSchema: { type: "object", properties: { status: { type: "string", enum: ["published", "draft", "all"] }, category: { type: "string" }, limit: { type: "number" }, offset: { type: "number" } } } },
+  { name: "get_post", description: "Isi lengkap satu artikel berdasarkan slug.", inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } } } },
+  { name: "validate_article", description: "Cek artikel tanpa menyimpan: error yang memblokir, peringatan SEO, jumlah kata/subjudul.", inputSchema: ARTICLE_SCHEMA },
+  { name: "create_post", description: "Buat artikel baru. Langsung terbit bila lolos validasi (kecuali publish:false).", inputSchema: ARTICLE_SCHEMA },
+  { name: "update_post", description: "Perbarui artikel berdasarkan slug (seluruh field dikirim ulang).", inputSchema: { ...ARTICLE_SCHEMA, required: ["slug", ...ARTICLE_SCHEMA.required] } },
+  { name: "unpublish_post", description: "Tarik artikel dari publik (tidak menghapus data).", inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } } } }
+];
+function registerBlogAutomation(app, getDb) {
+  const blog = createBlogAutomation(getDb);
+  const api = (write, fn, status = 200) => async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      if (!apiKeyValid(req)) return res.status(401).json({ ok: false, error: "INVALID_API_KEY" });
+      if (write) allowWrite(req);
+      res.status(status).json({ ok: true, ...await fn(req) });
+    } catch (error) {
+      if (error instanceof BlogApiError) return res.status(error.status).json({ ok: false, error: error.code, ...error.details ? { details: error.details } : {} });
+      console.error("[blog-automation]", req.method, req.path, error.message, error.code ?? "");
+      res.status(isMissingStore(error) ? 503 : 500).json({ ok: false, error: isMissingStore(error) ? "BLOG_STORE_UNAVAILABLE" : "INTERNAL_ERROR" });
+    }
+  };
+  const base = "/api/v1/blog-automation";
+  app.get(`${base}/guide`, api(false, () => blog.guide()));
+  app.get(`${base}/posts`, api(false, (req) => blog.listPosts(req.query)));
+  app.get(`${base}/posts/:slug`, api(false, (req) => blog.getPost(String(req.params.slug))));
+  app.post(`${base}/validate`, api(false, (req) => blog.validate(req.body || {})));
+  app.post(`${base}/posts`, api(true, (req) => blog.create(req.body || {}), 201));
+  app.put(`${base}/posts/:slug`, api(true, (req) => blog.update(String(req.params.slug), req.body || {})));
+  app.delete(`${base}/posts/:slug`, api(true, (req) => blog.unpublish(String(req.params.slug))));
+  app.post(`${base}/mcp`, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const body = req.body || {};
+    const id = body.id ?? null;
+    const reply = (payload) => res.json({ jsonrpc: "2.0", id, ...payload });
+    try {
+      if (!apiKeyValid(req)) return res.status(401).json({ jsonrpc: "2.0", id, error: { code: -32001, message: "INVALID_API_KEY" } });
+    } catch (error) {
+      return res.status(503).json({ jsonrpc: "2.0", id, error: { code: -32002, message: error.message } });
+    }
+    if (body.jsonrpc !== "2.0" || typeof body.method !== "string") return res.status(400).json({ jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid request" } });
+    if (body.method.startsWith("notifications/")) return res.status(202).end();
+    if (body.method === "initialize") return reply({ result: {
+      protocolVersion: String(body.params?.protocolVersion || "2025-06-18"),
+      capabilities: { tools: {} },
+      serverInfo: { name: "newhope-blog", version: "1.0.0" },
+      instructions: "Tulis artikel bahasa Indonesia untuk pemilik UMKM. Panggil blog_guide dulu, lalu validate_article, lalu create_post. Jangan menulis klaim fitur yang tidak ada."
+    } });
+    if (body.method === "ping") return reply({ result: {} });
+    if (body.method === "tools/list") return reply({ result: { tools: BLOG_MCP_TOOLS } });
+    if (body.method !== "tools/call") return reply({ error: { code: -32601, message: "Method not found" } });
+    const name = String(body.params?.name || ""), args = body.params?.arguments || {};
+    try {
+      const write = ["create_post", "update_post", "unpublish_post"].includes(name);
+      if (write) allowWrite(req);
+      const result = name === "blog_guide" ? blog.guide() : name === "list_posts" ? await blog.listPosts(args) : name === "get_post" ? await blog.getPost(args.slug) : name === "validate_article" ? blog.validate(args) : name === "create_post" ? await blog.create(args) : name === "update_post" ? await blog.update(String(args.slug || ""), args) : name === "unpublish_post" ? await blog.unpublish(args.slug) : void 0;
+      if (result === void 0) return reply({ error: { code: -32602, message: `Unknown tool: ${name}` } });
+      reply({ result: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result } });
+    } catch (error) {
+      const message = error instanceof BlogApiError ? JSON.stringify({ error: error.code, ...error.details ? { details: error.details } : {} }, null, 2) : "INTERNAL_ERROR";
+      if (!(error instanceof BlogApiError)) console.error("[blog-mcp]", name, error.message);
+      reply({ result: { content: [{ type: "text", text: message }], isError: true } });
+    }
+  });
 }
 
 // src/server/clientSupport.ts
@@ -1571,7 +2350,7 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
     });
     const eligible = all.filter((r) => r.trial_started_at || r.plan_id === TRIAL_PLAN_ID || !r.subscription_id);
     const converted = eligible.filter((r) => r.converted).length;
-    const summary = {
+    const summary2 = {
       active: all.filter((r) => r.status === "ACTIVE").length,
       trial: all.filter((r) => r.status === "TRIAL").length,
       expired: all.filter((r) => ["EXPIRED", "PAST_DUE"].includes(r.status)).length,
@@ -1599,7 +2378,7 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       total: filtered.length,
       limit,
       offset,
-      summary,
+      summary: summary2,
       plans: SAAS_PLANS,
       canManage: req.internal.role === "ROLE_SUPERADMIN",
       canSupport: ["ROLE_SUPERADMIN", "ROLE_INTERNAL_SUPPORT"].includes(req.internal.role)
@@ -1721,11 +2500,16 @@ function integrationProviders(env = process.env) {
     { id: "supabase", name: "Supabase", purpose: "Database dan autentikasi akun", configured: configured("DATABASE_URL") && (configured("SUPABASE_URL", "SUPABASE_ANON_KEY") || configured("VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY")), dashboard: "https://supabase.com/dashboard/project/fqxrhumsgigcgjtlbfuo", note: "Status berdasarkan konfigurasi server; bukan pemeriksaan uptime." },
     { id: "doku", name: "DOKU", purpose: "Pembayaran langganan", configured: configured("DOKU_CLIENT_ID", "DOKU_SECRET_KEY"), dashboard: "https://dashboard.doku.com/", note: (env.DOKU_API_URL || "https://api.doku.com").includes("api-sandbox") ? "Mode sandbox; bukan pembayaran produksi." : "Endpoint produksi; periksa aktivasi channel di dashboard DOKU." },
     { id: "resend", name: "Resend", purpose: "Email bantuan akun dan billing", configured: configured("RESEND_API_KEY"), dashboard: "https://resend.com/api-keys", note: "Keberadaan kunci tidak memastikan domain pengirim telah diverifikasi." },
+    { id: "blog", name: "Blog automation", purpose: "REST API dan MCP penerbitan artikel", configured: String(env.BLOG_API_KEYS || "").split(",").some((key) => key.trim().length >= 24), dashboard: "https://vercel.com/slaks37s-projects/kasir-newhope/settings/environment-variables", note: "Key BLOG_API_KEYS hanya untuk blog. Berbeda dari OAuth read-only data POS; koneksi agen tidak tercatat sebagai koneksi owner MCP." },
     { id: "deepseek", name: "DeepSeek", purpose: "Analisis AI berbayar", configured: configured("DEEPSEEK_API_KEY"), dashboard: "https://platform.deepseek.com/api_keys", note: "Penggunaan mengikuti batas akun dan paket di layanan AI." },
     { id: "agnes", name: "Agnes AI", purpose: "Penyedia AI alternatif", configured: configured("AGNES_API_KEY"), dashboard: "https://apihub.agnes-ai.com/", note: "Status hanya konfigurasi; pilihan model mengikuti layanan AI." }
   ];
 }
 var INTEGRATION_API_CATALOG = [
+  { method: "GET", path: "/api/v1/blog-automation/guide", auth: "Bearer API key blog", purpose: "Panduan otomasi artikel" },
+  { method: "POST", path: "/api/v1/blog-automation/validate", auth: "Bearer API key blog", purpose: "Validasi artikel tanpa menyimpan" },
+  { method: "POST", path: "/api/v1/blog-automation/posts", auth: "Bearer API key blog; dapat menerbitkan artikel", purpose: "Buat artikel (publish:false untuk draft)" },
+  { method: "POST", path: "/api/v1/blog-automation/mcp", auth: "Bearer API key blog; bukan OAuth POS", purpose: "MCP editorial untuk automation agent" },
   { method: "GET", path: "/api/v1/subscription/plans", auth: "Publik", purpose: "Katalog paket" },
   { method: "GET", path: "/api/v1/subscription/status", auth: "Bearer JWT akun owner", purpose: "Langganan dan kapasitas akun" },
   { method: "GET", path: "/api/v1/sync/business", auth: "Bearer JWT akun owner", purpose: "Bisnis dan outlet akun" },
@@ -2247,10 +3031,11 @@ async function recordAccess(db, who, action, resource, merchantId, justification
   );
 }
 function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supportProvider) {
+  registerBlogRoutes(app, getDb);
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID3();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID4();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -2686,7 +3471,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID3();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID4();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
@@ -3087,11 +3872,11 @@ function registerFinanceRoutes(app, db) {
       if (Number(row.closing_cash) !== money(b.actualCash)) throw new FinanceError(409, "SHIFT_CLOSE_CONFLICT");
       return { shift: row.summary, replayed: true };
     }
-    const summary = { ...await calculateShift(c, s, row), status: "CLOSED", endTime: (/* @__PURE__ */ new Date()).toISOString(), actualCash: money(b.actualCash), notes: String(b.notes || "").slice(0, 500) };
-    summary.difference = money(summary.actualCash - summary.expectedCash);
-    await c.query(`UPDATE pos.shifts SET status='CLOSED',closed_at=$2,closing_cash=$3,expected_cash=$4,cash_difference=$5,summary=$6::jsonb,notes=$7 WHERE id=$1`, [row.id, summary.endTime, summary.actualCash, summary.expectedCash, summary.difference, JSON.stringify(summary), summary.notes]);
-    await writeActivity(c, { tenantId: s.tenantId, merchantId: s.merchantId, businessSector: s.sector, appModule: "POS", eventType: "SHIFT_CLOSED", severity: "INFO", summary: "Shift ditutup", detail: { clientShiftId: b.clientShiftId, expectedCash: summary.expectedCash, difference: summary.difference } });
-    return { shift: summary, replayed: false };
+    const summary2 = { ...await calculateShift(c, s, row), status: "CLOSED", endTime: (/* @__PURE__ */ new Date()).toISOString(), actualCash: money(b.actualCash), notes: String(b.notes || "").slice(0, 500) };
+    summary2.difference = money(summary2.actualCash - summary2.expectedCash);
+    await c.query(`UPDATE pos.shifts SET status='CLOSED',closed_at=$2,closing_cash=$3,expected_cash=$4,cash_difference=$5,summary=$6::jsonb,notes=$7 WHERE id=$1`, [row.id, summary2.endTime, summary2.actualCash, summary2.expectedCash, summary2.difference, JSON.stringify(summary2), summary2.notes]);
+    await writeActivity(c, { tenantId: s.tenantId, merchantId: s.merchantId, businessSector: s.sector, appModule: "POS", eventType: "SHIFT_CLOSED", severity: "INFO", summary: "Shift ditutup", detail: { clientShiftId: b.clientShiftId, expectedCash: summary2.expectedCash, difference: summary2.difference } });
+    return { shift: summary2, replayed: false };
   });
   route("/api/v1/finance/refund", async (c, s, req) => {
     const id = String(req.body?.clientTxnId || "");
@@ -3275,7 +4060,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
 }
 
 // services/pos/laborProjection.ts
-var text = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var text2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
 var timestamp2 = (value, optional = false) => {
   if (optional && (value === void 0 || value === null || value === "")) return null;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new BillingError(422, "INVALID_LABOR_DATE");
@@ -3297,7 +4082,7 @@ async function projectLabor(c, scope, sector, op) {
     return;
   }
   const value = op.value;
-  if (value.id !== op.recordId || !text(value.staffId, 96) || !text(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
+  if (value.id !== op.recordId || !text2(value.staffId, 96) || !text2(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
   if (attendance) {
     if (!["CLOCKED_IN", "CLOCKED_OUT"].includes(String(value.status))) throw new BillingError(422, "INVALID_ATTENDANCE_STATUS");
     const started = timestamp2(value.clockInTime), ended = timestamp2(value.clockOutTime, true);
@@ -3307,7 +4092,7 @@ async function projectLabor(c, scope, sector, op) {
     if (!outlet) throw new BillingError(403, "ATTENDANCE_OUTLET_NOT_OWNED");
     if (existing && (existing.staff_id !== value.staffId || existing.outlet_id !== outlet.id || new Date(existing.clock_in_at).toISOString() !== started)) throw new BillingError(409, "ATTENDANCE_IDENTITY_IMMUTABLE");
     if (existing?.clock_out_at && (!ended || new Date(existing.clock_out_at).toISOString() !== ended)) throw new BillingError(409, "CLOSED_ATTENDANCE_IMMUTABLE");
-    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
+    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text2(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
     const saved2 = await c.query(
       `INSERT INTO pos.staff_attendances
       (tenant_id,merchant_id,outlet_id,client_attendance_id,staff_id,staff_name,staff_role,clock_in_at,clock_out_at,
@@ -3323,13 +4108,13 @@ async function projectLabor(c, scope, sector, op) {
         outlet.id,
         op.recordId,
         value.staffId,
-        text(value.staffName, 120),
-        text(value.staffRole, 64) || "STAFF",
+        text2(value.staffName, 120),
+        text2(value.staffRole, 64) || "STAFF",
         started,
         ended,
-        text(value.shiftNotes, 500) || null,
+        text2(value.shiftNotes, 500) || null,
         value.status,
-        text(value.branchName, 100),
+        text2(value.branchName, 100),
         JSON.stringify(value.clockInGeo || null),
         JSON.stringify(value.clockOutGeo || null),
         sector
@@ -3345,7 +4130,7 @@ async function projectLabor(c, scope, sector, op) {
   const amounts = fields.map((field) => money2(value[field]));
   const columns = ["base_salary", "allowance", "individual_commission", "team_pool_commission", "daily_target_bonus", "gross_earnings", "deductions", "net_salary"];
   if (existing?.status === "PAID") {
-    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
+    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text2(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
       throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
     return;
   }
@@ -3368,8 +4153,8 @@ async function projectLabor(c, scope, sector, op) {
       scope.merchantId,
       op.recordId,
       value.staffId,
-      text(value.staffName, 120),
-      text(value.staffRole, 64) || "STAFF",
+      text2(value.staffName, 120),
+      text2(value.staffRole, 64) || "STAFF",
       value.periodMonth,
       start.slice(0, 10),
       end.slice(0, 10),
@@ -3377,8 +4162,8 @@ async function projectLabor(c, scope, sector, op) {
       ...amounts,
       value.status,
       paid,
-      text(value.paymentMethod, 64) || null,
-      text(value.notes, 500) || null,
+      text2(value.paymentMethod, 64) || null,
+      text2(value.notes, 500) || null,
       sector
     ]
   );
@@ -3807,12 +4592,12 @@ function stringQuery(value, name) {
   return value.trim() || null;
 }
 function dateQuery(value, name) {
-  const date = stringQuery(value, name);
-  if (!date) return null;
-  if (!DATE.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || (/* @__PURE__ */ new Date(`${date}T00:00:00Z`)).toISOString().slice(0, 10) !== date) {
+  const date2 = stringQuery(value, name);
+  if (!date2) return null;
+  if (!DATE.test(date2) || !Number.isFinite(Date.parse(`${date2}T00:00:00Z`)) || (/* @__PURE__ */ new Date(`${date2}T00:00:00Z`)).toISOString().slice(0, 10) !== date2) {
     throw new ReportRequestError(400, `INVALID_${name}`);
   }
-  return date;
+  return date2;
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
@@ -3979,8 +4764,8 @@ function localDate(timezone) {
   const part = (type) => parts.find((p) => p.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
-function shiftDate(date, days) {
-  const d = /* @__PURE__ */ new Date(`${date}T12:00:00Z`);
+function shiftDate(date2, days) {
+  const d = /* @__PURE__ */ new Date(`${date2}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
@@ -5082,6 +5867,8 @@ async function buildRuntime() {
 var PUBLIC_EXACT = /* @__PURE__ */ new Set(["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"]);
 function isPublicApi(path, method) {
   if (PUBLIC_EXACT.has(path)) return true;
+  if (method === "GET" && (path === "/blog" || /^\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path) || path === "/sitemap.xml" || path === "/rss.xml")) return true;
+  if (path === "/api/v1/blog-automation" || path.startsWith("/api/v1/blog-automation/")) return true;
   if (method === "GET" && (path === "/api/v1/blog" || /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path))) return true;
   return method === "POST" && /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
 }
