@@ -3,6 +3,7 @@ import express from 'express';
 import type { Db } from '../shared/db';
 import { authenticateBearer } from '../shared/auth';
 import { authorizedBusiness, MCP_SCOPE, mcpTools, runMcpTool } from './tools';
+import { mcpAdminSettings } from './settings';
 
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
@@ -50,6 +51,15 @@ export function registerMcpRoutes(app: express.Express, db: Db, authenticate = a
   });
   const route = (method: 'get' | 'post', path: string | string[], fn: (req: any, res: any) => Promise<any> | any) =>
     app[method](path, (req, res, next) => Promise.resolve().then(() => fn(req, res)).catch(next));
+  // Read the shared switch on every request: other workers must observe a pause.
+  // Owners can still inspect/revoke existing consent while tool access is paused.
+  app.use((req,res,next) => {
+    if (['/api/mcp/manage','/api/mcp/disconnect','/api/mcp/revoke'].includes(req.path)) return next();
+    mcpAdminSettings(db).then(setting => {
+      if (!setting.enabled) return void res.status(503).json({error:'MCP_PAUSED_BY_ADMIN'});
+      next();
+    }).catch(next);
+  });
   const audit = async (id: string, event: string, tool: string | null = null, cx = db) => {
     await cx.query('INSERT INTO mcp_private.audit(connection_id,event,tool) VALUES($1,$2,$3)', [id, event, tool]);
   };

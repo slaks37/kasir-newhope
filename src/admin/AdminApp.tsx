@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Info,
   ArrowLeft,
+  Plug,
 } from "lucide-react";
 import {
   api,
@@ -41,6 +42,7 @@ const Subscriptions=lazy(()=>import('./pages/Subscriptions'));
 const Clients=lazy(()=>import('./pages/Clients'));
 const BlogManagement=lazy(()=>import('./pages/BlogManagement'));
 const StaffCommissions=lazy(()=>import('./pages/StaffCommissions'));
+const Integrations=lazy(()=>import('./pages/Integrations'));
 import AdminMfa from './AdminMfa';
 
 type PageId =
@@ -51,6 +53,7 @@ type PageId =
   | "commissions"
   | "users"
   | "blog"
+  | "integrations"
   | "transactions"
   | "products"
   | "activity"
@@ -63,6 +66,7 @@ type PageId =
  * menghalangi siapa pun memanggil endpointnya langsung.
  */
 const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
+  {id:'integrations',label:'Integrasi, API & MCP',icon:Plug,cap:'MANAGE_INTEGRATIONS'},
   {
     id: "overview",
     label: "Ringkasan Sektor",
@@ -522,6 +526,7 @@ export default function AdminApp() {
               {page === "commissions" && <StaffCommissions />}
               {page === "users" && <UserManagement />}
               {page === "blog" && <BlogManagement />}
+              {page === "integrations" && <Integrations />}
               {page === "transactions" && (
                 <Transactions sector={sector} onSector={setSector} />
               )}

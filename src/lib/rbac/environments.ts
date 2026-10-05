@@ -158,6 +158,7 @@ export type InternalCapability =
   | 'GRANT_AI_CREDITS'
   | 'IMPERSONATE_MERCHANT'
   | 'VIEW_ACCESS_AUDIT'
+  | 'MANAGE_INTEGRATIONS'
   // Ringkasan lima sektor bisnis. Agregat murni — tidak ada merchant yang bisa
   // dikenali dari angkanya, jadi Growth boleh melihatnya.
   | 'VIEW_SECTOR_ANALYTICS'
@@ -181,6 +182,7 @@ const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
     'GRANT_AI_CREDITS',
     'IMPERSONATE_MERCHANT',
     'VIEW_ACCESS_AUDIT',
+    'MANAGE_INTEGRATIONS',
     'VIEW_SECTOR_ANALYTICS',
     'VIEW_TRANSACTION_LOG',
     'VIEW_PRODUCT_SALES',
@@ -222,6 +224,7 @@ export function hasInternalCapability(role: string, cap: InternalCapability): bo
  * MUST write an `internal_access_log` row.
  */
 export const AUDITED_CAPABILITIES: InternalCapability[] = [
+  'MANAGE_INTEGRATIONS',
   'MANAGE_SUPPORT',
   'VIEW_MERCHANT_DETAIL',
   'IMPERSONATE_MERCHANT',

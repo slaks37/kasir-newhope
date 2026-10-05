@@ -414,6 +414,17 @@ async function runMcpTool(db, subject, businessId, name, args) {
   };
 }
 
+// services/mcp/settings.ts
+async function mcpAdminSettings(db) {
+  try {
+    const row = (await db.query("SELECT enabled,updated_at FROM internal.platform_integrations WHERE key='mcp'")).rows[0];
+    return { enabled: row?.enabled !== false, updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : null, available: true };
+  } catch (error) {
+    if (error.code !== "42P01") throw error;
+    return { enabled: true, updatedAt: null, available: false };
+  }
+}
+
 // services/mcp/routes.ts
 var hash = (s) => createHash("sha256").update(s).digest("hex");
 var secret = () => randomBytes(32).toString("base64url");
@@ -464,6 +475,13 @@ function registerMcpRoutes(app, db, authenticate = authenticateBearer) {
     next();
   });
   const route = (method, path, fn) => app[method](path, (req, res, next) => Promise.resolve().then(() => fn(req, res)).catch(next));
+  app.use((req, res, next) => {
+    if (["/api/mcp/manage", "/api/mcp/disconnect", "/api/mcp/revoke"].includes(req.path)) return next();
+    mcpAdminSettings(db).then((setting) => {
+      if (!setting.enabled) return void res.status(503).json({ error: "MCP_PAUSED_BY_ADMIN" });
+      next();
+    }).catch(next);
+  });
   const audit = async (id, event, tool = null, cx = db) => {
     await cx.query("INSERT INTO mcp_private.audit(connection_id,event,tool) VALUES($1,$2,$3)", [id, event, tool]);
   };

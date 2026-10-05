@@ -258,6 +258,9 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     ?coalescedRead('admin:'+data.session.access_token+':'+target,run):run();
 }
 export const api={
+  integrations:(offset=0)=>request('integrations',{offset}),
+  updateMcpSettings:(body:{enabled:boolean;expectedUpdatedAt:string|null;reason:string})=>request('integrations/mcp',undefined,body,'PUT'),
+  revokeMcpConnection:(id:string,reason:string)=>request('integrations/mcp/connections/'+encodeURIComponent(id)+'/revoke',undefined,{reason},'POST'),
   logout:async()=>{await supabase.auth.signOut();setIdentity(null);},
   login:async(email:string,password:string):Promise<Session>=>{
     if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');

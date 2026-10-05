@@ -27,6 +27,7 @@ import type { Db } from '../../services/shared/db';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
+import { registerAdminIntegrationRoutes } from './adminIntegrations';
 import * as repo from './repo';
 
 interface InternalIdentity {
@@ -247,6 +248,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   }));
   registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
   registerClientSupportRoutes(app,getDb,guard,supportProvider);
+  registerAdminIntegrationRoutes(app,getDb,guard);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
     const f=repo.cleanFilter(req.query);
     const {rows}=await db.query(`SELECT * FROM contract.staff_commission_ledger
