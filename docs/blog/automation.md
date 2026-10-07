@@ -33,6 +33,15 @@ Tanpa `BLOG_API_KEYS`, semua endpoint otomasi menjawab `503 BLOG_API_NOT_CONFIGU
 ## REST API
 Header: `Authorization: Bearer <key>` (atau `X-Api-Key: <key>`).
 
+### Memastikan artikel benar-benar terbit dari Make
+
+- Header harus berisi **string kunci**, bukan objek connection atau teks `[object Object]`. Header yang salah menghasilkan `401 INVALID_API_KEY`; artikel tidak disimpan.
+- Run Make berwarna hijau bukan bukti publikasi bila HTTP error hanya dicatat lalu diabaikan. Setelah pencatatan error, hentikan run sebagai gagal untuk kegagalan autentikasi/server.
+- Konfirmasi publikasi dengan respons `201`, `ok: true`, `post.isPublished: true`, dan URL `post.url`. Draft tidak boleh diberi status published.
+- `422` memerlukan perbaikan isi artikel. `409` memerlukan pemeriksaan artikel yang sudah ada, bukan publikasi ulang dengan slug acak.
+- Verifikasi artikel di `/blog/<slug>`, daftar `/blog`, `/sitemap.xml`, dan `/rss.xml`. Cache publik dapat menunda tampilan terbaru; jangan membuat salinan artikel untuk mengatasi cache.
+- Secret Vercel tidak dapat dibaca kembali. Jika kunci hilang, rotasi dengan persetujuan pemilik dan perbarui seluruh connector blog yang memakai kunci lama, lalu redeploy. Jangan memasukkan kunci ke Git atau log.
+
 | Method | Path | Fungsi |
 |---|---|---|
 | GET | `/api/v1/blog-automation/guide` | Kategori, aturan, format |

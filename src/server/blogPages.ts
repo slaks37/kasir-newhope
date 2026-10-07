@@ -32,6 +32,7 @@ const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 const date = (iso: string) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(new Date(iso));
 const postUrl = (slug: string) => `${siteUrl()}/blog/${slug}`;
 const DEFAULT_IMAGE = '/retail-store.jpg';
+const BRAND_IMAGE = '/new-hope-logo-mark.png';
 const image = (post: PublicPost) => post.coverImage || DEFAULT_IMAGE;
 const absolute = (url: string) => (url.startsWith('http') ? url : siteUrl() + url);
 
@@ -126,10 +127,12 @@ function document(opts: { title: string; description: string; canonical: string;
 <meta property="og:title" content="${esc(opts.title)}">
 <meta property="og:description" content="${esc(opts.description)}">
 <meta property="og:url" content="${esc(opts.canonical)}">
-<meta property="og:image" content="${esc(absolute(opts.image || DEFAULT_IMAGE))}">
+<meta property="og:image" content="${esc(absolute(opts.image || BRAND_IMAGE))}">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="${esc(absolute(opts.image || BRAND_IMAGE))}">
 <link rel="alternate" type="application/rss+xml" title="${BLOG_NAME}" href="${siteUrl()}/rss.xml">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="1024x1024" href="${BRAND_IMAGE}">
+<link rel="apple-touch-icon" href="${BRAND_IMAGE}">
 <meta name="theme-color" content="#F5B82E">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -254,11 +257,11 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
       datePublished: post.createdAt, dateModified: post.updatedAt, inLanguage: 'id-ID', mainEntityOfPage: canonical,
       articleSection: post.category, keywords: (post.seo.metaKeywords || post.tags).join(', '), wordCount: article.words,
       author: { '@type': 'Person', name: post.author.name, jobTitle: post.author.role },
-      publisher: { '@type': 'Organization', name: 'New Hope POS', url: siteUrl(), logo: { '@type': 'ImageObject', url: `${siteUrl()}/favicon.svg` } } },
+      publisher: { '@type': 'Organization', name: 'New Hope POS', url: siteUrl(), logo: { '@type': 'ImageObject', url: `${siteUrl()}${BRAND_IMAGE}` } } },
     breadcrumbs([{ name: 'Beranda', url: siteUrl() + '/' }, { name: 'Blog', url: `${siteUrl()}/blog` }, { name: post.category, url: `${siteUrl()}/blog?kategori=${categorySlug(post.category)}` }, { name: post.title, url: canonical }]),
   ];
   if (faq.length) jsonLd.push({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map(f => ({ '@type': 'Question', name: f.question, acceptedAnswer: { '@type': 'Answer', text: f.answer } })) });
-  return document({ title, description, canonical, image: image(post), type: 'article', jsonLd, body,
+  return document({ title, description, canonical, image: post.coverImage || BRAND_IMAGE, type: 'article', jsonLd, body,
     extraHead: `<meta property="article:published_time" content="${esc(post.createdAt)}"><meta property="article:modified_time" content="${esc(post.updatedAt)}"><meta property="article:section" content="${esc(post.category)}">` });
 }
 

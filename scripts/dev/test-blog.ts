@@ -56,6 +56,8 @@ try {
   assert.match(page.text, /<link rel="canonical" href="https:\/\/kasir\.example\/blog">/);
   assert.match(page.text, /GTM-WD7T7WSF/); assert.match(page.text, /"@type":"Blog"/);
   assert.equal((page.text.match(/<h1/g) || []).length, 1);
+  assert.match(page.text, /property="og:image" content="https:\/\/kasir\.example\/new-hope-logo-mark\.png"/);
+  assert.match(page.text, /name="twitter:image" content="https:\/\/kasir\.example\/new-hope-logo-mark\.png"/);
   page = await get('/blog/cara-membuka-kafe-modal-10-juta-sukses');
   assert.equal(page.status, 200);
   assert.equal((page.text.match(/<h1/g) || []).length, 1, 'Seed article repeats its title in content; the page still has one H1');
@@ -77,17 +79,32 @@ try {
   assert.equal((await call('GET', '/api/v1/blog-automation/guide', undefined, null)).status, 401);
   assert.equal((await call('GET', '/api/v1/blog-automation/guide', undefined, 'short')).status, 401, 'Keys shorter than 24 characters are ignored');
   assert.deepEqual((await call('GET', '/api/v1/blog-automation/guide')).body.categories.length, 7);
+  // Make must send a scalar credential, not a serialized connection object.
+  const beforeBadKey = (await db.query('SELECT count(*)::int n FROM public.blog_posts')).rows[0].n;
+  const badKeyResponse = await fetch(base + '/api/v1/blog-automation/posts', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Api-Key': '[object Object]' }, body: JSON.stringify(article()),
+  });
+  assert.equal(badKeyResponse.status, 401);
+  assert.equal((await badKeyResponse.json() as any).error, 'INVALID_API_KEY');
+  assert.equal((await db.query('SELECT count(*)::int n FROM public.blog_posts')).rows[0].n, beforeBadKey, 'Invalid Make credentials cannot publish an article');
   const rejected = await call('POST', '/api/v1/blog-automation/posts', article({ content: 'pendek' }));
   assert.equal(rejected.status, 422); assert.ok(rejected.body.details.errors.length);
-  const created = await call('POST', '/api/v1/blog-automation/posts', article());
+  const createResponse = await fetch(base + '/api/v1/blog-automation/posts', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify(article()),
+  });
+  const created = { status: createResponse.status, body: await createResponse.json() as any };
   assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.ok, true, 'Publisher must check the API acknowledgement, not only Make execution status');
   assert.deepEqual([created.body.post.slug, created.body.post.isPublished], ['cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', true]);
   assert.equal((await call('POST', '/api/v1/blog-automation/posts', article())).body.error, 'SLUG_ALREADY_EXISTS');
   assert.equal((await call('POST', '/api/v1/blog-automation/posts', article({ slug: 'lain' }))).body.error, 'TITLE_ALREADY_EXISTS');
   page = await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil');
   assert.equal(page.status, 200);
   assert.match(page.text, /"@type":"FAQPage"/); assert.match(page.text, /<div class="table-wrap"><table>/); assert.match(page.text, /Daftar isi/);
+  assert.match(page.text, /property="og:image" content="https:\/\/images\.example\/kopi\.jpg"/, 'Article cover remains its share image');
   assert.match((await get('/sitemap.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
+  assert.match((await get('/blog')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
+  assert.match((await get('/rss.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
   const updated = await call('PUT', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', article({ title: 'Cara Menghitung HPP Kopi Susu: Contoh Lengkap per Gelas' }));
   assert.equal(updated.status, 200, JSON.stringify(updated.body));
   assert.equal(updated.body.post.slug, 'cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', 'Update keeps the URL unless a new slug is sent');
