@@ -15,8 +15,8 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type express from 'express';
 import type { Db } from '../../services/shared/db';
 import { ARTICLE_RULES, checkArticle, type ArticleInput, type ArticleRecord } from '../lib/blog/articleInput';
-import { BLOG_CATEGORIES } from '../lib/blog/categories';
-import { renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
+import { BLOG_CATEGORIES, categoryFromSlug } from '../lib/blog/categories';
+import { BLOG_PAGE_SIZE, renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
 
 const COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
   reading_time_minutes, tags, media_embeds, seo, is_published, is_featured, created_at, updated_at`;
@@ -40,7 +40,7 @@ export function rowToPublicPost(r: any): PublicPost & { isPublished: boolean } {
 const isMissingStore = (error: unknown) => ['42P01', '42501'].includes(String((error as { code?: string })?.code));
 
 async function publishedPosts(db: Db): Promise<PublicPost[]> {
-  const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true ORDER BY is_featured DESC, created_at DESC LIMIT 2000`);
+  const { rows } = await db.query(`SELECT id, slug, title, excerpt, category, cover_image, author_name, reading_time_minutes, created_at, updated_at FROM public.blog_posts WHERE is_published = true ORDER BY created_at DESC, id DESC`);
   return rows.map(rowToPublicPost);
 }
 
@@ -57,9 +57,29 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     };
 
   app.get('/blog', page(async (req, res, db) => {
-    const pageNumber = Number.parseInt(String(req.query.halaman || '1'), 10);
-    const result = renderBlogIndex(await publishedPosts(db), { category: req.query.kategori ? String(req.query.kategori) : null, page: Number.isFinite(pageNumber) ? pageNumber : 1 });
-    res.setHeader('Cache-Control', result.status === 200 ? PAGE_CACHE : 'no-store');
+    const scalar = (value: unknown) => value === undefined || typeof value === 'string';
+    const rawPage = String(req.query.halaman || '1'), categorySlug = String(req.query.kategori || '');
+    const pageNumber = Number(rawPage), category = categorySlug ? categoryFromSlug(categorySlug) : null;
+    if (!['halaman','kategori','q','urut'].every(k => scalar(req.query[k])) || !/^[1-9]\d*$/.test(rawPage) || !Number.isSafeInteger(pageNumber) || (categorySlug && !category)) {
+      res.setHeader('Cache-Control', 'no-store'); return res.status(404).type('html').send(renderNotFound());
+    }
+    const search = String(req.query.q || '').trim().slice(0,120);
+    const sort = req.query.urut === 'terlama' ? 'terlama' : 'terbaru';
+    // Parameters prevent injection; escape LIKE wildcards so a search is literal.
+    const pattern = search ? '%' + search.replace(/[\\%_]/g, '\\$&') + '%' : null;
+    const where = `is_published = true AND ($1::text IS NULL OR category = $1)
+      AND ($2::text IS NULL OR title ILIKE $2 OR excerpt ILIKE $2 OR array_to_string(tags, ' ') ILIKE $2)`;
+    const params = [category, pattern];
+    const total = Number((await db.query(`SELECT count(*)::int n FROM public.blog_posts WHERE ${where}`, params)).rows[0].n);
+    if (pageNumber > Math.max(1, Math.ceil(total / BLOG_PAGE_SIZE))) {
+      res.setHeader('Cache-Control', 'no-store'); return res.status(404).type('html').send(renderNotFound());
+    }
+    const direction = sort === 'terlama' ? 'ASC' : 'DESC'; // whitelist, never query text
+    const rows = (await db.query(`SELECT ${COLUMNS.replace('content, ', '')} FROM public.blog_posts WHERE ${where}
+      ORDER BY created_at ${direction}, id ${direction} LIMIT $3 OFFSET $4`, [...params, BLOG_PAGE_SIZE, (pageNumber-1)*BLOG_PAGE_SIZE])).rows;
+    const result = renderBlogIndex(rows.map(rowToPublicPost), { category: categorySlug, page: pageNumber, search, sort, total });
+    // Publication must appear on the index immediately, not after a day of SWR.
+    res.setHeader('Cache-Control', 'no-store');
     res.status(result.status).type('html').send(result.html);
   }));
 
@@ -79,12 +99,12 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
   app.get('/sitemap.xml', page(async (_req, res, db) => {
     let posts: PublicPost[] = [];
     try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
-    res.setHeader('Cache-Control', PAGE_CACHE);
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, must-revalidate');
     res.type('application/xml').send(renderSitemap(posts));
   }));
 
   app.get('/rss.xml', page(async (_req, res, db) => {
-    res.setHeader('Cache-Control', PAGE_CACHE);
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, must-revalidate');
     res.type('application/rss+xml').send(renderRss(await publishedPosts(db)));
   }));
 

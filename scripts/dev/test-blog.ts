@@ -52,7 +52,7 @@ try {
 
   // Public pages.
   let page = await get('/blog');
-  assert.equal(page.status, 200); assert.match(page.type, /text\/html/); assert.match(page.cache, /s-maxage=300/);
+  assert.equal(page.status, 200); assert.match(page.type, /text\/html/); assert.equal(page.cache, 'no-store');
   assert.match(page.text, /<link rel="canonical" href="https:\/\/kasir\.example\/blog">/);
   assert.match(page.text, /GTM-WD7T7WSF/); assert.match(page.text, /"@type":"Blog"/);
   assert.equal((page.text.match(/<h1/g) || []).length, 1);
@@ -67,6 +67,13 @@ try {
   assert.equal((await get('/blog/tidak-ada')).status, 404);
   assert.equal((await get('/blog/Cara-Membuka-Kafe-Modal-10-Juta-Sukses')).status, 301);
   assert.equal((await get('/blog?kategori=tidak-ada')).status, 404);
+  for (const invalid of ['0', '-1', '2foo', '1.5', '999999999999999999999']) assert.equal((await get('/blog?halaman='+invalid)).status,404);
+  assert.equal((await get('/blog?halaman=999')).status,404);
+  assert.match((await get('/blog')).text, /Pagination artikel/);
+  assert.match((await get('/blog?q=tidakadaunik')).text, /0 artikel/);
+  assert.match((await get('/blog?q=%25')).text, /0 artikel/, 'LIKE wildcards are literal');
+  assert.match((await get('/blog?q=kafe')).text, /name="robots" content="noindex,follow"/);
+  assert.match((await get('/blog?q=%3Cscript%3E')).text, /value="&lt;script&gt;"/);
   assert.match((await get('/blog?kategori=kuliner-fnb')).text, /Panduan Lengkap: Cara Membuka Kafe/);
   let sitemap = await get('/sitemap.xml');
   assert.match(sitemap.type, /xml/); assert.match(sitemap.text, /<loc>https:\/\/kasir\.example\/blog\/cara-membuka-kafe-modal-10-juta-sukses<\/loc>/);
@@ -123,6 +130,29 @@ try {
   assert.equal(viaMcp.body.result.isError, undefined, JSON.stringify(viaMcp.body));
   assert.equal((await get('/blog/checklist-buka-toko-kelontong-modern-di-lingkungan-perumahan')).status, 200);
   assert.equal((await rpc('tools/call', { name: 'create_post', arguments: article({ title: 'Checklist Buka Toko Kelontong Modern di Lingkungan Perumahan' }) })).body.result.isError, true);
+
+  // Database pagination, stable ordering, combined filters and unpublished isolation.
+  for (let i=0;i<25;i++) await db.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,is_published,created_at,updated_at)
+    VALUES ($1,$2,$3,'Fixture pagination','Content','Tips Bisnis & Strategi',true,$4,$4)`,
+    ['pagination-'+i,'pagination-'+i,'Pagination Fixture '+i,new Date(Date.UTC(2026,9,1,0,i)).toISOString()]);
+  const filteredFirst = await get('/blog?kategori=tips-bisnis&q=Pagination');
+  const filteredSecond = await get('/blog?kategori=tips-bisnis&q=Pagination&halaman=2');
+  const filteredLast = await get('/blog?kategori=tips-bisnis&q=Pagination&halaman=3');
+  assert.match(filteredFirst.text,/Menampilkan 1–12 dari 25 artikel/);
+  assert.match(filteredSecond.text,/Menampilkan 13–24 dari 25 artikel/);
+  assert.match(filteredLast.text,/Menampilkan 25–25 dari 25 artikel/);
+  const links = (html:string) => [...html.matchAll(/class="card" href="\/blog\/([^"]+)"/g)].map(m=>m[1]);
+  assert.equal(new Set([...links(filteredFirst.text),...links(filteredSecond.text),...links(filteredLast.text)]).size,25);
+  assert.equal(links(filteredFirst.text)[0],'pagination-24');
+  assert.equal(links((await get('/blog?kategori=tips-bisnis&q=Pagination&urut=terlama')).text)[0],'pagination-0');
+  assert.match(filteredSecond.text,/kategori=tips-bisnis&amp;q=Pagination&amp;halaman=3/);
+  assert.equal((await get('/blog?kategori=tips-bisnis&q=Pagination&halaman=4')).status,404);
+  assert.ok(!(await get('/blog?q=HPP')).text.includes('href="/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil"'), 'Draft excluded');
+  assert.match((await get('/sitemap.xml')).text,/pagination-0/);
+  const head = await fetch(base+'/blog', {method:'HEAD'});
+  assert.equal(head.status,200); assert.equal(await head.text(),'');
+  assert.equal(isPublicApi('/blog','HEAD'),true);
+  assert.equal(isPublicApi('/api/v1/admin/merchants','HEAD'),false);
 
   // Browsers never reach the table directly; the Vercel boundary exposes exactly these paths.
   const grants = (await db.query(`SELECT count(*)::int n FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name='blog_posts' AND grantee IN ('anon','authenticated')`)).rows[0].n;

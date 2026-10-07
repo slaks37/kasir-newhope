@@ -35,7 +35,7 @@ const PUBLIC_EXACT=new Set(['/api/v1/subscription/plans','/api/v1/webhooks/doku'
 export function isPublicApi(path:string,method:string):boolean{
   if(PUBLIC_EXACT.has(path))return true;
   // Server-rendered blog pages, and the automation API (authenticated by its own API key).
-  if(method==='GET'&&(path==='/blog'||/^\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path)||path==='/sitemap.xml'||path==='/rss.xml'))return true;
+  if((method==='GET'||method==='HEAD')&&(path==='/blog'||/^\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path)||path==='/sitemap.xml'||path==='/rss.xml'))return true;
   if(path==='/api/v1/blog-automation'||path.startsWith('/api/v1/blog-automation/'))return true;
   if(method==='GET'&&(path==='/api/v1/blog'||/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path)))return true;
   return method==='POST'&&/^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);

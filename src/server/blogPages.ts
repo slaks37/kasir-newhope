@@ -31,7 +31,7 @@ const esc = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').repla
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 const date = (iso: string) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(new Date(iso));
 const postUrl = (slug: string) => `${siteUrl()}/blog/${slug}`;
-const DEFAULT_IMAGE = '/retail-store.jpg';
+const DEFAULT_IMAGE = '/new-hope-logo-mark.png';
 const BRAND_IMAGE = '/new-hope-logo-mark.png';
 const image = (post: PublicPost) => post.coverImage || DEFAULT_IMAGE;
 const absolute = (url: string) => (url.startsWith('http') ? url : siteUrl() + url);
@@ -56,7 +56,13 @@ a{color:inherit}img{max-width:100%;height:auto;display:block}
 .eyebrow{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--brand-ink);background:var(--brand-soft);padding:4px 10px;border-radius:999px;text-decoration:none}
 h1{font-size:clamp(30px,4.4vw,46px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 12px}
 .lead{font-size:18px;color:var(--muted);max-width:680px;margin:0}
-.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 20px;scrollbar-width:none}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 20px}
+.filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:20px}
+.filters label{display:grid;gap:6px;font-size:13px;font-weight:700}.filters label:first-child{flex:1;min-width:200px}
+.filters input,.filters select{font:inherit;font-size:15px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);width:100%}
+.filters button{border:0;cursor:pointer;font:inherit}.results{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:0 0 18px;color:var(--muted);font-size:14px}
+a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid #b45309;outline-offset:3px}
+.card img.brand-cover{object-fit:contain;padding:38px;background:#fff8e5}.chip[aria-disabled=true]{opacity:.45}.pager{flex-wrap:wrap;align-items:center}
 .chip{flex:none;text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
 .chip[aria-current=page]{background:var(--ink);border-color:var(--ink);color:#fff}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;padding-bottom:36px}
@@ -145,7 +151,7 @@ ${opts.jsonLd.map(item => `<script type="application/ld+json">${json(item)}</scr
 <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <a class="skip" href="#konten">Lewati ke konten</a>
 <header class="site-header"><div class="wrap">
-  <a class="brand" href="/blog"><span class="brand-mark" aria-hidden="true">NH</span><span>${BLOG_NAME}<small>Panduan usaha & kasir untuk UMKM</small></span></a>
+  <a class="brand" href="/blog"><img class="brand-mark" src="${BRAND_IMAGE}" alt="" width="32" height="32"><span>${BLOG_NAME}<small>Panduan usaha & kasir untuk UMKM</small></span></a>
   <nav class="site-nav" aria-label="Navigasi utama"><a href="/">Beranda</a><a href="/blog">Artikel</a><a href="/login">Masuk</a><a class="btn" href="/register">Coba gratis<span class="wide"> 45 hari</span></a></nav>
 </div></header>
 <main id="konten">${opts.body}</main>
@@ -159,7 +165,7 @@ ${opts.jsonLd.map(item => `<script type="application/ld+json">${json(item)}</scr
 
 function card(post: PublicPost, heading: 'h2' | 'h3' = 'h2', featured = false) {
   return `<a class="card${featured ? ' feature' : ''}" href="/blog/${esc(post.slug)}">
-  <img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? 'eager' : 'lazy'}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">
+  <img${!post.coverImage ? ' class="brand-cover"' : ''} src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? 'eager' : 'lazy'}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
   <div class="card-body">
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
@@ -169,34 +175,42 @@ function card(post: PublicPost, heading: 'h2' | 'h3' = 'h2', featured = false) {
 </a>`;
 }
 
-export function renderBlogIndex(posts: PublicPost[], opts: { category?: string | null; page?: number } = {}): { status: number; html: string } {
+export function renderBlogIndex(posts: PublicPost[], opts: { category?: string | null; page?: number; search?: string; sort?: 'terbaru' | 'terlama'; total?: number } = {}): { status: number; html: string } {
   const category = opts.category ? categoryFromSlug(opts.category) : null;
   if (opts.category && !category) return { status: 404, html: renderNotFound() };
-  const filtered = category ? posts.filter(p => p.category === category) : posts;
-  const pages = Math.max(1, Math.ceil(filtered.length / BLOG_PAGE_SIZE));
-  const page = Math.min(Math.max(1, opts.page || 1), pages);
-  if ((opts.page || 1) > pages && filtered.length) return { status: 404, html: renderNotFound() };
-  const slice = filtered.slice((page - 1) * BLOG_PAGE_SIZE, page * BLOG_PAGE_SIZE);
-  const featured = page === 1 && !category ? slice[0] : undefined;
-  const rest = featured ? slice.slice(1) : slice;
-  const query = (p: number) => { const q = new URLSearchParams(); if (category) q.set('kategori', categorySlug(category)); if (p > 1) q.set('halaman', String(p)); const s = q.toString(); return '/blog' + (s ? '?' + s : ''); };
+  // Routes supply an already filtered database page; the empty fallback has total=0.
+  const total = opts.total ?? posts.length;
+  const pages = Math.max(1, Math.ceil(total / BLOG_PAGE_SIZE));
+  const page = opts.page || 1;
+  if (!Number.isSafeInteger(page) || page < 1 || page > pages) return { status: 404, html: renderNotFound() };
+  const slice = posts;
+  const search = opts.search || '', sort = opts.sort || 'terbaru';
+  const query = (p: number, selected = category) => { const q = new URLSearchParams(); if (selected) q.set('kategori', categorySlug(selected)); if (search) q.set('q', search); if (sort !== 'terbaru') q.set('urut', sort); if (p > 1) q.set('halaman', String(p)); const s = q.toString(); return '/blog' + (s ? '?' + s : ''); };
   const title = category ? `${category} — ${BLOG_NAME}` : `${BLOG_NAME}: Panduan Usaha, Kasir & Keuangan UMKM`;
   const description = category
     ? `Artikel ${category.toLowerCase()} untuk pemilik usaha: panduan praktis, contoh hitungan, dan tips operasional dari New Hope POS.`
     : 'Panduan praktis untuk pemilik kafe, laundry, ritel, carwash, dan barbershop: hitung HPP, kelola stok, kasir, dan keuangan usaha.';
-  const chips = [`<a class="chip" href="/blog"${!category ? ' aria-current="page"' : ''}>Semua</a>`,
-    ...BLOG_CATEGORIES.map(c => `<a class="chip" href="/blog?kategori=${categorySlug(c)}"${c === category ? ' aria-current="page"' : ''}>${esc(c)}</a>`)].join('');
+  const chips = [`<a class="chip" href="${esc(query(1, null))}"${!category ? ' aria-current="page"' : ''}>Semua kategori</a>`,
+    ...BLOG_CATEGORIES.map(c => `<a class="chip" href="${esc(query(1, c))}"${c === category ? ' aria-current="page"' : ''}>${esc(c)}</a>`)].join('');
+  const numbers = Array.from(new Set([1, pages, page - 1, page, page + 1].filter(n => n >= 1 && n <= pages))).sort((a,b) => a-b);
+  const pagination = numbers.map((n,i) => `${i && n > numbers[i-1]+1 ? '<span aria-hidden="true">…</span>' : ''}<a class="chip" href="${esc(query(n))}" aria-label="Halaman ${n}"${n === page ? ' aria-current="page"' : ''}>${n}</a>`).join('');
   const body = `<div class="wrap">
   <header class="page-header">
     <span class="eyebrow">${category ? 'Kategori' : 'Blog'}</span>
     <h1>${esc(category || 'Panduan usaha & kasir untuk UMKM')}</h1>
     <p class="lead">${esc(description)}</p>
   </header>
+  <form class="filters" action="/blog" method="get" role="search">
+    <label>Cari artikel<input type="search" name="q" value="${esc(search)}" maxlength="120" placeholder="Cari HPP, stok, kasir…"></label>
+    <label>Kategori<select name="kategori"><option value="">Semua kategori</option>${BLOG_CATEGORIES.map(c => `<option value="${categorySlug(c)}"${c === category ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <label>Urutan<select name="urut"><option value="terbaru"${sort === 'terbaru' ? ' selected' : ''}>Terbaru</option><option value="terlama"${sort === 'terlama' ? ' selected' : ''}>Terlama</option></select></label>
+    <button class="btn" type="submit">Tampilkan</button><a href="/blog">Reset filter</a>
+  </form>
   <nav class="chips" aria-label="Kategori">${chips}</nav>
-  ${slice.length === 0 ? `<p class="empty">Belum ada artikel${category ? ' di kategori ini' : ''}.</p>` : ''}
-  ${featured ? card(featured, 'h2', true) : ''}
-  ${rest.length ? `<section class="grid" aria-label="Daftar artikel">${rest.map(p => card(p)).join('')}</section>` : ''}
-  ${pages > 1 ? `<nav class="pager" aria-label="Halaman">${page > 1 ? `<a class="chip" rel="prev" href="${query(page - 1)}">← Sebelumnya</a>` : ''}<span class="chip" aria-current="page">Halaman ${page} dari ${pages}</span>${page < pages ? `<a class="chip" rel="next" href="${query(page + 1)}">Berikutnya →</a>` : ''}</nav>` : ''}
+  <div class="results"><span>${total ? `Menampilkan ${(page-1)*BLOG_PAGE_SIZE+1}–${(page-1)*BLOG_PAGE_SIZE+slice.length} dari ${total} artikel` : '0 artikel'}${search ? ` untuk “${esc(search)}”` : ''}</span><span>Halaman ${page} dari ${pages}</span></div>
+  ${slice.length === 0 ? '<div class="empty">Tidak ada artikel yang sesuai. Coba kata kunci atau kategori lain.</div>' : ''}
+  ${slice.length ? `<section class="grid" aria-label="Daftar artikel">${slice.map(p => card(p)).join('')}</section>` : ''}
+  <nav class="pager" aria-label="Pagination artikel">${page > 1 ? `<a class="chip" rel="prev" href="${esc(query(page-1))}">← Sebelumnya</a>` : '<span class="chip" aria-disabled="true">← Sebelumnya</span>'}${pagination}${page < pages ? `<a class="chip" rel="next" href="${esc(query(page+1))}">Berikutnya →</a>` : '<span class="chip" aria-disabled="true">Berikutnya →</span>'}</nav>
 </div>`;
   const canonical = siteUrl() + query(page);
   const jsonLd = [
@@ -204,7 +218,7 @@ export function renderBlogIndex(posts: PublicPost[], opts: { category?: string |
       blogPost: slice.map(p => ({ '@type': 'BlogPosting', headline: p.title, url: postUrl(p.slug), datePublished: p.createdAt, dateModified: p.updatedAt, image: absolute(image(p)) })) },
     breadcrumbs([{ name: 'Beranda', url: siteUrl() + '/' }, { name: 'Blog', url: `${siteUrl()}/blog` }, ...(category ? [{ name: category, url: canonical }] : [])]),
   ];
-  return { status: 200, html: document({ title, description, canonical, jsonLd, body, extraHead: [page > 1 ? `<link rel="prev" href="${siteUrl() + query(page - 1)}">` : '', page < pages ? `<link rel="next" href="${siteUrl() + query(page + 1)}">` : ''].join('') }) };
+  return { status: 200, html: document({ title, description, canonical, jsonLd, body, robots: search || sort !== 'terbaru' ? 'noindex,follow' : undefined, extraHead: [page > 1 ? `<link rel="prev" href="${esc(siteUrl() + query(page - 1))}">` : '', page < pages ? `<link rel="next" href="${esc(siteUrl() + query(page + 1))}">` : ''].join('') }) };
 }
 
 /** Older metadata carried brand suffixes ("| Blog Harapan Baru"); the page adds exactly one. */

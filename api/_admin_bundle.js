@@ -1425,7 +1425,7 @@ var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 var json = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
 var date = (iso2) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso2));
 var postUrl = (slug) => `${siteUrl()}/blog/${slug}`;
-var DEFAULT_IMAGE = "/retail-store.jpg";
+var DEFAULT_IMAGE = "/new-hope-logo-mark.png";
 var BRAND_IMAGE = "/new-hope-logo-mark.png";
 var image = (post) => post.coverImage || DEFAULT_IMAGE;
 var absolute = (url) => url.startsWith("http") ? url : siteUrl() + url;
@@ -1449,7 +1449,13 @@ a{color:inherit}img{max-width:100%;height:auto;display:block}
 .eyebrow{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--brand-ink);background:var(--brand-soft);padding:4px 10px;border-radius:999px;text-decoration:none}
 h1{font-size:clamp(30px,4.4vw,46px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 12px}
 .lead{font-size:18px;color:var(--muted);max-width:680px;margin:0}
-.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 20px;scrollbar-width:none}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 20px}
+.filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:20px}
+.filters label{display:grid;gap:6px;font-size:13px;font-weight:700}.filters label:first-child{flex:1;min-width:200px}
+.filters input,.filters select{font:inherit;font-size:15px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);width:100%}
+.filters button{border:0;cursor:pointer;font:inherit}.results{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:0 0 18px;color:var(--muted);font-size:14px}
+a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid #b45309;outline-offset:3px}
+.card img.brand-cover{object-fit:contain;padding:38px;background:#fff8e5}.chip[aria-disabled=true]{opacity:.45}.pager{flex-wrap:wrap;align-items:center}
 .chip{flex:none;text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
 .chip[aria-current=page]{background:var(--ink);border-color:var(--ink);color:#fff}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;padding-bottom:36px}
@@ -1537,7 +1543,7 @@ ${opts.jsonLd.map((item) => `<script type="application/ld+json">${json(item)}</s
 <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <a class="skip" href="#konten">Lewati ke konten</a>
 <header class="site-header"><div class="wrap">
-  <a class="brand" href="/blog"><span class="brand-mark" aria-hidden="true">NH</span><span>${BLOG_NAME}<small>Panduan usaha & kasir untuk UMKM</small></span></a>
+  <a class="brand" href="/blog"><img class="brand-mark" src="${BRAND_IMAGE}" alt="" width="32" height="32"><span>${BLOG_NAME}<small>Panduan usaha & kasir untuk UMKM</small></span></a>
   <nav class="site-nav" aria-label="Navigasi utama"><a href="/">Beranda</a><a href="/blog">Artikel</a><a href="/login">Masuk</a><a class="btn" href="/register">Coba gratis<span class="wide"> 45 hari</span></a></nav>
 </div></header>
 <main id="konten">${opts.body}</main>
@@ -1550,7 +1556,7 @@ ${opts.jsonLd.map((item) => `<script type="application/ld+json">${json(item)}</s
 }
 function card(post, heading = "h2", featured = false) {
   return `<a class="card${featured ? " feature" : ""}" href="/blog/${esc(post.slug)}">
-  <img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? "eager" : "lazy"}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">
+  <img${!post.coverImage ? ' class="brand-cover"' : ""} src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? "eager" : "lazy"}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
   <div class="card-body">
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
@@ -1562,16 +1568,17 @@ function card(post, heading = "h2", featured = false) {
 function renderBlogIndex(posts, opts = {}) {
   const category = opts.category ? categoryFromSlug(opts.category) : null;
   if (opts.category && !category) return { status: 404, html: renderNotFound() };
-  const filtered = category ? posts.filter((p) => p.category === category) : posts;
-  const pages = Math.max(1, Math.ceil(filtered.length / BLOG_PAGE_SIZE));
-  const page2 = Math.min(Math.max(1, opts.page || 1), pages);
-  if ((opts.page || 1) > pages && filtered.length) return { status: 404, html: renderNotFound() };
-  const slice = filtered.slice((page2 - 1) * BLOG_PAGE_SIZE, page2 * BLOG_PAGE_SIZE);
-  const featured = page2 === 1 && !category ? slice[0] : void 0;
-  const rest = featured ? slice.slice(1) : slice;
-  const query = (p) => {
+  const total = opts.total ?? posts.length;
+  const pages = Math.max(1, Math.ceil(total / BLOG_PAGE_SIZE));
+  const page2 = opts.page || 1;
+  if (!Number.isSafeInteger(page2) || page2 < 1 || page2 > pages) return { status: 404, html: renderNotFound() };
+  const slice = posts;
+  const search = opts.search || "", sort = opts.sort || "terbaru";
+  const query = (p, selected = category) => {
     const q = new URLSearchParams();
-    if (category) q.set("kategori", categorySlug(category));
+    if (selected) q.set("kategori", categorySlug(selected));
+    if (search) q.set("q", search);
+    if (sort !== "terbaru") q.set("urut", sort);
     if (p > 1) q.set("halaman", String(p));
     const s = q.toString();
     return "/blog" + (s ? "?" + s : "");
@@ -1579,20 +1586,28 @@ function renderBlogIndex(posts, opts = {}) {
   const title = category ? `${category} \u2014 ${BLOG_NAME}` : `${BLOG_NAME}: Panduan Usaha, Kasir & Keuangan UMKM`;
   const description = category ? `Artikel ${category.toLowerCase()} untuk pemilik usaha: panduan praktis, contoh hitungan, dan tips operasional dari New Hope POS.` : "Panduan praktis untuk pemilik kafe, laundry, ritel, carwash, dan barbershop: hitung HPP, kelola stok, kasir, dan keuangan usaha.";
   const chips = [
-    `<a class="chip" href="/blog"${!category ? ' aria-current="page"' : ""}>Semua</a>`,
-    ...BLOG_CATEGORIES.map((c) => `<a class="chip" href="/blog?kategori=${categorySlug(c)}"${c === category ? ' aria-current="page"' : ""}>${esc(c)}</a>`)
+    `<a class="chip" href="${esc(query(1, null))}"${!category ? ' aria-current="page"' : ""}>Semua kategori</a>`,
+    ...BLOG_CATEGORIES.map((c) => `<a class="chip" href="${esc(query(1, c))}"${c === category ? ' aria-current="page"' : ""}>${esc(c)}</a>`)
   ].join("");
+  const numbers = Array.from(new Set([1, pages, page2 - 1, page2, page2 + 1].filter((n) => n >= 1 && n <= pages))).sort((a, b) => a - b);
+  const pagination = numbers.map((n, i) => `${i && n > numbers[i - 1] + 1 ? '<span aria-hidden="true">\u2026</span>' : ""}<a class="chip" href="${esc(query(n))}" aria-label="Halaman ${n}"${n === page2 ? ' aria-current="page"' : ""}>${n}</a>`).join("");
   const body = `<div class="wrap">
   <header class="page-header">
     <span class="eyebrow">${category ? "Kategori" : "Blog"}</span>
     <h1>${esc(category || "Panduan usaha & kasir untuk UMKM")}</h1>
     <p class="lead">${esc(description)}</p>
   </header>
+  <form class="filters" action="/blog" method="get" role="search">
+    <label>Cari artikel<input type="search" name="q" value="${esc(search)}" maxlength="120" placeholder="Cari HPP, stok, kasir\u2026"></label>
+    <label>Kategori<select name="kategori"><option value="">Semua kategori</option>${BLOG_CATEGORIES.map((c) => `<option value="${categorySlug(c)}"${c === category ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+    <label>Urutan<select name="urut"><option value="terbaru"${sort === "terbaru" ? " selected" : ""}>Terbaru</option><option value="terlama"${sort === "terlama" ? " selected" : ""}>Terlama</option></select></label>
+    <button class="btn" type="submit">Tampilkan</button><a href="/blog">Reset filter</a>
+  </form>
   <nav class="chips" aria-label="Kategori">${chips}</nav>
-  ${slice.length === 0 ? `<p class="empty">Belum ada artikel${category ? " di kategori ini" : ""}.</p>` : ""}
-  ${featured ? card(featured, "h2", true) : ""}
-  ${rest.length ? `<section class="grid" aria-label="Daftar artikel">${rest.map((p) => card(p)).join("")}</section>` : ""}
-  ${pages > 1 ? `<nav class="pager" aria-label="Halaman">${page2 > 1 ? `<a class="chip" rel="prev" href="${query(page2 - 1)}">\u2190 Sebelumnya</a>` : ""}<span class="chip" aria-current="page">Halaman ${page2} dari ${pages}</span>${page2 < pages ? `<a class="chip" rel="next" href="${query(page2 + 1)}">Berikutnya \u2192</a>` : ""}</nav>` : ""}
+  <div class="results"><span>${total ? `Menampilkan ${(page2 - 1) * BLOG_PAGE_SIZE + 1}\u2013${(page2 - 1) * BLOG_PAGE_SIZE + slice.length} dari ${total} artikel` : "0 artikel"}${search ? ` untuk \u201C${esc(search)}\u201D` : ""}</span><span>Halaman ${page2} dari ${pages}</span></div>
+  ${slice.length === 0 ? '<div class="empty">Tidak ada artikel yang sesuai. Coba kata kunci atau kategori lain.</div>' : ""}
+  ${slice.length ? `<section class="grid" aria-label="Daftar artikel">${slice.map((p) => card(p)).join("")}</section>` : ""}
+  <nav class="pager" aria-label="Pagination artikel">${page2 > 1 ? `<a class="chip" rel="prev" href="${esc(query(page2 - 1))}">\u2190 Sebelumnya</a>` : '<span class="chip" aria-disabled="true">\u2190 Sebelumnya</span>'}${pagination}${page2 < pages ? `<a class="chip" rel="next" href="${esc(query(page2 + 1))}">Berikutnya \u2192</a>` : '<span class="chip" aria-disabled="true">Berikutnya \u2192</span>'}</nav>
 </div>`;
   const canonical = siteUrl() + query(page2);
   const jsonLd = [
@@ -1607,7 +1622,7 @@ function renderBlogIndex(posts, opts = {}) {
     },
     breadcrumbs([{ name: "Beranda", url: siteUrl() + "/" }, { name: "Blog", url: `${siteUrl()}/blog` }, ...category ? [{ name: category, url: canonical }] : []])
   ];
-  return { status: 200, html: document({ title, description, canonical, jsonLd, body, extraHead: [page2 > 1 ? `<link rel="prev" href="${siteUrl() + query(page2 - 1)}">` : "", page2 < pages ? `<link rel="next" href="${siteUrl() + query(page2 + 1)}">` : ""].join("") }) };
+  return { status: 200, html: document({ title, description, canonical, jsonLd, body, robots: search || sort !== "terbaru" ? "noindex,follow" : void 0, extraHead: [page2 > 1 ? `<link rel="prev" href="${esc(siteUrl() + query(page2 - 1))}">` : "", page2 < pages ? `<link rel="next" href="${esc(siteUrl() + query(page2 + 1))}">` : ""].join("") }) };
 }
 var cleanTitle = (value) => value.replace(/\s*[|–—-]\s*(blog\s+harapan\s+baru|warta\s+harapan\s+baru|blog\s+new\s+hope(\s+pos)?|new\s+hope\s+pos)\b.*$/i, "").trim();
 var breadcrumbs = (items) => ({
@@ -1752,7 +1767,7 @@ function rowToPublicPost(r) {
 }
 var isMissingStore = (error) => ["42P01", "42501"].includes(String(error?.code));
 async function publishedPosts(db) {
-  const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true ORDER BY is_featured DESC, created_at DESC LIMIT 2000`);
+  const { rows } = await db.query(`SELECT id, slug, title, excerpt, category, cover_image, author_name, reading_time_minutes, created_at, updated_at FROM public.blog_posts WHERE is_published = true ORDER BY created_at DESC, id DESC`);
   return rows.map(rowToPublicPost);
 }
 function registerBlogRoutes(app, getDb) {
@@ -1770,9 +1785,29 @@ function registerBlogRoutes(app, getDb) {
     }
   };
   app.get("/blog", page2(async (req, res, db) => {
-    const pageNumber = Number.parseInt(String(req.query.halaman || "1"), 10);
-    const result = renderBlogIndex(await publishedPosts(db), { category: req.query.kategori ? String(req.query.kategori) : null, page: Number.isFinite(pageNumber) ? pageNumber : 1 });
-    res.setHeader("Cache-Control", result.status === 200 ? PAGE_CACHE : "no-store");
+    const scalar = (value) => value === void 0 || typeof value === "string";
+    const rawPage = String(req.query.halaman || "1"), categorySlug2 = String(req.query.kategori || "");
+    const pageNumber = Number(rawPage), category = categorySlug2 ? categoryFromSlug(categorySlug2) : null;
+    if (!["halaman", "kategori", "q", "urut"].every((k) => scalar(req.query[k])) || !/^[1-9]\d*$/.test(rawPage) || !Number.isSafeInteger(pageNumber) || categorySlug2 && !category) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(404).type("html").send(renderNotFound());
+    }
+    const search = String(req.query.q || "").trim().slice(0, 120);
+    const sort = req.query.urut === "terlama" ? "terlama" : "terbaru";
+    const pattern = search ? "%" + search.replace(/[\\%_]/g, "\\$&") + "%" : null;
+    const where = `is_published = true AND ($1::text IS NULL OR category = $1)
+      AND ($2::text IS NULL OR title ILIKE $2 OR excerpt ILIKE $2 OR array_to_string(tags, ' ') ILIKE $2)`;
+    const params = [category, pattern];
+    const total = Number((await db.query(`SELECT count(*)::int n FROM public.blog_posts WHERE ${where}`, params)).rows[0].n);
+    if (pageNumber > Math.max(1, Math.ceil(total / BLOG_PAGE_SIZE))) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(404).type("html").send(renderNotFound());
+    }
+    const direction = sort === "terlama" ? "ASC" : "DESC";
+    const rows = (await db.query(`SELECT ${COLUMNS.replace("content, ", "")} FROM public.blog_posts WHERE ${where}
+      ORDER BY created_at ${direction}, id ${direction} LIMIT $3 OFFSET $4`, [...params, BLOG_PAGE_SIZE, (pageNumber - 1) * BLOG_PAGE_SIZE])).rows;
+    const result = renderBlogIndex(rows.map(rowToPublicPost), { category: categorySlug2, page: pageNumber, search, sort, total });
+    res.setHeader("Cache-Control", "no-store");
     res.status(result.status).type("html").send(result.html);
   }));
   app.get("/blog/:slug", page2(async (req, res, db) => {
@@ -1798,11 +1833,11 @@ function registerBlogRoutes(app, getDb) {
     } catch (error) {
       if (!isMissingStore(error)) throw error;
     }
-    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, must-revalidate");
     res.type("application/xml").send(renderSitemap(posts));
   }));
   app.get("/rss.xml", page2(async (_req, res, db) => {
-    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, must-revalidate");
     res.type("application/rss+xml").send(renderRss(await publishedPosts(db)));
   }));
   registerBlogAutomation(app, getDb);
@@ -5870,7 +5905,7 @@ async function buildRuntime() {
 var PUBLIC_EXACT = /* @__PURE__ */ new Set(["/api/v1/subscription/plans", "/api/v1/webhooks/doku", "/api/health"]);
 function isPublicApi(path, method) {
   if (PUBLIC_EXACT.has(path)) return true;
-  if (method === "GET" && (path === "/blog" || /^\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path) || path === "/sitemap.xml" || path === "/rss.xml")) return true;
+  if ((method === "GET" || method === "HEAD") && (path === "/blog" || /^\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path) || path === "/sitemap.xml" || path === "/rss.xml")) return true;
   if (path === "/api/v1/blog-automation" || path.startsWith("/api/v1/blog-automation/")) return true;
   if (method === "GET" && (path === "/api/v1/blog" || /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}$/.test(path))) return true;
   return method === "POST" && /^\/api\/v1\/blog\/[A-Za-z0-9._~-]{1,200}\/like$/.test(path);
