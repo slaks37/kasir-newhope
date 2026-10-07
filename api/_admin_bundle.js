@@ -1735,7 +1735,7 @@ ${posts.slice(0, 30).map((p) => `<item><title>${esc(p.title)}</title><link>${pos
 // src/server/blogRoutes.ts
 var COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
   reading_time_minutes, tags, media_embeds, seo, is_published, is_featured, created_at, updated_at`;
-var PAGE_CACHE = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400";
+var PAGE_CACHE = "public, max-age=0, s-maxage=60, must-revalidate";
 var parseJson = (value, fallback) => {
   if (value && typeof value === "object") return value;
   try {
@@ -1821,7 +1821,7 @@ function registerBlogRoutes(app, getDb) {
     const post = rowToPublicPost(rows[0]);
     const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
       ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
-    void db.query("UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1", [post.id]).catch(() => {
+    if (req.method !== "HEAD") void db.query("UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1", [post.id]).catch(() => {
     });
     res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("html").send(renderBlogPost(post, related));
@@ -1833,11 +1833,11 @@ function registerBlogRoutes(app, getDb) {
     } catch (error) {
       if (!isMissingStore(error)) throw error;
     }
-    res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, must-revalidate");
+    res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("application/xml").send(renderSitemap(posts));
   }));
   app.get("/rss.xml", page2(async (_req, res, db) => {
-    res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, must-revalidate");
+    res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("application/rss+xml").send(renderRss(await publishedPosts(db)));
   }));
   registerBlogAutomation(app, getDb);

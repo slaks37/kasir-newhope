@@ -14,8 +14,9 @@ Drafts return 404. Admin, financial data and publishing credentials remain priva
 - Search and alternative-sort pages use `noindex,follow` to avoid redundant
   search-index entries. Default and category pages remain indexable.
 - The index is `no-store`, so successful publication appears immediately.
-  Sitemap and RSS have a maximum 60-second shared-cache lifetime. Article pages
-  retain their existing cache policy; updates can take longer to revalidate.
+  Article pages, sitemap and RSS have a maximum 60-second shared-cache lifetime,
+  without the former day-long stale-while-revalidate window. HEAD checks do not
+  increment article view counts.
 - `/sitemap.xml` includes every published article, without the former 2,000-row
   cutoff. `/rss.xml` contains the latest 30. Robots permits public crawling and
   excludes admin and API routes. Public pages also permit HEAD requests.
