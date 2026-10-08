@@ -6,7 +6,8 @@ import {
   deleteBlogPost,
 } from '../../lib/blogStorage';
 import { BLOG_CATEGORIES } from '../../lib/blog/categories';
-import { api } from '../api';
+import { api, ApiError } from '../api';
+import AdminMfa from '../AdminMfa';
 import { newId } from '../../lib/ids';
 import {
   BookOpen,
@@ -55,6 +56,7 @@ export const BlogManagement: React.FC = () => {
   const [photoError, setPhotoError] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [reauth, setReauth] = useState(false);
   const photoRequest = useRef(0);
   useEffect(() => { if (!showModal) { photoRequest.current++; setPhotoBusy(false); } }, [showModal]);
   useEffect(() => () => { photoRequest.current++; }, []);
@@ -70,7 +72,10 @@ export const BlogManagement: React.FC = () => {
       if (request !== photoRequest.current) return;
       if (target === 'cover') setCoverImage(result.url);
       else setContent(previous => previous + `\n\n![${(coverAlt.trim() || 'Foto artikel').replace(/[\[\]\\\n]/g, '')}](${result.url})\n`);
-    } catch (error) { if (request === photoRequest.current) setPhotoError(error instanceof Error ? error.message : 'Unggah foto gagal. Silakan coba lagi.'); }
+    } catch (error) { if (request === photoRequest.current) {
+      if (error instanceof ApiError && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(error.code)) setReauth(true);
+      setPhotoError(error instanceof Error ? error.message : 'Unggah foto gagal. Silakan coba lagi.');
+    } }
     finally { if (request === photoRequest.current) setPhotoBusy(false); }
   };
   const [authorName, setAuthorName] = useState('Tim Editorial New Hope POS');
@@ -238,7 +243,10 @@ export const BlogManagement: React.FC = () => {
       const result = editingPostId ? await api.blog.update(editingPostId, postPayload) : await api.blog.create(postPayload);
       if (!result?.ok || !result.post) throw Error('Artikel belum dikonfirmasi server.');
       setShowModal(false); await reloadPosts();
-    } catch (error) { setSaveError(error instanceof Error ? error.message : 'Gagal menyimpan artikel. Form tetap disimpan di layar.'); }
+    } catch (error) {
+      if (error instanceof ApiError && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(error.code)) setReauth(true);
+      setSaveError(error instanceof Error ? error.message : 'Gagal menyimpan artikel. Form tetap disimpan di layar.');
+    }
     finally { setSaving(false); }
   };
 
@@ -463,7 +471,11 @@ export const BlogManagement: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSavePost} className="space-y-6">
+            {reauth && <div className="p-4 rounded-xl border border-amber-200 bg-amber-50">
+              <p className="mb-3">Tulisan Anda tetap disimpan di editor. Setelah verifikasi, pilih foto atau simpan kembali.</p>
+              <AdminMfa embedded onVerified={() => {setReauth(false);setPhotoError('');setSaveError('');}} onLogout={() => window.location.reload()} />
+            </div>}
+            <form hidden={reauth} onSubmit={handleSavePost} className="space-y-6">
               {/* Row 1: Title & Slug */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">

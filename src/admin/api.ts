@@ -227,7 +227,7 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   if(response.status===403 && ['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {
     // The support drawer performs its own step-up and retains the selected
     // account, ticket and uncertain intent. Other pages use the global gate.
-    if(!/^clients\/[0-9a-f-]+\/actions$/i.test(path))window.dispatchEvent(new Event('admin-mfa-required'));
+    if(!/^clients\/[0-9a-f-]+\/actions$/i.test(path) && !(method !== 'DELETE' && /^blog(?:\/|$)/.test(path)))window.dispatchEvent(new Event('admin-mfa-required'));
     throw new ApiError(403,result.error,'Verifikasi autentikator diperlukan. Setelah verifikasi, tinjau dan kirim kembali tindakan Anda.');
   }
   if(!response.ok || result.ok===false) {
