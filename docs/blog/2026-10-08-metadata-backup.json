@@ -1,0 +1,224 @@
+[
+  {
+    "id": "blog-d5f0470f-7bbc-4e4c-81cf-fae546f85edd",
+    "slug": "umkm-sering-gagal-rekonsiliasi-kas-tunai-qris-transfer-saling-tumpang-tindih",
+    "cover_image": null,
+    "seo": {
+      "faq": [],
+      "source": "automation",
+      "metaTitle": "Rekonsiliasi Kas UMKM: Mengatasi Selisih Kas Harian",
+      "canonicalUrl": "https://kasir.newhope.space/blog/umkm-sering-gagal-rekonsiliasi-kas-tunai-qris-transfer-saling-tumpang-tindih",
+      "focusKeyword": "rekonsiliasi kas UMKM",
+      "metaKeywords": [
+        "rekonsiliasi kas UMKM",
+        "pembayaran QRIS UMKM",
+        "pencatatan kas harian",
+        "payment mix UMKM",
+        "laporan omzet UMKM",
+        "kasir digital UMKM"
+      ],
+      "metaDescription": "Pelajari cara rekonsiliasi kas UMKM yang rapi dari tunai, QRIS, hingga transfer. Temukan kesalahan umum dan solusi praktis untuk omzet yang lebih terkontrol."
+    }
+  },
+  {
+    "id": "blog-601d786c-50dc-4ca6-9bea-036b52183dc4",
+    "slug": "margin-tipis-akibat-kenaikan-bahan-baku-hitung-hpp-per-porsi-dengan-benar",
+    "cover_image": null,
+    "seo": {
+      "faq": [
+        {
+          "answer": "Update harga beli bahan baku terbaru di sistem pencatatan Anda secara berkala. HPP per porsi akan dihitung ulang otomatis berdasarkan harga terbaru, sehingga margin tetap akurat.",
+          "question": "Bagaimana cara menghitung HPP jika harga bahan baku berubah setiap minggu?"
+        },
+        {
+          "answer": "Ya. Biaya operasional dapat dialokasikan per porsi berdasarkan estimasi penggunaan. Misalnya, jika biaya listrik bulanan Rp 500.000 dan Anda menjual 250 porsi per bulan, alokasikan Rp 2.000 per porsi ke HPP.",
+          "question": "Apakah biaya operasional seperti gas dan listrik harus dimasukkan ke HPP?"
+        },
+        {
+          "answer": "Pantau laporan laba kotor per produk secara berkala. Jika margin suatu menu terus menyusut meski penjualan stabil, kemungkinan HPP-nya sudah tidak sesuai dengan harga jual. Anda perlu menyesuaikan harga atau mengurangi biaya bahan.",
+          "question": "Bagaimana cara mengetahui menu mana yang mulai tidak menguntungkan?"
+        }
+      ],
+      "source": "automation",
+      "metaTitle": "Cara Hitung HPP per Porsi Agar Margin Tetap Aman",
+      "canonicalUrl": "https://kasir.newhope.space/blog/margin-tipis-akibat-kenaikan-bahan-baku-hitung-hpp-per-porsi-dengan-benar",
+      "focusKeyword": "hitung HPP per porsi",
+      "metaKeywords": [
+        "HPP",
+        "F&B",
+        "Margin",
+        "Pencatatan",
+        "UMKM"
+      ],
+      "metaDescription": "Hitung HPP per porsi dengan benar untuk jaga margin keuntungan usaha F&B. Contoh lengkap dan langkah praktis untuk UMKM."
+    }
+  },
+  {
+    "id": "blog-e1312708-cfbf-474f-8179-dcaa4c099ec5",
+    "slug": "bahan-baku-melonjak-margin-tipis-ini-cara-umkm-f-dan-b-bertahan-tanpa-tebak-tebakan",
+    "cover_image": null,
+    "seo": {
+      "faq": [
+        {
+          "answer": "HPP sebaiknya dihitung per porsi atau per produk jadi, karena satu produk terdiri dari beberapa bahan dengan takaran berbeda. Menghitung per bahan baku saja tidak cukup untuk mengetahui margin aktual.",
+          "question": "Apakah HPP harus dihitung per porsi atau cukup per bahan baku?"
+        },
+        {
+          "answer": "Update harga beli bahan baku segera setelah ada perubahan. HPP yang tercatat tetap akurat, dan Anda bisa langsung melihat dampaknya ke margin per produk melalui laporan laba kotor.",
+          "question": "Bagaimana jika harga bahan baku naik di tengah bulan?"
+        },
+        {
+          "answer": "Ya. New Hope dirancang untuk UMKM yang ingin beralih dari pencatatan manual ke sistem digital. Fitur HPP per produk, linkage bahan baku, dan laporan laba kotor bisa langsung dipakai tanpa perlu tim IT.",
+          "question": "Apakah New Hope cocok untuk UMKM F&B yang masih pakai catatan manual?"
+        }
+      ],
+      "source": "automation",
+      "metaTitle": "Hitung HPP UMKM F&B saat Bahan Baku Naik",
+      "canonicalUrl": "https://kasir.newhope.space/blog/bahan-baku-melonjak-margin-tipis-ini-cara-umkm-f-dan-b-bertahan-tanpa-tebak-tebakan",
+      "focusKeyword": "hitung HPP UMKM F&B",
+      "metaKeywords": [
+        "HPP",
+        "UMKM F&B",
+        "manajemen margin",
+        "kasir digital",
+        "bisnis kuliner"
+      ],
+      "metaDescription": "Panduan hitung HPP UMKM F&B saat bahan baku naik. Pelajari cara menjaga margin laba dengan data aktual, bukan tebak-tebakan. Coba New Hope gratis 45 hari."
+    }
+  },
+  {
+    "id": "blog-adc58398-e900-4656-983b-18508063cd41",
+    "slug": "omzet-naik-lap-tipis-hitung-hpp-per-produk-agar-usaha-tidak-rugi-diam-diam",
+    "cover_image": null,
+    "seo": {
+      "faq": [
+        {
+          "answer": "Tidak. HPP hanya mencakup biaya langsung untuk menghasilkan satu unit produk, seperti bahan baku dan kemasan. Biaya operasional bulanan seperti sewa, listrik, dan gaji karyawan masuk ke beban usaha, bukan ke dalam HPP per produk.",
+          "question": "Apakah HPP sama dengan biaya operasional bulanan?"
+        },
+        {
+          "answer": "Update HPP produk secara berkala, minimal dua minggu sekali. Catat harga pembelian terbaru, hitung ulang takaran per porsi, dan sesuaikan harga jual jika margin sudah terlalu tipis. Pencatatan digital seperti New Hope POS mempermudah pembaruan ini.",
+          "question": "Bagaimana jika harga bahan baku naik setiap minggu?"
+        },
+        {
+          "answer": "Ya. New Hope POS mendukung berbagai jenis usaha UMKM seperti retail, laundry, dan jasa. Fitur HPP, stok, laporan omzet, dan insight bisnis tersedia sesuai kategori usaha yang kamu jalankan.",
+          "question": "Apakah New Hope POS bisa digunakan untuk usaha selain F&B?"
+        }
+      ],
+      "source": "automation",
+      "metaTitle": "Hitung HPP per Produk, Cegah Omzet Naik tapi Lap Tipis",
+      "canonicalUrl": "https://kasir.newhope.space/blog/omzet-naik-lap-tipis-hitung-hpp-per-produk-agar-usaha-tidak-rugi-diam-diam",
+      "focusKeyword": "cara hitung HPP UMKM",
+      "metaKeywords": [
+        "HPP UMKM",
+        "manajemen biaya",
+        "kasir digital",
+        "keuangan UMKM",
+        "F&B",
+        "laba kotor"
+      ],
+      "metaDescription": "Omzet naik tapi laba tipis? Pelajari cara hitung HPP per produk UMKM, contoh kopi susu, hingga tips mengelola margin dengan New Hope POS."
+    }
+  },
+  {
+    "id": "blog-50269751-32bb-4ec8-922b-7163ab3f459e",
+    "slug": "cabai-mahal-margin-tergerus-cara-hitung-hpp-agar-usaha-f-dan-b-tidak-rugi",
+    "cover_image": null,
+    "seo": {
+      "faq": [
+        {
+          "answer": "Saat laba kotor per porsi turun di bawah ambang minimum yang Anda tetapkan, misalnya di bawah 30% dari harga jual. Gunakan data HPP terbaru yang tercatat di sistem kasir untuk memutuskannya, bukan perasaan.",
+          "question": "Kapan harus menaikkan harga jual menu?"
+        },
+        {
+          "answer": "Secara matematis ya, tapi secara bisnis berisiko. Pelanggan yang merasa porsi atau rasa berkurang akan berhenti kembali. Lebih baik pertahankan standar resep, lalu sesuaikan harga jual atau cari substitusi yang sepadan rasanya.",
+          "question": "Apakah mengurangi takaran bahan bisa menghemat HPP?"
+        },
+        {
+          "answer": "Catat semua perubahan harga pembelian bahan baku secara berkala. Sistem HPP akan otomatis merefleksikan harga terbaru saat Anda输入 ulang harga beli. Margin akan kembali normal jika harga jual tetap dipertahankan.",
+          "question": "Bagaimana kalau harga bahan baku turun lagi setelah naik?"
+        }
+      ],
+      "source": "automation",
+      "metaTitle": "Hitung HPP F&B Saat Bahan Baku Mahal, Hindari Rugi",
+      "canonicalUrl": "https://kasir.newhope.space/blog/cabai-mahal-margin-tergerus-cara-hitung-hpp-agar-usaha-f-dan-b-tidak-rugi",
+      "focusKeyword": "HPP F&B kenaikan harga bahan",
+      "metaKeywords": [
+        "HPP",
+        "F&B",
+        "harga bahan baku",
+        "margin",
+        "kasir digital"
+      ],
+      "metaDescription": "Harga cabai dan bahan baku naik? Simak cara menghitung HPP per porsi F&B agar Anda bisa ambil keputusan harga tanpa tebak-tebakan. Panduan lengkap dengan contoh angka."
+    }
+  },
+  {
+    "id": "blog-8bb3e11f-56d6-4d3a-ac92-92a8139dea0b",
+    "slug": "cara-menentukan-harga-laundry-kiloan-yang-tetap-untung",
+    "cover_image": "https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?auto=format&fit=crop&q=80&w=1200",
+    "seo": {
+      "faq": [
+        {
+          "answer": "Tergantung volume dan biaya tetap Anda. Dalam contoh usaha 1.500 kg per bulan, biaya variabel Rp 2.600 dan biaya tetap Rp 6.000, sehingga total biaya Rp 8.600 per kg.",
+          "question": "Berapa biaya modal per kilogram laundry kiloan?"
+        },
+        {
+          "answer": "Bagi total biaya tetap bulanan dengan selisih harga per kg dan biaya variabel per kg. Hasilnya adalah jumlah kilogram minimum per bulan agar usaha tidak rugi.",
+          "question": "Bagaimana cara menghitung titik impas laundry?"
+        },
+        {
+          "answer": "Ya. Layanan kilat memakai mesin dan tenaga lebih intensif dalam waktu singkat, sehingga wajar dihargai lebih tinggi dari layanan reguler.",
+          "question": "Apakah layanan kilat perlu harga berbeda?"
+        }
+      ],
+      "source": "automation",
+      "ogImage": "https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?auto=format&fit=crop&q=80&w=1200",
+      "coverAlt": "Tumpukan pakaian bersih yang sudah dilipat",
+      "metaTitle": "Cara Menentukan Harga Laundry Kiloan yang Tetap Untung",
+      "canonicalUrl": "https://kasir.newhope.space/blog/cara-menentukan-harga-laundry-kiloan-yang-tetap-untung",
+      "focusKeyword": "harga laundry kiloan",
+      "metaKeywords": [
+        "Laundry Kiloan",
+        "Harga Jual",
+        "Titik Impas",
+        "Biaya Operasional"
+      ],
+      "metaDescription": "Cara menentukan harga laundry kiloan: hitung biaya per kg, bebankan biaya tetap, tambah margin, dan cari titik impas bulanan dengan contoh angka."
+    }
+  },
+  {
+    "id": "blog-6be05330-92ac-4ff1-931a-5c75c6b311f6",
+    "slug": "cara-menghitung-hpp-menu-kafe-per-porsi-contoh-lengkap-kopi-susu",
+    "cover_image": "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&q=80&w=1200",
+    "seo": {
+      "faq": [
+        {
+          "answer": "Banyak kafe memakai patokan 25–35% dari harga jual untuk minuman. Angka akhirnya tetap perlu disesuaikan dengan harga pesaing dan daya beli pelanggan di lokasi Anda.",
+          "question": "Berapa persentase HPP yang ideal untuk minuman kafe?"
+        },
+        {
+          "answer": "Tidak. HPP per porsi hanya berisi bahan dan kemasan yang habis untuk satu porsi. Sewa, gaji, dan listrik adalah biaya operasional yang dibayar dari laba kotor.",
+          "question": "Apakah sewa tempat dan gaji karyawan masuk ke HPP?"
+        },
+        {
+          "answer": "Setiap kali harga beli bahan atau resep berubah. Selain itu, bandingkan pemakaian teoretis dengan stok fisik setiap minggu untuk bahan mahal seperti kopi dan susu.",
+          "question": "Seberapa sering HPP perlu dihitung ulang?"
+        }
+      ],
+      "source": "automation",
+      "ogImage": "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&q=80&w=1200",
+      "coverAlt": "Suasana kedai kopi dengan papan menu",
+      "metaTitle": "Cara Menghitung HPP Menu Kafe per Porsi: Contoh Lengkap Kopi Susu",
+      "canonicalUrl": "https://kasir.newhope.space/blog/cara-menghitung-hpp-menu-kafe-per-porsi-contoh-lengkap-kopi-susu",
+      "focusKeyword": "HPP",
+      "metaKeywords": [
+        "HPP",
+        "Kedai Kopi",
+        "Harga Jual",
+        "Manajemen Stok"
+      ],
+      "metaDescription": "Cara menghitung HPP menu kafe per porsi dengan contoh kopi susu: resep standar, harga per gram, rumus harga jual, dan cara memantau selisih stok."
+    }
+  }
+]

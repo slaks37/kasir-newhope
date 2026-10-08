@@ -16,6 +16,7 @@ import type express from 'express';
 import type { Db } from '../../services/shared/db';
 import { ARTICLE_RULES, checkArticle, type ArticleInput, type ArticleRecord } from '../lib/blog/articleInput';
 import { BLOG_CATEGORIES, categoryFromSlug } from '../lib/blog/categories';
+import { generatedBlogCover } from '../lib/blog/covers';
 import { BLOG_PAGE_SIZE, renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
 
 const COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
@@ -181,7 +182,12 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
       const clash = (await c.query(`SELECT slug FROM public.blog_posts WHERE (slug = $1 OR lower(title) = lower($2)) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
         [record.slug, record.title, existing?.id ?? null])).rows[0];
       if (clash) throw new BlogApiError(409, clash.slug === record.slug ? 'SLUG_ALREADY_EXISTS' : 'TITLE_ALREADY_EXISTS', { slug: clash.slug });
-      const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage || undefined, source: 'automation' };
+      if (!record.coverImage) {
+        record.coverImage = siteUrl() + generatedBlogCover(record.title);
+        record.seo.coverGenerated = true;
+        record.seo.coverAlt = 'Ilustrasi AI: ' + record.title;
+      } else record.seo.coverGenerated = /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage);
+      const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage, source: 'automation' };
       const values = [record.slug, record.title, record.excerpt, record.content, record.category, record.coverImage || null,
         record.author.name, record.author.role, record.author.avatar || null, record.readingTimeMinutes, record.tags,
         JSON.stringify(seo), record.isPublished, record.isFeatured];
@@ -209,7 +215,7 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
     format: {
       content: 'Markdown. Jangan tulis judul (# ...) di content; judul memakai field title. Struktur: paragraf pembuka → beberapa bagian ## (H2) dengan ### (H3) bila perlu → penutup. Gunakan daftar, tabel, dan > kutipan untuk poin penting.',
       required: ['title', 'excerpt', 'content', 'category'],
-      optional: ['slug', 'tags', 'coverImage', 'coverAlt', 'author{name,role,avatar}', 'seo{metaTitle,metaDescription,focusKeyword,keywords[]}', 'faq[{question,answer}]', 'isFeatured', 'publish (default true)'],
+      optional: ['slug', 'tags', 'coverImage (kosong: ilustrasi AI dari pustaka sampul)', 'coverAlt', 'author{name,role,avatar}', 'seo{metaTitle,metaDescription,focusKeyword,keywords[]}', 'faq[{question,answer}]', 'sources[{title,url,publisher,publishedAt}]', 'sourceRequired + sourceFeed (wajib untuk automation berita)', 'isFeatured', 'publish (default true)'],
     },
   });
 
@@ -227,6 +233,9 @@ const ARTICLE_SCHEMA = {
     tags: { type: 'array', items: { type: 'string' }, maxItems: ARTICLE_RULES.maxTags },
     coverImage: { type: 'string', description: 'URL https gambar sampul (1200×600 disarankan)' },
     coverAlt: { type: 'string' },
+    sources: { type: 'array', maxItems: 5, items: { type: 'object', required: ['title', 'url'], properties: { title: { type: 'string' }, url: { type: 'string' }, publisher: { type: 'string' }, publishedAt: { type: 'string' } } } },
+    sourceRequired: { type: 'boolean', description: 'Artikel berita: true, wajib sumber cocok dengan sourceFeed.' },
+    sourceFeed: { type: 'string', description: 'Feed RSS yang diamati automation; untuk validasi saja, tidak disimpan.' },
     author: { type: 'object', properties: { name: { type: 'string' }, role: { type: 'string' }, avatar: { type: 'string' } } },
     seo: { type: 'object', properties: { metaTitle: { type: 'string' }, metaDescription: { type: 'string' }, focusKeyword: { type: 'string' }, keywords: { type: 'array', items: { type: 'string' } } } },
     faq: { type: 'array', maxItems: ARTICLE_RULES.maxFaq, items: { type: 'object', required: ['question', 'answer'], properties: { question: { type: 'string' }, answer: { type: 'string' } } } },

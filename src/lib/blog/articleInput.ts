@@ -2,6 +2,7 @@ import { BLOG_CATEGORIES, isBlogCategory, slugify, type PublishedBlogCategory } 
 import { readingMinutes, renderArticle } from './markdown';
 
 export type FaqItem = { question: string; answer: string };
+export type ArticleSource = { title: string; url: string; publishedAt?: string; publisher?: string };
 
 /** What automation (API/MCP) sends. Only title, excerpt, content and category are required. */
 export type ArticleInput = {
@@ -10,13 +11,14 @@ export type ArticleInput = {
   author?: { name?: unknown; role?: unknown; avatar?: unknown } | unknown;
   seo?: { metaTitle?: unknown; metaDescription?: unknown; focusKeyword?: unknown; keywords?: unknown } | unknown;
   faq?: unknown;
+  sources?: unknown; sourceRequired?: unknown; sourceFeed?: unknown;
 };
 
 export type ArticleRecord = {
   slug: string; title: string; excerpt: string; content: string; category: PublishedBlogCategory;
   tags: string[]; coverImage: string; isFeatured: boolean; isPublished: boolean; readingTimeMinutes: number;
   author: { name: string; role: string; avatar: string };
-  seo: { metaTitle: string; metaDescription: string; metaKeywords: string[]; focusKeyword?: string; coverAlt?: string; faq: FaqItem[] };
+  seo: { metaTitle: string; metaDescription: string; metaKeywords: string[]; focusKeyword?: string; coverAlt?: string; faq: FaqItem[]; sources: ArticleSource[]; coverGenerated?: boolean };
 };
 
 export type ArticleCheck = { ok: boolean; errors: string[]; warnings: string[]; record?: ArticleRecord; stats: { words: number; h2: number; h3: number } };
@@ -85,7 +87,7 @@ export function checkArticle(input: ArticleInput): ArticleCheck {
 
   const coverImage = httpsUrl(input.coverImage);
   if (input.coverImage && !coverImage) errors.push('coverImage harus URL https.');
-  if (!coverImage) warnings.push('Tanpa coverImage, pratinjau di Google/WhatsApp memakai gambar bawaan.');
+  if (!coverImage) warnings.push('Tanpa coverImage, dipilih ilustrasi AI dari pustaka sampul editorial.');
 
   const faqIn = Array.isArray(input.faq) ? input.faq : [];
   if (faqIn.length > ARTICLE_RULES.maxFaq) errors.push(`faq maksimal ${ARTICLE_RULES.maxFaq} pertanyaan.`);
@@ -93,12 +95,50 @@ export function checkArticle(input: ArticleInput): ArticleCheck {
   if (faq.some(f => f.question.length < 10 || f.answer.length < 20)) errors.push('Setiap faq butuh question (≥10 karakter) dan answer (≥20 karakter).');
 
   const avatar = httpsUrl(authorIn.avatar);
+  const sources: ArticleSource[] = [];
+  if (input.sources !== undefined && (!Array.isArray(input.sources) || input.sources.length > 5)) errors.push('sources harus array, maksimal 5 sumber.');
+  for (const item of (Array.isArray(input.sources) ? input.sources.slice(0, 5) : [])) {
+    const source = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    const sourceTitle = text(source.title, 250), url = httpsUrl(source.url);
+    let valid = sourceTitle.length >= 10 && Boolean(url);
+    if (url) {
+      try {
+        const parsed = new URL(url);
+        valid = valid && !parsed.username && !parsed.password && parsed.pathname !== '/' && parsed.hostname !== 'kasir.newhope.space';
+      } catch { valid = false; }
+    }
+    const publishedAt = text(source.publishedAt, 80);
+    if (publishedAt && !Number.isFinite(Date.parse(publishedAt))) valid = false;
+    if (input.sourceRequired === true && !publishedAt) valid = false;
+    if (!valid) { errors.push('Sumber membutuhkan judul dan URL https artikel (bukan beranda), dengan tanggal valid.'); continue; }
+    sources.push({ title: sourceTitle, url, ...(publishedAt ? { publishedAt: new Date(publishedAt).toISOString() } : {}), ...(text(source.publisher, 100) ? { publisher: text(source.publisher, 100) } : {}) });
+  }
+  if (input.sourceRequired === true && !sources.length) errors.push('Artikel berbasis berita wajib menyertakan sources.');
+  // Automation supplies its observed feed as evidence; never persist or render it.
+  if (input.sourceRequired === true) {
+    const feed = typeof input.sourceFeed === 'string' ? input.sourceFeed : '';
+    if (feed.length > 500_000) errors.push('sourceFeed melebihi 500.000 karakter.');
+    for (const source of sources) {
+      const escapedUrl = source.url.replace(/&/g, '&amp;');
+      const items = feed.match(/<item>[\s\S]*?<\/item>/g) || [];
+      if (!items.some(item => {
+        const observedTitle = item.match(/<title>([\s\S]*?)<\/title>/)?.[1];
+        const observedLink = item.match(/<link>([\s\S]*?)<\/link>/)?.[1];
+        const observedDate = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1];
+        const observedPublisher = item.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1];
+        return observedTitle === source.title.replace(/&/g, '&amp;') && (observedLink === source.url || observedLink === escapedUrl)
+          && (!source.publisher || observedPublisher === source.publisher.replace(/&/g, '&amp;'))
+          && (!source.publishedAt || (observedDate && Date.parse(observedDate) === Date.parse(source.publishedAt)));
+      }))
+        errors.push('Sumber berita tidak cocok dengan judul dan tautan dalam feed yang dibaca.');
+    }
+  }
   const record: ArticleRecord = {
     slug, title, excerpt, content: content.trim(), category: (isBlogCategory(input.category) ? input.category : BLOG_CATEGORIES[0]),
     tags, coverImage, isFeatured: input.isFeatured === true, isPublished: input.publish !== false,
     readingTimeMinutes: readingMinutes(rendered.words),
     author: { name: text(authorIn.name, 80) || 'Tim Editorial New Hope POS', role: text(authorIn.role, 80) || 'Editor', avatar },
-    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...(focusKeyword ? { focusKeyword } : {}), ...(text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}), faq },
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...(focusKeyword ? { focusKeyword } : {}), ...(text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}), faq, sources },
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? undefined : record, stats: { words: rendered.words, h2, h3 } };
 }

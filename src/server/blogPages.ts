@@ -7,7 +7,8 @@
  */
 import { BLOG_CATEGORIES, categoryFromSlug, categorySlug } from '../lib/blog/categories';
 import { renderArticle } from '../lib/blog/markdown';
-import type { FaqItem } from '../lib/blog/articleInput';
+import type { FaqItem, ArticleSource } from '../lib/blog/articleInput';
+import { generatedBlogCover, GENERATED_COVER_CAPTION } from '../lib/blog/covers';
 
 export const GTM_ID = 'GTM-WD7T7WSF';
 export const BLOG_NAME = 'Blog New Hope POS';
@@ -18,7 +19,7 @@ export type PublicPost = {
   coverImage: string; author: { name: string; role: string; avatar: string };
   readingTimeMinutes: number; tags: string[]; isFeatured: boolean;
   mediaEmbeds: Array<{ type?: string; url?: string; caption?: string }>;
-  seo: { metaTitle?: string; metaDescription?: string; metaKeywords?: string[]; coverAlt?: string; faq?: FaqItem[] };
+  seo: { metaTitle?: string; metaDescription?: string; metaKeywords?: string[]; coverAlt?: string; faq?: FaqItem[]; sources?: ArticleSource[]; coverGenerated?: boolean };
   createdAt: string; updatedAt: string;
 };
 
@@ -33,7 +34,7 @@ const date = (iso: string) => new Intl.DateTimeFormat('id-ID', { day: 'numeric',
 const postUrl = (slug: string) => `${siteUrl()}/blog/${slug}`;
 const DEFAULT_IMAGE = '/new-hope-logo-mark.png';
 const BRAND_IMAGE = '/new-hope-logo-mark.png';
-const image = (post: PublicPost) => post.coverImage || DEFAULT_IMAGE;
+const image = (post: PublicPost) => post.coverImage || generatedBlogCover(post.title);
 const absolute = (url: string) => (url.startsWith('http') ? url : siteUrl() + url);
 
 const STYLE = `
@@ -165,7 +166,7 @@ ${opts.jsonLd.map(item => `<script type="application/ld+json">${json(item)}</scr
 
 function card(post: PublicPost, heading: 'h2' | 'h3' = 'h2', featured = false) {
   return `<a class="card${featured ? ' feature' : ''}" href="/blog/${esc(post.slug)}">
-  <img${!post.coverImage ? ' class="brand-cover"' : ''} src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? 'eager' : 'lazy'}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
+  <img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? 'eager' : 'lazy'}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
   <div class="card-body">
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
@@ -238,6 +239,8 @@ export function renderBlogPost(post: PublicPost, related: PublicPost[]): string 
   const title = `${cleanTitle(post.seo.metaTitle || '') || post.title} | ${BLOG_NAME}`;
   const description = post.seo.metaDescription || post.excerpt;
   const faq = (post.seo.faq || []).filter(f => f?.question && f?.answer);
+  const sources = (Array.isArray(post.seo.sources) ? post.seo.sources : []).filter(s => s?.title && /^https:\/\//i.test(s.url));
+  const generated = !post.coverImage || post.seo.coverGenerated === true;
   const toc = article.headings.length >= 3 ? `<aside class="toc" aria-label="Daftar isi"><strong>Daftar isi</strong><ol>${article.headings.map(h => `<li class="h${h.level}"><a href="#${h.id}">${esc(h.text)}</a></li>`).join('')}${faq.length ? '<li class="h2"><a href="#faq">Pertanyaan umum</a></li>' : ''}</ol></aside>` : '<aside></aside>';
   const videos = post.mediaEmbeds.map(e => ({ id: youtubeId(e.url), caption: e.caption })).filter(v => v.id)
     .map(v => `<figure><div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}" title="${esc(v.caption || post.title)}" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe></div>${v.caption ? `<figcaption>${esc(v.caption)}</figcaption>` : ''}</figure>`).join('');
@@ -252,10 +255,11 @@ export function renderBlogPost(post: PublicPost, related: PublicPost[]): string 
       <p class="lead">${esc(post.excerpt)}</p>
       <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} · <time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time>${updated ? ` · diperbarui <time datetime="${esc(post.updatedAt)}">${date(post.updatedAt)}</time>` : ''} · ${post.readingTimeMinutes} menit baca</span></div></div>
     </header>
-    ${post.coverImage ? `<figure class="cover"><img src="${esc(post.coverImage)}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="600" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'"></figure>` : ''}
+    <figure class="cover"><img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="675" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">${generated ? `<figcaption class="meta">${GENERATED_COVER_CAPTION}</figcaption>` : ''}</figure>
     <div class="layout">
       <div>
         <div class="prose">${article.html}${videos}</div>
+        ${sources.length ? `<section class="section prose" aria-label="Sumber berita"><h2>Sumber berita & referensi</h2><p>Berita berikut menjadi pemicu topik. Panduan dan contoh perhitungan di atas merupakan analisis New Hope POS, bukan kutipan langsung dari media.</p><ul>${sources.map(s => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>${s.publisher ? ` — ${esc(s.publisher)}` : ''}${s.publishedAt && Number.isFinite(Date.parse(s.publishedAt)) ? ` · ${date(s.publishedAt)}` : ''}</li>`).join('')}</ul></section>` : ''}
         ${faq.length ? `<section class="section faq" id="faq"><h2>Pertanyaan umum</h2>${faq.map(f => `<details><summary>${esc(f.question)}</summary><p>${esc(f.answer)}</p></details>`).join('')}</section>` : ''}
         ${post.tags.length ? `<div class="section tags" aria-label="Tag">${post.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
         <section class="section"><div class="author-box">${avatar}<div><strong>${esc(post.author.name)}</strong><div class="meta">${esc(post.author.role)}</div><p style="margin:8px 0 0;color:var(--muted)">Ditulis untuk ${BLOG_NAME}. Punya pertanyaan tentang usaha Anda? Coba New Hope POS gratis dan hubungi tim kami.</p></div></div></section>
@@ -270,12 +274,13 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
     { '@context': 'https://schema.org', '@type': 'BlogPosting', headline: post.title, description, image: [absolute(image(post))],
       datePublished: post.createdAt, dateModified: post.updatedAt, inLanguage: 'id-ID', mainEntityOfPage: canonical,
       articleSection: post.category, keywords: (post.seo.metaKeywords || post.tags).join(', '), wordCount: article.words,
+      ...(sources.length ? { citation: sources.map(s => ({ '@type': 'CreativeWork', name: s.title, url: s.url, ...(s.publishedAt ? { datePublished: s.publishedAt } : {}) })) } : {}),
       author: { '@type': 'Person', name: post.author.name, jobTitle: post.author.role },
       publisher: { '@type': 'Organization', name: 'New Hope POS', url: siteUrl(), logo: { '@type': 'ImageObject', url: `${siteUrl()}${BRAND_IMAGE}` } } },
     breadcrumbs([{ name: 'Beranda', url: siteUrl() + '/' }, { name: 'Blog', url: `${siteUrl()}/blog` }, { name: post.category, url: `${siteUrl()}/blog?kategori=${categorySlug(post.category)}` }, { name: post.title, url: canonical }]),
   ];
   if (faq.length) jsonLd.push({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map(f => ({ '@type': 'Question', name: f.question, acceptedAnswer: { '@type': 'Answer', text: f.answer } })) });
-  return document({ title, description, canonical, image: post.coverImage || BRAND_IMAGE, type: 'article', jsonLd, body,
+  return document({ title, description, canonical, image: image(post), type: 'article', jsonLd, body,
     extraHead: `<meta property="article:published_time" content="${esc(post.createdAt)}"><meta property="article:modified_time" content="${esc(post.updatedAt)}"><meta property="article:section" content="${esc(post.category)}">` });
 }
 

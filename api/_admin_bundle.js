@@ -1390,12 +1390,52 @@ ${content}`)) errors.push(message);
   }
   const coverImage = httpsUrl(input.coverImage);
   if (input.coverImage && !coverImage) errors.push("coverImage harus URL https.");
-  if (!coverImage) warnings.push("Tanpa coverImage, pratinjau di Google/WhatsApp memakai gambar bawaan.");
+  if (!coverImage) warnings.push("Tanpa coverImage, dipilih ilustrasi AI dari pustaka sampul editorial.");
   const faqIn = Array.isArray(input.faq) ? input.faq : [];
   if (faqIn.length > ARTICLE_RULES.maxFaq) errors.push(`faq maksimal ${ARTICLE_RULES.maxFaq} pertanyaan.`);
   const faq = faqIn.slice(0, ARTICLE_RULES.maxFaq).map((item) => ({ question: text(item?.question, 200), answer: text(item?.answer, 800) }));
   if (faq.some((f) => f.question.length < 10 || f.answer.length < 20)) errors.push("Setiap faq butuh question (\u226510 karakter) dan answer (\u226520 karakter).");
   const avatar = httpsUrl(authorIn.avatar);
+  const sources = [];
+  if (input.sources !== void 0 && (!Array.isArray(input.sources) || input.sources.length > 5)) errors.push("sources harus array, maksimal 5 sumber.");
+  for (const item of Array.isArray(input.sources) ? input.sources.slice(0, 5) : []) {
+    const source = item && typeof item === "object" ? item : {};
+    const sourceTitle = text(source.title, 250), url = httpsUrl(source.url);
+    let valid = sourceTitle.length >= 10 && Boolean(url);
+    if (url) {
+      try {
+        const parsed = new URL(url);
+        valid = valid && !parsed.username && !parsed.password && parsed.pathname !== "/" && parsed.hostname !== "kasir.newhope.space";
+      } catch {
+        valid = false;
+      }
+    }
+    const publishedAt = text(source.publishedAt, 80);
+    if (publishedAt && !Number.isFinite(Date.parse(publishedAt))) valid = false;
+    if (input.sourceRequired === true && !publishedAt) valid = false;
+    if (!valid) {
+      errors.push("Sumber membutuhkan judul dan URL https artikel (bukan beranda), dengan tanggal valid.");
+      continue;
+    }
+    sources.push({ title: sourceTitle, url, ...publishedAt ? { publishedAt: new Date(publishedAt).toISOString() } : {}, ...text(source.publisher, 100) ? { publisher: text(source.publisher, 100) } : {} });
+  }
+  if (input.sourceRequired === true && !sources.length) errors.push("Artikel berbasis berita wajib menyertakan sources.");
+  if (input.sourceRequired === true) {
+    const feed = typeof input.sourceFeed === "string" ? input.sourceFeed : "";
+    if (feed.length > 5e5) errors.push("sourceFeed melebihi 500.000 karakter.");
+    for (const source of sources) {
+      const escapedUrl = source.url.replace(/&/g, "&amp;");
+      const items = feed.match(/<item>[\s\S]*?<\/item>/g) || [];
+      if (!items.some((item) => {
+        const observedTitle = item.match(/<title>([\s\S]*?)<\/title>/)?.[1];
+        const observedLink = item.match(/<link>([\s\S]*?)<\/link>/)?.[1];
+        const observedDate = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1];
+        const observedPublisher = item.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1];
+        return observedTitle === source.title.replace(/&/g, "&amp;") && (observedLink === source.url || observedLink === escapedUrl) && (!source.publisher || observedPublisher === source.publisher.replace(/&/g, "&amp;")) && (!source.publishedAt || observedDate && Date.parse(observedDate) === Date.parse(source.publishedAt));
+      }))
+        errors.push("Sumber berita tidak cocok dengan judul dan tautan dalam feed yang dibaca.");
+    }
+  }
   const record = {
     slug,
     title,
@@ -1408,10 +1448,16 @@ ${content}`)) errors.push(message);
     isPublished: input.publish !== false,
     readingTimeMinutes: readingMinutes(rendered.words),
     author: { name: text(authorIn.name, 80) || "Tim Editorial New Hope POS", role: text(authorIn.role, 80) || "Editor", avatar },
-    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, faq }
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, faq, sources }
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
 }
+
+// src/lib/blog/covers.ts
+function generatedBlogCover(title) {
+  return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
+}
+var GENERATED_COVER_CAPTION = "Ilustrasi dibuat dengan AI; bukan foto kejadian dalam berita.";
 
 // src/server/blogPages.ts
 var GTM_ID = "GTM-WD7T7WSF";
@@ -1427,7 +1473,7 @@ var date = (iso2) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "
 var postUrl = (slug) => `${siteUrl()}/blog/${slug}`;
 var DEFAULT_IMAGE = "/new-hope-logo-mark.png";
 var BRAND_IMAGE = "/new-hope-logo-mark.png";
-var image = (post) => post.coverImage || DEFAULT_IMAGE;
+var image = (post) => post.coverImage || generatedBlogCover(post.title);
 var absolute = (url) => url.startsWith("http") ? url : siteUrl() + url;
 var STYLE = `
 :root{--bg:#fafaf7;--surface:#fff;--ink:#1c1917;--muted:#57534e;--soft:#78716c;--line:#e7e5e4;--brand:#f5b82e;--brand-ink:#78350f;--brand-soft:#fef3c7;--radius:14px;--max:1120px;--read:720px;color-scheme:light}
@@ -1556,7 +1602,7 @@ ${opts.jsonLd.map((item) => `<script type="application/ld+json">${json(item)}</s
 }
 function card(post, heading = "h2", featured = false) {
   return `<a class="card${featured ? " feature" : ""}" href="/blog/${esc(post.slug)}">
-  <img${!post.coverImage ? ' class="brand-cover"' : ""} src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? "eager" : "lazy"}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
+  <img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" loading="${featured ? "eager" : "lazy"}" decoding="async" width="640" height="360" onerror="this.onerror=null;this.classList.add('brand-cover');this.src='${DEFAULT_IMAGE}'">
   <div class="card-body">
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
@@ -1640,6 +1686,8 @@ function renderBlogPost(post, related) {
   const title = `${cleanTitle(post.seo.metaTitle || "") || post.title} | ${BLOG_NAME}`;
   const description = post.seo.metaDescription || post.excerpt;
   const faq = (post.seo.faq || []).filter((f) => f?.question && f?.answer);
+  const sources = (Array.isArray(post.seo.sources) ? post.seo.sources : []).filter((s) => s?.title && /^https:\/\//i.test(s.url));
+  const generated = !post.coverImage || post.seo.coverGenerated === true;
   const toc = article.headings.length >= 3 ? `<aside class="toc" aria-label="Daftar isi"><strong>Daftar isi</strong><ol>${article.headings.map((h) => `<li class="h${h.level}"><a href="#${h.id}">${esc(h.text)}</a></li>`).join("")}${faq.length ? '<li class="h2"><a href="#faq">Pertanyaan umum</a></li>' : ""}</ol></aside>` : "<aside></aside>";
   const videos = post.mediaEmbeds.map((e) => ({ id: youtubeId(e.url), caption: e.caption })).filter((v) => v.id).map((v) => `<figure><div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}" title="${esc(v.caption || post.title)}" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe></div>${v.caption ? `<figcaption>${esc(v.caption)}</figcaption>` : ""}</figure>`).join("");
   const initials = post.author.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -1653,10 +1701,11 @@ function renderBlogPost(post, related) {
       <p class="lead">${esc(post.excerpt)}</p>
       <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} \xB7 <time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time>${updated ? ` \xB7 diperbarui <time datetime="${esc(post.updatedAt)}">${date(post.updatedAt)}</time>` : ""} \xB7 ${post.readingTimeMinutes} menit baca</span></div></div>
     </header>
-    ${post.coverImage ? `<figure class="cover"><img src="${esc(post.coverImage)}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="600" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'"></figure>` : ""}
+    <figure class="cover"><img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="675" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">${generated ? `<figcaption class="meta">${GENERATED_COVER_CAPTION}</figcaption>` : ""}</figure>
     <div class="layout">
       <div>
         <div class="prose">${article.html}${videos}</div>
+        ${sources.length ? `<section class="section prose" aria-label="Sumber berita"><h2>Sumber berita & referensi</h2><p>Berita berikut menjadi pemicu topik. Panduan dan contoh perhitungan di atas merupakan analisis New Hope POS, bukan kutipan langsung dari media.</p><ul>${sources.map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>${s.publisher ? ` \u2014 ${esc(s.publisher)}` : ""}${s.publishedAt && Number.isFinite(Date.parse(s.publishedAt)) ? ` \xB7 ${date(s.publishedAt)}` : ""}</li>`).join("")}</ul></section>` : ""}
         ${faq.length ? `<section class="section faq" id="faq"><h2>Pertanyaan umum</h2>${faq.map((f) => `<details><summary>${esc(f.question)}</summary><p>${esc(f.answer)}</p></details>`).join("")}</section>` : ""}
         ${post.tags.length ? `<div class="section tags" aria-label="Tag">${post.tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
         <section class="section"><div class="author-box">${avatar}<div><strong>${esc(post.author.name)}</strong><div class="meta">${esc(post.author.role)}</div><p style="margin:8px 0 0;color:var(--muted)">Ditulis untuk ${BLOG_NAME}. Punya pertanyaan tentang usaha Anda? Coba New Hope POS gratis dan hubungi tim kami.</p></div></div></section>
@@ -1681,6 +1730,7 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
       articleSection: post.category,
       keywords: (post.seo.metaKeywords || post.tags).join(", "),
       wordCount: article.words,
+      ...sources.length ? { citation: sources.map((s) => ({ "@type": "CreativeWork", name: s.title, url: s.url, ...s.publishedAt ? { datePublished: s.publishedAt } : {} })) } : {},
       author: { "@type": "Person", name: post.author.name, jobTitle: post.author.role },
       publisher: { "@type": "Organization", name: "New Hope POS", url: siteUrl(), logo: { "@type": "ImageObject", url: `${siteUrl()}${BRAND_IMAGE}` } }
     },
@@ -1691,7 +1741,7 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
     title,
     description,
     canonical,
-    image: post.coverImage || BRAND_IMAGE,
+    image: image(post),
     type: "article",
     jsonLd,
     body,
@@ -1917,7 +1967,12 @@ function createBlogAutomation(getDb) {
         [record.slug, record.title, existing?.id ?? null]
       )).rows[0];
       if (clash) throw new BlogApiError(409, clash.slug === record.slug ? "SLUG_ALREADY_EXISTS" : "TITLE_ALREADY_EXISTS", { slug: clash.slug });
-      const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage || void 0, source: "automation" };
+      if (!record.coverImage) {
+        record.coverImage = siteUrl() + generatedBlogCover(record.title);
+        record.seo.coverGenerated = true;
+        record.seo.coverAlt = "Ilustrasi AI: " + record.title;
+      } else record.seo.coverGenerated = /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage);
+      const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage, source: "automation" };
       const values = [
         record.slug,
         record.title,
@@ -1955,7 +2010,7 @@ function createBlogAutomation(getDb) {
     format: {
       content: "Markdown. Jangan tulis judul (# ...) di content; judul memakai field title. Struktur: paragraf pembuka \u2192 beberapa bagian ## (H2) dengan ### (H3) bila perlu \u2192 penutup. Gunakan daftar, tabel, dan > kutipan untuk poin penting.",
       required: ["title", "excerpt", "content", "category"],
-      optional: ["slug", "tags", "coverImage", "coverAlt", "author{name,role,avatar}", "seo{metaTitle,metaDescription,focusKeyword,keywords[]}", "faq[{question,answer}]", "isFeatured", "publish (default true)"]
+      optional: ["slug", "tags", "coverImage (kosong: ilustrasi AI dari pustaka sampul)", "coverAlt", "author{name,role,avatar}", "seo{metaTitle,metaDescription,focusKeyword,keywords[]}", "faq[{question,answer}]", "sources[{title,url,publisher,publishedAt}]", "sourceRequired + sourceFeed (wajib untuk automation berita)", "isFeatured", "publish (default true)"]
     }
   });
   return { listPosts, getPost, validate, create: (input) => save(input, "create"), update: (slug, input) => save(input, "update", slug), unpublish, guide };
@@ -1972,6 +2027,9 @@ var ARTICLE_SCHEMA = {
     tags: { type: "array", items: { type: "string" }, maxItems: ARTICLE_RULES.maxTags },
     coverImage: { type: "string", description: "URL https gambar sampul (1200\xD7600 disarankan)" },
     coverAlt: { type: "string" },
+    sources: { type: "array", maxItems: 5, items: { type: "object", required: ["title", "url"], properties: { title: { type: "string" }, url: { type: "string" }, publisher: { type: "string" }, publishedAt: { type: "string" } } } },
+    sourceRequired: { type: "boolean", description: "Artikel berita: true, wajib sumber cocok dengan sourceFeed." },
+    sourceFeed: { type: "string", description: "Feed RSS yang diamati automation; untuk validasi saja, tidak disimpan." },
     author: { type: "object", properties: { name: { type: "string" }, role: { type: "string" }, avatar: { type: "string" } } },
     seo: { type: "object", properties: { metaTitle: { type: "string" }, metaDescription: { type: "string" }, focusKeyword: { type: "string" }, keywords: { type: "array", items: { type: "string" } } } },
     faq: { type: "array", maxItems: ARTICLE_RULES.maxFaq, items: { type: "object", required: ["question", "answer"], properties: { question: { type: "string" }, answer: { type: "string" } } } },

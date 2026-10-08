@@ -46,6 +46,15 @@ try {
 
   // Article rules.
   assert.equal(checkArticle(article()).ok, true, JSON.stringify(checkArticle(article()).errors));
+  const source = { title: 'Harga bahan baku naik - Media Contoh', url: 'https://media.example/berita/harga', publishedAt: '2026-10-07T06:00:00Z' };
+  const evidence = `<rss><item><title>${source.title}</title><link>${source.url}</link><pubDate>Wed, 07 Oct 2026 06:00:00 GMT</pubDate></item></rss>`;
+  assert.equal(checkArticle(article({ sources: [source], sourceRequired: true, sourceFeed: evidence })).ok, true);
+  assert.equal(checkArticle(article({ sources: [source], sourceRequired: true, sourceFeed: '' })).ok, false);
+  assert.equal(checkArticle(article({ sourceRequired: true })).ok, false);
+  assert.equal(checkArticle(article({ sources: [{ ...source, url: 'https://media.example' }] })).ok, false);
+  assert.equal(checkArticle(article({ sources: [{ ...source, url: 'https://%' }] })).ok, false);
+  assert.equal(checkArticle(article({ sources: [{ ...source, publishedAt: 'yesterday' }] })).ok, false);
+  assert.equal(checkArticle(article({ sources: [{ ...source, publishedAt: '2026-10-08T06:00:00Z' }], sourceRequired: true, sourceFeed: evidence })).ok, false);
   assert.ok(checkArticle(article({ content: '## a\n\nterlalu pendek' })).errors.some(e => e.includes('terlalu tipis')));
   assert.ok(checkArticle(article({ content: body + '\n\nDana penjualan cair H+1 otomatis.' })).errors.some(e => e.includes('H+1')));
   assert.ok(checkArticle(article({ category: 'Gosip' })).errors.some(e => e.startsWith('category')));
@@ -97,7 +106,7 @@ try {
   const rejected = await call('POST', '/api/v1/blog-automation/posts', article({ content: 'pendek' }));
   assert.equal(rejected.status, 422); assert.ok(rejected.body.details.errors.length);
   const createResponse = await fetch(base + '/api/v1/blog-automation/posts', {
-    method: 'POST', headers: { 'content-type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify(article()),
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify(article({ sources: [source], sourceRequired: true, sourceFeed: evidence })),
   });
   const created = { status: createResponse.status, body: await createResponse.json() as any };
   assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -107,13 +116,23 @@ try {
   assert.equal((await call('POST', '/api/v1/blog-automation/posts', article({ slug: 'lain' }))).body.error, 'TITLE_ALREADY_EXISTS');
   page = await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil');
   assert.equal(page.status, 200);
+  assert.match(page.text, /Sumber berita & referensi/);
+  assert.match(page.text, /href="https:\/\/media\.example\/berita\/harga"/);
+  assert.match(page.text, /"citation":\[/);
+  assert.ok(!page.text.includes('<rss>'), 'Raw source evidence is never rendered');
+  const sourceStored = (await db.query('SELECT seo FROM public.blog_posts WHERE slug=$1', [created.body.post.slug])).rows[0].seo as any;
+  assert.equal(sourceStored.sources[0].publishedAt, '2026-10-07T06:00:00.000Z');
+  assert.equal(sourceStored.sourceFeed, undefined, 'Evidence is not stored');
   assert.match(page.text, /"@type":"FAQPage"/); assert.match(page.text, /<div class="table-wrap"><table>/); assert.match(page.text, /Daftar isi/);
   assert.match(page.text, /property="og:image" content="https:\/\/images\.example\/kopi\.jpg"/, 'Article cover remains its share image');
   assert.match((await get('/sitemap.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
   assert.match((await get('/blog')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
   assert.match((await get('/rss.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
-  const updated = await call('PUT', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', article({ title: 'Cara Menghitung HPP Kopi Susu: Contoh Lengkap per Gelas' }));
+  const updated = await call('PUT', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', article({ title: 'Cara Menghitung HPP Kopi Susu: Contoh Lengkap per Gelas', coverImage: '' }));
   assert.equal(updated.status, 200, JSON.stringify(updated.body));
+  page = await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil');
+  assert.match(page.text, /hpp-ingredients-ai\.jpg/);
+  assert.match(page.text, /Ilustrasi dibuat dengan AI/);
   assert.equal(updated.body.post.slug, 'cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', 'Update keeps the URL unless a new slug is sent');
   assert.equal((await call('DELETE', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil')).body.post.isPublished, false);
   assert.equal((await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil')).status, 404);
