@@ -26,6 +26,7 @@ import {
 import type { Db } from '../../services/shared/db';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import { registerBlogRoutes } from './blogRoutes';
+import { registerBlogMediaRoutes, type BlogMediaProvider } from './blogMedia';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import { registerAdminIntegrationRoutes } from './adminIntegrations';
@@ -82,7 +83,7 @@ async function recordAccess(db: Db, who: InternalIdentity, action: string, resou
     [who.id,who.role,merchantId,action,resource,justification,ip,req.auditRequestId,String(req.headers['user-agent'] || '').slice(0,512)]);
 }
 
-export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider): void {
+export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider, blogMediaProvider?: BlogMediaProvider): void {
   registerBlogRoutes(app, getDb);
   app.use('/api/admin',(req:AdminRequest,res,next)=>{
     const forwarded=String(req.headers['x-request-id'] || '');
@@ -251,6 +252,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
   registerClientSupportRoutes(app,getDb,guard,supportProvider);
   registerAdminIntegrationRoutes(app,getDb,guard);
+  registerBlogMediaRoutes(app, guard, blogMediaProvider);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
     const f=repo.cleanFilter(req.query);
     const {rows}=await db.query(`SELECT * FROM contract.staff_commission_ledger
@@ -663,7 +665,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
                 reading_time_minutes = COALESCE($11, reading_time_minutes),
                 tags = COALESCE($12, tags),
                 media_embeds = COALESCE($13::jsonb, media_embeds),
-                seo = COALESCE($14::jsonb, seo),
+                seo = CASE WHEN $14::jsonb IS NULL THEN seo ELSE COALESCE(seo, '{}'::jsonb) || $14::jsonb END,
                 is_published = COALESCE($15, is_published),
                 is_featured = COALESCE($16, is_featured),
                 updated_at = CURRENT_TIMESTAMP

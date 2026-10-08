@@ -232,6 +232,10 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   }
   if(!response.ok || result.ok===false) {
     const supportErrors:Record<string,string>={
+      INVALID_BLOG_PHOTO:'Foto tidak valid. Pilih JPG, PNG, atau WebP maksimal 5 MB.',
+      BLOG_STORAGE_NOT_CONFIGURED:'Penyimpanan foto blog belum dikonfigurasi di server.',
+      BLOG_STORAGE_BUCKET_PRIVATE:'Penyimpanan foto blog belum tersedia untuk pembaca publik.',
+      BLOG_PHOTO_UPLOAD_FAILED:'Foto belum berhasil diunggah. Isi artikel tetap ada; silakan coba lagi.',
       PASSWORD_RESET_COOLDOWN:'Reset baru dibatasi. Tunggu minimal 2 menit dan periksa inbox/spam owner terlebih dahulu.',
       PASSWORD_RESET_STATUS_UNKNOWN:'Hasil pengiriman belum dapat dipastikan. Jangan kirim permintaan baru; periksa permintaan sebelumnya dan riwayat support.',
       PASSWORD_RESET_PROVIDER_REJECTED:'Layanan email reset belum menerima permintaan. Periksa riwayat support sebelum mencoba lagi.',
@@ -305,6 +309,7 @@ export const api={
   client:(tenantId:string,justification:string)=>request('clients/'+encodeURIComponent(tenantId),{justification}),
   clientAction:(tenantId:string,body:any)=>request('clients/'+encodeURIComponent(tenantId)+'/actions',undefined,body),
   blog:{
+    uploadPhoto:(photo:string)=>request('blog/media',undefined,{photo},'POST'),
     list:(p?:Record<string,unknown>)=>request('blog',p),
     create:(body:any)=>request('blog',undefined,body,'POST'),
     update:(id:string,body:any)=>request('blog/'+encodeURIComponent(id),undefined,body,'PUT'),

@@ -20,7 +20,7 @@
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
     "verify": "npm run lint && npm run build:api && npm run test:runtime && npm test && npm run build",
-    "test:product-photo": "node --import tsx scripts/dev/test-product-photo.ts",
+    "test:product-photo": "node --import tsx scripts/dev/test-product-photo.ts && node --import tsx scripts/dev/test-blog-photo.ts",
     "test:workspace": "node --import tsx scripts/dev/test-workspace-architecture.ts && node --import tsx scripts/dev/test-offline-workspace.ts",
     "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-operational-repair.ts && node --import tsx scripts/dev/test-background-sync.ts && node --import tsx scripts/dev/test-sync-boundary.ts && node --import tsx scripts/dev/test-sync-poison.ts && node --import tsx scripts/dev/test-deploy-order.ts",
     "test:financial-cloud": "node --import tsx scripts/dev/test-pool-config.ts && node --import tsx scripts/dev/test-financial-cloud.ts && node --import tsx scripts/dev/test-admin-reporting.ts && node --import tsx scripts/dev/test-legacy-financial-migration.ts",

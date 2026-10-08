@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { prepareBlogPhoto } from '../../lib/blog/photo';
 import { BlogPost, BlogCategory, MediaEmbedType, BlogMediaEmbed } from '../../types/blog';
 import {
   getAllBlogPosts,
-  createBlogPost,
-  updateBlogPost,
   deleteBlogPost,
 } from '../../lib/blogStorage';
 import { BLOG_CATEGORIES } from '../../lib/blog/categories';
@@ -51,6 +50,29 @@ export const BlogManagement: React.FC = () => {
   const [content, setContent] = useState('');
   const [category, setCategory] = useState<BlogCategory>('Tips Bisnis & Strategi');
   const [coverImage, setCoverImage] = useState('');
+  const [coverAlt, setCoverAlt] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const photoRequest = useRef(0);
+  useEffect(() => { if (!showModal) { photoRequest.current++; setPhotoBusy(false); } }, [showModal]);
+  useEffect(() => () => { photoRequest.current++; }, []);
+  const uploadPhoto = async (event: React.ChangeEvent<HTMLInputElement>, target: 'cover' | 'content') => {
+    const file = event.target.files?.[0]; event.target.value = '';
+    if (!file) return;
+    const request = ++photoRequest.current; setPhotoBusy(true); setPhotoError('');
+    try {
+      const photo = await prepareBlogPhoto(file);
+      if (request !== photoRequest.current) return;
+      const result = await api.blog.uploadPhoto(photo);
+      if (!result?.ok || !result.url) throw Error('Unggah foto belum dikonfirmasi server.');
+      if (request !== photoRequest.current) return;
+      if (target === 'cover') setCoverImage(result.url);
+      else setContent(previous => previous + `\n\n![${(coverAlt.trim() || 'Foto artikel').replace(/[\[\]\\\n]/g, '')}](${result.url})\n`);
+    } catch (error) { if (request === photoRequest.current) setPhotoError(error instanceof Error ? error.message : 'Unggah foto gagal. Silakan coba lagi.'); }
+    finally { if (request === photoRequest.current) setPhotoBusy(false); }
+  };
   const [authorName, setAuthorName] = useState('Tim Editorial New Hope POS');
   const [authorRole, setAuthorRole] = useState('Business Consultant');
   const [authorAvatar, setAuthorAvatar] = useState('https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150');
@@ -102,6 +124,7 @@ export const BlogManagement: React.FC = () => {
   };
 
   const handleOpenCreateModal = () => {
+    photoRequest.current++; setPhotoBusy(false); setPhotoError(''); setSaveError(''); setCoverAlt('');
     setEditingPostId(null);
     setTitle('');
     setSlug('');
@@ -124,6 +147,7 @@ export const BlogManagement: React.FC = () => {
   };
 
   const handleOpenEditModal = (p: BlogPost) => {
+    photoRequest.current++; setPhotoBusy(false); setPhotoError(''); setSaveError(''); setCoverAlt(p.seo.coverAlt || '');
     setEditingPostId(p.id);
     setTitle(p.title);
     setSlug(p.slug);
@@ -162,8 +186,9 @@ export const BlogManagement: React.FC = () => {
     setMediaEmbeds(mediaEmbeds.filter((m) => m.id !== id));
   };
 
-  const handleSavePost = (e: React.FormEvent) => {
+  const handleSavePost = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (photoBusy || saving) return;
     if (!title.trim() || !slug.trim()) {
       notify('Judul artikel dan Slug URL wajib diisi.');
       return;
@@ -195,32 +220,26 @@ export const BlogManagement: React.FC = () => {
       tags: tagsArray.length > 0 ? tagsArray : ['UMKM', 'New Hope POS'],
       mediaEmbeds,
       seo: {
+        ...(posts.find(p => p.id === editingPostId)?.seo || {}),
         metaTitle: metaTitle.trim() || title,
         metaDescription: metaDescription.trim() || excerpt.trim(),
         metaKeywords: keywordsArray.length > 0 ? keywordsArray : tagsArray,
         canonicalUrl: `${window.location.origin}/blog/${slug.trim()}`,
         ogImage: coverImage.trim(),
+        coverAlt: coverAlt.trim(),
+        coverGenerated: /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(coverImage.trim()),
       },
       isPublished,
       isFeatured,
     };
 
-    if (editingPostId) {
-      api.blog.update(editingPostId, postPayload).catch((err) => {
-        console.warn('[BlogManagement] API update failed, saved locally:', err);
-      });
-      updateBlogPost(editingPostId, postPayload);
-    } else {
-      api.blog.create(postPayload).then((res) => {
-        if (res?.post) createBlogPost(res.post);
-      }).catch((err) => {
-        console.warn('[BlogManagement] API create failed, saved locally:', err);
-        createBlogPost(postPayload);
-      });
-    }
-
-    setShowModal(false);
-    void reloadPosts();
+    setSaving(true); setSaveError('');
+    try {
+      const result = editingPostId ? await api.blog.update(editingPostId, postPayload) : await api.blog.create(postPayload);
+      if (!result?.ok || !result.post) throw Error('Artikel belum dikonfirmasi server.');
+      setShowModal(false); await reloadPosts();
+    } catch (error) { setSaveError(error instanceof Error ? error.message : 'Gagal menyimpan artikel. Form tetap disimpan di layar.'); }
+    finally { setSaving(false); }
   };
 
   const handleDeletePost = (p: BlogPost) => {
@@ -437,6 +456,7 @@ export const BlogManagement: React.FC = () => {
 
               <button
                 onClick={() => setShowModal(false)}
+                disabled={saving}
                 className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -489,16 +509,31 @@ export const BlogManagement: React.FC = () => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Cover Image URL *</label>
+                  <label htmlFor="blog-cover-file" className="text-xs font-bold text-slate-700">Foto sampul artikel</label>
+                  <input id="blog-cover-file" type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusy || saving} onChange={e => void uploadPhoto(e, 'cover')} className="block w-full text-xs file:rounded-lg file:border-0 file:bg-amber-100 file:px-3 file:py-2" />
+                  <p className="text-xs text-slate-500">JPG, PNG, WebP · maksimal 5 MB. Foto diunggah ke cloud dan dapat diakses publik. Gunakan foto milik sendiri atau yang berizin.</p>
+                  {coverImage && <img src={coverImage} alt={coverAlt || 'Pratinjau sampul artikel'} className="w-full h-40 object-cover rounded-xl border border-slate-200" />}
+                  <label htmlFor="blog-cover-alt" className="text-xs font-bold text-slate-700">Deskripsi foto (teks alternatif)</label>
+                  <input id="blog-cover-alt" value={coverAlt} onChange={e => setCoverAlt(e.target.value)} maxLength={160} placeholder="Contoh: Pemilik kedai menghitung biaya bahan baku" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs" />
+                  <label className="text-xs text-slate-500">Atau gunakan URL gambar HTTPS</label>
                   <input
                     type="url"
                     value={coverImage}
                     onChange={(e) => setCoverImage(e.target.value)}
                     placeholder="https://images.unsplash.com/..."
                     required
+                    disabled={photoBusy || saving}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
+              </div>
+              {photoBusy && <p role="status" className="text-sm text-amber-800">Memproses dan mengunggah foto…</p>}
+              {photoError && <p role="alert" className="text-sm text-rose-700">{photoError}</p>}
+              {saveError && <p role="alert" className="text-sm text-rose-700">{saveError}</p>}
+              <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+                <label htmlFor="blog-content-file" className="text-xs font-bold text-slate-700">Tambahkan foto ke isi artikel</label>
+                <input id="blog-content-file" type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusy || saving} onChange={e => void uploadPhoto(e, 'content')} className="block text-xs" />
+                <p className="text-xs text-slate-500">Foto disisipkan di akhir isi artikel. Anda bisa memindahkan baris Markdown-nya ke paragraf yang diinginkan.</p>
               </div>
 
               {/* Row 3: Excerpt */}
@@ -694,6 +729,7 @@ export const BlogManagement: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
+                  disabled={saving}
                   className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
                 >
                   Batal
@@ -701,10 +737,11 @@ export const BlogManagement: React.FC = () => {
 
                 <button
                   type="submit"
+                  disabled={photoBusy || saving}
                   className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center space-x-2 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{editingPostId ? 'Simpan Perubahan' : 'Terbitkan Artikel Sekarang'}</span>
+                  <span>{saving ? 'Menyimpan ke server…' : photoBusy ? 'Mengunggah foto…' : editingPostId ? 'Simpan Perubahan' : isPublished ? 'Terbitkan Artikel Sekarang' : 'Simpan Draft'}</span>
                 </button>
               </div>
             </form>

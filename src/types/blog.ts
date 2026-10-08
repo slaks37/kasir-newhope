@@ -29,6 +29,8 @@ export interface BlogSEOMetadata {
   metaKeywords: string[];
   canonicalUrl?: string;
   ogImage?: string;
+  coverAlt?: string;
+  coverGenerated?: boolean;
 }
 
 export interface BlogPost {

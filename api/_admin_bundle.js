@@ -1150,7 +1150,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -1555,7 +1555,7 @@ a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{ou
 @media (max-width:960px){.grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:minmax(0,1fr)}.toc{display:none}.feature{grid-template-columns:1fr}.feature img{min-height:0;aspect-ratio:16/9}}
 @media (max-width:640px){.wrap{padding:0 16px}.grid{grid-template-columns:1fr}.site-nav a:not(.btn){display:none}.brand small{display:none}.wide{display:none}.brand{font-size:15px}.page-header{padding:28px 0 16px}.prose{font-size:17px}.prose h2{font-size:23px}.cover img{aspect-ratio:16/9}}
 `;
-function document(opts) {
+function document2(opts) {
   return `<!doctype html>
 <html lang="id">
 <head>
@@ -1668,7 +1668,7 @@ function renderBlogIndex(posts, opts = {}) {
     },
     breadcrumbs([{ name: "Beranda", url: siteUrl() + "/" }, { name: "Blog", url: `${siteUrl()}/blog` }, ...category ? [{ name: category, url: canonical }] : []])
   ];
-  return { status: 200, html: document({ title, description, canonical, jsonLd, body, robots: search || sort !== "terbaru" ? "noindex,follow" : void 0, extraHead: [page2 > 1 ? `<link rel="prev" href="${esc(siteUrl() + query(page2 - 1))}">` : "", page2 < pages ? `<link rel="next" href="${esc(siteUrl() + query(page2 + 1))}">` : ""].join("") }) };
+  return { status: 200, html: document2({ title, description, canonical, jsonLd, body, robots: search || sort !== "terbaru" ? "noindex,follow" : void 0, extraHead: [page2 > 1 ? `<link rel="prev" href="${esc(siteUrl() + query(page2 - 1))}">` : "", page2 < pages ? `<link rel="next" href="${esc(siteUrl() + query(page2 + 1))}">` : ""].join("") }) };
 }
 var cleanTitle = (value) => value.replace(/\s*[|–—-]\s*(blog\s+harapan\s+baru|warta\s+harapan\s+baru|blog\s+new\s+hope(\s+pos)?|new\s+hope\s+pos)\b.*$/i, "").trim();
 var breadcrumbs = (items) => ({
@@ -1737,7 +1737,7 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
     breadcrumbs([{ name: "Beranda", url: siteUrl() + "/" }, { name: "Blog", url: `${siteUrl()}/blog` }, { name: post.category, url: `${siteUrl()}/blog?kategori=${categorySlug(post.category)}` }, { name: post.title, url: canonical }])
   ];
   if (faq.length) jsonLd.push({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: faq.map((f) => ({ "@type": "Question", name: f.question, acceptedAnswer: { "@type": "Answer", text: f.answer } })) });
-  return document({
+  return document2({
     title,
     description,
     canonical,
@@ -1749,7 +1749,7 @@ ${related.length ? `<section class="related"><div class="wrap"><h2>Artikel terka
   });
 }
 function renderNotFound() {
-  return document({
+  return document2({
     title: `Artikel tidak ditemukan | ${BLOG_NAME}`,
     description: "Halaman yang Anda cari tidak ada.",
     canonical: `${siteUrl()}/blog`,
@@ -2104,8 +2104,69 @@ function registerBlogAutomation(app, getDb) {
   });
 }
 
-// src/server/clientSupport.ts
+// src/server/blogMedia.ts
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID as randomUUID4 } from "node:crypto";
+
+// src/lib/blog/photo.ts
+var BLOG_PHOTO_MAX_CHARS = 65e4;
+
+// src/server/blogMedia.ts
+var BUCKET = "blog-media";
+function createBlogMediaProvider() {
+  return { async upload(bytes, path) {
+    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
+    const signal = AbortSignal.timeout(18e3);
+    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
+    const bucket = await client.storage.getBucket(BUCKET);
+    if (bucket.error) {
+      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
+      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
+      if (created.error) {
+        const existing = await client.storage.getBucket(BUCKET);
+        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
+      }
+    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
+    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
+    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+  } };
+}
+function decodeBlogPhoto(value) {
+  if (typeof value !== "string" || value.length > BLOG_PHOTO_MAX_CHARS) throw Error("INVALID_BLOG_PHOTO");
+  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) throw Error("INVALID_BLOG_PHOTO");
+  const bytes = Buffer.from(match[1], "base64");
+  if (bytes.toString("base64") !== match[1] || bytes.length < 100 || bytes.length > 5e5 || bytes[0] !== 255 || bytes[1] !== 216 || bytes[2] !== 255 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) throw Error("INVALID_BLOG_PHOTO");
+  return bytes;
+}
+function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider()) {
+  app.post("/api/admin/blog/media", guard("VIEW_SECTOR_ANALYTICS"), async (req, res) => {
+    if (req.internal?.role !== "ROLE_SUPERADMIN") {
+      res.status(403).json({ ok: false, error: "CAPABILITY_DENIED" });
+      return;
+    }
+    let bytes;
+    try {
+      bytes = decodeBlogPhoto(req.body?.photo);
+    } catch {
+      res.status(400).json({ ok: false, error: "INVALID_BLOG_PHOTO" });
+      return;
+    }
+    try {
+      const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID4()}.jpg`);
+      res.status(201).json({ ok: true, url });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      res.status(code === "BLOG_STORAGE_NOT_CONFIGURED" ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
+    }
+  });
+}
+
+// src/server/clientSupport.ts
+import { createClient as createClient2 } from "@supabase/supabase-js";
 
 // src/config/accountSubscription.ts
 function accountSubscription(tenant2, stored, used, now = Date.now()) {
@@ -2161,7 +2222,7 @@ var SupportError = class extends Error {
 function createClientSupportProvider() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const auth = url && key ? createClient(url, key, {
+  const auth = url && key ? createClient2(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) }
   }) : null;
@@ -3126,12 +3187,12 @@ async function recordAccess(db, who, action, resource, merchantId, justification
     [who.id, who.role, merchantId, action, resource, justification, ip, req.auditRequestId, String(req.headers["user-agent"] || "").slice(0, 512)]
   );
 }
-function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supportProvider) {
+function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supportProvider, blogMediaProvider) {
   registerBlogRoutes(app, getDb);
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID4();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID5();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -3283,6 +3344,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   registerSubscriptionAdminRoutes(app, getDb, guard, wrap);
   registerClientSupportRoutes(app, getDb, guard, supportProvider);
   registerAdminIntegrationRoutes(app, getDb, guard);
+  registerBlogMediaRoutes(app, guard, blogMediaProvider);
   app.get("/api/admin/staff-commissions", guard("VIEW_TRANSACTION_LOG"), wrap(async (req, res, db) => {
     const f = cleanFilter(req.query);
     const { rows } = await db.query(`SELECT * FROM contract.staff_commission_ledger
@@ -3567,7 +3629,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID4();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID5();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
@@ -3644,7 +3706,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
                 reading_time_minutes = COALESCE($11, reading_time_minutes),
                 tags = COALESCE($12, tags),
                 media_embeds = COALESCE($13::jsonb, media_embeds),
-                seo = COALESCE($14::jsonb, seo),
+                seo = CASE WHEN $14::jsonb IS NULL THEN seo ELSE COALESCE(seo, '{}'::jsonb) || $14::jsonb END,
                 is_published = COALESCE($15, is_published),
                 is_featured = COALESCE($16, is_featured),
                 updated_at = CURRENT_TIMESTAMP
