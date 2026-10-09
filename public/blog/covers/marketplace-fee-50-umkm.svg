@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="1200" height="600" role="img" aria-label="Ilustrasi produk lokal, marketplace, potongan biaya layanan 50 persen dan penghitungan margin UMKM">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fffdf6"/><stop offset="1" stop-color="#e5f4e9"/></linearGradient>
+<linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#146b4f"/><stop offset="1" stop-color="#064d3b"/></linearGradient>
+<linearGradient id="sun" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f4c56b"/><stop offset="1" stop-color="#e89b4c"/></linearGradient>
+<filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#0f5741" flood-opacity=".13"/></filter>
+<pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse"><path d="M34 0H0V34" fill="none" stroke="#5c977d" opacity=".08"/></pattern>
+</defs>
+<rect width="1200" height="600" fill="url(#bg)"/>
+<rect width="1200" height="600" fill="url(#grid)"/>
+<circle cx="1040" cy="70" r="190" fill="#b9dfc6" opacity=".4"/><circle cx="100" cy="520" r="220" fill="#f6dbaf" opacity=".55"/>
+<g filter="url(#shadow)"><rect x="45" y="80" width="545" height="452" rx="30" fill="#ffffff"/><rect x="69" y="102" width="497" height="406" rx="24" fill="#f4f8f4"/></g>
+<rect x="90" y="124" width="190" height="32" rx="16" fill="#d6ece0"/><text x="109" y="146" font-family="Arial,sans-serif" font-size="15" font-weight="700" fill="#176044">TOKO PRODUK LOKAL</text>
+<g transform="translate(97,177)">
+<rect x="0" y="0" width="210" height="236" rx="13" fill="#ffffff" stroke="#dce6df"/>
+<rect x="18" y="17" width="174" height="115" rx="9" fill="#f7e7ca"/>
+<path d="M70 49h71l10 69H60z" fill="#d4a46e"/><path d="M72 48l33 -19 38 19" stroke="#9e6a34" stroke-width="6" fill="none" stroke-linejoin="round"/><path d="M86 65v40M122 65v40" stroke="#ab784c" stroke-width="6"/>
+<text x="18" y="157" font-family="Arial,sans-serif" font-size="15" fill="#315142" font-weight="700">Pesanan Marketplace</text><text x="18" y="181" font-family="Arial,sans-serif" font-size="12" fill="#6e8379">Produk • jumlah • margin</text>
+<rect x="18" y="195" width="112" height="22" rx="11" fill="#d5efe1"/><text x="32" y="211" font-family="Arial,sans-serif" font-size="12" fill="#176044">Penjualan tercatat</text>
+</g>
+<g transform="translate(330,190)">
+<rect x="9" y="80" width="183" height="139" rx="12" fill="#dca96b" stroke="#a87a43" stroke-width="3"/>
+<path d="M9 118h183M99 80v139" stroke="#ae7c43" stroke-width="6"/>
+<path d="M76 102l30 -29 32 29" fill="none" stroke="#fff6e8" stroke-width="7" stroke-linecap="round"/>
+<rect x="114" y="0" width="90" height="95" rx="8" fill="#f4cc95" stroke="#ba9157" stroke-width="2"/>
+<path d="M159 0v95M114 32h90" stroke="#bd945d" stroke-width="4"/>
+<rect x="102" y="150" width="74" height="34" rx="6" fill="#f4efdd"/><path d="M117 160h43m-43 9h31m-31 9h39" stroke="#7f7465" stroke-width="3"/>
+</g>
+<rect x="93" y="431" width="437" height="52" rx="14" fill="#e1f1e5"/><path d="M111 456h22l9 -13 11 23 14 -19 14 9h26" stroke="#148060" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><text x="224" y="460" font-family="Arial,sans-serif" font-size="17" font-weight="700" fill="#126045">Hitung biaya, jaga margin</text>
+<g transform="translate(635,94)">
+<rect x="0" y="0" width="508" height="72" rx="21" fill="#e2f2e8"/>
+<text x="27" y="29" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#165b43">RENCANA INSENTIF UNTUK UMKM</text>
+<text x="27" y="55" font-family="Arial,sans-serif" font-size="17" fill="#357b62">Potongan biaya layanan marketplace</text>
+<text x="0" y="220" font-family="Arial,sans-serif" font-size="142" font-weight="900" fill="url(#green)">50%</text>
+<rect x="310" y="104" width="175" height="94" rx="19" fill="url(#sun)" transform="rotate(5 310 104)"/>
+<text x="334" y="143" font-family="Arial,sans-serif" font-size="15" font-weight="700" fill="#604329">BIAYA LAYANAN</text>
+<path d="M370 156v28m-16 -13 16 17 16 -17" stroke="#8d3f23" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<rect x="4" y="274" width="495" height="102" rx="22" fill="#ffffff" filter="url(#shadow)"/>
+<circle cx="53" cy="326" r="24" fill="#d8efe0"/><path d="M40 324l10 10 19 -22" stroke="#10734c" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="95" y="314" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#154e3a">Potensi efisiensi biaya</text>
+<text x="95" y="341" font-family="Arial,sans-serif" font-size="15" fill="#466b5d">Verifikasi syarat sebelum menghitung laba</text>
+<rect x="4" y="397" width="495" height="46" rx="18" fill="#125b44"/>
+<text x="252" y="427" text-anchor="middle" font-family="Arial,sans-serif" font-size="17" font-weight="700" fill="#ffffff">NEW HOPE  •  INSIGHT UMKM</text>
+</g>
+</svg>
