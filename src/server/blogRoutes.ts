@@ -122,7 +122,12 @@ class BlogApiError extends Error {
 
 const digest = (value: string) => createHash('sha256').update(value).digest();
 function apiKeyValid(req: express.Request): boolean {
-  const configured = String(process.env.BLOG_API_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length >= 24);
+  // Legacy Make publisher keys and a separately rotatable n8n key.
+  // Keep existing Make credentials valid when introducing the n8n integration.
+  const configured = [
+    ...String(process.env.BLOG_API_KEYS || '').split(','),
+    String(process.env.BLOG_N8N_API_KEY || ''),
+  ].map(k => k.trim()).filter(k => k.length >= 24);
   if (!configured.length) throw new BlogApiError(503, 'BLOG_API_NOT_CONFIGURED');
   const header = String(req.headers.authorization || '');
   const presented = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() || String(req.headers['x-api-key'] || '').trim();
