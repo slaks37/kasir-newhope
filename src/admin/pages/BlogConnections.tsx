@@ -60,7 +60,7 @@ export default function BlogConnections({consent=false}:{consent?:boolean}) {
             <h2 className="text-lg font-bold">Tinjau izin ChatGPT</h2>
             {!valid&&<p role="alert">Permintaan koneksi tidak dikenal. Mulai kembali dari pengaturan aplikasi ChatGPT.</p>}
             <p>ChatGPT dapat membaca artikel dan draft, memvalidasi tulisan, membuat dan memperbarui artikel, serta menarik artikel dari publik. Isi blog yang dibaca akan diterima ChatGPT.</p>
-            <p>Tulisan disimpan sebagai draft secara default. Untuk menerbitkan, berikan perintah publikasi secara eksplisit di chat. Izin berlaku 30 hari dan dapat dicabut kapan saja.</p>
+            <p>Tulisan disimpan sebagai draft secara default. Untuk menerbitkan, berikan perintah publikasi secara eksplisit di chat. Izin berlaku 3 tahun dan dapat dicabut kapan saja.</p>
             <label className="flex items-start gap-3"><input type="checkbox" checked={approved} onChange={e=>setApproved(e.target.checked)} className="mt-1"/>Saya mengizinkan ChatGPT mengelola blog New Hope dengan izin tersebut.</label>
             <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!approved||!valid} onClick={()=>void decide(true)}>{busy?'Memproses…':'Izinkan akses blog'}</button><button className="rounded-xl border px-4 py-3" disabled={busy||!valid} onClick={()=>void decide(false)}>Tolak</button></div>
           </>:<>

@@ -116,7 +116,7 @@ Tidak diperlukan API key n8n pada ChatGPT.
 Superadmin masuk melalui `/admin/blog-connect`, memverifikasi MFA, lalu meninjau
 izin membaca artikel/draft, membuat, memperbarui, menerbitkan, dan menarik artikel.
 Kelola/cabut koneksi di `/admin/blog-connections` atau menu Integrasi admin.
-Persetujuan berlaku 30 hari; access token satu jam; refresh token berotasi dan replay
+Persetujuan baru berlaku 3 tahun kalender sesuai persetujuan pemilik; access token satu jam; refresh token berotasi dan replay
 mencabut seluruh koneksi. Tokens disimpan sebagai hash SHA-256 di schema privat
 `blog_mcp_private`. Setiap panggilan memeriksa membership Superadmin aktif.
 

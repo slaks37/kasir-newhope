@@ -22,6 +22,7 @@ try {
   await pg.exec(fs.readFileSync('supabase/migrations/20261005090000_blog_posts_store.sql','utf8'));
   await pg.exec(fs.readFileSync('supabase/migrations/20260928135919_mcp_readonly_connections.sql','utf8'));
   await pg.exec(fs.readFileSync('supabase/migrations/20261009234039_blog_editorial_oauth.sql','utf8'));
+  await pg.exec(fs.readFileSync('supabase/migrations/20261010014711_blog_editorial_three_year_consent.sql','utf8'));
   const auth=async(req:any)=>{
     const who=String(req.headers.authorization||'').replace('Bearer ','');
     return ['editor','other-editor','merchant','stale','weak'].includes(who)?{subject:['stale','weak'].includes(who)?'editor':who,aal:who==='weak'?'aal1' as const:'aal2' as const,mfaVerifiedAt:Date.now()/1000-(who==='stale'?700:0)}:null;
@@ -58,7 +59,14 @@ try {
     const redirect=new URL(c.body.redirect);assert.equal(redirect.searchParams.get('state'),args.state);assert.equal(redirect.searchParams.get('iss'),resource+'/oauth');
     const exchange={client_id:args.client_id,resource,grant_type:'authorization_code',code:redirect.searchParams.get('code'),redirect_uri:args.redirect_uri,code_verifier:'a'.repeat(64)};
     assert.equal((await call('/api/blog-mcp/token',{...exchange,code_verifier:'b'.repeat(64)},undefined,true)).status,400);
-    const tokens=await call('/api/blog-mcp/token',exchange,undefined,true);assert.equal(tokens.status,200);return tokens.body;
+    const tokens=await call('/api/blog-mcp/token',exchange,undefined,true);assert.equal(tokens.status,200);
+    assert(tokens.body.expires_in>3500&&tokens.body.expires_in<=3600,'access tokens remain limited to one hour');
+    const grant=(await db.query(`SELECT c.expires_at AS grant_expiry, c.created_at+interval '3 years' AS expected_expiry,
+      k.expires_at AS refresh_expiry FROM blog_mcp_private.connections c JOIN blog_mcp_private.credentials k ON k.connection_id=c.id
+      WHERE k.hash=$1 AND k.kind='refresh'`,[createHash('sha256').update(tokens.body.refresh_token).digest('hex')])).rows[0];
+    assert.equal(Date.parse(grant.grant_expiry),Date.parse(grant.expected_expiry),'grant lasts three calendar years');
+    assert.equal(Date.parse(grant.refresh_expiry),Date.parse(grant.grant_expiry),'refresh cannot exceed grant expiry');
+    return tokens.body;
   }
   const tokens=await connect(),access=tokens.access_token;
   const tool=(name:string,a:any={})=>call('/api/blog-mcp',rpc('tools/call',{name,arguments:a}),access);

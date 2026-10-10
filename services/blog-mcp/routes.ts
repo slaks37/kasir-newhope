@@ -109,7 +109,7 @@ export function registerBlogMcpRoutes(app: express.Express, db: Db, authenticate
       const n = (await cx.query("SELECT count(*)::int AS n FROM blog_mcp_private.connections WHERE owner_ref=$1 AND created_at>now()-interval '1 hour'",[p.subject])).rows[0].n;
       if (n>=10) fail('rate_limited');
       await editor(cx,p.subject);
-      await cx.query('INSERT INTO blog_mcp_private.connections(id,owner_ref,client_id,resource,scope) VALUES($1,$2,$3,$4,$5)',[id,p.subject,a.client_id,config.resource,BLOG_SCOPE]);
+      await cx.query("INSERT INTO blog_mcp_private.connections(id,owner_ref,client_id,resource,scope,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '3 years')",[id,p.subject,a.client_id,config.resource,BLOG_SCOPE]);
       await cx.query("INSERT INTO blog_mcp_private.credentials(hash,connection_id,kind,redirect_uri,challenge,expires_at) VALUES($1,$2,'code',$3,$4,now()+interval '5 minutes')",[hash(code),id,a.redirect_uri,a.code_challenge]);
       await audit(cx,id,'consent_granted');
     });
