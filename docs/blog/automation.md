@@ -132,3 +132,8 @@ Deploy: jalankan migrasi `supabase/migrations/20261009234039_blog_editorial_oaut
 `BLOG_MCP_ENABLED=false` menghentikan seluruh endpoint editorial bila dibutuhkan.
 Koneksi dalam akun ChatGPT baru selesai setelah persetujuan OAuth nyata dan uji tool
 berhasil; deployment endpoint tidak otomatis membuat akun terhubung.
+
+
+Vercel Hobby: endpoint `/api/mcp` dan `/api/blog-mcp` masing-masing memakai satu
+catch-all entrypoint beserta rewrite root; entrypoint root duplikat tidak diperlukan.
+Total fungsi deployment tetap 12. Verifikasi discovery dan `/api/mcp` setelah deploy.
