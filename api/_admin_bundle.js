@@ -1539,7 +1539,7 @@ function coverUrl(value) {
   } catch {
     throw new CoverError(400, "INVALID_COVER_URL");
   }
-  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash || !(url.hostname === "storage.googleapis.com" && url.pathname.startsWith("/agnes-aigc/") || url.hostname === "apihub.agnes-ai.com" && url.pathname.startsWith("/storage/images/"))) {
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash || !(url.hostname === "storage.googleapis.com" && url.pathname.startsWith("/agnes-aigc/") || url.hostname === "apihub.agnes-ai.com" && url.pathname.startsWith("/storage/images/") || url.hostname === "platform-outputs.agnes-ai.space" && url.pathname.startsWith("/images/t2i/"))) {
     throw new CoverError(400, "INVALID_COVER_URL");
   }
   return url;

@@ -8,6 +8,7 @@ import type { Db } from '../../services/shared/db';
 
 const fixture=readFileSync('public/blog/covers/hpp-ingredients-ai.jpg');
 const validUrl='https://storage.googleapis.com/agnes-aigc/cover.png';
+assert.equal(coverUrl('https://platform-outputs.agnes-ai.space/images/t2i/task/output.png').hostname,'platform-outputs.agnes-ai.space');
 for(const url of ['http://storage.googleapis.com/agnes-aigc/x.png','https://127.0.0.1/x','https://storage.googleapis.com/other/x','https://storage.googleapis.com.evil.test/agnes-aigc/x','https://user:pass@storage.googleapis.com/agnes-aigc/x','https://storage.googleapis.com:8443/agnes-aigc/x','https://storage.googleapis.com/agnes-aigc/../other/x'])assert.throws(()=>coverUrl(url));
 let uploaded=0, fetched=0;
 const importer=createCoverImporter({async upload(bytes,path){uploaded++;const meta=await sharp(bytes).metadata();assert.equal(meta.width,1200);assert.equal(meta.height,675);assert.equal(meta.format,'jpeg');assert.ok(bytes.length<=500000);assert.equal(meta.exif,undefined);assert.match(path,/^automation\/generated\/[\w-]+\.jpg$/);return 'https://storage.test/'+path;}},async(_url,options)=>{fetched++;assert.equal(options?.redirect,'error');return new Response(fixture,{headers:{'content-type':'image/jpeg'}});});
