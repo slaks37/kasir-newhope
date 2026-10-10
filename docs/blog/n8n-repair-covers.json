@@ -1,0 +1,339 @@
+{
+  "name": "New Hope — Repair Repeated Blog Covers",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "ec32b97a-e5ab-4c16-aab0-680d554e0e26",
+      "name": "Repair Existing Covers",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://kasir.newhope.space/api/v1/blog-automation/posts?status=published&limit=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "0b6a1133-249d-48cf-9618-a2f2972a812d",
+      "name": "Load Covers to Repair",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        272,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jTYb0rFR3DFemQpo",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json; if(r.ok!==true||!Array.isArray(r.posts))throw Error('Could not load cover repair queue'); return r.posts.filter(p=>/\\/blog\\/covers\\/(hpp-ingredients|cash-reconciliation)-ai\\.jpg$/.test(p.coverImage||'')).map(p=>({json:{mode:'repair',article:p,expectedCover:p.coverImage}}));"
+      },
+      "id": "f32a8368-bb9b-40c7-8851-8fb1ecd4d8f9",
+      "name": "Select Repeated Covers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const palettes = ['terracotta and cream','sage green and warm ivory','navy and pale peach','mustard and deep brown','teal and sand','burgundy and pearl'];\nconst scenes = ['overhead still life with ingredients arranged by unit cost and a kitchen scale','a small Indonesian food stall owner evaluating portions in a bright preparation kitchen','a boutique shop owner reviewing a simple visual sales chart among neatly arranged merchandise','a close-up of receipts grouped into three separate reconciliation trays','a split composition contrasting full order baskets with a small remaining profit jar','a ceramic plate with layered ingredient portions beside a measuring scoop','an isometric miniature shop with transparent blocks showing money flowing into cost categories','a bakery owner comparing two batches of bread and their ingredient baskets'];\nreturn $input.all().map((item,index)=>{\n const repair=item.json.mode==='repair';\n const a=repair?item.json.article:$('Parse Agnes - Validate VPC').first().json.article;\n if(!a?.title||!a?.excerpt)throw Error('Cover job lacks article context');\n const hash=Array.from(a.slug||a.title).reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0);\n const title=a.title.toLowerCase();\n const cashScenes=['three distinct receipt trays being reconciled in a small shop at closing time','a shop owner comparing abstract payment records with a ledger on a bright wooden desk','three colored payment streams converging into a balanced reconciliation scale','an isometric shop with separate cash, contactless and bank-transfer lanes being matched'];\n const costScenes=['a chef weighing ingredients for a single plated meal in a clean preparation kitchen','an overhead arrangement of portioned Indonesian ingredients beside a kitchen scale','a bakery owner checking flour and butter quantities beside freshly baked bread','a market vendor measuring raw ingredients beside carefully portioned meal bowls'];\n const profitScenes=['a boutique owner comparing a full order basket against a small remaining profit jar','a miniature shop with transparent cost blocks and a visible remaining margin','a balancing scale comparing retail inventory costs with a symbolic sales basket','an overhead still life of product samples and grouped cost receipts'];\n const relevant=/rekonsiliasi|qris|tunai|transfer|selisih kas/.test(title)?cashScenes:/hpp|bahan|porsi|menu|f&b/.test(title)?costScenes:profitScenes;\n const scene=relevant[hash%relevant.length], palette=palettes[Math.floor(hash/relevant.length)%palettes.length];\n const prompt='Create a polished editorial illustration for an Indonesian small-business article. Topic: '+a.title+'. Context: '+a.excerpt+'. Interpret the specific topic faithfully using this distinct visual starting point: '+scene+'. Palette: '+palette+'. Warm natural light, tactile materials, sophisticated magazine art direction, clear focal subject, wide 16:9 composition, full bleed, no border. No headline, no captions, no legible numbers, no logos, no watermark. Avoid the generic cash-register/phone/banknotes-on-a-cafe-counter scene. This is a conceptual illustration, not a photograph of the event in the news. Each article needs its own visual interpretation.';\n return {json:{mode:repair?'repair':'publish',article:a,expectedCover:repair?item.json.expectedCover:undefined,prompt,alt:('Ilustrasi AI: '+a.title).slice(0,160)},pairedItem:{item:index}};\n});\n"
+      },
+      "id": "fcf9fd6f-05cb-43d0-9426-124cf420e14c",
+      "name": "Prepare Cover Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://apihub.agnes-ai.com/v1/images/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'agnes-image-2.1-flash',prompt:$json.prompt,size:'1K',ratio:'16:9',extra_body:{response_format:'url'} }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 5000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 360000
+        }
+      },
+      "id": "268a32ac-1681-42a2-84f6-41f71c4a9acb",
+      "name": "Agnes AI - Generate Cover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1040,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "c2jpjYgrapVg8z0u",
+          "name": "AGNES AI 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://kasir.newhope.space/api/v1/blog-automation/covers",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({imageUrl:$json.data[0].url,alt:$('Prepare Cover Jobs').item.json.alt,...($('Prepare Cover Jobs').item.json.mode==='repair'?{slug:$('Prepare Cover Jobs').item.json.article.slug,expectedCover:$('Prepare Cover Jobs').item.json.expectedCover}:{} )}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "53a04ad3-012e-4d48-95a0-0a80bbc17838",
+      "name": "Store Cover - New Hope API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1312,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jTYb0rFR3DFemQpo",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item,index)=>{const r=item.json; const job=$('Prepare Cover Jobs').itemMatching(index).json; if(r.ok!==true||r.coverGenerated!==true||!/^https:\\/\\//.test(r.coverImage||''))throw Error('Unique cover was not stored; publication stopped'); return {json:{mode:job.mode,article:{...job.article,coverImage:r.coverImage,coverAlt:r.coverAlt,coverGenerated:true},repairedSlug:r.repairedSlug||null},pairedItem:{item:index}};});"
+      },
+      "id": "c73f016b-7955-401c-88c0-4affbf0cecf1",
+      "name": "Attach Unique Cover",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "repair-mode",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "repair",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a84e3f1c-8ae4-48ca-811c-483feea30fe1",
+      "name": "Existing Cover Repair?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1824,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "a320c6e3-4170-45ff-9754-afb80829d59e",
+      "name": "Repair One Cover at a Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        416,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 45
+      },
+      "id": "5fe63adb-b9d6-40c4-afbf-351cf3328397",
+      "name": "Wait Between Cover Repairs",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        768,
+        144
+      ],
+      "webhookId": "560bc479-b6bf-4f3c-ae0c-541fae454f4e"
+    }
+  ],
+  "connections": {
+    "Repair Existing Covers": {
+      "main": [
+        [
+          {
+            "node": "Load Covers to Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Covers to Repair": {
+      "main": [
+        [
+          {
+            "node": "Select Repeated Covers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Repeated Covers": {
+      "main": [
+        [
+          {
+            "node": "Repair One Cover at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cover Jobs": {
+      "main": [
+        [
+          {
+            "node": "Agnes AI - Generate Cover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agnes AI - Generate Cover": {
+      "main": [
+        [
+          {
+            "node": "Store Cover - New Hope API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Cover - New Hope API": {
+      "main": [
+        [
+          {
+            "node": "Attach Unique Cover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Unique Cover": {
+      "main": [
+        [
+          {
+            "node": "Existing Cover Repair?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Between Cover Repairs": {
+      "main": [
+        [
+          {
+            "node": "Repair One Cover at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair One Cover at a Time": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Cover Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existing Cover Repair?": {
+      "main": [
+        [
+          {
+            "node": "Wait Between Cover Repairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "active": false,
+  "pinData": {}
+}

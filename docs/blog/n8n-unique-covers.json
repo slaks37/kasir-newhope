@@ -1,5 +1,5 @@
 {
-  "name": "New Hope — Problem Intelligence Blog",
+  "name": "New Hope — Problem Intelligence Blog (FIXED / SAFE TEST)",
   "nodes": [
     {
       "parameters": {},
@@ -641,7 +641,7 @@
     },
     {
       "parameters": {
-        "content": "## Blog LIVE — konfigurasi 10 Oktober 2026\n\nAgnes AI tetap penulis di n8n sesuai pilihan owner. Credential Sheets/Agnes/blog dipertahankan.\n\n- Make scenario 9915760 NONAKTIF atas permintaan owner; konfigurasi dan riwayat disimpan.\n- n8n aktif setiap jam tepat, 24 jam sehari: 00.00, 01.00, …, 23.00 WIB.\n- Timezone Asia/Jakarta. Schedule Hourly WIB adalah satu-satunya aturan waktu.\n- Publish Mode - LIVE tetap melewati kualitas, sumber, duplikasi dan validasi API; jadwal per jam tidak menjamin artikel terbit setiap jam.\n- ChatGPT digunakan sebagai konektor editorial, bukan pengganti Agnes. Koneksi OAuth editorial belum tersedia/terverifikasi; jangan mengklaim ChatGPT sudah bisa menulis ke blog.\n\nUji sebelumnya 12848: audit rejected_quality, metaDescription 172 > 170. Tidak ada artikel baru dari uji itu. Perubahan jadwal ini tidak menjalankan uji AI tambahan.\n\n## Unique covers — 10 Oktober 2026\nSetiap artikel LIVE membuat ilustrasi Agnes Image 2.1 Flash → JPEG 1200×675 → storage New Hope sebelum publikasi. Gagal generate/upload menghentikan publikasi. Repair Existing Covers hanya mengganti 2 cover pustaka berulang; tidak mengubah isi/status artikel. Repair idempotent lewat expectedCover; cover manual dipertahankan.\nChatGPT editorial OAuth tersambung, grant berakhir 10 Oktober 2029.",
+        "content": "## Blog LIVE — konfigurasi 10 Oktober 2026\n\nAgnes AI tetap penulis di n8n sesuai pilihan owner. Credential Sheets/Agnes/blog dipertahankan.\n\n- Make scenario 9915760 NONAKTIF atas permintaan owner; konfigurasi dan riwayat disimpan.\n- n8n aktif setiap jam tepat, 24 jam sehari: 00.00, 01.00, …, 23.00 WIB.\n- Timezone Asia/Jakarta. Schedule Hourly WIB adalah satu-satunya aturan waktu.\n- Publish Mode - LIVE tetap melewati kualitas, sumber, duplikasi dan validasi API; jadwal per jam tidak menjamin artikel terbit setiap jam.\n- ChatGPT digunakan sebagai konektor editorial, bukan pengganti Agnes. Koneksi OAuth editorial belum tersedia/terverifikasi; jangan mengklaim ChatGPT sudah bisa menulis ke blog.\n\nUji sebelumnya 12848: audit rejected_quality, metaDescription 172 > 170. Tidak ada artikel baru dari uji itu. Perubahan jadwal ini tidak menjalankan uji AI tambahan.",
         "height": 490,
         "width": 550,
         "color": 4
@@ -751,27 +751,7 @@
       ]
     },
     {
-      "id": "cover-repair-trigger",
-      "name": "Repair Existing Covers",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        80,
-        880
-      ],
-      "parameters": {}
-    },
-    {
-      "id": "cover-repair-load",
-      "name": "Load Covers to Repair",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        300,
-        880
-      ],
       "parameters": {
-        "method": "GET",
         "url": "https://kasir.newhope.space/api/v1/blog-automation/posts?status=published&limit=200",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
@@ -784,6 +764,14 @@
           "timeout": 30000
         }
       },
+      "id": "32ca4d46-a1a7-4429-b343-362ed988c9f3",
+      "name": "Load Covers to Repair",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        384,
+        2096
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "jTYb0rFR3DFemQpo",
@@ -792,40 +780,32 @@
       }
     },
     {
-      "id": "cover-repair-select",
+      "parameters": {
+        "jsCode": "const r=$input.first().json; if(r.ok!==true||!Array.isArray(r.posts))throw Error('Could not load cover repair queue'); return r.posts.filter(p=>/\\/blog\\/covers\\/(hpp-ingredients|cash-reconciliation)-ai\\.jpg$/.test(p.coverImage||'')).map(p=>({json:{mode:'repair',article:p,expectedCover:p.coverImage}}));"
+      },
+      "id": "77f93e06-85db-459c-8478-e97f62bae91e",
       "name": "Select Repeated Covers",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        520,
-        880
-      ],
-      "parameters": {
-        "jsCode": "const r=$input.first().json; if(r.ok!==true||!Array.isArray(r.posts))throw Error('Could not load cover repair queue'); return r.posts.filter(p=>/\\/blog\\/covers\\/(hpp-ingredients|cash-reconciliation)-ai\\.jpg$/.test(p.coverImage||'')).map(p=>({json:{mode:'repair',article:p,expectedCover:p.coverImage}}));"
-      }
+        592,
+        2096
+      ]
     },
     {
-      "id": "cover-prompt",
+      "parameters": {
+        "jsCode": "const palettes = ['terracotta and cream','sage green and warm ivory','navy and pale peach','mustard and deep brown','teal and sand','burgundy and pearl'];\nconst scenes = ['overhead still life with ingredients arranged by unit cost and a kitchen scale','a small Indonesian food stall owner evaluating portions in a bright preparation kitchen','a boutique shop owner reviewing a simple visual sales chart among neatly arranged merchandise','a close-up of receipts grouped into three separate reconciliation trays','a split composition contrasting full order baskets with a small remaining profit jar','a ceramic plate with layered ingredient portions beside a measuring scoop','an isometric miniature shop with transparent blocks showing money flowing into cost categories','a bakery owner comparing two batches of bread and their ingredient baskets'];\nreturn $input.all().map((item,index)=>{\n const repair=item.json.mode==='repair';\n const a=repair?item.json.article:$('Parse Agnes - Validate VPC').first().json.article;\n if(!a?.title||!a?.excerpt)throw Error('Cover job lacks article context');\n const hash=Array.from(a.slug||a.title).reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0);\n const title=a.title.toLowerCase();\n const cashScenes=['three distinct receipt trays being reconciled in a small shop at closing time','a shop owner comparing abstract payment records with a ledger on a bright wooden desk','three colored payment streams converging into a balanced reconciliation scale','an isometric shop with separate cash, contactless and bank-transfer lanes being matched'];\n const costScenes=['a chef weighing ingredients for a single plated meal in a clean preparation kitchen','an overhead arrangement of portioned Indonesian ingredients beside a kitchen scale','a bakery owner checking flour and butter quantities beside freshly baked bread','a market vendor measuring raw ingredients beside carefully portioned meal bowls'];\n const profitScenes=['a boutique owner comparing a full order basket against a small remaining profit jar','a miniature shop with transparent cost blocks and a visible remaining margin','a balancing scale comparing retail inventory costs with a symbolic sales basket','an overhead still life of product samples and grouped cost receipts'];\n const relevant=/rekonsiliasi|qris|tunai|transfer|selisih kas/.test(title)?cashScenes:/hpp|bahan|porsi|menu|f&b/.test(title)?costScenes:profitScenes;\n const scene=relevant[hash%relevant.length], palette=palettes[Math.floor(hash/relevant.length)%palettes.length];\n const prompt='Create a polished editorial illustration for an Indonesian small-business article. Topic: '+a.title+'. Context: '+a.excerpt+'. Interpret the specific topic faithfully using this distinct visual starting point: '+scene+'. Palette: '+palette+'. Warm natural light, tactile materials, sophisticated magazine art direction, clear focal subject, wide 16:9 composition, full bleed, no border. No headline, no captions, no legible numbers, no logos, no watermark. Avoid the generic cash-register/phone/banknotes-on-a-cafe-counter scene. This is a conceptual illustration, not a photograph of the event in the news. Each article needs its own visual interpretation.';\n return {json:{mode:repair?'repair':'publish',article:a,expectedCover:repair?item.json.expectedCover:undefined,prompt,alt:('Ilustrasi AI: '+a.title).slice(0,160)},pairedItem:{item:index}};\n});\n"
+      },
+      "id": "d7c6568e-0c71-407d-b028-f44d41b2b467",
       "name": "Prepare Cover Jobs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2980,
-        520
-      ],
-      "parameters": {
-        "jsCode": "const palettes = ['terracotta and cream','sage green and warm ivory','navy and pale peach','mustard and deep brown','teal and sand','burgundy and pearl'];\nconst scenes = ['overhead still life with ingredients arranged by unit cost and a kitchen scale','a small Indonesian food stall owner evaluating portions in a bright preparation kitchen','a boutique shop owner reviewing a simple visual sales chart among neatly arranged merchandise','a close-up of receipts grouped into three separate reconciliation trays','a split composition contrasting full order baskets with a small remaining profit jar','a ceramic plate with layered ingredient portions beside a measuring scoop','an isometric miniature shop with transparent blocks showing money flowing into cost categories','a bakery owner comparing two batches of bread and their ingredient baskets'];\nreturn $input.all().map((item,index)=>{\n const repair=item.json.mode==='repair';\n const a=repair?item.json.article:$('Parse Agnes - Validate VPC').first().json.article;\n if(!a?.title||!a?.excerpt)throw Error('Cover job lacks article context');\n const hash=Array.from(a.slug||a.title).reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0);\n const scene=scenes[hash%scenes.length], palette=palettes[Math.floor(hash/scenes.length)%palettes.length];\n const prompt='Create a polished editorial illustration for an Indonesian small-business article. Topic: '+a.title+'. Context: '+a.excerpt+'. Interpret the specific topic faithfully using this distinct visual starting point: '+scene+'. Palette: '+palette+'. Warm natural light, tactile materials, sophisticated magazine art direction, clear focal subject, wide 16:9 composition, full bleed, no border. No headline, no captions, no legible numbers, no logos, no watermark. Avoid the generic cash-register/phone/banknotes-on-a-cafe-counter scene. This is a conceptual illustration, not a photograph of the event in the news. Each article needs its own visual interpretation.';\n return {json:{mode:repair?'repair':'publish',article:a,expectedCover:repair?item.json.expectedCover:undefined,prompt,alt:('Ilustrasi AI: '+a.title).slice(0,160)},pairedItem:{item:index}};\n});"
-      }
+        1184,
+        1968
+      ]
     },
     {
-      "id": "cover-generate",
-      "name": "Agnes AI - Generate Cover",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        3220,
-        520
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://apihub.agnes-ai.com/v1/images/generations",
@@ -833,41 +813,41 @@
         "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {model:'agnes-image-2.1-flash',prompt:$json.prompt,size:'1K',ratio:'16:9',extra_body:{response_format:'url'}} }}",
+        "jsonBody": "={{ JSON.stringify({model:'agnes-image-2.1-flash',prompt:$json.prompt,size:'1K',ratio:'16:9',extra_body:{response_format:'url'} }) }}",
         "options": {
-          "response": {
-            "response": {
-              "responseFormat": "json"
-            }
-          },
-          "timeout": 360000,
           "batching": {
             "batch": {
               "batchSize": 1,
               "batchInterval": 5000
             }
-          }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 360000
         }
       },
+      "id": "ea4b786b-9f72-426f-8e4f-9123606a8c43",
+      "name": "Agnes AI - Generate Cover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1424,
+        1968
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "credentials": {
         "httpBearerAuth": {
           "id": "c2jpjYgrapVg8z0u",
           "name": "AGNES AI 2"
         }
-      },
-      "retryOnFail": true,
-      "maxTries": 2,
-      "waitBetweenTries": 5000
+      }
     },
     {
-      "id": "cover-store",
-      "name": "Store Cover - New Hope API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        3460,
-        520
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://kasir.newhope.space/api/v1/blog-automation/covers",
@@ -875,7 +855,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {imageUrl:$json.data?.[0]?.url,alt:$('Prepare Cover Jobs').item.json.alt,...($('Prepare Cover Jobs').item.json.mode==='repair'?{slug:$('Prepare Cover Jobs').item.json.article.slug,expectedCover:$('Prepare Cover Jobs').item.json.expectedCover}:{})} }}",
+        "jsonBody": "={{ JSON.stringify({imageUrl:$json.data[0].url,alt:$('Prepare Cover Jobs').item.json.alt,...($('Prepare Cover Jobs').item.json.mode==='repair'?{slug:$('Prepare Cover Jobs').item.json.article.slug,expectedCover:$('Prepare Cover Jobs').item.json.expectedCover}:{} )}) }}",
         "options": {
           "response": {
             "response": {
@@ -885,6 +865,14 @@
           "timeout": 60000
         }
       },
+      "id": "247db96a-1d12-4876-ba6a-44a941c9225c",
+      "name": "Store Cover - New Hope API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1664,
+        1968
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "jTYb0rFR3DFemQpo",
@@ -893,27 +881,19 @@
       }
     },
     {
-      "id": "cover-attach",
+      "parameters": {
+        "jsCode": "return $input.all().map((item,index)=>{const r=item.json; const job=$('Prepare Cover Jobs').itemMatching(index).json; if(r.ok!==true||r.coverGenerated!==true||!/^https:\\/\\//.test(r.coverImage||''))throw Error('Unique cover was not stored; publication stopped'); return {json:{mode:job.mode,article:{...job.article,coverImage:r.coverImage,coverAlt:r.coverAlt,coverGenerated:true},repairedSlug:r.repairedSlug||null},pairedItem:{item:index}};});"
+      },
+      "id": "c47b2b06-2507-453c-952d-04155b83d100",
       "name": "Attach Unique Cover",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3700,
-        520
-      ],
-      "parameters": {
-        "jsCode": "return $input.all().map((item,index)=>{const r=item.json; const job=$('Prepare Cover Jobs').itemMatching(index).json; if(r.ok!==true||r.coverGenerated!==true||!/^https:\\/\\//.test(r.coverImage||''))throw Error('Unique cover was not stored; publication stopped'); return {json:{mode:job.mode,article:{...job.article,coverImage:r.coverImage,coverAlt:r.coverAlt,coverGenerated:true},repairedSlug:r.repairedSlug||null},pairedItem:{item:index}};});"
-      }
+        1904,
+        1968
+      ]
     },
     {
-      "id": "cover-route",
-      "name": "Existing Cover Repair?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3940,
-        520
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -936,7 +916,15 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "c2e1bb4c-2519-4f79-b06f-945b55e470e6",
+      "name": "Existing Cover Repair?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2144,
+        1968
+      ]
     }
   ],
   "connections": {
@@ -1170,17 +1158,6 @@
         ]
       ]
     },
-    "Repair Existing Covers": {
-      "main": [
-        [
-          {
-            "node": "Load Covers to Repair",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Load Covers to Repair": {
       "main": [
         [
@@ -1267,5 +1244,7 @@
     "timeSavedMode": "fixed",
     "timezone": "Asia/Jakarta",
     "callerPolicy": "workflowsFromSameOwner"
-  }
+  },
+  "active": false,
+  "pinData": {}
 }
