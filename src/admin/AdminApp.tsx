@@ -43,6 +43,7 @@ const Clients=lazy(()=>import('./pages/Clients'));
 const BlogManagement=lazy(()=>import('./pages/BlogManagement'));
 const StaffCommissions=lazy(()=>import('./pages/StaffCommissions'));
 const Integrations=lazy(()=>import('./pages/Integrations'));
+const BlogConnections=lazy(()=>import('./pages/BlogConnections'));
 import AdminMfa from './AdminMfa';
 
 type PageId =
@@ -395,6 +396,9 @@ export default function AdminApp() {
   }
 
   if(session.mfaRequired || reauth) return <AdminMfa onVerified={s=>{setSession(s);setReauth(false);}} onLogout={()=>{setSession(null);setReauth(false);}}/>;
+
+  if (['/admin/blog-connect','/admin/blog-connections'].includes(window.location.pathname))
+    return <Suspense fallback={<Loading />}><BlogConnections consent={window.location.pathname==='/admin/blog-connect'} /></Suspense>;
 
   const menu = NAV.filter((n) => session.capabilities.includes(n.cap));
   const currentNavItem = NAV.find((n) => n.id === page);

@@ -1,0 +1,103 @@
+// Isolated synthetic PostgreSQL and loopback HTTP; no provider or production writes.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createHash,randomUUID} from 'node:crypto';
+import express from 'express';
+import {PGlite} from '@electric-sql/pglite';
+import type {Db} from '../../services/shared/db';
+import {createBlogMcpHandler} from '../../src/server/blogMcpHandler';
+import {createMcpHandler} from '../../src/server/mcpHandler';
+import {registerBlogRoutes} from '../../src/server/blogRoutes';
+
+const pg=new PGlite();
+const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};},exec:sql=>runner.exec(sql),tx:fn=>pg.transaction(tx=>fn(wrap(tx))),close:()=>pg.close()});
+const db=wrap(pg),origin='https://kasir.newhope.space',resource=origin+'/api/blog-mcp';
+process.env.BLOG_MCP_PUBLIC_ORIGIN=origin;process.env.PUBLIC_SITE_URL=origin;process.env.MCP_ENABLED='true';
+process.env.BLOG_API_KEYS='synthetic-blog-key-1234567890';
+let server:ReturnType<express.Express['listen']>|undefined;
+try {
+  await pg.exec(`CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;
+    CREATE SCHEMA internal;CREATE TABLE internal.internal_users(id uuid PRIMARY KEY,sso_subject text,role text,is_active boolean);
+    INSERT INTO internal.internal_users VALUES('${randomUUID()}','editor','ROLE_SUPERADMIN',true),('${randomUUID()}','other-editor','ROLE_SUPERADMIN',true),('${randomUUID()}','merchant','ROLE_INTERNAL_GROWTH',true);`);
+  await pg.exec(fs.readFileSync('supabase/migrations/20261005090000_blog_posts_store.sql','utf8'));
+  await pg.exec(fs.readFileSync('supabase/migrations/20260928135919_mcp_readonly_connections.sql','utf8'));
+  await pg.exec(fs.readFileSync('supabase/migrations/20261009234039_blog_editorial_oauth.sql','utf8'));
+  const auth=async(req:any)=>{
+    const who=String(req.headers.authorization||'').replace('Bearer ','');
+    return ['editor','other-editor','merchant','stale','weak'].includes(who)?{subject:['stale','weak'].includes(who)?'editor':who,aal:who==='weak'?'aal1' as const:'aal2' as const,mfaVerifiedAt:Date.now()/1000-(who==='stale'?700:0)}:null;
+  };
+  const app=express();
+  const oauth=createBlogMcpHandler(async()=>db,auth),pos=createMcpHandler(async()=>db,auth);
+  app.use((req,res,next)=>req.path.startsWith('/api/blog-mcp')||req.path.startsWith('/.well-known/oauth-')?void oauth(req,res):req.path.startsWith('/api/mcp')?void pos(req,res):next());
+  app.use(express.json());registerBlogRoutes(app,async()=>db);
+  server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server!.once('listening',r));
+  const base='http://127.0.0.1:'+(server.address() as any).port;
+  async function call(path:string,body?:any,token?:string,asForm=false,requestOrigin=origin) {
+    const r=await fetch(base+path,{method:body===undefined?'GET':'POST',redirect:'manual',headers:{Origin:requestOrigin,...(body===undefined?{}:{'Content-Type':asForm?'application/x-www-form-urlencoded':'application/json'}),...(token?{Authorization:'Bearer '+token}:{})},body:body===undefined?undefined:asForm?new URLSearchParams(body).toString():JSON.stringify(body)});
+    const text=await r.text();return {status:r.status,headers:r.headers,body:text?JSON.parse(text):null};
+  }
+  const rpc=(method:string,params?:any)=>({jsonrpc:'2.0',id:1,method,params});
+  assert.equal((await call('/api/blog-mcp')).status,401);
+  const rm=(await call('/api/blog-mcp/resource')).body;assert.equal(rm.resource,resource);assert.deepEqual(rm.authorization_servers,[resource+'/oauth']);
+  const metadata=(await call('/api/blog-mcp/metadata')).body;assert.equal(metadata.issuer,resource+'/oauth');assert.equal(metadata.authorization_response_iss_parameter_supported,true);
+  assert.equal((await call('/api/blog-mcp/register',{redirect_uris:['https://evil.example']})).status,400);
+  assert.equal((await call('/api/blog-mcp/register',{redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']})).status,201);
+  const publicTools=(await call('/api/blog-mcp',rpc('tools/list'))).body.result.tools;
+  assert.equal(publicTools.length,7);assert.equal(publicTools.find((t:any)=>t.name==='create_post').inputSchema.properties.publish.default,false);
+  assert.ok(publicTools.every((t:any)=>t.securitySchemes[0].scopes[0]==='blog:write'));
+  assert.equal((await call('/api/blog-mcp',rpc('tools/call',{name:'blog_guide'}))).status,401);
+  const args={client_id:'newhope-blog-chatgpt',redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',response_type:'code',code_challenge_method:'S256',code_challenge:createHash('sha256').update('a'.repeat(64)).digest('base64url'),resource,scope:'blog:write',state:'synthetic-state'};
+  assert.equal((await call('/api/blog-mcp/consent',{...args,approve:true},'merchant')).status,403);
+  assert.equal((await call('/api/blog-mcp/consent',{...args,approve:true},'weak')).body.error,'MFA_REQUIRED');
+  assert.equal((await call('/api/blog-mcp/consent',{...args,approve:true},'stale')).body.error,'REAUTH_REQUIRED');
+  assert.equal((await call('/api/blog-mcp/consent',{...args,approve:true},'editor',false,'https://evil.example')).status,403);
+  assert.equal((await call('/api/blog-mcp/consent',{...args,resource:origin+'/api/mcp',approve:true},'editor')).status,400);
+  const denied=await call('/api/blog-mcp/consent',{...args,approve:false},'editor');assert.equal(new URL(denied.body.redirect).searchParams.get('error'),'access_denied');
+  async function connect() {
+    const c=await call('/api/blog-mcp/consent',{...args,approve:true},'editor');assert.equal(c.status,200);
+    const redirect=new URL(c.body.redirect);assert.equal(redirect.searchParams.get('state'),args.state);assert.equal(redirect.searchParams.get('iss'),resource+'/oauth');
+    const exchange={client_id:args.client_id,resource,grant_type:'authorization_code',code:redirect.searchParams.get('code'),redirect_uri:args.redirect_uri,code_verifier:'a'.repeat(64)};
+    assert.equal((await call('/api/blog-mcp/token',{...exchange,code_verifier:'b'.repeat(64)},undefined,true)).status,400);
+    const tokens=await call('/api/blog-mcp/token',exchange,undefined,true);assert.equal(tokens.status,200);return tokens.body;
+  }
+  const tokens=await connect(),access=tokens.access_token;
+  const tool=(name:string,a:any={})=>call('/api/blog-mcp',rpc('tools/call',{name,arguments:a}),access);
+  assert.equal((await call('/api/blog-mcp',rpc('initialize',{protocolVersion:'2025-06-18'}),access)).body.result.protocolVersion,'2025-06-18');
+  assert.equal((await call('/api/blog-mcp',rpc('tools/list'),'editor')).status,401,'POS JWT/session rejected as editorial bearer');
+  assert.equal((await call('/api/mcp',rpc('tools/list'),access)).status,401,'editorial token rejected by POS connector');
+  assert.equal((await call('/api/v1/blog-automation/mcp',rpc('tools/list'),access)).status,401,'editorial token rejected by API-key publisher');
+  assert.equal((await tool('list_transactions')).body.error.code,-32602);
+  assert.equal((await tool('blog_guide')).body.result.structuredContent.oauthEditorial.publishDefault,false);
+  const para='Pencatatan harian membantu pemilik usaha melihat angka dan stok secara jelas. Catat setiap transaksi kemudian tinjau selisih fisik pada akhir shift supaya kesalahan cepat ditemukan dan diperbaiki dengan langkah praktis bagi usaha kecil yang sedang tumbuh.';
+  const content=['Pembukaan artikel pengujian.','## Pencatatan harian',...Array(7).fill(para),'## Tinjau setiap shift',...Array(7).fill(para),'## Kesalahan yang sering terjadi',...Array(7).fill(para)].join('\n\n');
+  const article={title:'Panduan Pencatatan Harian untuk Usaha Kedai Kecil',excerpt:'Panduan pencatatan harian untuk kedai kecil, lengkap dengan langkah praktis meninjau stok dan transaksi pada akhir shift.',category:'Kuliner & F&B',content};
+  assert.equal((await tool('validate_article',article)).body.result.structuredContent.ok,true);
+  const draft=(await tool('create_post',article)).body.result;assert.equal(draft.isError,false);assert.equal(draft.structuredContent.post.isPublished,false);
+  const slug=draft.structuredContent.post.slug;
+  assert.equal((await tool('create_post',article)).body.result.isError,true,'duplicate request rejected');
+  assert.equal((await tool('create_post',{...article,title:'Artikel pendek yang tidak dapat diterbitkan',content:'short',publish:true})).body.result.isError,true);
+  assert.equal((await tool('create_post',{...article,publish:'true'})).body.error.code,-32602);
+  assert.equal((await tool('update_post',{...article,slug,publish:true})).body.result.structuredContent.post.isPublished,true,'explicit publish works');
+  assert.equal((await fetch(base+'/blog/'+slug)).status,200);
+  assert.equal((await tool('unpublish_post',{slug})).body.result.structuredContent.post.isPublished,false);
+  const owner=(await call('/api/blog-mcp/manage',undefined,'editor')).body;assert.equal(owner.connections.length,1);
+  assert.equal((await call('/api/blog-mcp/manage',undefined,'other-editor')).body.connections.length,0);
+  const id=owner.connections[0].id;
+  assert.ok(owner.events.some((e:any)=>e.event==='tool_write'&&e.slug===slug));
+  await call('/api/blog-mcp/disconnect',{id},'other-editor');assert.equal((await tool('blog_guide')).status,200);
+  await db.query("UPDATE internal.internal_users SET is_active=false WHERE sso_subject='editor'");assert.equal((await tool('blog_guide')).status,401,'role removal immediately blocks existing tokens');
+  await db.query("UPDATE internal.internal_users SET is_active=true WHERE sso_subject='editor'");
+  await call('/api/blog-mcp/disconnect',{id},'editor');assert.equal((await tool('blog_guide')).status,401);
+  const t2=await connect(),refresh={client_id:args.client_id,resource,grant_type:'refresh_token',refresh_token:t2.refresh_token};
+  const refreshed=await call('/api/blog-mcp/token',refresh,undefined,true);assert.equal(refreshed.status,200);
+  assert.equal((await call('/api/blog-mcp/token',refresh,undefined,true)).status,400);
+  assert.equal((await call('/api/blog-mcp',rpc('tools/list'),refreshed.body.access_token)).status,401,'refresh replay revokes connection');
+  const t3=await connect();
+  await db.query("UPDATE blog_mcp_private.credentials SET expires_at=now()-interval '1 second' WHERE hash=$1",[createHash('sha256').update(t3.access_token).digest('hex')]);
+  assert.equal((await call('/api/blog-mcp',rpc('tools/list'),t3.access_token)).status,401);
+  assert.ok((await db.query('SELECT hash FROM blog_mcp_private.credentials')).rows.every(r=>/^[a-f0-9]{64}$/.test(r.hash)));
+  assert.equal((await db.query("SELECT has_schema_privilege('authenticated','blog_mcp_private','USAGE') AS allowed")).rows[0].allowed,false);
+  await pg.exec('SET ROLE authenticated');await assert.rejects(()=>db.query('SELECT * FROM blog_mcp_private.credentials'),/permission denied/);await pg.exec('RESET ROLE');
+  process.env.BLOG_MCP_ENABLED='false';assert.equal((await call('/api/blog-mcp')).status,503);
+  console.log('BLOG MCP PASS: discovery, OAuth/PKCE/MFA, role and audience isolation, draft defaults, explicit publish, quality/duplicate rejection, public page, atomic audit, expiry, refresh replay, revocation, hashed private storage, kill switch.');
+} finally {if(server)await new Promise<void>(r=>server!.close(()=>r()));await pg.close();}

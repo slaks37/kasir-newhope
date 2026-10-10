@@ -1902,7 +1902,10 @@ var BlogApiError = class extends Error {
 };
 var digest = (value) => createHash("sha256").update(value).digest();
 function apiKeyValid(req) {
-  const configured = String(process.env.BLOG_API_KEYS || "").split(",").map((k) => k.trim()).filter((k) => k.length >= 24);
+  const configured = [
+    ...String(process.env.BLOG_API_KEYS || "").split(","),
+    String(process.env.BLOG_N8N_API_KEY || "")
+  ].map((k) => k.trim()).filter((k) => k.length >= 24);
   if (!configured.length) throw new BlogApiError(503, "BLOG_API_NOT_CONFIGURED");
   const header = String(req.headers.authorization || "");
   const presented = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim() || String(req.headers["x-api-key"] || "").trim();

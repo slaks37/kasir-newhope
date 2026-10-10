@@ -116,7 +116,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
 /* Automation: REST + MCP                                                      */
 /* -------------------------------------------------------------------------- */
 
-class BlogApiError extends Error {
+export class BlogApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly details?: unknown) { super(code); }
 }
 
