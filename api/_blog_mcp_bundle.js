@@ -387,7 +387,7 @@ ${content}`)) errors.push(message);
     isPublished: input.publish !== false,
     readingTimeMinutes: readingMinutes(rendered.words),
     author: { name: text(authorIn.name, 80) || "Tim Editorial New Hope POS", role: text(authorIn.role, 80) || "Editor", avatar },
-    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, faq, sources }
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, ...typeof input.coverGenerated === "boolean" ? { coverGenerated: input.coverGenerated } : {}, faq, sources }
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
 }
@@ -396,6 +396,12 @@ ${content}`)) errors.push(message);
 function generatedBlogCover(title) {
   return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
 }
+
+// src/server/blogCover.ts
+import sharp from "sharp";
+
+// src/server/blogMedia.ts
+import { createClient } from "@supabase/supabase-js";
 
 // src/server/blogPages.ts
 function siteUrl() {
@@ -448,6 +454,7 @@ var summary = (p) => ({
   title: p.title,
   category: p.category,
   excerpt: p.excerpt,
+  coverImage: p.coverImage,
   isPublished: p.isPublished,
   isFeatured: p.isFeatured,
   url: `${siteUrl()}/blog/${p.slug}`,
@@ -493,7 +500,7 @@ function createBlogAutomation(getDb) {
         record.coverImage = siteUrl() + generatedBlogCover(record.title);
         record.seo.coverGenerated = true;
         record.seo.coverAlt = "Ilustrasi AI: " + record.title;
-      } else record.seo.coverGenerated = /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage);
+      } else record.seo.coverGenerated = record.seo.coverGenerated === true || /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage) || /\/blog-media\/automation\/generated\//.test(record.coverImage);
       const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage, source: "automation" };
       const values = [
         record.slug,
@@ -549,6 +556,7 @@ var ARTICLE_SCHEMA = {
     tags: { type: "array", items: { type: "string" }, maxItems: ARTICLE_RULES.maxTags },
     coverImage: { type: "string", description: "URL https gambar sampul (1200\xD7600 disarankan)" },
     coverAlt: { type: "string" },
+    coverGenerated: { type: "boolean", description: "True bila sampul merupakan ilustrasi AI, bukan foto berita." },
     sources: { type: "array", maxItems: 5, items: { type: "object", required: ["title", "url"], properties: { title: { type: "string" }, url: { type: "string" }, publisher: { type: "string" }, publishedAt: { type: "string" } } } },
     sourceRequired: { type: "boolean", description: "Artikel berita: true, wajib sumber cocok dengan sourceFeed." },
     sourceFeed: { type: "string", description: "Feed RSS yang diamati automation; untuk validasi saja, tidak disimpan." },

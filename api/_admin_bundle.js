@@ -1150,7 +1150,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -1230,7 +1230,7 @@ function requiresAudit(cap) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash, randomUUID as randomUUID3, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID as randomUUID5, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -1448,7 +1448,7 @@ ${content}`)) errors.push(message);
     isPublished: input.publish !== false,
     readingTimeMinutes: readingMinutes(rendered.words),
     author: { name: text(authorIn.name, 80) || "Tim Editorial New Hope POS", role: text(authorIn.role, 80) || "Editor", avatar },
-    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, faq, sources }
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, ...typeof input.coverGenerated === "boolean" ? { coverGenerated: input.coverGenerated } : {}, faq, sources }
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
 }
@@ -1458,6 +1458,122 @@ function generatedBlogCover(title) {
   return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
 }
 var GENERATED_COVER_CAPTION = "Ilustrasi dibuat dengan AI; bukan foto kejadian dalam berita.";
+
+// src/server/blogCover.ts
+import sharp from "sharp";
+import { randomUUID as randomUUID4 } from "node:crypto";
+
+// src/server/blogMedia.ts
+import { createClient } from "@supabase/supabase-js";
+import { randomUUID as randomUUID3 } from "node:crypto";
+
+// src/lib/blog/photo.ts
+var BLOG_PHOTO_MAX_CHARS = 65e4;
+
+// src/server/blogMedia.ts
+var BUCKET = "blog-media";
+function createBlogMediaProvider() {
+  return { async upload(bytes, path) {
+    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
+    const signal = AbortSignal.timeout(18e3);
+    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
+    const bucket = await client.storage.getBucket(BUCKET);
+    if (bucket.error) {
+      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
+      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
+      if (created.error) {
+        const existing = await client.storage.getBucket(BUCKET);
+        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
+      }
+    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
+    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
+    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+  } };
+}
+function decodeBlogPhoto(value) {
+  if (typeof value !== "string" || value.length > BLOG_PHOTO_MAX_CHARS) throw Error("INVALID_BLOG_PHOTO");
+  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) throw Error("INVALID_BLOG_PHOTO");
+  const bytes = Buffer.from(match[1], "base64");
+  if (bytes.toString("base64") !== match[1] || bytes.length < 100 || bytes.length > 5e5 || bytes[0] !== 255 || bytes[1] !== 216 || bytes[2] !== 255 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) throw Error("INVALID_BLOG_PHOTO");
+  return bytes;
+}
+function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider()) {
+  app.post("/api/admin/blog/media", guard("VIEW_SECTOR_ANALYTICS"), async (req, res) => {
+    if (req.internal?.role !== "ROLE_SUPERADMIN") {
+      res.status(403).json({ ok: false, error: "CAPABILITY_DENIED" });
+      return;
+    }
+    let bytes;
+    try {
+      bytes = decodeBlogPhoto(req.body?.photo);
+    } catch {
+      res.status(400).json({ ok: false, error: "INVALID_BLOG_PHOTO" });
+      return;
+    }
+    try {
+      const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID3()}.jpg`);
+      res.status(201).json({ ok: true, url });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      res.status(code === "BLOG_STORAGE_NOT_CONFIGURED" ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
+    }
+  });
+}
+
+// src/server/blogCover.ts
+var CoverError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+};
+function coverUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    throw new CoverError(400, "INVALID_COVER_URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash || !(url.hostname === "storage.googleapis.com" && url.pathname.startsWith("/agnes-aigc/") || url.hostname === "apihub.agnes-ai.com" && url.pathname.startsWith("/storage/images/"))) {
+    throw new CoverError(400, "INVALID_COVER_URL");
+  }
+  return url;
+}
+function createCoverImporter(provider = createBlogMediaProvider(), fetchImage = fetch) {
+  return async (input) => {
+    const url = coverUrl(input.imageUrl);
+    const response = await fetchImage(url, { redirect: "error", signal: AbortSignal.timeout(2e4) });
+    if (!response.ok || !/^image\/(png|jpeg|webp)(;|$)/i.test(response.headers.get("content-type") || "") || Number(response.headers.get("content-length") || 0) > 8e6 || !response.body) throw new CoverError(422, "COVER_DOWNLOAD_REJECTED");
+    const reader = response.body.getReader(), chunks = [];
+    let length = 0;
+    try {
+      for (; ; ) {
+        const part = await reader.read();
+        if (part.done) break;
+        length += part.value.length;
+        if (length > 8e6) throw new CoverError(422, "COVER_TOO_LARGE");
+        chunks.push(part.value);
+      }
+    } finally {
+      await reader.cancel();
+    }
+    let bytes;
+    try {
+      bytes = await sharp(Buffer.concat(chunks), { limitInputPixels: 2e7, animated: false }).rotate().resize(1200, 675, { fit: "cover" }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+    } catch {
+      throw new CoverError(422, "INVALID_COVER_IMAGE");
+    }
+    if (bytes.length > 5e5) throw new CoverError(422, "COVER_TOO_LARGE");
+    const coverImage = await provider.upload(bytes, `automation/generated/${randomUUID4()}.jpg`);
+    const coverAlt = typeof input.alt === "string" ? input.alt.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 160) : "";
+    return { coverImage, coverAlt, coverGenerated: true, coverModel: "agnes-image-2.1-flash" };
+  };
+}
 
 // src/server/blogPages.ts
 var GTM_ID = "GTM-WD7T7WSF";
@@ -1820,7 +1936,7 @@ async function publishedPosts(db) {
   const { rows } = await db.query(`SELECT id, slug, title, excerpt, category, cover_image, author_name, reading_time_minutes, created_at, updated_at FROM public.blog_posts WHERE is_published = true ORDER BY created_at DESC, id DESC`);
   return rows.map(rowToPublicPost);
 }
-function registerBlogRoutes(app, getDb) {
+function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
   const page2 = (fn) => async (req, res) => {
     try {
       await fn(req, res, await getDb());
@@ -1890,7 +2006,7 @@ function registerBlogRoutes(app, getDb) {
     res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("application/rss+xml").send(renderRss(await publishedPosts(db)));
   }));
-  registerBlogAutomation(app, getDb);
+  registerBlogAutomation(app, getDb, coverImporter);
 }
 var BlogApiError = class extends Error {
   constructor(status, code, details) {
@@ -1929,6 +2045,7 @@ var summary = (p) => ({
   title: p.title,
   category: p.category,
   excerpt: p.excerpt,
+  coverImage: p.coverImage,
   isPublished: p.isPublished,
   isFeatured: p.isFeatured,
   url: `${siteUrl()}/blog/${p.slug}`,
@@ -1974,7 +2091,7 @@ function createBlogAutomation(getDb) {
         record.coverImage = siteUrl() + generatedBlogCover(record.title);
         record.seo.coverGenerated = true;
         record.seo.coverAlt = "Ilustrasi AI: " + record.title;
-      } else record.seo.coverGenerated = /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage);
+      } else record.seo.coverGenerated = record.seo.coverGenerated === true || /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage) || /\/blog-media\/automation\/generated\//.test(record.coverImage);
       const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage, source: "automation" };
       const values = [
         record.slug,
@@ -1996,7 +2113,7 @@ function createBlogAutomation(getDb) {
             author_avatar=$9,reading_time_minutes=$10,tags=$11,seo=$12::jsonb,is_published=$13,is_featured=$14,updated_at=CURRENT_TIMESTAMP
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
-            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID3()]);
+            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID5()]);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
       return { post: summary(rowToPublicPost(rows[0])), warnings: check.warnings, stats: check.stats };
     });
@@ -2030,6 +2147,7 @@ var ARTICLE_SCHEMA = {
     tags: { type: "array", items: { type: "string" }, maxItems: ARTICLE_RULES.maxTags },
     coverImage: { type: "string", description: "URL https gambar sampul (1200\xD7600 disarankan)" },
     coverAlt: { type: "string" },
+    coverGenerated: { type: "boolean", description: "True bila sampul merupakan ilustrasi AI, bukan foto berita." },
     sources: { type: "array", maxItems: 5, items: { type: "object", required: ["title", "url"], properties: { title: { type: "string" }, url: { type: "string" }, publisher: { type: "string" }, publishedAt: { type: "string" } } } },
     sourceRequired: { type: "boolean", description: "Artikel berita: true, wajib sumber cocok dengan sourceFeed." },
     sourceFeed: { type: "string", description: "Feed RSS yang diamati automation; untuk validasi saja, tidak disimpan." },
@@ -2049,7 +2167,7 @@ var BLOG_MCP_TOOLS = [
   { name: "update_post", description: "Perbarui artikel berdasarkan slug (seluruh field dikirim ulang).", inputSchema: { ...ARTICLE_SCHEMA, required: ["slug", ...ARTICLE_SCHEMA.required] } },
   { name: "unpublish_post", description: "Tarik artikel dari publik (tidak menghapus data).", inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } } } }
 ];
-function registerBlogAutomation(app, getDb) {
+function registerBlogAutomation(app, getDb, importCover) {
   const blog = createBlogAutomation(getDb);
   const api = (write, fn, status = 200) => async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -2058,6 +2176,7 @@ function registerBlogAutomation(app, getDb) {
       if (write) allowWrite(req);
       res.status(status).json({ ok: true, ...await fn(req) });
     } catch (error) {
+      if (error instanceof CoverError) return res.status(error.status).json({ ok: false, error: error.code });
       if (error instanceof BlogApiError) return res.status(error.status).json({ ok: false, error: error.code, ...error.details ? { details: error.details } : {} });
       console.error("[blog-automation]", req.method, req.path, error.message, error.code ?? "");
       res.status(isMissingStore(error) ? 503 : 500).json({ ok: false, error: isMissingStore(error) ? "BLOG_STORE_UNAVAILABLE" : "INTERNAL_ERROR" });
@@ -2068,6 +2187,21 @@ function registerBlogAutomation(app, getDb) {
   app.get(`${base}/posts`, api(false, (req) => blog.listPosts(req.query)));
   app.get(`${base}/posts/:slug`, api(false, (req) => blog.getPost(String(req.params.slug))));
   app.post(`${base}/validate`, api(false, (req) => blog.validate(req.body || {})));
+  app.post(`${base}/covers`, api(true, async (req) => {
+    const input = req.body || {};
+    const repairing = input.slug !== void 0;
+    const db = repairing ? await getDb() : null;
+    if (repairing && (typeof input.slug !== "string" || typeof input.expectedCover !== "string" || !/\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(input.expectedCover))) throw new BlogApiError(400, "INVALID_COVER_REPAIR");
+    if (db && !(await db.query("SELECT id FROM public.blog_posts WHERE slug=$1 AND cover_image=$2", [input.slug, input.expectedCover])).rows.length) throw new BlogApiError(409, "COVER_CHANGED");
+    const cover = await importCover(input);
+    if (db) {
+      const { rows } = await db.query(`UPDATE public.blog_posts SET cover_image=$1,
+        seo=COALESCE(seo,'{}'::jsonb) || $2::jsonb, updated_at=CURRENT_TIMESTAMP
+        WHERE slug=$3 AND cover_image=$4 RETURNING slug`, [cover.coverImage, JSON.stringify({ ...cover, ogImage: cover.coverImage }), input.slug, input.expectedCover]);
+      if (!rows.length) throw new BlogApiError(409, "COVER_CHANGED");
+    }
+    return { ...cover, ...repairing ? { repairedSlug: input.slug } : {} };
+  }, 201));
   app.post(`${base}/posts`, api(true, (req) => blog.create(req.body || {}), 201));
   app.put(`${base}/posts/:slug`, api(true, (req) => blog.update(String(req.params.slug), req.body || {})));
   app.delete(`${base}/posts/:slug`, api(true, (req) => blog.unpublish(String(req.params.slug))));
@@ -2103,67 +2237,6 @@ function registerBlogAutomation(app, getDb) {
       const message = error instanceof BlogApiError ? JSON.stringify({ error: error.code, ...error.details ? { details: error.details } : {} }, null, 2) : "INTERNAL_ERROR";
       if (!(error instanceof BlogApiError)) console.error("[blog-mcp]", name, error.message);
       reply({ result: { content: [{ type: "text", text: message }], isError: true } });
-    }
-  });
-}
-
-// src/server/blogMedia.ts
-import { createClient } from "@supabase/supabase-js";
-import { randomUUID as randomUUID4 } from "node:crypto";
-
-// src/lib/blog/photo.ts
-var BLOG_PHOTO_MAX_CHARS = 65e4;
-
-// src/server/blogMedia.ts
-var BUCKET = "blog-media";
-function createBlogMediaProvider() {
-  return { async upload(bytes, path) {
-    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
-    const signal = AbortSignal.timeout(18e3);
-    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
-    const bucket = await client.storage.getBucket(BUCKET);
-    if (bucket.error) {
-      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
-      if (created.error) {
-        const existing = await client.storage.getBucket(BUCKET);
-        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      }
-    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
-    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
-    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
-    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-  } };
-}
-function decodeBlogPhoto(value) {
-  if (typeof value !== "string" || value.length > BLOG_PHOTO_MAX_CHARS) throw Error("INVALID_BLOG_PHOTO");
-  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
-  if (!match) throw Error("INVALID_BLOG_PHOTO");
-  const bytes = Buffer.from(match[1], "base64");
-  if (bytes.toString("base64") !== match[1] || bytes.length < 100 || bytes.length > 5e5 || bytes[0] !== 255 || bytes[1] !== 216 || bytes[2] !== 255 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) throw Error("INVALID_BLOG_PHOTO");
-  return bytes;
-}
-function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider()) {
-  app.post("/api/admin/blog/media", guard("VIEW_SECTOR_ANALYTICS"), async (req, res) => {
-    if (req.internal?.role !== "ROLE_SUPERADMIN") {
-      res.status(403).json({ ok: false, error: "CAPABILITY_DENIED" });
-      return;
-    }
-    let bytes;
-    try {
-      bytes = decodeBlogPhoto(req.body?.photo);
-    } catch {
-      res.status(400).json({ ok: false, error: "INVALID_BLOG_PHOTO" });
-      return;
-    }
-    try {
-      const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID4()}.jpg`);
-      res.status(201).json({ ok: true, url });
-    } catch (error) {
-      const code = error instanceof Error ? error.message : "";
-      res.status(code === "BLOG_STORAGE_NOT_CONFIGURED" ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
     }
   });
 }
@@ -3195,7 +3268,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID5();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID6();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -3632,7 +3705,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID5();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID6();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
