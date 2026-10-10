@@ -44,6 +44,9 @@ export default function Integrations(){
     {error&&<ErrorBox error={error}/>}{notice&&<p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-slate-800">{notice}</p>}
     {loading&&<Loading/>}
     {data&&!loading&&tab==='mcp'&&<>
+      <Card title="ChatGPT Blog" subtitle="Izin editorial artikel diberikan oleh Superadmin.">
+        <div className="space-y-3 p-5"><p className="text-sm text-slate-600">Hubungkan ChatGPT untuk membaca dan menulis artikel. Tulisan baru disimpan sebagai draft; publikasi memerlukan perintah eksplisit.</p><a className="inline-block text-sm font-bold underline" href="/admin/blog-connections">Kelola koneksi ChatGPT Blog</a></div>
+      </Card>
       <Card title="Layanan MCP" subtitle="ChatGPT dan Claude membaca data hanya setelah persetujuan OAuth owner; tidak dapat menulis transaksi.">
         <div className="space-y-4 p-5">
           <div className="flex flex-wrap items-center gap-3"><Chip>{data.mcp.enabled?'Layanan aktif':'Layanan dijeda'}</Chip><span className="text-sm text-slate-600">Scope: {data.mcp.scope} · {data.mcp.active} izin aktif · {data.mcp.total} izin tercatat</span></div>

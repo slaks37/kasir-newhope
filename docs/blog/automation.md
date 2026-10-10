@@ -104,3 +104,36 @@ Alur yang disarankan untuk agen: `blog_guide` → tulis → `validate_article` �
 - **Search Console**: login dengan akun pemilik properti, pilih properti `https://kasir.newhope.space`, lalu **Sitemaps → tambahkan `sitemap.xml`**. Pantau "Pages" untuk artikel yang belum terindeks.
 - **GTM**: pastikan kontainer `GTM-WD7T7WSF` punya tag GA4 yang terpublikasi. Kode kontainer sudah ada di semua halaman.
 - **Kualitas lebih penting dari jumlah.** Kebijakan Google tentang *scaled content abuse* menurunkan peringkat situs yang menerbitkan banyak artikel tipis atau berulang, termasuk artikel buatan AI. Aturan di atas adalah batas bawah. Artikel yang menang biasanya menjawab satu pertanyaan spesifik pemilik usaha dengan contoh angka nyata.
+
+
+## ChatGPT Blog — OAuth editorial
+
+Endpoint: `https://kasir.newhope.space/api/blog-mcp`. Tambahkan aplikasi MCP khusus
+melalui pengaturan ChatGPT dan pilih **OAuth**. Discovery mengumumkan issuer
+`https://kasir.newhope.space/api/blog-mcp/oauth` dan scope `blog:write`.
+Tidak diperlukan API key n8n pada ChatGPT.
+
+Superadmin masuk melalui `/admin/blog-connect`, memverifikasi MFA, lalu meninjau
+izin membaca artikel/draft, membuat, memperbarui, menerbitkan, dan menarik artikel.
+Kelola/cabut koneksi di `/admin/blog-connections` atau menu Integrasi admin.
+Persetujuan baru berlaku 3 tahun kalender sesuai persetujuan pemilik; access token satu jam; refresh token berotasi dan replay
+mencabut seluruh koneksi. Tokens disimpan sebagai hash SHA-256 di schema privat
+`blog_mcp_private`. Setiap panggilan memeriksa membership Superadmin aktif.
+
+`create_post` dan `update_post` memakai `publish:false` secara default. Kirim
+`publish:true` hanya atas perintah publikasi eksplisit dari pengguna. Artikel
+harus melewati aturan kualitas REST API yang sama. Simpan dan audit berjalan dalam
+satu transaksi. Konektor POS `/api/mcp` tetap read-only dengan audience/token lain;
+API key n8n/Make dan JWT POS tidak diterima sebagai token editorial.
+
+Deploy: jalankan migrasi `supabase/migrations/20261009234039_blog_editorial_oauth.sql`,
+`npm run test:blog-mcp`, `npm run test:mcp`, `npm run lint`, dan `npm run build`.
+`BLOG_MCP_PUBLIC_ORIGIN` opsional, default `https://kasir.newhope.space`;
+`BLOG_MCP_ENABLED=false` menghentikan seluruh endpoint editorial bila dibutuhkan.
+Koneksi dalam akun ChatGPT baru selesai setelah persetujuan OAuth nyata dan uji tool
+berhasil; deployment endpoint tidak otomatis membuat akun terhubung.
+
+
+Vercel Hobby: endpoint `/api/mcp` dan `/api/blog-mcp` masing-masing memakai satu
+catch-all entrypoint beserta rewrite root; entrypoint root duplikat tidak diperlukan.
+Total fungsi deployment tetap 12. Verifikasi discovery dan `/api/mcp` setelah deploy.

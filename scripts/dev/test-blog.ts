@@ -128,6 +128,9 @@ try {
   assert.match((await get('/sitemap.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
   assert.match((await get('/blog')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
   assert.match((await get('/rss.xml')).text, /cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil/);
+  const ai = await call('PUT', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', article({ coverImage: 'https://storage.example/unique.jpg', coverGenerated: true, coverAlt: 'Ilustrasi biaya bahan' }));
+  assert.equal(ai.status, 200);
+  assert.match((await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil')).text, /Ilustrasi dibuat dengan AI/);
   const updated = await call('PUT', '/api/v1/blog-automation/posts/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', article({ title: 'Cara Menghitung HPP Kopi Susu: Contoh Lengkap per Gelas', coverImage: '' }));
   assert.equal(updated.status, 200, JSON.stringify(updated.body));
   page = await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil');

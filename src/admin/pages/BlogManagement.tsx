@@ -232,7 +232,7 @@ export const BlogManagement: React.FC = () => {
         canonicalUrl: `${window.location.origin}/blog/${slug.trim()}`,
         ogImage: coverImage.trim(),
         coverAlt: coverAlt.trim(),
-        coverGenerated: /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(coverImage.trim()),
+        coverGenerated: /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(coverImage.trim()) || /\/blog-media\/automation\/generated\//.test(coverImage.trim()),
       },
       isPublished,
       isFeatured,

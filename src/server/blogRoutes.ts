@@ -17,6 +17,7 @@ import type { Db } from '../../services/shared/db';
 import { ARTICLE_RULES, checkArticle, type ArticleInput, type ArticleRecord } from '../lib/blog/articleInput';
 import { BLOG_CATEGORIES, categoryFromSlug } from '../lib/blog/categories';
 import { generatedBlogCover } from '../lib/blog/covers';
+import { CoverError, createCoverImporter } from './blogCover';
 import { BLOG_PAGE_SIZE, renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
 
 const COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
@@ -45,7 +46,7 @@ async function publishedPosts(db: Db): Promise<PublicPost[]> {
   return rows.map(rowToPublicPost);
 }
 
-export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db>): void {
+export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db>, coverImporter = createCoverImporter()): void {
   const page = (fn: (req: express.Request, res: express.Response, db: Db) => Promise<unknown>) =>
     async (req: express.Request, res: express.Response) => {
       try { await fn(req, res, await getDb()); }
@@ -109,14 +110,14 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     res.type('application/rss+xml').send(renderRss(await publishedPosts(db)));
   }));
 
-  registerBlogAutomation(app, getDb);
+  registerBlogAutomation(app, getDb, coverImporter);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Automation: REST + MCP                                                      */
 /* -------------------------------------------------------------------------- */
 
-class BlogApiError extends Error {
+export class BlogApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly details?: unknown) { super(code); }
 }
 
@@ -146,7 +147,7 @@ function allowWrite(req: express.Request) {
 }
 
 const summary = (p: ReturnType<typeof rowToPublicPost>) => ({
-  slug: p.slug, title: p.title, category: p.category, excerpt: p.excerpt, isPublished: p.isPublished, isFeatured: p.isFeatured,
+  slug: p.slug, title: p.title, category: p.category, excerpt: p.excerpt, coverImage: p.coverImage, isPublished: p.isPublished, isFeatured: p.isFeatured,
   url: `${siteUrl()}/blog/${p.slug}`, readingTimeMinutes: p.readingTimeMinutes, createdAt: p.createdAt, updatedAt: p.updatedAt,
 });
 const full = (p: ReturnType<typeof rowToPublicPost>) => ({ ...summary(p), content: p.content, tags: p.tags, coverImage: p.coverImage, author: p.author, seo: p.seo });
@@ -191,7 +192,7 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
         record.coverImage = siteUrl() + generatedBlogCover(record.title);
         record.seo.coverGenerated = true;
         record.seo.coverAlt = 'Ilustrasi AI: ' + record.title;
-      } else record.seo.coverGenerated = /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage);
+      } else record.seo.coverGenerated = record.seo.coverGenerated === true || /\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(record.coverImage) || /\/blog-media\/automation\/generated\//.test(record.coverImage);
       const seo = { ...parseJson(existing?.seo, {}), ...record.seo, canonicalUrl: `${siteUrl()}/blog/${record.slug}`, ogImage: record.coverImage, source: 'automation' };
       const values = [record.slug, record.title, record.excerpt, record.content, record.category, record.coverImage || null,
         record.author.name, record.author.role, record.author.avatar || null, record.readingTimeMinutes, record.tags,
@@ -238,6 +239,7 @@ const ARTICLE_SCHEMA = {
     tags: { type: 'array', items: { type: 'string' }, maxItems: ARTICLE_RULES.maxTags },
     coverImage: { type: 'string', description: 'URL https gambar sampul (1200×600 disarankan)' },
     coverAlt: { type: 'string' },
+    coverGenerated: { type: 'boolean', description: 'True bila sampul merupakan ilustrasi AI, bukan foto berita.' },
     sources: { type: 'array', maxItems: 5, items: { type: 'object', required: ['title', 'url'], properties: { title: { type: 'string' }, url: { type: 'string' }, publisher: { type: 'string' }, publishedAt: { type: 'string' } } } },
     sourceRequired: { type: 'boolean', description: 'Artikel berita: true, wajib sumber cocok dengan sourceFeed.' },
     sourceFeed: { type: 'string', description: 'Feed RSS yang diamati automation; untuk validasi saja, tidak disimpan.' },
@@ -259,7 +261,7 @@ export const BLOG_MCP_TOOLS = [
   { name: 'unpublish_post', description: 'Tarik artikel dari publik (tidak menghapus data).', inputSchema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string' } } } },
 ] as const;
 
-function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>) {
+function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>, importCover: ReturnType<typeof createCoverImporter>) {
   const blog = createBlogAutomation(getDb);
   const api = (write: boolean, fn: (req: express.Request) => Promise<unknown> | unknown, status = 200) =>
     async (req: express.Request, res: express.Response) => {
@@ -269,6 +271,7 @@ function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>) 
         if (write) allowWrite(req);
         res.status(status).json({ ok: true, ...(await fn(req) as object) });
       } catch (error) {
+        if (error instanceof CoverError) return res.status(error.status).json({ ok: false, error: error.code });
         if (error instanceof BlogApiError) return res.status(error.status).json({ ok: false, error: error.code, ...(error.details ? { details: error.details } : {}) });
         console.error('[blog-automation]', req.method, req.path, (error as Error).message, (error as { code?: string }).code ?? '');
         res.status(isMissingStore(error) ? 503 : 500).json({ ok: false, error: isMissingStore(error) ? 'BLOG_STORE_UNAVAILABLE' : 'INTERNAL_ERROR' });
@@ -279,6 +282,24 @@ function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>) 
   app.get(`${base}/posts`, api(false, req => blog.listPosts(req.query as any)));
   app.get(`${base}/posts/:slug`, api(false, req => blog.getPost(String(req.params.slug))));
   app.post(`${base}/validate`, api(false, req => blog.validate(req.body || {})));
+  app.post(`${base}/covers`, api(true, async req => {
+    const input = req.body || {};
+    const repairing = input.slug !== undefined;
+    // Compare before uploading and atomically before updating: a later manual
+    // editorial change wins over this maintenance job.
+    const db = repairing ? await getDb() : null;
+    if (repairing && (typeof input.slug !== 'string' || typeof input.expectedCover !== 'string' ||
+      !/\/blog\/covers\/(hpp-ingredients|cash-reconciliation)-ai\.jpg$/.test(input.expectedCover))) throw new BlogApiError(400, 'INVALID_COVER_REPAIR');
+    if (db && !(await db.query('SELECT id FROM public.blog_posts WHERE slug=$1 AND cover_image=$2', [input.slug,input.expectedCover])).rows.length) throw new BlogApiError(409, 'COVER_CHANGED');
+    const cover = await importCover(input);
+    if (db) {
+      const { rows } = await db.query(`UPDATE public.blog_posts SET cover_image=$1,
+        seo=COALESCE(seo,'{}'::jsonb) || $2::jsonb, updated_at=CURRENT_TIMESTAMP
+        WHERE slug=$3 AND cover_image=$4 RETURNING slug`, [cover.coverImage,JSON.stringify({ ...cover, ogImage: cover.coverImage }),input.slug,input.expectedCover]);
+      if (!rows.length) throw new BlogApiError(409, 'COVER_CHANGED');
+    }
+    return { ...cover, ...(repairing ? { repairedSlug: input.slug } : {}) };
+  }, 201));
   app.post(`${base}/posts`, api(true, req => blog.create(req.body || {}), 201));
   app.put(`${base}/posts/:slug`, api(true, req => blog.update(String(req.params.slug), req.body || {})));
   app.delete(`${base}/posts/:slug`, api(true, req => blog.unpublish(String(req.params.slug))));

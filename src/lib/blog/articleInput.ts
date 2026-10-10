@@ -7,7 +7,7 @@ export type ArticleSource = { title: string; url: string; publishedAt?: string; 
 /** What automation (API/MCP) sends. Only title, excerpt, content and category are required. */
 export type ArticleInput = {
   title?: unknown; slug?: unknown; excerpt?: unknown; content?: unknown; category?: unknown;
-  tags?: unknown; coverImage?: unknown; coverAlt?: unknown; isFeatured?: unknown; publish?: unknown;
+  tags?: unknown; coverImage?: unknown; coverAlt?: unknown; coverGenerated?: unknown; isFeatured?: unknown; publish?: unknown;
   author?: { name?: unknown; role?: unknown; avatar?: unknown } | unknown;
   seo?: { metaTitle?: unknown; metaDescription?: unknown; focusKeyword?: unknown; keywords?: unknown } | unknown;
   faq?: unknown;
@@ -138,7 +138,7 @@ export function checkArticle(input: ArticleInput): ArticleCheck {
     tags, coverImage, isFeatured: input.isFeatured === true, isPublished: input.publish !== false,
     readingTimeMinutes: readingMinutes(rendered.words),
     author: { name: text(authorIn.name, 80) || 'Tim Editorial New Hope POS', role: text(authorIn.role, 80) || 'Editor', avatar },
-    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...(focusKeyword ? { focusKeyword } : {}), ...(text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}), faq, sources },
+    seo: { metaTitle, metaDescription, metaKeywords: keywords, ...(focusKeyword ? { focusKeyword } : {}), ...(text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}), ...(typeof input.coverGenerated === 'boolean' ? { coverGenerated: input.coverGenerated } : {}), faq, sources },
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? undefined : record, stats: { words: rendered.words, h2, h3 } };
 }

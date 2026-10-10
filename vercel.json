@@ -15,6 +15,22 @@
   ],
   "rewrites": [
     {
+      "source": "/.well-known/oauth-protected-resource/api/blog-mcp",
+      "destination": "/api/blog-mcp/resource"
+    },
+    {
+      "source": "/.well-known/oauth-authorization-server/api/blog-mcp/oauth",
+      "destination": "/api/blog-mcp/metadata"
+    },
+    {
+      "source": "/api/blog-mcp/(.*)",
+      "destination": "/api/blog-mcp/[...slug]?__path=/api/blog-mcp/$1"
+    },
+    {
+      "source": "/api/blog-mcp",
+      "destination": "/api/blog-mcp/[...slug]?__path=/api/blog-mcp"
+    },
+    {
       "source": "/api/v1/reports/(.*)",
       "destination": "/api/v1/sync/[...slug]?__path=/api/v1/reports/$1"
     },
