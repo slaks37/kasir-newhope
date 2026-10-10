@@ -102,6 +102,7 @@
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "credentials": {
         "httpBearerAuth": {
           "id": "c2jpjYgrapVg8z0u",
@@ -214,6 +215,119 @@
         144
       ],
       "webhookId": "560bc479-b6bf-4f3c-ae0c-541fae454f4e"
+    },
+    {
+      "parameters": {
+        "amount": 120
+      },
+      "id": "be7b8397-db27-48ea-a90b-3582bf03b52c",
+      "name": "Wait Before Cover Retry 1",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1328,
+        288
+      ],
+      "webhookId": "d14e68d9-906c-4143-8f30-ab4a36f84c77"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://apihub.agnes-ai.com/v1/images/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'agnes-image-2.1-flash',prompt:$('Prepare Cover Jobs').item.json.prompt,size:'1K',ratio:'16:9',extra_body:{response_format:'url'} }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 5000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 360000
+        }
+      },
+      "id": "a6de75ad-8da0-4272-b260-0bfe8903a1ef",
+      "name": "Agnes AI - Cover Retry 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1536,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "c2jpjYgrapVg8z0u",
+          "name": "AGNES AI 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 120
+      },
+      "id": "50998c25-4674-41c6-bc67-1eea3477a146",
+      "name": "Wait Before Cover Retry 2",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1728,
+        288
+      ],
+      "webhookId": "a25c964f-b8cf-43bf-8b17-40fd03f0623b"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://apihub.agnes-ai.com/v1/images/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'agnes-image-2.1-flash',prompt:$('Prepare Cover Jobs').item.json.prompt,size:'1K',ratio:'16:9',extra_body:{response_format:'url'} }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 5000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 360000
+        }
+      },
+      "id": "01a9ffef-42b0-45f6-80a3-72d0611da22a",
+      "name": "Agnes AI - Cover Retry 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1936,
+        288
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "c2jpjYgrapVg8z0u",
+          "name": "AGNES AI 2"
+        }
+      }
     }
   ],
   "connections": {
@@ -266,6 +380,13 @@
         [
           {
             "node": "Store Cover - New Hope API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Before Cover Retry 1",
             "type": "main",
             "index": 0
           }
@@ -322,6 +443,57 @@
         [
           {
             "node": "Wait Between Cover Repairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Cover Retry 1": {
+      "main": [
+        [
+          {
+            "node": "Agnes AI - Cover Retry 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agnes AI - Cover Retry 1": {
+      "main": [
+        [
+          {
+            "node": "Store Cover - New Hope API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Before Cover Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Cover Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Agnes AI - Cover Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agnes AI - Cover Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Store Cover - New Hope API",
             "type": "main",
             "index": 0
           }
