@@ -48,3 +48,23 @@ check wrapped categories, the GET search form, result counts and pagination.
 
 For a future very large archive, split sitemaps before the standard 50,000 URL /
 50 MB limits and assess full-text indexing and deeper-page query performance.
+
+## Blog-prefix property and change notifications
+
+For the Search Console property `https://kasir.newhope.space/blog/`, submit
+`https://kasir.newhope.space/blog/sitemap.xml`, not an article URL. This XML
+contains every published article under that prefix, excludes drafts, refreshes
+within 60 seconds, and keeps full ISO timestamps in lastmod. The root sitemap
+continues to include homepage, index and categories for root properties.
+
+Cards and article bylines display the original created_at date and time in WIB
+(Asia/Jakarta); updated bylines also include time. No historical timestamps change.
+
+REST/n8n, OAuth/ChatGPT and admin publication, edits, unpublication and deletion
+notify IndexNow after the database write commits. Preview/custom-site deployments
+do not advertise production changes. Requests are bounded to five seconds;
+failures are logged and do not roll back publication. There is no durable retry
+queue yet: the sitemap remains the discovery fallback. The public verification
+file under /blog/ proves only ownership for URL notifications, not CMS access.
+HTTP 200/202 means received/pending verification, never proof of indexing.
+Google's Indexing API is not used because ordinary blog articles are ineligible.

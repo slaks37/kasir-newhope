@@ -397,6 +397,32 @@ function generatedBlogCover(title) {
   return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
 }
 
+// src/server/blogDiscovery.ts
+var BLOG_INDEXNOW_KEY = "eda153f3ef2fb48e8fcc2454402be848";
+var BLOG_INDEXNOW_PATH = `/blog/${BLOG_INDEXNOW_KEY}.txt`;
+var ORIGIN = "https://kasir.newhope.space";
+async function notifyBlogDiscovery(slugs, send = fetch) {
+  if (process.env.VERCEL_ENV !== "production" || process.env.PUBLIC_SITE_URL && process.env.PUBLIC_SITE_URL.replace(/\/+$/, "") !== ORIGIN)
+    return { accepted: false, status: "skipped" };
+  const urls = [...new Set(slugs)].filter((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)).map((slug) => `${ORIGIN}/blog/${slug}`);
+  if (!urls.length) return { accepted: false, status: "skipped" };
+  try {
+    const response = await send("https://api.indexnow.org/indexnow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ host: "kasir.newhope.space", key: BLOG_INDEXNOW_KEY, keyLocation: ORIGIN + BLOG_INDEXNOW_PATH, urlList: urls }),
+      signal: AbortSignal.timeout(5e3),
+      redirect: "error"
+    });
+    const accepted = response.status === 200 || response.status === 202;
+    console.info("[blog-discovery]", accepted ? "accepted" : "failed", response.status, urls.length);
+    return { accepted, status: response.status };
+  } catch {
+    console.warn("[blog-discovery] notification failed; publication preserved");
+    return { accepted: false, status: "unavailable" };
+  }
+}
+
 // src/server/blogCover.ts
 import sharp from "sharp";
 
@@ -488,8 +514,9 @@ function createBlogAutomation(getDb) {
     if (!check.ok || !check.record) throw new BlogApiError(422, "ARTICLE_REJECTED", { errors: check.errors, warnings: check.warnings, stats: check.stats });
     const record = check.record;
     const db = await getDb();
-    return db.tx(async (c) => {
-      const existing = mode === "update" ? (await c.query("SELECT id, seo FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
+    const changedSlugs = [];
+    const result = await db.tx(async (c) => {
+      const existing = mode === "update" ? (await c.query("SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
       if (mode === "update" && !existing) throw new BlogApiError(404, "POST_NOT_FOUND");
       const clash = (await c.query(
         `SELECT slug FROM public.blog_posts WHERE (slug = $1 OR lower(title) = lower($2)) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
@@ -523,14 +550,19 @@ function createBlogAutomation(getDb) {
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
             RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID()]);
+      if (existing?.is_published) changedSlugs.push(existing.slug);
+      if (record.isPublished) changedSlugs.push(record.slug);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
       return { post: summary(rowToPublicPost(rows[0])), warnings: check.warnings, stats: check.stats };
     });
+    await notifyBlogDiscovery(changedSlugs);
+    return result;
   }
   async function unpublish(slug) {
     const db = await getDb();
     const { rows } = await db.query(`UPDATE public.blog_posts SET is_published = false, updated_at = CURRENT_TIMESTAMP WHERE slug = $1 RETURNING ${COLUMNS}`, [String(slug || "")]);
     if (!rows.length) throw new BlogApiError(404, "POST_NOT_FOUND");
+    await notifyBlogDiscovery([rows[0].slug]);
     return { post: summary(rowToPublicPost(rows[0])) };
   }
   const guide = () => ({

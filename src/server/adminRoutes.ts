@@ -25,6 +25,7 @@ import {
 } from '../lib/rbac/environments';
 import type { Db } from '../../services/shared/db';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
+import { notifyBlogDiscovery } from './blogDiscovery';
 import { registerBlogRoutes } from './blogRoutes';
 import { registerBlogMediaRoutes, type BlogMediaProvider } from './blogMedia';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
@@ -591,6 +592,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       const title = String(b.title || '').trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: 'TITLE_AND_SLUG_REQUIRED' });
 
+      const previous = (await db.query('SELECT slug, is_published FROM public.blog_posts WHERE slug = $1', [slug])).rows[0];
       const author = b.author || {};
       const { rows } = await db.query(
         `INSERT INTO public.blog_posts (
@@ -640,6 +642,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
           Boolean(b.isFeatured),
         ]
       );
+      await notifyBlogDiscovery([...(previous?.is_published ? [previous.slug] : []), ...(rows[0].is_published ? [rows[0].slug] : [])]);
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
@@ -650,6 +653,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     wrap(async (req, res, db) => {
       const id = String(req.params.id);
       const b = req.body || {};
+      const previous = (await db.query('SELECT slug, is_published FROM public.blog_posts WHERE id = $1', [id])).rows[0];
       const author = b.author || {};
       const { rows } = await db.query(
         `UPDATE public.blog_posts
@@ -691,6 +695,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         ]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      await notifyBlogDiscovery([...(previous?.is_published ? [previous.slug] : []), ...(rows[0].is_published ? [rows[0].slug] : [])]);
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
@@ -700,8 +705,9 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
     guard('VIEW_SECTOR_ANALYTICS'),
     wrap(async (req, res, db) => {
       const id = String(req.params.id);
-      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id`, [id]);
+      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id, slug, is_published`, [id]);
       if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
+      if (rows[0].is_published) await notifyBlogDiscovery([rows[0].slug]);
       res.json({ ok: true, id: rows[0].id });
     })
   );
