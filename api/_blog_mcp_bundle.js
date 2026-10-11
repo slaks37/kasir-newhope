@@ -402,7 +402,7 @@ var BLOG_INDEXNOW_KEY = "eda153f3ef2fb48e8fcc2454402be848";
 var BLOG_INDEXNOW_PATH = `/blog/${BLOG_INDEXNOW_KEY}.txt`;
 var ORIGIN = "https://kasir.newhope.space";
 async function notifyBlogDiscovery(slugs, send = fetch) {
-  if (process.env.VERCEL_ENV === "preview" || process.env.PUBLIC_SITE_URL && process.env.PUBLIC_SITE_URL.replace(/\/+$/, "") !== ORIGIN)
+  if (process.env.VERCEL_ENV !== "production" || process.env.PUBLIC_SITE_URL && process.env.PUBLIC_SITE_URL.replace(/\/+$/, "") !== ORIGIN)
     return { accepted: false, status: "skipped" };
   const urls = [...new Set(slugs)].filter((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)).map((slug) => `${ORIGIN}/blog/${slug}`);
   if (!urls.length) return { accepted: false, status: "skipped" };
