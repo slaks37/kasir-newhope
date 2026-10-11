@@ -31,6 +31,7 @@ export function siteUrl(): string {
 const esc = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 const date = (iso: string) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(new Date(iso));
+const timestamp = (iso: string) => `${date(iso)}, ${new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jakarta' }).format(new Date(iso)).replace('.', ':')} WIB`;
 const postUrl = (slug: string) => `${siteUrl()}/blog/${slug}`;
 const DEFAULT_IMAGE = '/new-hope-logo-mark.png';
 const BRAND_IMAGE = '/new-hope-logo-mark.png';
@@ -171,7 +172,7 @@ function card(post: PublicPost, heading: 'h2' | 'h3' = 'h2', featured = false) {
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
     <p>${esc(post.excerpt)}</p>
-    <div class="meta"><time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time><span aria-hidden="true">·</span><span>${post.readingTimeMinutes} menit baca</span></div>
+    <div class="meta"><time datetime="${esc(post.createdAt)}">${timestamp(post.createdAt)}</time><span aria-hidden="true">·</span><span>${post.readingTimeMinutes} menit baca</span></div>
   </div>
 </a>`;
 }
@@ -253,7 +254,7 @@ export function renderBlogPost(post: PublicPost, related: PublicPost[]): string 
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/blog">Blog</a><span aria-hidden="true">›</span><a href="/blog?kategori=${categorySlug(post.category)}">${esc(post.category)}</a></nav>
       <h1>${esc(post.title)}</h1>
       <p class="lead">${esc(post.excerpt)}</p>
-      <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} · <time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time>${updated ? ` · diperbarui <time datetime="${esc(post.updatedAt)}">${date(post.updatedAt)}</time>` : ''} · ${post.readingTimeMinutes} menit baca</span></div></div>
+      <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} · <time datetime="${esc(post.createdAt)}">${timestamp(post.createdAt)}</time>${updated ? ` · diperbarui <time datetime="${esc(post.updatedAt)}">${timestamp(post.updatedAt)}</time>` : ''} · ${post.readingTimeMinutes} menit baca</span></div></div>
     </header>
     <figure class="cover"><img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="675" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">${generated ? `<figcaption class="meta">${GENERATED_COVER_CAPTION}</figcaption>` : ''}</figure>
     <div class="layout">
@@ -289,18 +290,20 @@ export function renderNotFound(): string {
     body: `<div class="wrap"><header class="page-header"><span class="eyebrow">404</span><h1>Artikel tidak ditemukan</h1><p class="lead">Artikel mungkin sudah dipindahkan atau belum diterbitkan.</p><p><a class="btn" href="/blog">Lihat semua artikel</a></p></header></div>` });
 }
 
-export function renderSitemap(posts: PublicPost[]): string {
+export function renderSitemap(posts: PublicPost[], blogOnly = false): string {
   const base = siteUrl();
   const latest = posts.reduce((m, p) => (p.updatedAt > m ? p.updatedAt : m), '2026-10-01T00:00:00.000Z');
   const urls = [
-    { loc: `${base}/`, lastmod: latest, priority: '1.0' },
-    { loc: `${base}/blog`, lastmod: latest, priority: '0.9' },
-    ...BLOG_CATEGORIES.filter(c => posts.some(p => p.category === c)).map(c => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: '0.6' })),
+    ...(!blogOnly ? [
+      { loc: `${base}/`, lastmod: latest, priority: '1.0' },
+      { loc: `${base}/blog`, lastmod: latest, priority: '0.9' },
+      ...BLOG_CATEGORIES.filter(c => posts.some(p => p.category === c)).map(c => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: '0.6' })),
+    ] : []),
     ...posts.map(p => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: '0.8', image: p.coverImage })),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-${urls.map(u => `  <url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod.slice(0, 10)}</lastmod><priority>${u.priority}</priority>${'image' in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ''}</url>`).join('\n')}
+${urls.map(u => `  <url><loc>${esc(u.loc)}</loc><lastmod>${esc(u.lastmod)}</lastmod><priority>${u.priority}</priority>${'image' in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ''}</url>`).join('\n')}
 </urlset>`;
 }
 

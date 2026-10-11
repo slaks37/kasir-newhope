@@ -17,6 +17,7 @@ import type { Db } from '../../services/shared/db';
 import { ARTICLE_RULES, checkArticle, type ArticleInput, type ArticleRecord } from '../lib/blog/articleInput';
 import { BLOG_CATEGORIES, categoryFromSlug } from '../lib/blog/categories';
 import { generatedBlogCover } from '../lib/blog/covers';
+import { BLOG_INDEXNOW_KEY, BLOG_INDEXNOW_PATH, notifyBlogDiscovery } from './blogDiscovery';
 import { CoverError, createCoverImporter } from './blogCover';
 import { BLOG_PAGE_SIZE, renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
 
@@ -85,6 +86,15 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     res.status(result.status).type('html').send(result.html);
   }));
 
+  app.get(BLOG_INDEXNOW_PATH, (_req, res) => { res.type('text/plain').send(BLOG_INDEXNOW_KEY); });
+
+  app.get(['/sitemap.xml', '/blog/sitemap.xml'], page(async (req, res, db) => {
+    let posts: PublicPost[] = [];
+    try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
+    res.setHeader('Cache-Control', PAGE_CACHE);
+    res.type('application/xml').send(renderSitemap(posts, req.path === '/blog/sitemap.xml'));
+  }));
+
   app.get('/blog/:slug', page(async (req, res, db) => {
     const slug = String(req.params.slug).toLowerCase();
     if (slug !== req.params.slug) return res.redirect(301, `/blog/${slug}`);
@@ -96,13 +106,6 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     if (req.method !== 'HEAD') void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('html').send(renderBlogPost(post, related));
-  }));
-
-  app.get('/sitemap.xml', page(async (_req, res, db) => {
-    let posts: PublicPost[] = [];
-    try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
-    res.setHeader('Cache-Control', PAGE_CACHE);
-    res.type('application/xml').send(renderSitemap(posts));
   }));
 
   app.get('/rss.xml', page(async (_req, res, db) => {
@@ -180,9 +183,10 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
     if (!check.ok || !check.record) throw new BlogApiError(422, 'ARTICLE_REJECTED', { errors: check.errors, warnings: check.warnings, stats: check.stats });
     const record: ArticleRecord = check.record;
     const db = await getDb();
-    return db.tx(async c => {
+    const changedSlugs: string[] = [];
+    const result = await db.tx(async c => {
       const existing = mode === 'update'
-        ? (await c.query('SELECT id, seo FROM public.blog_posts WHERE slug = $1 FOR UPDATE', [pathSlug])).rows[0]
+        ? (await c.query('SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE', [pathSlug])).rows[0]
         : undefined;
       if (mode === 'update' && !existing) throw new BlogApiError(404, 'POST_NOT_FOUND');
       const clash = (await c.query(`SELECT slug FROM public.blog_posts WHERE (slug = $1 OR lower(title) = lower($2)) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
@@ -204,15 +208,20 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
         : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
             RETURNING ${COLUMNS}`, [...values, 'blog-' + randomUUID()]);
+      if (existing?.is_published) changedSlugs.push(existing.slug);
+      if (record.isPublished) changedSlugs.push(record.slug);
       console.info('[blog-automation]', existing ? 'UPDATED' : 'CREATED', record.slug, record.isPublished ? 'published' : 'draft');
       return { post: summary(rowToPublicPost(rows[0])), warnings: check.warnings, stats: check.stats };
     });
+    await notifyBlogDiscovery(changedSlugs);
+    return result;
   }
 
   async function unpublish(slug: string) {
     const db = await getDb();
     const { rows } = await db.query(`UPDATE public.blog_posts SET is_published = false, updated_at = CURRENT_TIMESTAMP WHERE slug = $1 RETURNING ${COLUMNS}`, [String(slug || '')]);
     if (!rows.length) throw new BlogApiError(404, 'POST_NOT_FOUND');
+    await notifyBlogDiscovery([rows[0].slug]);
     return { post: summary(rowToPublicPost(rows[0])) };
   }
 

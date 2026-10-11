@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import express from 'express';
 import type { Db } from '../../services/shared/db';
+import { BLOG_INDEXNOW_KEY, BLOG_INDEXNOW_PATH } from '../../src/server/blogDiscovery';
 import { registerBlogRoutes } from '../../src/server/blogRoutes';
 import { renderArticle } from '../../src/lib/blog/markdown';
 import { checkArticle } from '../../src/lib/blog/articleInput';
@@ -87,6 +88,15 @@ try {
   let sitemap = await get('/sitemap.xml');
   assert.match(sitemap.type, /xml/); assert.match(sitemap.text, /<loc>https:\/\/kasir\.example\/blog\/cara-membuka-kafe-modal-10-juta-sukses<\/loc>/);
   assert.match((await get('/rss.xml')).text, /<rss version="2.0"/);
+  assert.equal((await get(BLOG_INDEXNOW_PATH)).text, BLOG_INDEXNOW_KEY);
+  const scoped = await get('/blog/sitemap.xml');
+  assert.equal(scoped.status, 200); assert.match(scoped.type, /xml/);
+  const locations = [...scoped.text.matchAll(/<loc>(.*?)<\/loc>/g)].map(m => m[1]);
+  assert.ok(locations.length > 0 && locations.every(u => u.startsWith('https://kasir.example/blog/')));
+  await db.query("UPDATE public.blog_posts SET created_at='2026-10-11T18:31:00Z' WHERE slug='cara-membuka-kafe-modal-10-juta-sukses'");
+  for (const path of ['/blog', '/blog/cara-membuka-kafe-modal-10-juta-sukses'])
+    assert.match((await get(path)).text, /12 Oktober 2026, 01:31 WIB/, 'UTC dates roll over correctly in Jakarta');
+
 
   // Automation API: fail closed without configuration, then key-authenticated.
   delete process.env.BLOG_API_KEYS;

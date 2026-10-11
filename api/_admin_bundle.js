@@ -1229,6 +1229,32 @@ function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
 }
 
+// src/server/blogDiscovery.ts
+var BLOG_INDEXNOW_KEY = "eda153f3ef2fb48e8fcc2454402be848";
+var BLOG_INDEXNOW_PATH = `/blog/${BLOG_INDEXNOW_KEY}.txt`;
+var ORIGIN = "https://kasir.newhope.space";
+async function notifyBlogDiscovery(slugs, send = fetch) {
+  if (process.env.VERCEL_ENV === "preview" || process.env.PUBLIC_SITE_URL && process.env.PUBLIC_SITE_URL.replace(/\/+$/, "") !== ORIGIN)
+    return { accepted: false, status: "skipped" };
+  const urls = [...new Set(slugs)].filter((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)).map((slug) => `${ORIGIN}/blog/${slug}`);
+  if (!urls.length) return { accepted: false, status: "skipped" };
+  try {
+    const response = await send("https://api.indexnow.org/indexnow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ host: "kasir.newhope.space", key: BLOG_INDEXNOW_KEY, keyLocation: ORIGIN + BLOG_INDEXNOW_PATH, urlList: urls }),
+      signal: AbortSignal.timeout(5e3),
+      redirect: "error"
+    });
+    const accepted = response.status === 200 || response.status === 202;
+    console.info("[blog-discovery]", accepted ? "accepted" : "failed", response.status, urls.length);
+    return { accepted, status: response.status };
+  } catch {
+    console.warn("[blog-discovery] notification failed; publication preserved");
+    return { accepted: false, status: "unavailable" };
+  }
+}
+
 // src/server/blogRoutes.ts
 import { createHash, randomUUID as randomUUID5, timingSafeEqual } from "node:crypto";
 
@@ -1586,6 +1612,7 @@ function siteUrl() {
 var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var json = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
 var date = (iso2) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso2));
+var timestamp = (iso2) => `${date(iso2)}, ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Jakarta" }).format(new Date(iso2)).replace(".", ":")} WIB`;
 var postUrl = (slug) => `${siteUrl()}/blog/${slug}`;
 var DEFAULT_IMAGE = "/new-hope-logo-mark.png";
 var BRAND_IMAGE = "/new-hope-logo-mark.png";
@@ -1723,7 +1750,7 @@ function card(post, heading = "h2", featured = false) {
     <span class="cat">${esc(post.category)}</span>
     <${heading}>${esc(post.title)}</${heading}>
     <p>${esc(post.excerpt)}</p>
-    <div class="meta"><time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time><span aria-hidden="true">\xB7</span><span>${post.readingTimeMinutes} menit baca</span></div>
+    <div class="meta"><time datetime="${esc(post.createdAt)}">${timestamp(post.createdAt)}</time><span aria-hidden="true">\xB7</span><span>${post.readingTimeMinutes} menit baca</span></div>
   </div>
 </a>`;
 }
@@ -1815,7 +1842,7 @@ function renderBlogPost(post, related) {
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/blog">Blog</a><span aria-hidden="true">\u203A</span><a href="/blog?kategori=${categorySlug(post.category)}">${esc(post.category)}</a></nav>
       <h1>${esc(post.title)}</h1>
       <p class="lead">${esc(post.excerpt)}</p>
-      <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} \xB7 <time datetime="${esc(post.createdAt)}">${date(post.createdAt)}</time>${updated ? ` \xB7 diperbarui <time datetime="${esc(post.updatedAt)}">${date(post.updatedAt)}</time>` : ""} \xB7 ${post.readingTimeMinutes} menit baca</span></div></div>
+      <div class="byline">${avatar}<div><strong>${esc(post.author.name)}</strong><span class="meta">${esc(post.author.role)} \xB7 <time datetime="${esc(post.createdAt)}">${timestamp(post.createdAt)}</time>${updated ? ` \xB7 diperbarui <time datetime="${esc(post.updatedAt)}">${timestamp(post.updatedAt)}</time>` : ""} \xB7 ${post.readingTimeMinutes} menit baca</span></div></div>
     </header>
     <figure class="cover"><img src="${esc(image(post))}" alt="${esc(post.seo.coverAlt || post.title)}" width="1200" height="675" fetchpriority="high" onerror="this.onerror=null;this.src='${DEFAULT_IMAGE}'">${generated ? `<figcaption class="meta">${GENERATED_COVER_CAPTION}</figcaption>` : ""}</figure>
     <div class="layout">
@@ -1874,18 +1901,20 @@ function renderNotFound() {
     body: `<div class="wrap"><header class="page-header"><span class="eyebrow">404</span><h1>Artikel tidak ditemukan</h1><p class="lead">Artikel mungkin sudah dipindahkan atau belum diterbitkan.</p><p><a class="btn" href="/blog">Lihat semua artikel</a></p></header></div>`
   });
 }
-function renderSitemap(posts) {
+function renderSitemap(posts, blogOnly = false) {
   const base = siteUrl();
   const latest = posts.reduce((m, p) => p.updatedAt > m ? p.updatedAt : m, "2026-10-01T00:00:00.000Z");
   const urls = [
-    { loc: `${base}/`, lastmod: latest, priority: "1.0" },
-    { loc: `${base}/blog`, lastmod: latest, priority: "0.9" },
-    ...BLOG_CATEGORIES.filter((c) => posts.some((p) => p.category === c)).map((c) => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: "0.6" })),
+    ...!blogOnly ? [
+      { loc: `${base}/`, lastmod: latest, priority: "1.0" },
+      { loc: `${base}/blog`, lastmod: latest, priority: "0.9" },
+      ...BLOG_CATEGORIES.filter((c) => posts.some((p) => p.category === c)).map((c) => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: "0.6" }))
+    ] : [],
     ...posts.map((p) => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: "0.8", image: p.coverImage }))
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod.slice(0, 10)}</lastmod><priority>${u.priority}</priority>${"image" in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ""}</url>`).join("\n")}
+${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc><lastmod>${esc(u.lastmod)}</lastmod><priority>${u.priority}</priority>${"image" in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ""}</url>`).join("\n")}
 </urlset>`;
 }
 function renderRss(posts) {
@@ -1976,6 +2005,19 @@ function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
     res.setHeader("Cache-Control", "no-store");
     res.status(result.status).type("html").send(result.html);
   }));
+  app.get(BLOG_INDEXNOW_PATH, (_req, res) => {
+    res.type("text/plain").send(BLOG_INDEXNOW_KEY);
+  });
+  app.get(["/sitemap.xml", "/blog/sitemap.xml"], page2(async (req, res, db) => {
+    let posts = [];
+    try {
+      posts = await publishedPosts(db);
+    } catch (error) {
+      if (!isMissingStore(error)) throw error;
+    }
+    res.setHeader("Cache-Control", PAGE_CACHE);
+    res.type("application/xml").send(renderSitemap(posts, req.path === "/blog/sitemap.xml"));
+  }));
   app.get("/blog/:slug", page2(async (req, res, db) => {
     const slug = String(req.params.slug).toLowerCase();
     if (slug !== req.params.slug) return res.redirect(301, `/blog/${slug}`);
@@ -1991,16 +2033,6 @@ function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
     });
     res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("html").send(renderBlogPost(post, related));
-  }));
-  app.get("/sitemap.xml", page2(async (_req, res, db) => {
-    let posts = [];
-    try {
-      posts = await publishedPosts(db);
-    } catch (error) {
-      if (!isMissingStore(error)) throw error;
-    }
-    res.setHeader("Cache-Control", PAGE_CACHE);
-    res.type("application/xml").send(renderSitemap(posts));
   }));
   app.get("/rss.xml", page2(async (_req, res, db) => {
     res.setHeader("Cache-Control", PAGE_CACHE);
@@ -2079,8 +2111,9 @@ function createBlogAutomation(getDb) {
     if (!check.ok || !check.record) throw new BlogApiError(422, "ARTICLE_REJECTED", { errors: check.errors, warnings: check.warnings, stats: check.stats });
     const record = check.record;
     const db = await getDb();
-    return db.tx(async (c) => {
-      const existing = mode === "update" ? (await c.query("SELECT id, seo FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
+    const changedSlugs = [];
+    const result = await db.tx(async (c) => {
+      const existing = mode === "update" ? (await c.query("SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
       if (mode === "update" && !existing) throw new BlogApiError(404, "POST_NOT_FOUND");
       const clash = (await c.query(
         `SELECT slug FROM public.blog_posts WHERE (slug = $1 OR lower(title) = lower($2)) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
@@ -2114,14 +2147,19 @@ function createBlogAutomation(getDb) {
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
             RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID5()]);
+      if (existing?.is_published) changedSlugs.push(existing.slug);
+      if (record.isPublished) changedSlugs.push(record.slug);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
       return { post: summary(rowToPublicPost(rows[0])), warnings: check.warnings, stats: check.stats };
     });
+    await notifyBlogDiscovery(changedSlugs);
+    return result;
   }
   async function unpublish(slug) {
     const db = await getDb();
     const { rows } = await db.query(`UPDATE public.blog_posts SET is_published = false, updated_at = CURRENT_TIMESTAMP WHERE slug = $1 RETURNING ${COLUMNS}`, [String(slug || "")]);
     if (!rows.length) throw new BlogApiError(404, "POST_NOT_FOUND");
+    await notifyBlogDiscovery([rows[0].slug]);
     return { post: summary(rowToPublicPost(rows[0])) };
   }
   const guide = () => ({
@@ -3709,6 +3747,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
+      const previous = (await db.query("SELECT slug, is_published FROM public.blog_posts WHERE slug = $1", [slug])).rows[0];
       const author = b.author || {};
       const { rows } = await db.query(
         `INSERT INTO public.blog_posts (
@@ -3758,6 +3797,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
           Boolean(b.isFeatured)
         ]
       );
+      await notifyBlogDiscovery([...previous?.is_published ? [previous.slug] : [], ...rows[0].is_published ? [rows[0].slug] : []]);
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
@@ -3767,6 +3807,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     wrap(async (req, res, db) => {
       const id = String(req.params.id);
       const b = req.body || {};
+      const previous = (await db.query("SELECT slug, is_published FROM public.blog_posts WHERE id = $1", [id])).rows[0];
       const author = b.author || {};
       const { rows } = await db.query(
         `UPDATE public.blog_posts
@@ -3808,6 +3849,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         ]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      await notifyBlogDiscovery([...previous?.is_published ? [previous.slug] : [], ...rows[0].is_published ? [rows[0].slug] : []]);
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
@@ -3816,8 +3858,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const id = String(req.params.id);
-      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id`, [id]);
+      const { rows } = await db.query(`DELETE FROM public.blog_posts WHERE id = $1 RETURNING id, slug, is_published`, [id]);
       if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
+      if (rows[0].is_published) await notifyBlogDiscovery([rows[0].slug]);
       res.json({ ok: true, id: rows[0].id });
     })
   );
@@ -3950,7 +3993,7 @@ var FinanceError = class extends Error {
     this.status = status;
   }
 };
-function timestamp(value) {
+function timestamp2(value) {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new FinanceError(400, "INVALID_EVENT_DATE");
   return new Date(value).toISOString();
 }
@@ -3978,7 +4021,7 @@ async function scopeFor(db, req) {
 async function applyRefund(db, scope, transactionId, command) {
   if (!command || !ID.test(command.clientRefundId || "") || !["CASH", "ORIGINAL_METHOD"].includes(command.refundMethod) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 500 || !Array.isArray(command.items) || !command.items.length || command.items.length > 200)
     throw new FinanceError(400, "INVALID_REFUND");
-  const occurredAt = timestamp(command.occurredAt || (/* @__PURE__ */ new Date()).toISOString());
+  const occurredAt = timestamp2(command.occurredAt || (/* @__PURE__ */ new Date()).toISOString());
   const normalized = { ...command, occurredAt, reason: command.reason.trim(), items: [...command.items].sort((a, b) => a.clientItemId.localeCompare(b.clientItemId)) };
   const txn = (await db.query(
     `SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE`,
@@ -4122,7 +4165,7 @@ function registerFinanceRoutes(app, db) {
     const b = req.body;
     if (!ID.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
       throw new FinanceError(400, "INVALID_CASH_EVENT");
-    const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp(b.occurredAt);
+    const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp2(b.occurredAt);
     const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
     const prev = (await c.query("SELECT id,command=$2::jsonb AS same,outlet_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3", [s.tenantId, JSON.stringify(command), b.clientEventId])).rows[0];
     if (prev) {
@@ -4295,7 +4338,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
 
 // services/pos/laborProjection.ts
 var text2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
-var timestamp2 = (value, optional = false) => {
+var timestamp3 = (value, optional = false) => {
   if (optional && (value === void 0 || value === null || value === "")) return null;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new BillingError(422, "INVALID_LABOR_DATE");
   return new Date(value).toISOString();
@@ -4319,7 +4362,7 @@ async function projectLabor(c, scope, sector, op) {
   if (value.id !== op.recordId || !text2(value.staffId, 96) || !text2(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
   if (attendance) {
     if (!["CLOCKED_IN", "CLOCKED_OUT"].includes(String(value.status))) throw new BillingError(422, "INVALID_ATTENDANCE_STATUS");
-    const started = timestamp2(value.clockInTime), ended = timestamp2(value.clockOutTime, true);
+    const started = timestamp3(value.clockInTime), ended = timestamp3(value.clockOutTime, true);
     if (value.status === "CLOCKED_OUT" && !ended || ended && Date.parse(ended) < Date.parse(started)) throw new BillingError(422, "INVALID_ATTENDANCE_DATE");
     if (typeof value.branchId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.branchId)) throw new BillingError(422, "ATTENDANCE_OUTLET_REQUIRED");
     const outlet = (await c.query("SELECT id FROM internal.outlets WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3", [value.branchId, scope.tenantId, scope.merchantId])).rows[0];
@@ -4358,7 +4401,7 @@ async function projectLabor(c, scope, sector, op) {
     return;
   }
   if (!["DRAFT", "PAID"].includes(String(value.status)) || typeof value.periodMonth !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.periodMonth) || !Number.isSafeInteger(value.daysAttended) || Number(value.daysAttended) < 0) throw new BillingError(422, "INVALID_PAYROLL_RECORD");
-  const start = timestamp2(value.periodStart), end = timestamp2(value.periodEnd), paid = timestamp2(value.paidAt, true);
+  const start = timestamp3(value.periodStart), end = timestamp3(value.periodEnd), paid = timestamp3(value.paidAt, true);
   if (end < start || value.status === "PAID" && !paid) throw new BillingError(422, "INVALID_PAYROLL_DATE");
   const fields = ["baseSalary", "allowance", "individualCommission", "teamPoolCommission", "dailyTargetBonus", "grossEarnings", "deductions", "netSalary"];
   const amounts = fields.map((field) => money2(value[field]));
