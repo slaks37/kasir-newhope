@@ -1059,7 +1059,7 @@ export const AIAssistant: React.FC = () => {
       const rows = parseActionJournal(localStorage.getItem(key) || '[]',tenant.businessId);
       const record: ActionRecord = {
         id: newId('plan'), businessId: tenant.businessId, status: 'DRAFT', createdAt: new Date().toISOString(),
-        action: {id: msg.id, kind:'REVIEW', title:'Draft DeepSeek — tinjau owner', reason:'Saran model, bukan tindakan yang sudah dilakukan.',
+        action: {id: msg.id, kind:'REVIEW', title:'Draft AI pihak ketiga — tinjau owner', reason:'Saran model, bukan tindakan yang sudah dilakukan.',
           draft:msg.text.slice(0,15000), metric:'revenue'},
       };
       if (!rows.some(r => r.action?.id === msg.id)) localStorage.setItem(key,JSON.stringify([...rows,record].slice(-100)));

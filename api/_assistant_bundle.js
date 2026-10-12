@@ -201,7 +201,7 @@ function getLlmConfig() {
   const model = (process.env.DEEPSEEK_MODEL || "deepseek-chat").trim() || "deepseek-chat";
   return { apiKey, baseUrl, model, provider: "DeepSeek" };
 }
-var LLM_PROVIDER_LABEL = "DeepSeek";
+var LLM_PROVIDER_LABEL = "AI pihak ketiga: Agnes AI & DeepSeek";
 var LLM_TIMEOUT_MS = 3e4;
 var LLM_DEFAULT_MAX_TOKENS = 1500;
 async function callLlm(opts) {
