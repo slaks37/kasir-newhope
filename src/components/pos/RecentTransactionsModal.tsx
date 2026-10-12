@@ -184,12 +184,12 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
     document.body.removeChild(link);
   };
 
-  const executeVoidTransaction = (approvedBy?: string) => {
+  const executeVoidTransaction = async (approvedBy?: string) => {
     if (!voidingOrder) return;
     const reason = customReason.trim() || voidReason;
     // Penyetuju override ikut tercatat di catatan order dan log stok perangkat.
     const finalReason = approvedBy ? `${reason} (disetujui ${approvedBy})` : reason;
-    voidOrder(voidingOrder.id, finalReason);
+    try{await voidOrder(voidingOrder.id, finalReason);}catch(error){notify(error instanceof Error?error.message:'Void tidak diproses');return;}
     setVoidingOrder(null);
     setVoidReason('Salah Input Menu / Kasir');
     setCustomReason('');
@@ -198,10 +198,6 @@ export const RecentTransactionsModal: React.FC<RecentTransactionsModalProps> = (
 
   const handleConfirmVoid = () => {
     if (!voidingOrder) return;
-    if (!hasPermission('void_order')) {
-      setShowAuthModal(true);
-      return;
-    }
     executeVoidTransaction();
   };
 

@@ -177,7 +177,7 @@ var INITIAL_USERS = [
     name: "Pemilik Toko",
     username: "owner",
     role: "ADMIN",
-    pin: "1234",
+    pin: "",
     email: "",
     phone: "",
     status: "ACTIVE",

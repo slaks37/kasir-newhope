@@ -1,3 +1,4 @@
+import {commandHash} from '../../services/pos/financialAuthorization';
 // Real isolated PostgreSQL engine and HTTP boundary. Never connects to production.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,21 +27,47 @@ await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref,owner_user_i
 await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$2,'Cloud brand','FNB',$3)",[merchant,tenant,owner+'_FNB']);
 await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$3,$4,'Active',true),($2,$3,$4,'Deferred',false)",[outlet,inactive,tenant,merchant]);
 await ensureSubscription(db,tenant);
-const app=express();app.use(express.json());app.use(createSyncHandler(async req=>req.headers.authorization==='Bearer owner'?{subject:owner}:req.headers.authorization==='Bearer other'?{subject:other}:null,async()=>db));
+const app=express();app.use(express.json());app.use(createSyncHandler(async req=>req.headers.authorization==='Bearer owner'?{subject:owner,email:owner+'@fixture.invalid'}:req.headers.authorization==='Bearer other'?{subject:other}:null,async()=>db));
 const server=app.listen(0,'127.0.0.1');await new Promise<void>((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
 const base='http://127.0.0.1:'+(server.address() as any).port;
 const nativeFetch=globalThis.fetch;
+process.env.SUPABASE_URL='https://auth.fixture.invalid';process.env.SUPABASE_ANON_KEY='fixture-only';
 globalThis.fetch=((input:any,init?:RequestInit)=>{
   const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);
+  if(url.origin==='https://auth.fixture.invalid'){const body=JSON.parse(String(init?.body));return Promise.resolve(new Response(JSON.stringify(body.password==='fixture-password'?{user:{id:owner,email_confirmed_at:new Date().toISOString()}}:{error:'invalid'}),{status:body.password==='fixture-password'?200:400}));}
   assert.equal(url.origin,base,'Integration fixture must never contact a remote service');
   return nativeFetch(input,init);
 }) as typeof fetch;
-const post=async(path:string,body:any,token='owner')=>{const response=await fetch(base+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
+const rawPost=async(path:string,body:any,token='owner')=>{const response=await fetch(base+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
+const grants=new Map<string,string>();
+const grant=async(body:any,action:string,reference:string,reason:string,command:any)=>{
+  const key=JSON.stringify([body.sector,body.outletId,action,reference,commandHash(command)]);
+  if(grants.has(key))return grants.get(key);
+  const result=await rawPost('/api/v1/finance/approve',{sector:body.sector,outletId:body.outletId,action,reference,reason,command,pin:'529681'});
+  if(result.status!==200)return undefined;
+  grants.set(key,result.data.approvalGrant);return result.data.approvalGrant;
+};
+const post=async(path:string,input:any,token='owner')=>{
+  const body=JSON.parse(JSON.stringify(input));
+  if(token==='owner'){
+    if(path==='/api/v1/finance/refund')body.refund.approvalGrant=await grant(body,'REFUND',body.clientTxnId,body.refund.reason,body.refund);
+    if(path==='/api/v1/finance/cash'&&body.type==='CASH_OUT')body.approvalGrant=await grant(body,'CASH_OUT',body.clientEventId,body.description,body);
+    if(path==='/api/v1/finance/cash/reverse')body.approvalGrant=await grant(body,'CASH_REVERSE',body.originalEventId,body.reason,body);
+    if(path==='/api/v1/sync/transactions')for(const txn of body.transactions||[]){
+      if(txn.paymentStatus==='CANCELLED'){txn.voidReason='Fixture approved void';txn.approvalGrant=await grant(body,'VOID',txn.clientTxnId,txn.voidReason,txn);}
+      for(const refund of txn.refunds||[])refund.approvalGrant=await grant(body,'REFUND',txn.clientTxnId,refund.reason,refund);
+    }
+  }
+  return rawPost(path,body,token);
+};
 const get=async(path:string,token='owner')=>{const response=await fetch(base+path,{headers:{authorization:'Bearer '+token}});return {status:response.status,data:await response.json()};};
 const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'1234'})).status,400);
+  assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'529681'})).status,403);
+  assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'529681',ownerPassword:'fixture-password'})).status,200);
   const directory=await get('/api/v1/sync/business');
   assert.equal(directory.status,200);assert.equal(directory.data.businesses[0].businessId,merchant);
   assert.equal(directory.data.businesses[0].legacyAlias,owner+'_FNB');
@@ -164,6 +191,16 @@ try{
   assert.equal((await get('/api/v1/reports/summary?'+query)).data.financialSummary.totalNetRevenue,0);
   assert.equal((await transactionLog(db,{merchantId:merchant})).counts.voided,1);
   const cash={...scope,clientEventId:'cash-A',type:'CASH_OUT',amount:5000,category:'OPERASIONAL',description:'Expense',occurredAt:'2026-10-01T10:00:00Z'};
+  assert.equal((await rawPost('/api/v1/finance/cash',cash)).status,403,'No grant cannot debit cash');
+  const secureGrant=await grant(cash,'CASH_OUT',cash.clientEventId,cash.description,cash);
+  assert.equal((await rawPost('/api/v1/finance/cash',{...cash,approvalGrant:secureGrant,amount:cash.amount+1})).status,403,'Grant cannot authorize changed amount');
+  assert.equal((await rawPost('/api/v1/finance/cash',{...cash,approvalGrant:secureGrant,clientEventId:'stolen-reference'})).status,403,'Grant bound to event reference');
+  assert.equal((await rawPost('/api/v1/finance/cash',{...cash,approvalGrant:'X'.repeat(43)})).status,403,'Forged grant denied');
+  const expiring={...cash,clientEventId:'expired-cash'};
+  const expired=await grant(expiring,'CASH_OUT',expiring.clientEventId,expiring.description,expiring);
+  await db.query("UPDATE pos.financial_approval_grants SET expires_at=now()-interval '1 second' WHERE reference=$1",[expiring.clientEventId]);
+  assert.equal((await rawPost('/api/v1/finance/cash',{...expiring,approvalGrant:expired})).status,403,'Expired unconsumed grant denied');
+
   assert.equal((await post('/api/v1/finance/cash',cash)).status,200);assert.equal((await post('/api/v1/finance/cash',cash)).data.replayed,true);
   assert.equal((await post('/api/v1/finance/cash',{...cash,amount:6000})).status,409);
   assert.equal((await get('/api/v1/reports/summary?'+query)).data.cashSummary.expectedCashInDrawer,-5000);
@@ -380,5 +417,13 @@ try{
   console.log('PASS: 60/61 partial commit, merchant-scoped identities, exact replay, server-side wrong-scope backups and byte-equivalent financial ledger');
   console.log('PASS: canonical directory and explicit business authorization; same-sector ambiguity and inactive/foreign selections fail closed');
   console.log('PASS: two same-sector businesses own identical product IDs independently, exact replay, namespace rollback/retry, legacy-client compatibility, recovery snapshot and idempotent creation');
+  await assert.rejects(()=>db.query("UPDATE pos.financial_authorization_audit SET reason='changed'"),/FINANCIAL_AUTHORIZATION_AUDIT_IMMUTABLE/);
+  await assert.rejects(()=>db.exec('TRUNCATE pos.financial_authorization_audit'),/FINANCIAL_AUTHORIZATION_AUDIT_IMMUTABLE/);
+  const scopedAudit=(await db.query("SELECT * FROM pos.financial_authorization_audit WHERE action='CASH_OUT' AND reference='cash-A'")).rows;
+  assert.equal(scopedAudit.length,1,'Replay never creates duplicate approval audit');assert.equal(scopedAudit[0].actor_ref,owner);assert.equal(scopedAudit[0].approver_ref,owner);assert(scopedAudit[0].authorized_at);
+  await db.query('UPDATE pos.financial_pin_attempts SET failures=0,attempts=0 WHERE tenant_id=$1',[tenant]);
+  for(let i=0;i<5;i++)assert.equal((await rawPost('/api/v1/finance/approve',{...cash,action:'CASH_OUT',reference:'cash-A',reason:'Test lockout',command:cash,pin:'913682'})).status,403);
+  assert.equal((await rawPost('/api/v1/finance/approve',{...cash,action:'CASH_OUT',reference:'cash-A',reason:'Test lockout',command:cash,pin:'529681'})).status,429,'Persistent server lockout survives requests');
+  assert.equal((await db.query('SELECT failures FROM pos.financial_pin_attempts WHERE tenant_id=$1',[tenant])).rows[0].failures,5);
   console.log('PASS: Device A → PostgreSQL → Device B → Admin equality; retry, immutable cash, refund, void, SETTLED split tender, tenant/outlet isolation and timezone');
 }finally{globalThis.fetch=nativeFetch;await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}

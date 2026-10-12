@@ -1,3 +1,4 @@
+import {requestFinancialApproval,financeRequest} from '../lib/auth/financialApprovalClient';
 import React, { useState, useEffect, ReactNode } from 'react';
 import { orderOperations,mergeOrderOperations } from '../lib/sync/orderOperations';
 import {
@@ -67,7 +68,6 @@ import {
   getPinLockoutStatus,
   recordFailedPinAttempt,
   resetPinAttempts,
-  DEFAULT_OWNER_PIN,
 } from '../lib/auth/pinSecurity';
 import { useAuth } from './AuthContext';
 import {useWorkspaceBusiness} from './WorkspaceBusinessContext';
@@ -204,10 +204,10 @@ export interface POSContextType {
     }[];
     paidFromCashDrawer: boolean;
     notes?: string;
-  }) => {
+  }) => Promise<{
     savedItems: StockItem[];
     totalCost: number;
-  };
+  }>;
 
   // Product Bundles (Paket Promo & Bundling)
   bundles: ProductBundle[];
@@ -351,7 +351,7 @@ export interface POSContextType {
   payrollSlips: PayrollSlip[];
   savePayrollSlip: (slip: PayrollSlip) => void;
   deletePayrollSlip: (slipId: string) => void;
-  disbursePayrollCashMovement: (slipId: string, paymentMethod?: string) => boolean;
+  disbursePayrollCashMovement: (slipId: string, paymentMethod?: string) => Promise<boolean>;
 
   // Automated WhatsApp Lifecycle Hooks
   sentLifecycleHookIds: string[];
@@ -383,9 +383,9 @@ export interface POSContextType {
     amount: number,
     description: string,
     recipientOrSource?: string
-  ) => CashMovement;
-  deleteCashMovement: (id: string) => void;
-  setInitialCash: (amount: number) => void;
+  ) => Promise<CashMovement>;
+  deleteCashMovement: (id: string) => Promise<void>;
+  setInitialCash: (amount: number) => Promise<void>;
 }
 
 // Compatibility consumers retain usePOS; hot paths subscribe to individual domains.
@@ -484,7 +484,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko',
     username: authUser?.email?.split('@')[0] || 'owner',
     role: 'ADMIN',
-    pin: DEFAULT_OWNER_PIN,
+    pin: '',
     email: authUser?.email || '',
     phone: '',
     status: 'ACTIVE',
@@ -1354,7 +1354,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 
   // Input Bahan Baku Otomatis dari Kamera / Scan Nota Belanja Supplier
-  const processRawMaterialReceipt = (payload: {
+  const processRawMaterialReceipt = async (payload: {
     receiptImage?: string;
     supplierName?: string;
     receiptDate?: string;
@@ -1455,13 +1455,14 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
+    if(payload.paidFromCashDrawer&&totalCost>0)
+      await addCashMovement('CASH_OUT','BELANJA_BAHAN',totalCost,'Pembelian bahan baku',payload.supplierName);
+
     setStockItems(updatedStockItems);
     if (newLogs.length > 0) {
       setInventoryLogs((prev) => [...newLogs, ...prev]);
     }
 
-    if(payload.paidFromCashDrawer&&totalCost>0)
-      addCashMovement('CASH_OUT','BELANJA_BAHAN',totalCost,'Pembelian bahan baku',payload.supplierName);
 
     if (soundEnabled) playPOSSound('payment_success');
 
@@ -1541,6 +1542,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const verifyPin = async (pinInput: string, requiredRoles?: UserRole[]) => {
     // 1. Cek status lockout terlebih dahulu
+    if(pinInput==='1234')return {success:false,message:'PIN bawaan ditolak. Atur PIN pribadi; tindakan finansial memakai PIN server.'};
     const lockout = getPinLockoutStatus();
     if (lockout.isLockedOut) {
       return {
@@ -1965,18 +1967,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Void / Cancel Order
-  const voidOrder = (orderId: string, reason = 'Kesalahan Input Kasir') => {
+  const voidOrder = async (orderId: string, reason = 'Kesalahan Input Kasir') => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'VOID') return;
 
-    try {
-      enqueueSync(tenant.businessId,
-        orderToPayload({ ...targetOrder, status: 'VOID', paymentStatus: 'CANCELLED' }, currentUser.role));
-    } catch (error) {
-      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
-      notify('Pembatalan belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
-      return;
-    }
+    if(!online)throw new Error('Void memerlukan persetujuan server saat online.');
+    await runSync(syncTarget,true);
+    const command={...orderToPayload({...targetOrder,status:'VOID',paymentStatus:'CANCELLED'},currentUser.role),voidReason:reason};
+    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:targetOrder.branchId||'',action:'VOID',reference:targetOrder.id,reason,command});
+    const response=await fetch('/api/v1/sync/transactions',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),
+      body:JSON.stringify({businessId:tenant.businessId,sector:activeSector,outletId:targetOrder.branchId,transactions:[{...command,approvalGrant}]})});
+    const result=await response.json().catch(()=>null);
+    if(!response.ok||!result?.ok||result.rejected?.length)throw new Error(result?.rejected?.[0]?.error||result?.error||'Void belum dikonfirmasi server. Periksa riwayat sebelum mengulang.');
 
     // 1. Update order status to VOID and payment status to CANCELLED
     setOrders((prevOrders) =>
@@ -2168,8 +2170,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const command={clientRefundId:refundId,occurredAt:refundTimestamp,refundMethod,
       reason:refundItems.map(item=>item.reason).filter(Boolean).join(', ')||'Retur item',
       items:orderRefundItems.map(item=>({clientItemId:item.cartItemId,quantity:item.quantity}))};
+    if(!online)throw new Error('Refund memerlukan persetujuan server saat online.');
+    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:targetOrder.branchId||'',action:'REFUND',reference:targetOrder.id,reason:command.reason,command});
     enqueueCashCommand(tenant.businessId,{action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
-      clientEventId:refundId,clientTxnId:targetOrder.id,refund:command}});
+      clientEventId:refundId,clientTxnId:targetOrder.id,refund:{...command,approvalGrant}}});
     await runSync(syncTarget,true);
     const acknowledged=refundAcknowledgment(tenant.businessId,refundId);
     if(!acknowledged)throw new Error('Refund menunggu konfirmasi cloud; perintah tersimpan dan akan dicoba kembali dengan ID yang sama.');
@@ -2661,25 +2665,31 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setShift(data.shift);setShiftHistory(previous=>[data.shift,...previous.filter(row=>row.id!==data.shift.id)]);
     window.dispatchEvent(new Event('financial-updated'));return data.shift;
   };
-  const addCashMovement = (type:CashMovementType,category:CashMovementCategory,amount:number,description:string,recipientOrSource?:string):CashMovement=>{
+  const addCashMovement = async (type:CashMovementType,category:CashMovementCategory,amount:number,description:string,recipientOrSource?:string):Promise<CashMovement>=>{
     if(!Number.isFinite(amount)||amount<=0)throw new Error('INVALID_CASH_AMOUNT');
     const movement:CashMovement={id:newId('cash'),type,category,amount:Math.abs(amount),description:description.trim(),
       timestamp:new Date().toISOString(),cashierName:currentUser.name,shiftId:shift.id,businessSector:activeSector,userId:storeOwnerId,
       branchId:syncTarget.outletId,recipientOrSource:recipientOrSource?.trim()};
-    enqueueCashCommand(tenant.businessId,cashMovementToCommand(activeSector,movement,syncTarget.outletId!));
+    const command=cashMovementToCommand(activeSector,movement,syncTarget.outletId!);
+    if(type==='CASH_OUT'){
+      const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_OUT',reference:movement.id,reason:description,command:command.body});
+      await financeRequest('cash',{...command.body,approvalGrant});
+    }else enqueueCashCommand(tenant.businessId,command);
     setCashMovements(previous=>[movement,...previous]);setSyncStatus(financialStatus(tenant.businessId));
     void runSync(syncTarget);return movement;
   };
-  const deleteCashMovement = (id:string)=>{
-    enqueueCashCommand(tenant.businessId,{action:'reverse',body:{sector:activeSector,outletId:syncTarget.outletId!,
-      clientEventId:'reverse:'+id,originalEventId:id,reason:'Koreksi mutasi kas oleh owner'}});
+  const deleteCashMovement = async (id:string)=>{
+    const body={sector:activeSector,outletId:syncTarget.outletId!,clientEventId:'reverse:'+id,originalEventId:id,reason:'Koreksi mutasi kas oleh owner'};
+    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_REVERSE',reference:id,reason:body.reason,command:body});
+    await financeRequest('cash/reverse',{...body,approvalGrant});
+    window.dispatchEvent(new Event('financial-updated'));
     setSyncStatus(financialStatus(tenant.businessId));void runSync(syncTarget);
   };
-  const setInitialCash = (amount:number)=>{
+  const setInitialCash = async (amount:number)=>{
     if(!Number.isFinite(amount)||amount<0)throw new Error('INVALID_CASH_AMOUNT');
     // A change to opening cash is an explicit signed correction, preserving history.
     const delta=amount-shift.initialCash;
-    if(delta!==0)addCashMovement(delta>0?'CASH_IN':'CASH_OUT','MODAL_AWAL',Math.abs(delta),'Koreksi modal awal shift');
+    if(delta!==0)await addCashMovement(delta>0?'CASH_IN':'CASH_OUT','MODAL_AWAL',Math.abs(delta),'Koreksi modal awal shift');
   };
 
   const updateOrderLaundryStatus = (
@@ -2838,7 +2848,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 
 
-  const disbursePayrollCashMovement = (slipId: string, paymentMethod: string = 'TUNAI'): boolean => {
+  const disbursePayrollCashMovement = async (slipId: string, paymentMethod: string = 'TUNAI'): Promise<boolean> => {
     const slip = payrollSlips.find((s) => s.id === slipId);
     if (!slip || slip.status==='PAID') return false;
     if(!Number.isFinite(slip.netSalary)||slip.netSalary<0)throw Error('INVALID_PAYROLL_AMOUNT');
@@ -2850,7 +2860,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       paymentMethod,
     };
     if (paymentMethod.toUpperCase().includes('TUNAI') || paymentMethod.toUpperCase().includes('KAS')) {
-      addCashMovement(
+      await addCashMovement(
         'CASH_OUT',
         'OPERASIONAL',
         slip.netSalary,
