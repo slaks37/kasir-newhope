@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && node scripts/build-landing.mjs && node scripts/dev/test-landing-build.mjs && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
+    "build": "vite build && node scripts/build-landing.mjs && node scripts/build-legal.mjs && node scripts/dev/test-legal-build.mjs && node scripts/dev/test-landing-build.mjs && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "test:mcp": "node --import tsx scripts/dev/test-mcp.ts",
@@ -30,7 +30,7 @@
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",
     "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts && node --import tsx scripts/dev/test-blog-seed.ts && node --import tsx scripts/dev/test-blog.ts && npm run -s test:admin-integrations",
-    "test:client-support": "node --import tsx scripts/dev/test-client-support.ts",
+    "test:client-support": "node --import tsx scripts/dev/test-client-support.ts && node --import tsx scripts/dev/test-privacy-controls.ts",
     "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
     "batch:insights:dry": "node scripts/batch/daily-insights.mjs --dry-run",

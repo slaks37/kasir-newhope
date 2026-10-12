@@ -28,6 +28,7 @@ import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '..
 import { notifyBlogDiscovery } from './blogDiscovery';
 import { registerBlogRoutes } from './blogRoutes';
 import { registerBlogMediaRoutes, type BlogMediaProvider } from './blogMedia';
+import {registerPrivacySupport} from './privacySupport';
 import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSupport';
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import { registerAdminIntegrationRoutes } from './adminIntegrations';
@@ -252,6 +253,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   }));
   registerSubscriptionAdminRoutes(app,getDb,guard,wrap);
   registerClientSupportRoutes(app,getDb,guard,supportProvider);
+  registerPrivacySupport(app,getDb,guard);
   registerAdminIntegrationRoutes(app,getDb,guard);
   registerBlogMediaRoutes(app, guard, blogMediaProvider);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{

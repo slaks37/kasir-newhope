@@ -1,3 +1,4 @@
+import {LEGAL_NOTICE_VERSION} from '../../config/legalNotices';
 import React, { useEffect, useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
@@ -63,6 +64,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
   const [yearly,setYearly]=useState(defaults.yearly);
   const [extraOutlets,setExtraOutlets]=useState(defaults.extraOutlets);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
+  const [legalAccepted,setLegalAccepted]=useState(false);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -304,6 +306,9 @@ export const SubscriptionPaymentPage: React.FC = () => {
   const handleProceedToPayment = async () => {
     setError(null);
     setVerifyNotice(null);
+
+    if(!legalAccepted){setError('Terima syarat layanan dan baca pemberitahuan privasi terlebih dahulu.');return;}
+    if(session?.access_token){try{const notice=await fetch('/api/v1/privacy/notices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({termsVersion:LEGAL_NOTICE_VERSION,privacyVersion:LEGAL_NOTICE_VERSION})});if(!notice.ok)throw new Error();}catch{setError('Penerimaan syarat belum tercatat. Coba lagi saat online.');return;}}
 
     // Free Trial Activation Flow
     if (selectedPlanId === TRIAL_PLAN_ID) {
@@ -942,6 +947,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
             </div>
           )}
 
+<label className="block text-sm"><input type="checkbox" checked={legalAccepted} onChange={e=>setLegalAccepted(e.target.checked)}/> Saya menerima <a href="/terms" target="_blank" rel="noreferrer" className="underline">syarat langganan</a> dan telah membaca <a href="/privacy" target="_blank" rel="noreferrer" className="underline">pemberitahuan privasi</a>. Invoice komersial bukan otomatis Faktur Pajak. Bantuan/refund: <a href="/support" className="underline">hubungi dukungan</a>.</label>
           {/* Action Buttons */}
           <div className="space-y-3 pt-2">
             {verifyNotice && (
