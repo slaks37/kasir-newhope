@@ -41,6 +41,11 @@ const query=`outletId=${outlet}&sector=FNB&from=2026-10-01&to=2026-10-01`;
 const tx={clientTxnId:'sale-device-A',cashierRef:owner,cashierName:'Owner',subtotal:55000,totalAmount:55000,paymentMethod:'CASH',paymentStatus:'PAID',createdAt:'2026-09-30T17:00:00.000Z',items:[{clientItemId:'line-A',productRef:'p-A',productName:'Product',unitPrice:27500,unitCost:10000,quantity:2,totalPrice:55000}]};
 const body={businessId:owner+'_FNB',sector:'FNB',outletId:outlet,storeName:'Cloud fixture',transactions:[tx]};
 try{
+  const reconciliation=await get('/api/v1/finance/reconciliation?'+query);
+  assert.equal(reconciliation.status,200);assert.deepEqual(reconciliation.data.totals,[]);
+  assert.equal((await get('/api/v1/finance/reconciliation?'+query,'other')).status,409,'Unknown owner cannot enumerate payments');
+  assert.equal((await get('/api/v1/finance/reconciliation?'+query,'anonymous')).status,401);
+  assert.equal((await get('/api/v1/finance/reconciliation?sector=FNB&outletId='+randomUUID())).status,403);
   const directory=await get('/api/v1/sync/business');
   assert.equal(directory.status,200);assert.equal(directory.data.businesses[0].businessId,merchant);
   assert.equal(directory.data.businesses[0].legacyAlias,owner+'_FNB');

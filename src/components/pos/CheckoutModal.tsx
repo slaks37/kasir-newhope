@@ -636,7 +636,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     <li>Pelanggan membuka m-Banking (BCA, Mandiri, BRI, BNI, dll) atau E-Wallet (Gopay, OVO, Dana, ShopeePay).</li>
                     <li>Pelanggan melakukan **Scan QR Code pada Akrilik / Stiker QRIS** toko.</li>
                     <li>Pastikan pelanggan menginput nominal tagihan yang sesuai: <b className="text-amber-800 font-mono text-xs">{formatRupiah(grandTotal)}</b></li>
-                    <li>Periksa layar HP pelanggan untuk konfirmasi status transaksi berhasil.</li>
+                    <li>Periksa penerimaan di aplikasi bank/penyedia QRIS milik toko, bukan hanya layar pelanggan.</li>
+                    <li>Status dicatat kasir; belum diverifikasi otomatis oleh penyedia. Nominal QRIS statis yang sama tidak mengidentifikasi pesanan secara unik.</li>
                   </ul>
                 </div>
 

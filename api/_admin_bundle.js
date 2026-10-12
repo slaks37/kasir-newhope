@@ -4106,6 +4106,23 @@ function registerFinanceRoutes(app, db) {
       res.status(known2 ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known2 || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
     }
   });
+  app.get("/api/v1/finance/reconciliation", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const data = await db.tx(async (c) => {
+        const s = await scopeFor(c, req);
+        const totals = (await c.query(`SELECT verification_origin,count(*)::int count,COALESCE(sum(amount),0) amount
+        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        const exceptions = (await c.query(`SELECT e.provider_event_ref,e.reason,e.received_at FROM pos.payment_reconciliation_events e
+        LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
+        AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        return { totals, exceptions };
+      });
+      res.json({ ok: true, ...data });
+    } catch (e) {
+      res.status(e instanceof FinanceError || e instanceof BillingError ? e.status : 503).json({ ok: false, error: e instanceof FinanceError || e instanceof BillingError ? e.message : "RECONCILIATION_UNAVAILABLE" });
+    }
+  });
   app.get("/api/v1/finance/shift", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     try {
@@ -4246,8 +4263,8 @@ async function applyTenders(db, scope, transactionId, tenders) {
     }
     const paid = Number((await db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM pos.payments WHERE transaction_id=$1 AND payment_status IN('PAID','SETTLED')", [transactionId])).rows[0].amount);
     if (Math.round((paid + tender.amount) * 100) > Math.round(Number(txn.total_amount) * 100)) throw new FinanceError(409, "TENDER_EXCEEDS_BALANCE");
-    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,paid_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
+    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,verification_origin,paid_at,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH','CASHIER_RECORDED',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
     if (tender.method === "CASH") await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,actor_ref,note,occurred_at)
       VALUES($1,$2,$3,$4,'SALE',$5,$6,$7,'Pembayaran tunai split',$8)`, [scope.tenantId, scope.merchantId, scope.outletId, "payment:" + row.id, tender.amount, transactionId, scope.actorRef, tender.createdAt]);
   }
@@ -5787,8 +5804,8 @@ function registerSyncRoutes(app, db) {
           } else
             await c.query(
               `INSERT INTO pos.payments
-               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
+               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider, verification_origin)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH','CASHIER_RECORDED')
              ON CONFLICT DO NOTHING RETURNING id`,
               [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
             ).then(async (payment) => {

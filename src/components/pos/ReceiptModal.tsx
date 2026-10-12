@@ -34,13 +34,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
   }, [settings.autoPrintReceipt, handlePrint]);
 
   const handleShareWhatsApp = () => {
-    const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nFaktur: ${order.invoiceNumber||order.id}\nTanggal: ${formatDateTime(
+    const text = `*STRUK PEMBAYARAN ${settings.storeName.toUpperCase()}*\nNomor struk: ${order.invoiceNumber||order.id}\nTanggal: ${formatDateTime(
       order.date
     )}\n--------------------------\n${order.items
       .map((i) => `${i.quantity}x ${i.name} (${formatRupiah(i.totalPrice)})`)
       .join('\n')}\n--------------------------\nSubtotal: ${formatRupiah(
       order.subtotal
-    )}\nTOTAL TAGIHAN: ${formatRupiah(order.total)}\nStatus: ${order.paymentStatus==='PENDING'?'BELUM LUNAS':'LUNAS'} (${order.paymentMethod})\n\nTerima Kasih!`;
+    )}\nTOTAL TAGIHAN: ${formatRupiah(order.total)}\nStatus: ${order.paymentStatus==='PENDING'?'BELUM LUNAS':'LUNAS'} (${order.paymentMethod})\nStruk komersial, bukan Faktur Pajak resmi.${order.paymentMethod==='CASH'?'':' Status POS dicatat kasir; verifikasi penyedia diperiksa terpisah.'}\n\nTerima Kasih!`;
 
     const url = `https://wa.me/${
       order.customer?.phone || ''
@@ -283,6 +283,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, settings, onC
             <div className="text-center pt-3 border-t border-dashed border-slate-300 space-y-1 text-[9px] text-slate-600">
               <p className="whitespace-pre-line">{settings.receiptHeader}</p>
               <p className="whitespace-pre-line pt-1">{settings.receiptFooter}</p>
+              <p>Struk komersial — bukan Faktur Pajak resmi.</p>
+              {order.paymentMethod!=='CASH'&&<p>Pembayaran dicatat kasir; konfirmasi penyedia diperiksa terpisah.</p>}
               <p className="font-bold pt-1 text-slate-800">*** New Hope POS ***</p>
             </div>
           </div>
