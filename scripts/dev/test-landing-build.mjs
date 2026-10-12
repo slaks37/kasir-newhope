@@ -3,10 +3,12 @@ import {readFile, access} from 'node:fs/promises';
 import path from 'node:path';
 
 const page = await readFile('dist/landing.html', 'utf8');
-const app = await readFile('dist/index.html', 'utf8');
+const app = await readFile('dist/app.html', 'utf8');
+assert.equal(await readFile('dist/index.html', 'utf8'), page, 'Filesystem root must serve the prerendered landing');
 const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
 const routes = JSON.parse(await readFile('vercel.json', 'utf8')).rewrites;
 assert.equal(routes.find(route => route.source === '/')?.destination, '/landing.html');
+assert.ok(routes.some(route => route.destination === '/app.html'), 'Private navigation must use the cashier shell');
 assert.ok(page.includes('id="nh-hero-title"') && page.includes('id="pricing"'), 'Public copy and prices exist before JavaScript');
 assert.equal(/<link[^>]+rel="stylesheet"/.test(page), false, 'Landing has no render-blocking stylesheet requests');
 assert.equal(/fonts\.(googleapis|gstatic)\.com/.test(page), false, 'Public font is local');

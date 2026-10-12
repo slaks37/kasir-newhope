@@ -5,7 +5,7 @@
  * membuka aplikasi. Data offline (antrean penjualan, snapshot toko) sudah
  * disimpan aplikasi sendiri; service worker hanya menyimpan file statis.
  *
- *  - Navigasi (halaman kasir): network-first, fallback ke index.html tersimpan.
+ *  - Navigasi (halaman kasir): network-first, fallback ke app.html tersimpan.
  *  - /assets/* (nama ber-hash, tidak pernah berubah): cache-first.
  *  - TIDAK PERNAH: /api/*, /admin*, /blog*, sitemap/RSS, request non-GET, domain lain (Supabase, CDN).
  *  - Versi baru menunggu sampai semua tab lama ditutup (tanpa skipWaiting), agar
@@ -14,7 +14,7 @@
 export function serviceWorkerSource(buildId: string, assets: readonly string[]): string {
   return `/* New Hope POS service worker — build ${buildId}. Generated; do not edit. */
 const SHELL = 'nh-shell-${buildId}';
-const PRECACHE = ${JSON.stringify(['/index.html', '/manifest.json', '/favicon.svg', '/images/products/kopi-susu.webp', '/images/products/matcha-latte.webp', '/images/products/nasi-goreng.webp', '/images/products/croissant.webp', ...assets])};
+const PRECACHE = ${JSON.stringify(['/app.html', '/manifest.json', '/favicon.svg', '/images/products/kopi-susu.webp', '/images/products/matcha-latte.webp', '/images/products/nasi-goreng.webp', '/images/products/croissant.webp', ...assets])};
 
 function route(request) {
   if (request.method !== 'GET') return 'network';
@@ -22,14 +22,25 @@ function route(request) {
   if (url.origin !== self.location.origin) return 'network';
   if (url.pathname.startsWith('/api/') || url.pathname === '/api' || url.pathname.startsWith('/admin') || url.pathname === '/sw.js') return 'network';
   // Server-rendered pages and AI discoverability files: never cached as the app shell.
-  if (url.pathname === '/' || url.pathname === '/landing.html' || url.pathname === '/blog' || url.pathname.startsWith('/blog/') || url.pathname === '/sitemap.xml' || url.pathname === '/rss.xml' || url.pathname === '/llms.txt' || url.pathname.startsWith('/.well-known/') || url.pathname === '/robots.txt') return 'network';
+  if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/landing.html' || url.pathname === '/blog' || url.pathname.startsWith('/blog/') || url.pathname === '/sitemap.xml' || url.pathname === '/rss.xml' || url.pathname === '/llms.txt' || url.pathname.startsWith('/.well-known/') || url.pathname === '/robots.txt') return 'network';
   if (request.mode === 'navigate') return 'shell';
   if (url.pathname.startsWith('/assets/')) return 'asset';
   return 'network';
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(PRECACHE)));
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL);
+    await cache.addAll(PRECACHE);
+    const app = await cache.match('/app.html');
+    // Previous workers used /index.html as their cashier fallback. Keep that
+    // fallback operational while this worker waits for existing tabs to close.
+    if (app) for (const key of await caches.keys()) {
+      if (key.startsWith('nh-shell-') && key !== SHELL) {
+        await (await caches.open(key)).put('/index.html', app.clone());
+      }
+    }
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -46,11 +57,11 @@ async function shell(request) {
     ]);
     if (response.ok && (response.headers.get('content-type') || '').includes('text/html')) {
       const cache = await caches.open(SHELL);
-      await cache.put('/index.html', response.clone());
+      await cache.put('/app.html', response.clone());
     }
     return response;
   } catch (error) {
-    const cached = await caches.match('/index.html');
+    const cached = await caches.match('/app.html');
     return cached || Response.error();
   }
 }

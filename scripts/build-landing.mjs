@@ -29,7 +29,13 @@ try {
   }
   page = page.replace('<div id="root"></div>', `<div id="root">${html}</div>`);
   if (!page.includes('<h1')) throw new Error('Landing content was not prerendered');
+  // Vercel's static directory index takes priority over a root rewrite.
+  // Publish marketing as the actual index and preserve the cashier separately.
+  const appShell = await readFile('dist/index.html', 'utf8');
+  if (!appShell.includes('<div id="root"></div>')) throw new Error('Run vite build before prerendering; cashier shell must be preserved');
+  await writeFile('dist/app.html', appShell);
   await writeFile('dist/landing.html', page);
+  await writeFile('dist/index.html', page);
   console.log(`Prerendered public landing: ${Buffer.byteLength(page)} bytes; CSS inline, no auth bootstrap.`);
 } finally {
   await unlink(renderer).catch(() => {});

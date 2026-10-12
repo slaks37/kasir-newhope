@@ -14,6 +14,7 @@ const caches = {
     return {
       addAll: async (urls: string[]) => { for (const u of urls) store.set(keyOf(u), new Response('cached:' + u, { headers: { 'content-type': u.endsWith('.html') ? 'text/html' : 'text/javascript' } })); },
       put: async (req: { url: string } | string, res: Response) => { store.set(keyOf(req), res); },
+      match: async (req: { url: string } | string) => store.get(keyOf(req))?.clone(),
     };
   },
   match: async (req: { url: string } | string) => { for (const store of stores.values()) { const hit = store.get(keyOf(req)); if (hit) return hit.clone(); } return undefined; },
@@ -35,7 +36,8 @@ const dispatch = async (url: string, init: { method?: string; mode?: string } = 
 };
 
 await waitUntil(listeners.install);
-assert.ok(stores.get('nh-shell-b1')!.has('/index.html') && stores.get('nh-shell-b1')!.has('/assets/Pos-def.js'), 'Shell and cashier assets are precached');
+assert.ok(stores.get('nh-shell-b1')!.has('/app.html') && stores.get('nh-shell-b1')!.has('/assets/Pos-def.js'), 'Shell and cashier assets are precached');
+assert.equal(await stores.get('nh-shell-old')!.get('/index.html')!.text(), 'cached:/app.html', 'A waiting update repairs the legacy cashier fallback, never marketing HTML');
 await waitUntil(listeners.activate);
 assert.equal(stores.has('nh-shell-old'), false, 'Previous build caches are removed on activation');
 
@@ -43,10 +45,10 @@ assert.equal(stores.has('nh-shell-old'), false, 'Previous build caches are remov
 assert.equal(await (await dispatch('/pos', { mode: 'navigate' }))!.text(), 'net:/pos');
 // Offline refresh still opens the app from the cached shell.
 online = false;
-assert.equal(await (await dispatch('/reports', { mode: 'navigate' }))!.text(), 'net:/pos', 'Offline navigation serves the last good index.html');
+assert.equal(await (await dispatch('/reports', { mode: 'navigate' }))!.text(), 'net:/pos', 'Offline navigation serves the last good app.html');
 // Hashed assets come from cache, even offline.
 assert.match(await (await dispatch('/assets/Pos-def.js'))!.text(), /cached:\/assets\/Pos-def\.js/);
 // Never intercepted: API, admin, non-GET, other origins, or AI discoverability endpoints.
-for (const [url, init] of [['/', { mode: 'navigate' }], ['/landing.html', { mode: 'navigate' }], ['/api/v1/sync/state', {}], ['/admin', { mode: 'navigate' }], ['/blog/cara-hitung-hpp', { mode: 'navigate' }], ['/sitemap.xml', {}], ['/llms.txt', { mode: 'navigate' }], ['/.well-known/ai-catalog.json', {}], ['/robots.txt', {}], ['/assets/x.js', { method: 'POST' }], ['https://project.supabase.co/auth/v1/user', {}]] as const)
+for (const [url, init] of [['/', { mode: 'navigate' }], ['/index.html', { mode: 'navigate' }], ['/landing.html', { mode: 'navigate' }], ['/api/v1/sync/state', {}], ['/admin', { mode: 'navigate' }], ['/blog/cara-hitung-hpp', { mode: 'navigate' }], ['/sitemap.xml', {}], ['/llms.txt', { mode: 'navigate' }], ['/.well-known/ai-catalog.json', {}], ['/robots.txt', {}], ['/assets/x.js', { method: 'POST' }], ['https://project.supabase.co/auth/v1/user', {}]] as const)
   assert.equal(await dispatch(url, init as any), null, url + ' must bypass the service worker');
 console.log('PASS: service worker precaches the cashier shell, serves offline refresh, caches hashed assets, cleans old builds and never touches API/admin/blog/non-GET/cross-origin');

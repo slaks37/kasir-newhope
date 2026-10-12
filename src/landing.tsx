@@ -2,11 +2,15 @@ import React from 'react';
 import {hydrateRoot, createRoot} from 'react-dom/client';
 import {HomePage} from './components/home/HomePage';
 import {legacyHashPath} from './lib/navigation/routes';
+import {registerServiceWorker} from './pwa/serviceWorker';
 import './landing-base.css';
 
 // Public marketing never needs session restoration, tenant data or an offline cache.
 // Authentication and checkout resume in the application on navigation.
 const go = (path: string) => window.location.assign(path);
+// Returning cashier devices update an existing worker. First-time marketing
+// visitors do not download or precache the operational application.
+if (navigator.serviceWorker?.controller) registerServiceWorker();
 const legacy = legacyHashPath(window.location.hash);
 if (legacy) window.location.replace(legacy);
 else {
