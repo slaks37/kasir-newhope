@@ -28,21 +28,22 @@ import { LanguageProvider } from './i18n/LanguageContext';
 import { installAuthenticatedFetch } from './lib/authenticatedFetch';
 import App from './App';
 import './index.css';
-import './styles/app-theme.css';
 import { normalizeLegacyRoute } from './lib/navigation/workspaceRouter';
 import { registerServiceWorker } from './pwa/serviceWorker';
-import { Notifier } from './components/ui/Notifier';
 
 installAuthenticatedFetch();
 normalizeLegacyRoute();
 registerServiceWorker();
 const McpConnections = lazy(() => import('./components/mcp/McpConnections').then(m => ({ default: m.McpConnections })));
+const Notifier = lazy(() => import('./components/ui/Notifier').then(m => ({ default: m.Notifier })));
 
-// Do not initialize or persist account-scoped POS state under an anonymous
-// fallback while the saved Auth session is still being restored.
+// Fast-path: public landing page ('/') and auth routes render without waiting for
+// the Supabase session restoration roundtrip. Account-scoped workspace routes wait.
 function POSSession() {
   const {user,loading}=useAuth();
-  if(loading) return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const isPublicRoute = pathname === '/' || pathname === '/login' || pathname === '/register' || pathname === '/reset-password';
+  if(loading && !isPublicRoute) return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;
   return <App />;
 }
 
@@ -55,6 +56,8 @@ createRoot(document.getElementById('root')!).render(
           : <POSSession />}
       </AuthProvider>
     </LanguageProvider>
-    <Notifier />
+    <Suspense fallback={null}>
+      <Notifier />
+    </Suspense>
   </StrictMode>,
 );

@@ -102,7 +102,7 @@ export const BUSINESS_PRESETS: Record<BusinessSector, BusinessPreset> = {
         minStockAlert: 10,
         unit: 'cup',
         isAvailable: true,
-        image: 'https://images.unsplash.com/photo-1517701604599-bb29b565090c?w=300',
+        image: '/images/products/kopi-susu.webp',
         description: 'Espresso blend house khas New Hope dengan susu segar dan gula aren murni.',
         variants: [
           { id: 'v1', name: 'Regular (12oz)', priceExtra: 0 },
@@ -121,7 +121,7 @@ export const BUSINESS_PRESETS: Record<BusinessSector, BusinessPreset> = {
         minStockAlert: 5,
         unit: 'cup',
         isAvailable: true,
-        image: 'https://images.unsplash.com/photo-1536256263959-770b48d82b0a?w=300',
+        image: '/images/products/matcha-latte.webp',
         description: 'Bubuk matcha impor Uji Kyoto dikocok lembut dengan oat milk segar.',
       },
       {
@@ -136,7 +136,7 @@ export const BUSINESS_PRESETS: Record<BusinessSector, BusinessPreset> = {
         minStockAlert: 5,
         unit: 'porsi',
         isAvailable: true,
-        image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=300',
+        image: '/images/products/nasi-goreng.webp',
         description: 'Nasi goreng bumbu rempah spesial disajikan dengan telur ceplok, sate ayam & kerupuk.',
       },
       {
@@ -151,7 +151,7 @@ export const BUSINESS_PRESETS: Record<BusinessSector, BusinessPreset> = {
         minStockAlert: 3,
         unit: 'pcs',
         isAvailable: true,
-        image: 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=300',
+        image: '/images/products/croissant.webp',
         description: 'French pastry renyah diluar dan flaky di dalam menggunakan mentega asli.',
       },
     ],

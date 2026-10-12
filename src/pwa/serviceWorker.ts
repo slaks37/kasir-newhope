@@ -14,7 +14,7 @@
 export function serviceWorkerSource(buildId: string, assets: readonly string[]): string {
   return `/* New Hope POS service worker — build ${buildId}. Generated; do not edit. */
 const SHELL = 'nh-shell-${buildId}';
-const PRECACHE = ${JSON.stringify(['/index.html', '/manifest.json', '/favicon.svg', ...assets])};
+const PRECACHE = ${JSON.stringify(['/index.html', '/manifest.json', '/favicon.svg', '/images/products/kopi-susu.webp', '/images/products/matcha-latte.webp', '/images/products/nasi-goreng.webp', '/images/products/croissant.webp', ...assets])};
 
 function route(request) {
   if (request.method !== 'GET') return 'network';

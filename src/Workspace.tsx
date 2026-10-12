@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useState } from 'react';
+import './styles/app-theme.css';
 import { POSProvider } from './context/POSContext';
 import {WorkspaceBusinessProvider,useWorkspaceBusiness} from './context/WorkspaceBusinessContext';
 import { useWorkspaceShell } from './context/POSDomains';

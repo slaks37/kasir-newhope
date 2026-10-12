@@ -122,9 +122,9 @@ assert.match(robotsContent, /^Allow: \//m);
 assert.match(robotsContent, /^Disallow: \/admin/m);
 assert.match(robotsContent, /^Disallow: \/api\//m);
 assert.match(robotsContent, /^Sitemap: https:\/\/kasir\.newhope\.space\/sitemap\.xml/m);
-assert.match(robotsContent, /^Agentmap: https:\/\/kasir\.newhope\.space\/\.well-known\/ai-catalog\.json/m);
-assert.match(robotsContent, /^Agentmap: https:\/\/kasir\.newhope\.space\/\.well-known\/ard\.json/m);
-console.log('PASS: robots.txt provides Agentmap discovery while preserving private admin/API disallows.');
+assert.match(robotsContent, /^Sitemap: https:\/\/kasir\.newhope\.space\/blog\/sitemap\.xml/m);
+assert.ok(!robotsContent.includes('Agentmap:'), 'robots.txt must NOT have unknown directives like Agentmap to comply with RFC 9309 and pass Lighthouse SEO audit.');
+console.log('PASS: robots.txt conforms to RFC 9309 without invalid directives, preserving sitemaps and private disallows.');
 
 console.log('--- TEST 4: HTML discovery links in index.html ---');
 const htmlContent = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

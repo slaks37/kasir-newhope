@@ -9,6 +9,7 @@
  */
 
 import React, { useState } from "react";
+import "../../styles/app-theme.css";
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {readCheckoutIntent} from '../../lib/workspace/checkoutIntent';

@@ -1,4 +1,5 @@
 import {useState,type FormEvent} from 'react';
+import '../../styles/app-theme.css';
 import {useAuth} from '../../context/AuthContext';
 import {supabase} from '../../lib/supabase';
 import {navigate} from '../../lib/navigation/workspaceRouter';

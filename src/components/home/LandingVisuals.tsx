@@ -43,6 +43,19 @@ export function ProductPhoto({
       </span>
     );
   const base = src.split("?")[0];
+  if (base.startsWith("/")) {
+    return (
+      <img
+        src={base}
+        width="160"
+        height="120"
+        alt={alt}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
   return (
     <img
       src={`${base}?fit=crop&fm=webp&w=320&q=75`}
