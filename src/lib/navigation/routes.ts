@@ -6,6 +6,13 @@ export type WorkspaceModule = keyof typeof workspaceRoutes;
 export function moduleForPath(path:string):WorkspaceModule|null {
   return (Object.keys(workspaceRoutes) as WorkspaceModule[]).find(key=>workspaceRoutes[key]===path.replace(/\/$/,''))||null;
 }
+/** Unknown public paths may show marketing; account and blog routes keep their own handlers. */
+export function isLandingPath(path:string):boolean {
+  const pathname=path.split('?')[0];
+  return pathname==='/'||(!moduleForPath(pathname)&&
+    !['/login','/register','/reset-password'].includes(pathname)&&
+    pathname!=='/blog'&&!pathname.startsWith('/blog/'));
+}
 export function pathForModule(module:WorkspaceModule|'home'):string {
   return module==='home'?workspaceRoutes.overview:workspaceRoutes[module]||workspaceRoutes.overview;
 }
