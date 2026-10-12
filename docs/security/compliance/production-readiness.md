@@ -1,0 +1,45 @@
+# Production readiness and release control
+
+Status: **NOT production-ready / no production SQL executed**. This is a reviewable remediation package, not legal approval or proof all external automations/providers were audited. Main reference is `90321d8`; five domain draft PRs: [database14](https://github.com/slaks37/kasir-newhope/pull/14), [financial15](https://github.com/slaks37/kasir-newhope/pull/15), [privacy16](https://github.com/slaks37/kasir-newhope/pull/16), [AI17](https://github.com/slaks37/kasir-newhope/pull/17), [payments18](https://github.com/slaks37/kasir-newhope/pull/18). Both Agnes AI and DeepSeek remain configured choices.
+
+## Review and staging checklist
+
+- [ ] Approve each domain diff/migration and risk register; record reviewer and timestamp. Rebase against current main. Integrate shared source changes, preserve all added test scripts/HTTP negatives and regenerate API bundles from sources. Never accept a generated-file merge as evidence source and deploy bundle match.
+- [ ] Record production backend login per POS/AI/billing/internal/batch function, usage of contract views/Auth provisioning/n8n/ETL, schema exposure, default ACL creator and trusted database CA. Use per-service credentials with sufficient reviewed grants. Schema naming is not role isolation.
+- [ ] Create an isolated Supabase PostgreSQL **17** staging project/schema with matching role/view/Auth dependencies. PGlite tests are PostgreSQL18/WASM fixtures, not proof of production parity. No live customer data copied into fixture tests.
+- [ ] Prove recoverable backup and export schema/ACL/defaults. Inspect drift: browser inheritance, PUBLIC relation ACLs, unknown owners/functions and managed supabase_admin defaults. Do not blindly enable RLS/revoke dependencies; DB migration deliberately aborts on unexpected PUBLIC/inherited access.
+- [ ] Apply below migrations once through the reviewed Supabase migration path, not both mirrored local and Supabase paths. Use the same migration owner as production; inspect ACL snapshot owner/RLS protection. No automatic `db push` to production.
+- [ ] Test direct browser-role SELECT/column/function/sequence/write denial in all business schemas, including guessed tenants/outlets. Test two real synthetic cloud owners via HTTP; foreign businesses/outlets/transactions must fail before mutation. Test svc roles with absent/wrong tenant context and real configured backend roles.
+- [ ] Test FNB, RETAIL, LAUNDRY, CARWASH, BARBERSHOP: signup, cloud sync, ordinary offline cash sale/reconnect/replay, stock, multi-outlet switching, reports, paid/Free limits, DOKU sandbox, blog/n8n consumers and both AI routes. Compare ledger/stock/audit before/after sensitive operations.
+- [ ] Stage strong server PIN setup/rotation with fresh owner password, rejection of 1234, bad password/PIN quota, expired/stolen/tampered/action/reference/outlet grants, exact consumed retries and immutable actor/approver/reason/time/reference. Verify no local mutation on rejected/offline privileged commands. Plan OAuth-only owner recovery and historical queue reconciliation. Independent cloud manager delegation is not implemented.
+- [ ] Approve legal entity/registration/contact, data inventory/bases/durations/holds, rights operations, DPA/subprocessors, cross-border safeguards, incident recipients/timing and actual required DPO/role assignments with counsel. Configure verified `VITE_PUBLIC_PRIVACY_EMAIL`; verify non-account public `/support` contact and owner Settings → Privasi & Permintaan Data. Staff must actually fulfil requests; API intake/status alone is insufficient. No dummy email/NIB/NPWP.
+- [ ] Approve final subscription refund/cancellation/fees/tax terms, actual invoices and landing claims. Commercial invoices/receipts are not official Faktur Pajak; accountant reviews configurable sector taxes. Draft placeholders must be completed before public release.
+- [ ] Resolve Agnes AI and DeepSeek API terms, retention/training/regions/deletion/breach assistance; keep both names and routes. Verify scoped consent/revoke, minimized wire/audit and provider errors. Review external n8n/ChatGPT workflow payloads, execution logs/credentials and retention separately. No claim of universal PII redaction or anonymous aggregates.
+- [ ] If enabling merchant provider reconciliation: select approved licensed PSP, approve merchant-direct account binding and official signature/timestamp protocol, certify real sandbox/delivery conflicts/exceptions/settlement. No live webhook/account exists in this package. DOKU subscription remains separate. Review/reconcile rejection exceptions operationally; never use static amount alone or edit immutable evidence.
+- [ ] Owner resolves Supabase Free plan limitation for leaked-password protection. With supported approved plan: Authentication → Sign In / Providers → Email → Prevent use of leaked passwords → Save, then advisor and signup/password-change checks. No paid upgrade was made. Stage secure password-change settings/recovery compatibility before changing them.
+- [ ] All local and hosted CI jobs must have final SUCCESS, bundles clean, exact integrated release SHA and checksums recorded. A pending run or draft Vercel preview is not a production deployment.
+
+## Migrations and dependencies
+
+| Sequence | Supabase migration | Mirrored local bootstrap | Purpose |
+|---|---|---|---|
+| 1 | 20261012091847_browser_role_least_privilege.sql | none; explicit ACL review only | Captured/reversible ACL cleanup, preserve existing RLS and service helpers. Stage backend consumers immediately. |
+| 2 | 20261012092414_server_financial_approvals.sql | 0059 | Private server PIN, attempts, grants, immutable financial evidence. |
+| 3 | 20261012144654_privacy_request_workflow.sql | 0060 | Private rights intake/events/versioned notice records. |
+| 4 | 20261012145413_ai_provider_consent_records.sql | 0061 | Private consent events and actual AI provider metadata. |
+| 5 | 20261012150628_merchant_payment_provenance.sql | 0062 | Origin metadata, private merchant account/link/reconciliation evidence. |
+
+The ACL migration changes defaults only for its executing owner; later objects need explicit service grants, as new domain tables do. New tables have scoped RLS after dependency inspection. Existing data amounts/statuses/tenant ownership, existing table RLS and contract-view semantics are not rewritten. Additive metadata defaults distinguish historical unverified records; no historical verification backfill. Migration mirrors have identical SQL; do not run a duplicate migration.
+
+## Production authorization and verification
+
+- [ ] Owner approves concrete reviewed SQL, maintenance window, staging signoffs, backup/restore evidence and risk acceptance. Record operator, UTC/WIB timestamps, migration checksums and before/after grants. Request approval only once this evidence exists; existing editorial authorization is not approval of a silent production database change.
+- [ ] Deploy server/client from exact integrated SHA only after schema exists and legacy-client behavior is rehearsed. Record Vercel deployment revision/READY, CI revision and legal notice version. Avoid new client with old server for sensitive actions.
+- [ ] Read-only production verification: application/backend health, Auth sign-in, legal-route/contact reachability, own-business reports, advisors and catalog. Browser private-role access denied; narrow API exposure retained. Verify logs contain no PIN/password/tokens. Do not create/refund real customer orders or charge a provider during smoke checks.
+- [ ] Observe blocked grants, financial replay/rejection counts, reconciliation exceptions, rights intake delivery and AI consent decisions with minimized logging. Assign named on-call/support contacts and escalation window. Request indexing/search performance is not a security or legal signoff.
+
+## Rollback and stop conditions
+
+On schema drift, unknown backend dependency, wrong tenant response, lost stock/ledger consistency, leaked secret, failed authority check or failed immutable evidence: **stop release**. Restore a narrow reviewed dependency rather than reopening all browser access. Keep ordinary sales available when possible, fail closed on privileged writes/optional unapproved provider transport.
+
+DB-only ACL rollback is [captured SQL](rollback-browser-roles.sql); it restores previous insecure access and therefore requires explicit owner review, incident assessment and compensation. Domain rollback plans are [financial](financial-release.md), [privacy](privacy-rights-runbook.md), [AI](ai-governance.md), [payments](payment-controls.md). Preserve credentials/consent/rights/financial evidence and provenance; do not DROP audit or redeploy the vulnerable authorization server. No automatic production rollback or purge.
