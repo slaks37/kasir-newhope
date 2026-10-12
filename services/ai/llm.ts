@@ -1,13 +1,13 @@
 /**
- * Penyedia LLM — DeepSeek (REST kompatibel OpenAI, tanpa SDK).
+ * Penyedia LLM pihak ketiga — Agnes AI dan DeepSeek (REST kompatibel OpenAI).
  *
  * Dipindahkan utuh dari monolit ke ai-service. Inilah alasan utama ai-service
  * dipisah: panggilan ke penyedia eksternal bisa menggantung sampai 30 detik,
  * dan di dalam satu proses bersama, request kasir ikut mengantre di belakangnya.
- * Sebagai proses tersendiri, DeepSeek yang lambat hanya memperlambat AI.
+ * Sebagai proses tersendiri, penyedia yang lambat hanya memperlambat AI.
  *
  * Kunci API dibaca dari environment dan tidak pernah di-hardcode, tidak pernah
- * dicatat di log, dan dibersihkan dari pesan error lewat scrubSecret().
+ * dicatat di log; rincian error penyedia tidak diteruskan ke pengguna.
  */
 
 export interface LlmConfig {
@@ -48,7 +48,7 @@ export function getLlmConfig(): LlmConfig | null {
 }
 
 /** Provider name shown in logs and status text. Never includes the key. */
-export const LLM_PROVIDER_LABEL = 'DeepSeek';
+export const LLM_PROVIDER_LABEL = 'AI pihak ketiga: Agnes AI & DeepSeek';
 /** A hung provider must never pin an Express worker forever. */
 export const LLM_TIMEOUT_MS = 30_000;
 const LLM_DEFAULT_MAX_TOKENS = 1500;
