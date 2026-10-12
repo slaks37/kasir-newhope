@@ -27,17 +27,39 @@ try {
   }
   await pg.exec('SET ROLE svc_pos');
   assert.equal((await pg.query('SELECT * FROM pos.fixture')).rows.length,2,'Backend dependency preserved');
-  assert.equal((await pg.query('SELECT public.fixture_fn() AS n')).rows[0].n,1,'PUBLIC helper preserved explicitly for backend');
+  assert.equal((await pg.query<{n:number}>('SELECT public.fixture_fn() AS n')).rows[0].n,1,'PUBLIC helper preserved explicitly for backend');
   await pg.exec('RESET ROLE');
   await pg.exec('CREATE TABLE pos.future_fixture(id int); CREATE FUNCTION public.future_fn() RETURNS int LANGUAGE sql AS $$SELECT 2$$;');
   for(const role of ['anon','authenticated']){
-    assert.equal((await pg.query('SELECT has_table_privilege($1,$2,$3) AS allowed',[role,'pos.future_fixture','SELECT'])).rows[0].allowed,false);
-    assert.equal((await pg.query('SELECT has_function_privilege($1,$2,$3) AS allowed',[role,'public.future_fn()','EXECUTE'])).rows[0].allowed,false);
+    assert.equal((await pg.query<{allowed:boolean}>('SELECT has_table_privilege($1,$2,$3) AS allowed',[role,'pos.future_fixture','SELECT'])).rows[0].allowed,false);
+    assert.equal((await pg.query<{allowed:boolean}>('SELECT has_function_privilege($1,$2,$3) AS allowed',[role,'public.future_fn()','EXECUTE'])).rows[0].allowed,false);
   }
   await pg.exec(fs.readFileSync('docs/security/compliance/rollback-browser-roles.sql','utf8'));
   await pg.exec('SET ROLE anon');
   assert.equal((await pg.query('SELECT * FROM internal.fixture')).rows.length,2,'Rollback restores captured access, no invented blanket grants');
-  assert.equal((await pg.query('SELECT public.fixture_fn() AS n')).rows[0].n,1);
+  assert.equal((await pg.query<{n:number}>('SELECT public.fixture_fn() AS n')).rows[0].n,1);
   await pg.exec('RESET ROLE');
   console.log('PASS: 72 browser role denials, backend helpers, future defaults, captured rollback; isolated PostgreSQL only.');
 } finally {await pg.close();}
+
+// Repeat against the real repository schema, not only synthetic ACL fixtures.
+const actual=new PGlite();
+try {
+  await actual.exec('CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role BYPASSRLS;');
+  const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
+  for(const file of files)await actual.exec(fs.readFileSync(file,'utf8'));
+  await actual.exec(migration);
+  const relations=(await actual.query<{schema_name:string;relation_name:string}>(`SELECT n.nspname schema_name,c.relname relation_name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN('public','pos','internal','billing','ai','contract') AND c.relkind IN('r','p','v','m','f')`)).rows;
+  for(const role of ['anon','authenticated']){
+    for(const r of relations){
+      await actual.exec('SET ROLE '+role);
+      await assert.rejects(()=>actual.query('SELECT * FROM "'+r.schema_name+'"."'+r.relation_name+'" LIMIT 0'),/permission denied/);
+      await actual.exec('RESET ROLE');
+    }
+    const residual=await actual.query<{n:number}>(`SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN('public','pos','internal','billing','ai','contract') AND c.relkind IN('r','p','v','m','f') AND (has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege($1,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))`,[role]);
+    assert.equal(residual.rows[0].n,0,'No residual real-schema relation/column privilege');
+  }
+  // Known backend login is preserved; without tenant context its RLS rows stay hidden.
+  await actual.exec('SET ROLE svc_pos');await actual.query('SELECT * FROM pos.transactions LIMIT 0');await actual.exec('RESET ROLE');
+  console.log('PASS: real repository schema '+relations.length+' relations deny both browser roles; backend relation dependency remains.');
+}finally{await actual.close();}
