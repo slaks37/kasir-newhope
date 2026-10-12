@@ -561,7 +561,7 @@
   gap: 12px;
   margin: 11px 0;
   font-size: 0.48rem;
-  color: #67748a;
+  color: #475467;
 }
 .nh-mock-tabs b {
   color: #17223b;
@@ -2682,3 +2682,6 @@
     color: #000;
   }
 }
+
+/* The miniature cashier UI keeps stable metrics independent of the marketing font. */
+.nh-pos-screen { font-family: system-ui, sans-serif; }

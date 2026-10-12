@@ -55,6 +55,7 @@ export default defineConfig(() => {
         // browser merchant adalah kode yang tidak bisa dibaca merchant.
         input: {
           main: path.resolve(projectDir, 'index.html'),
+          landing: path.resolve(projectDir, 'landing.html'),
           admin: path.resolve(projectDir, 'admin.html'),
         },
       },

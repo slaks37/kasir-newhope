@@ -1,0 +1,15 @@
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: optional;
+  src: url('/fonts/plus-jakarta-sans-latin.woff2') format('woff2');
+}
+@layer base {
+  html { line-height: 1.5; -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+  .nh-landing button, .nh-landing input, .nh-landing summary { color: inherit; }
+  .nh-landing button { border: 0 solid; background-color: transparent; padding: 0; }
+  .nh-landing img, .nh-landing svg { vertical-align: middle; }
+  .nh-landing img { max-width: 100%; }
+}
