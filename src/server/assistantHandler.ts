@@ -4,6 +4,7 @@ import { registerAssistantRoutes } from '../../services/ai/routes';
 import { createServerlessBoundary } from './serverlessBoundary';
 
 const methods: Record<string,readonly string[]> = {
+  '/api/v1/assistant/consent':['GET','POST'],
   '/api/v1/assistant/query':['POST'], '/api/v1/assistant/credits':['GET'],
   '/api/v1/assistant/quick-chips':['GET'], '/api/v1/assistant/audit':['GET'],
   '/api/v1/assistant/group':['GET'],

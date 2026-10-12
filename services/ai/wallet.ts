@@ -18,6 +18,7 @@
  * Membaca-lalu-menulis dari aplikasi akan membiarkan keduanya lolos.
  */
 
+import {auditQueryMarker} from './paidPrivacy';
 import type { Db } from '../shared/db';
 import type { AiCreditWallet } from '../../src/lib/assistant/types';
 import { findSaaSPlan, TRIAL_PLAN_ID } from '../../src/config/saasPlans';
@@ -223,6 +224,7 @@ export interface AuditInput {
   creditsCharged: number;
   latencyMs: number;
   model?: string | null;
+  provider?: string | null;
   promptTokens?: number | null;
   completionTokens?: number | null;
 }
@@ -239,11 +241,11 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
     await db.query(
       `INSERT INTO ai.ai_query_logs
          (id, merchant_id, tenant_id, query_text, resolved_intent, source,
-          credits_charged, latency_ms, model, prompt_tokens, completion_tokens,business_id)
-       VALUES (uuidv7(), $1, $1, $2, $3, $4, $5, $6, $7, $8, $9,$10)`,
+          credits_charged, latency_ms, model, prompt_tokens, completion_tokens,business_id,provider)
+       VALUES (uuidv7(), $1, $1, $2, $3, $4, $5, $6, $7, $8, $9,$10,$11)`,
       [
         merchantId,
-        a.query.slice(0, 2000),
+        auditQueryMarker(a.query),
         a.intent.slice(0, 64),
         a.source.slice(0, 20),
         a.creditsCharged,
@@ -252,6 +254,7 @@ export async function catatAudit(db: Db, a: AuditInput): Promise<void> {
         a.promptTokens ?? null,
         a.completionTokens ?? null,
         a.businessId ?? null,
+        a.provider ?? null,
       ]
     );
   } catch (err) {
