@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {hashFinancialPin,verifyFinancialPin,validFinancialPin,commandHash} from '../../services/pos/financialAuthorization';
+for(const pin of ['1234','4321','0000','111111','123456','12345678','abc','12','123456789'])assert.equal(validFinancialPin(pin),false);
+const first=await hashFinancialPin('529681'),second=await hashFinancialPin('529681');
+assert.notEqual(first,second,'Random salts prohibit equal stored hashes');
+assert.equal(await verifyFinancialPin('529681',first),true);
+assert.equal(await verifyFinancialPin('913682',first),false);
+assert.equal(await verifyFinancialPin('1234',first),false);
+assert.equal(await verifyFinancialPin('529681','529681'),false);
+assert.equal(commandHash({amount:100,id:'A'}),commandHash({id:'A',amount:100,approvalGrant:'secret'}));
+assert.notEqual(commandHash({amount:100,id:'A'}),commandHash({amount:101,id:'A'}));
+console.log('PASS: salted scrypt, weak/default PIN rejection, no legacy plaintext, exact command binding');

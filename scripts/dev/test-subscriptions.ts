@@ -115,6 +115,13 @@ async function main(){
  app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({error:err.message}));
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
  const url='http://127.0.0.1:'+(server.address() as any).port;
+ const nativeFetch=globalThis.fetch;
+ const savedAuthUrl=process.env.SUPABASE_URL,savedAuthKey=process.env.SUPABASE_ANON_KEY;
+ process.env.SUPABASE_URL='https://auth.fixture.invalid';process.env.SUPABASE_ANON_KEY='fixture-only';
+ globalThis.fetch=((input:any,init?:RequestInit)=>{
+  if(String(input).startsWith('https://auth.fixture.invalid/'))return Promise.resolve(new Response(JSON.stringify({user:{id:'owner-three',email_confirmed_at:new Date().toISOString()}}),{status:JSON.parse(String(init?.body)).password==='fixture-password'?200:400}));
+  return nativeFetch(input,init);
+ }) as typeof fetch;
  try{
   assert.equal((await fetch(url+'/api/admin/me',{headers:{'x-internal-user':'operator@test.invalid'}})).status,401);
   assert.equal((await fetch(url+'/api/admin/me',{headers:{authorization:'Bearer merchant'}})).status,403);
@@ -248,7 +255,7 @@ async function main(){
   const sync=await stateRequest('owner-three',[{kind:'products',recordId:'product-test',baseRevision:0,deleted:false,value:{id:'product-test',name:'Test Product',price:20000,costPrice:5000,unit:'pcs'}}]);
   assert.equal(sync.status,200,'real catalog sync: '+await sync.text());
   const product=(await db.query("SELECT id,tenant_id,merchant_id,outlet_id FROM pos.products WHERE external_ref='product-test'")).rows[0];
-  const catalogHeaders={'x-auth-sub':'owner-three','content-type':'application/json'};
+  const catalogHeaders={'x-auth-sub':'owner-three','x-auth-email':'owner-three@fixture.invalid','content-type':'application/json'};
   const secondDevice=await stateRequest('owner-three',[{kind:'products',recordId:'device-b-product',baseRevision:0,deleted:false,value:{id:'device-b-product',name:'Device B Product',categoryName:'Minuman',price:1000,costPrice:0}}]);
   assert.equal(secondDevice.status,200,await secondDevice.clone().text());
   assert.equal((await db.query('SELECT is_available FROM pos.products WHERE id=$1',[product.id])).rows[0].is_available,true,
@@ -305,8 +312,16 @@ async function main(){
     body:JSON.stringify({...secondOutletSale,outletId:firstOutlet.id,idempotencyKey:'second-outlet-void',
       transactions:[{...secondOutletSale.transactions[0],paymentStatus:'CANCELLED'}]})});
   assert.equal(voidSecondOutlet.status,200,await voidSecondOutlet.clone().text());
-  assert.equal(Number((await db.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1 AND outlet_id=$2',
-    [stockItem,deferred.id])).rows[0].current_stock),0,'Void restores the original outlet');
+  assert.equal((await voidSecondOutlet.json()).rejected.length,1,'Cross-outlet void is rejected');
+  assert.equal(Number((await db.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1 AND outlet_id=$2',[stockItem,deferred.id])).rows[0].current_stock),-1,'Unauthorized void cannot restore inventory');
+  const pinSetup=await fetch(url+'/api/v1/finance/pin',{method:'POST',headers:catalogHeaders,body:JSON.stringify({sector:'FNB',outletId:deferred.id,newPin:'529681',ownerPassword:'fixture-password'})});
+  assert.equal(pinSetup.status,200,await pinSetup.clone().text());
+  const voidCommand={...secondOutletSale.transactions[0],paymentStatus:'CANCELLED',voidReason:'Owner verified void'};
+  const approved=await fetch(url+'/api/v1/finance/approve',{method:'POST',headers:catalogHeaders,body:JSON.stringify({sector:'FNB',outletId:deferred.id,pin:'529681',action:'VOID',reference:voidCommand.clientTxnId,reason:voidCommand.voidReason,command:voidCommand})});
+  assert.equal(approved.status,200,await approved.clone().text());
+  const acceptedVoid=await fetch(url+'/api/v1/sync/transactions',{method:'POST',headers:catalogHeaders,body:JSON.stringify({...secondOutletSale,idempotencyKey:'approved-outlet-void',transactions:[{...voidCommand,approvalGrant:(await approved.json()).approvalGrant}]})});
+  const approvedVoidResult=await acceptedVoid.json();assert.equal(approvedVoidResult.voided,1,JSON.stringify(approvedVoidResult));
+  assert.equal(Number((await db.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1 AND outlet_id=$2',[stockItem,deferred.id])).rows[0].current_stock),0,'Approved void restores original outlet');
   console.log('PASS: new outlet without stock location syncs sale and void against its own inventory');
   const log=await fetch(url+'/api/v1/sync/activity',{method:'POST',headers:{'x-auth-sub':'owner-three','content-type':'application/json'},body:JSON.stringify({businessId:'owner-three_FNB',eventType:'TEST_OPERATION',summary:'Real activity round trip',appModule:'POS'})});
   assert.equal(log.status,200,'activity sync: '+await log.text());

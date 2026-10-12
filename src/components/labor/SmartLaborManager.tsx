@@ -1,3 +1,4 @@
+import {notify} from '../../lib/ui/notify';
 import React, { useState, useMemo } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -241,10 +242,10 @@ export const SmartLaborManager: React.FC = () => {
   };
 
   // Disburse Cash Out
-  const handleDisbursePayroll = (slip: PayrollSlip) => {
+  const handleDisbursePayroll = async (slip: PayrollSlip) => {
     const confirmMsg = `Cairkan gaji bersih ${formatRupiah(slip.netSalary)} untuk ${slip.staffName}? Pembayaran akan dicatat otomatis di Buku Kas sebagai Pengeluaran Operasional.`;
     if (window.confirm(confirmMsg)) {
-      disbursePayrollCashMovement(slip.id, 'TUNAI / KAS');
+      try{await disbursePayrollCashMovement(slip.id, 'TUNAI / KAS');}catch(error){notify(error instanceof Error?error.message:'Pembayaran belum disetujui');return;}
       if (viewingSlip && viewingSlip.id === slip.id) {
         setViewingSlip({
           ...viewingSlip,

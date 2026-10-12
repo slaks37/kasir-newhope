@@ -534,7 +534,7 @@ export const INITIAL_USERS: User[] = [
     name: 'Pemilik Toko',
     username: 'owner',
     role: 'ADMIN',
-    pin: '1234',
+    pin: '',
     email: '',
     phone: '',
     status: 'ACTIVE',

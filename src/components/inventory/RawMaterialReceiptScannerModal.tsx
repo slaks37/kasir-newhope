@@ -345,7 +345,7 @@ export const RawMaterialReceiptScannerModal: React.FC<RawMaterialReceiptScannerM
   const totalReceiptAmount = scannedItems.reduce((s, i) => s + i.subtotal, 0);
 
   // Save / Apply items to stock
-  const handleSaveToInventory = () => {
+  const handleSaveToInventory = async () => {
     if (scannedItems.length === 0) {
       notify('Tidak ada item yang dapat disimpan. Tambahkan minimal 1 bahan baku!');
       return;
@@ -360,14 +360,15 @@ export const RawMaterialReceiptScannerModal: React.FC<RawMaterialReceiptScannerM
       costPrice: it.costPrice,
     }));
 
-    const result = processRawMaterialReceipt({
+    let result;
+    try{result = await processRawMaterialReceipt({
       receiptImage: capturedImage || undefined,
       supplierName: supplierName.trim(),
       receiptDate,
       items: payloadItems,
       paidFromCashDrawer,
       notes: receiptNotes,
-    });
+    });}catch(error){notify(error instanceof Error?error.message:'Penerimaan belum disetujui');return;}
 
     setSavedResult(result);
     setScanStep('SUCCESS');

@@ -16,6 +16,8 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
   '/api/v1/reports/summary': ['GET'],
   '/api/v1/reports/transactions': ['GET'],
+  '/api/v1/finance/pin': ['POST'],
+  '/api/v1/finance/approve': ['POST'],
   '/api/v1/finance/refund': ['POST'],
   '/api/v1/finance/cash': ['POST'],
   '/api/v1/finance/cash/reverse': ['POST'],
