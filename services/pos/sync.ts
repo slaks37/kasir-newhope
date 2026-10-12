@@ -675,8 +675,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           else
           await c.query(
             `INSERT INTO pos.payments
-               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
+               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider, verification_origin)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH','CASHIER_RECORDED')
              ON CONFLICT DO NOTHING RETURNING id`,
             [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
           ).then(async payment=>{

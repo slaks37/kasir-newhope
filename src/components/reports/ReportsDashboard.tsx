@@ -1,3 +1,4 @@
+import {PaymentReconciliationSummary} from './PaymentReconciliationSummary';
 import React, { useState, useMemo, useEffect } from 'react';
 import { useReportWorkspace } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -346,6 +347,7 @@ export const ReportsDashboard: React.FC = () => {
       {/* ========================================================================= */}
       {/* 🌟 HERO SECTION: DASHBOARD OMZET HARI INI & REKAP KAS FISIK DI LACI 🌟 */}
       {/* ========================================================================= */}
+      <PaymentReconciliationSummary/>
       <div className="nh-report-summary bg-white text-slate-900 rounded-3xl p-6 lg:p-7 shadow-xs border border-slate-200 relative overflow-hidden">
         {/* Background ambient glow */}
 

@@ -68,6 +68,11 @@ try{
   assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'1234'})).status,400);
   assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'529681'})).status,403);
   assert.equal((await rawPost('/api/v1/finance/pin',{sector:'FNB',outletId:outlet,newPin:'529681',ownerPassword:'fixture-password'})).status,200);
+  const reconciliation=await get('/api/v1/finance/reconciliation?'+query);
+  assert.equal(reconciliation.status,200);assert.deepEqual(reconciliation.data.totals,[]);
+  assert.equal((await get('/api/v1/finance/reconciliation?'+query,'other')).status,409,'Unknown owner cannot enumerate payments');
+  assert.equal((await get('/api/v1/finance/reconciliation?'+query,'anonymous')).status,401);
+  assert.equal((await get('/api/v1/finance/reconciliation?sector=FNB&outletId='+randomUUID())).status,403);
   const directory=await get('/api/v1/sync/business');
   assert.equal(directory.status,200);assert.equal(directory.data.businesses[0].businessId,merchant);
   assert.equal(directory.data.businesses[0].legacyAlias,owner+'_FNB');

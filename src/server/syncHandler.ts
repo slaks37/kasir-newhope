@@ -23,6 +23,7 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/finance/refund': ['POST'],
   '/api/v1/finance/cash': ['POST'],
   '/api/v1/finance/cash/reverse': ['POST'],
+  '/api/v1/finance/reconciliation':['GET'],
   '/api/v1/finance/shift': ['GET'],
   '/api/v1/finance/shift/open': ['POST'],
   '/api/v1/finance/shift/close': ['POST'],
