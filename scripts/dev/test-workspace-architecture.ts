@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {SelectedStore} from '../../src/context/selectedStore';
-import {guardedPath,legacyHashPath,moduleForPath,pathForModule,safeReturnPath,workspaceRoutes} from '../../src/lib/navigation/routes';
+import {guardedPath,isLandingPath,legacyHashPath,moduleForPath,pathForModule,safeReturnPath,workspaceRoutes} from '../../src/lib/navigation/routes';
 import {RefreshCoordinator,coalescedRead,setReadScope} from '../../src/lib/sync/refreshCoordinator';
 import {kindsForModule} from '../../src/lib/sync/moduleKinds';
 import {SharedStateSync} from '../../src/lib/sync/sharedState';
@@ -44,6 +44,10 @@ for(const [module,path] of Object.entries(workspaceRoutes)){
   assert.equal(guardedPath(path,true),path,'Restoring authentication preserves deep links');
 }
 assert.equal(guardedPath('/register?returnTo=%2Freports',true),'/reports');
+assert.equal(isLandingPath('/'),true);
+assert.equal(isLandingPath('/unknown'),true);
+for(const route of ['/login','/register?returnTo=%2Fsubscription','/reset-password','/blog','/blog/artikel',...Object.values(workspaceRoutes)])
+  assert.equal(isLandingPath(route),false,route+' must reach its account/workspace/blog handler');
 assert.equal(legacyHashPath('#login'),'/login');assert.equal(legacyHashPath('#payment'),'/subscription');
 for(const unsafe of ['//other.invalid/pos','https://other.invalid/pos','/unknown'])assert.equal(safeReturnPath(unsafe),'/overview');
 const store=new SelectedStore({cart:[],products:[],attendance:[],sync:0,reports:[],action:(n:number)=>n});

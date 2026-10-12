@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
+    "build": "vite build && node scripts/build-landing.mjs && node scripts/dev/test-landing-build.mjs && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "test:mcp": "node --import tsx scripts/dev/test-mcp.ts",
@@ -19,7 +19,7 @@
     "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
-    "verify": "npm run lint && npm run build:api && npm run test:runtime && npm test && npm run build",
+    "verify": "npm run lint && npm run build && npm run test:runtime && npm test",
     "test:product-photo": "node --import tsx scripts/dev/test-product-photo.ts && node --import tsx scripts/dev/test-blog-photo.ts && npm run -s test:blog-cover",
     "test:blog-cover": "node --import tsx scripts/dev/test-blog-cover.ts",
     "test:workspace": "node --import tsx scripts/dev/test-workspace-architecture.ts && node --import tsx scripts/dev/test-offline-workspace.ts",

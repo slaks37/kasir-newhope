@@ -15,6 +15,10 @@
   ],
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/landing.html"
+    },
+    {
       "source": "/.well-known/oauth-protected-resource/api/blog-mcp",
       "destination": "/api/blog-mcp/resource"
     },

@@ -30,9 +30,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useAuth } from "../../context/AuthContext";
 import {clearCheckoutIntent,saveCheckoutIntent} from '../../lib/workspace/checkoutIntent';
-import {navigate} from '../../lib/navigation/workspaceRouter';
 import {
   BUSINESS_PRESETS,
   type BusinessSector,
@@ -61,6 +59,8 @@ interface HomePageProps {
   onOpenRegister?: () => void;
   onOpenPOS?: (targetTab?: string) => void;
   isStandaloneLanding?: boolean;
+  user?: {id: string} | null;
+  onNavigate?: (path: string) => void;
 }
 
 const WHATSAPP = supportWhatsAppUrl(import.meta.env.VITE_SUPPORT_WHATSAPP,
@@ -333,8 +333,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   onOpenLogin,
   onOpenRegister,
   onOpenPOS,
+  user = null,
+  onNavigate = (path) => window.location.assign(path),
 }) => {
-  const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedSector, setSelectedSector] = useState<BusinessSector>("FNB");
   const [isYearlyBilling, setIsYearlyBilling] = useState(true);
@@ -368,7 +369,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (user) {
       openPOS("payment");
     } else {
-      navigate('/register?returnTo=%2Fsubscription');
+      onNavigate('/register?returnTo=%2Fsubscription');
     }
   };
   const navClose = () => setMenuOpen(false);

@@ -43,12 +43,15 @@ export function ProductPhoto({
       </span>
     );
   const base = src.split("?")[0];
+  const thumbnail = /^\/images\/products\/(kopi-susu|matcha-latte|nasi-goreng|croissant)\.webp$/.exec(base)?.[1];
   if (base.startsWith("/")) {
     return (
       <img
-        src={base}
+        src={thumbnail ? `/images/landing/${thumbnail}-160.webp` : base}
+        srcSet={thumbnail ? `/images/landing/${thumbnail}-80.webp 80w, /images/landing/${thumbnail}-160.webp 160w` : undefined}
+        sizes={thumbnail ? "(max-width: 640px) 76px, 120px" : undefined}
         width="160"
-        height="120"
+        height={thumbnail ? "92" : "120"}
         alt={alt}
         loading={eager ? "eager" : "lazy"}
         decoding="async"
