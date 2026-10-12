@@ -27,6 +27,28 @@ try {
     const css = await readFile(path.join('dist', href.slice(1)), 'utf8');
     page = page.replace(tag, `<style>${css.replaceAll('</style', '<\\/style')}</style>`);
   }
+  // Inline the tiny, framework-free bootstrap. Deferred feature imports keep
+  // their hashed asset URLs; neither React nor its preload tree is fetched
+  // merely to read the already-rendered marketing page.
+  const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
+  const landingEntry = manifest['landing.html'].file;
+  const bootstrap = await build({
+    entryPoints: [path.resolve('dist', landingEntry)], bundle: true,
+    write: false, format: 'esm', minify: true, platform: 'browser',
+    define: {'import.meta.url': 'landingModuleUrl'},
+    banner: {js: `const landingModuleUrl = new URL(${JSON.stringify('/' + landingEntry)}, location.origin).href;`},
+    plugins: [{name: 'keep-deferred-landing-features', setup(builder) {
+      builder.onResolve({filter: /.*/}, args => {
+        if (args.kind !== 'dynamic-import') return;
+        const asset = path.relative(path.resolve('dist'), path.resolve(args.resolveDir, args.path));
+        return {path: '/' + asset.split(path.sep).join('/'), external: true};
+      });
+    }}],
+  });
+  const entryTag = /<script\b[^>]*type="module"[^>]*src="[^"]+"[^>]*><\/script>/;
+  if (!entryTag.test(page)) throw new Error('Missing landing bootstrap');
+  page = page.replace(entryTag, `<script type="module" data-landing-bootstrap>${bootstrap.outputFiles[0].text.replaceAll('</script', '<\\/script')}</script>`);
+  page = page.replace(/<link\b[^>]*rel="modulepreload"[^>]*>/g, '');
   page = page.replace('<div id="root"></div>', `<div id="root">${html}</div>`);
   if (!page.includes('<h1')) throw new Error('Landing content was not prerendered');
   // Vercel's static directory index takes priority over a root rewrite.

@@ -2685,3 +2685,21 @@
 
 /* The miniature cashier UI keeps stable metrics independent of the marketing font. */
 .nh-pos-screen { font-family: system-ui, sans-serif; }
+.nh-load-error {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  padding: 1rem;
+  color: #7f1d1d;
+  background: #fff;
+  border: 1px solid #7f1d1d;
+  border-radius: .75rem;
+}
+.nh-load-error button {
+  padding: .5rem .75rem;
+  color: #fff;
+  background: #7f1d1d;
+  border-radius: .5rem;
+}
