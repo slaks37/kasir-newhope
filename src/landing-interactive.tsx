@@ -22,4 +22,5 @@ export function activateLanding(root: HTMLElement) {
     else createRoot(root).render(page);
   });
   disclosures.forEach(details => { details.open = true; });
+  return (action: () => void) => flushSync(action);
 }

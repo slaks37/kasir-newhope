@@ -16,11 +16,13 @@ else {
   let loading: Promise<void> | undefined;
   const pending: Array<() => void> = [];
   const activate = () => loading ??= import('./landing-interactive').then(({activateLanding}) => {
-    activateLanding(root);
+    const replay = activateLanding(root);
     ready = true;
     document.getElementById('nh-load-status')?.remove();
     root.removeAttribute('aria-busy');
-    while (pending.length) pending.shift()!();
+    // Commit each action before the next one. For example, a queued billing
+    // toggle must update the plan handler before a queued checkout click.
+    while (pending.length) replay(pending.shift()!);
   }).catch(error => {
     loading = undefined;
     pending.length = 0;

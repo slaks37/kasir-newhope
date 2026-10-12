@@ -7,7 +7,8 @@ read-only visitors, anchors, and native disclosures do not need hydration.
 Login and trial CTAs navigate directly. Buttons, sector links, and range controls
 load landing-interactive on pointer/focus intent or their first action. The
 bootstrap queues actions during loading and replays them after synchronous
-hydration. Preserve native open disclosures and replay input values against
+hydration. Commit each queued action before the next so a billing toggle updates
+the handler used by a subsequent checkout click. Preserve native open disclosures and replay input values against
 React's SSR-initialized value tracker. Failed downloads offer an explicit reload
 because browsers can cache a rejected dynamic import until the page reloads.
 The authenticated application remains a separate app.html with its existing
