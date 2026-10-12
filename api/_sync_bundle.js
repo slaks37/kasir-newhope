@@ -816,6 +816,59 @@ async function applyTenders(db, scope, transactionId, tenders) {
   }
 }
 
+// src/config/legalNotices.ts
+var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
+
+// services/pos/privacy.ts
+var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var PrivacyError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function ownerScope(db, req) {
+  const p = trustedPrincipal(req);
+  if (!p || p.subject === "local-development") throw new PrivacyError(401, "UNAUTHENTICATED");
+  const t = (await db.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND is_active AND merged_into IS NULL ORDER BY created_at,id LIMIT 1", [p.subject])).rows[0];
+  if (!t) throw new PrivacyError(403, "OWNER_REQUIRED");
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [t.id]);
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["privacy:" + t.id]);
+  return { tenantId: t.id, actor: p.subject };
+}
+function registerPrivacyRoutes(app, db) {
+  const route = (method, path, run) => app[method](path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const data = await db.tx(async (c) => run(c, await ownerScope(c, req), req));
+      res.json({ ok: true, ...data });
+    } catch (e) {
+      res.status(e instanceof PrivacyError ? e.status : 503).json({ ok: false, error: e instanceof PrivacyError ? e.message : "PRIVACY_WORKFLOW_UNAVAILABLE" });
+    }
+  });
+  route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
+  route("post", "/api/v1/privacy/requests", async (c, s, req) => {
+    const { clientRequestId, type, message } = req.body || {};
+    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
+    if (previous) {
+      if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
+      return { requestId: previous.id, status: previous.status, replayed: true };
+    }
+    const count = (await c.query("SELECT count(*)::int n FROM internal.privacy_requests WHERE tenant_id=$1 AND created_at>now()-interval '24 hours'", [s.tenantId])).rows[0].n;
+    if (count >= 10) throw new PrivacyError(429, "PRIVACY_REQUEST_RATE_LIMITED");
+    const record = (await c.query("INSERT INTO internal.privacy_requests(tenant_id,actor_ref,client_request_id,request_type,message) VALUES($1,$2,$3,$4,$5) RETURNING id,status", [s.tenantId, s.actor, clientRequestId, type, message.trim()])).rows[0];
+    await c.query("INSERT INTO internal.privacy_request_events(request_id,tenant_id,actor_ref,event,reason) VALUES($1,$2,$3,'RECEIVED','Owner submitted request; identity and retention review required')", [record.id, s.tenantId, s.actor]);
+    return { requestId: record.id, status: record.status };
+  });
+  route("post", "/api/v1/privacy/notices", async (c, s, req) => {
+    if (req.body?.termsVersion !== LEGAL_NOTICE_VERSION || req.body?.privacyVersion !== LEGAL_NOTICE_VERSION) throw new PrivacyError(400, "NOTICE_VERSION_REQUIRED");
+    await c.query("INSERT INTO internal.legal_notice_acknowledgements(tenant_id,actor_ref,terms_version,privacy_version) VALUES($1,$2,$3,$3) ON CONFLICT DO NOTHING", [s.tenantId, s.actor, LEGAL_NOTICE_VERSION]);
+    return { version: LEGAL_NOTICE_VERSION };
+  });
+}
+
 // src/lib/sync/orderOperations.ts
 var ORDER_OPERATION_FIELDS = [
   "id",
@@ -1414,7 +1467,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -1441,10 +1494,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID2.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID2.test(merchantId) || tenantId && !UUID2.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -1742,7 +1795,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID2.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -1913,6 +1966,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
   registerReportRoutes(app, db);
@@ -2756,6 +2810,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/privacy/requests": ["GET", "POST"],
+  "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],
   "/api/v1/sync/catalog": ["GET", "POST"],
   "/api/v1/sync/transactions": ["POST"],

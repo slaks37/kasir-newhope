@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
+import {PrivacyRequestsTab} from './PrivacyRequestsTab';
 import { SubscriptionBillingTab } from './SubscriptionBillingTab';
 import {
   Settings,
@@ -52,7 +53,7 @@ export const SettingsManager: React.FC = () => {
   const logoEditedRef = useRef(false);
   const lastBusinessIdRef = useRef(tenant.businessId);
 
-  const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING'>('STORE');
+  const [activeTab, setActiveTab] = useState<'STORE' | 'BRANCHES' | 'USERS' | 'BILLING' | 'PRIVACY'>('STORE');
   const [formSettings, setFormSettings] = useState<StoreSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -259,6 +260,7 @@ export const SettingsManager: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-3">
+          <button type="button" onClick={()=>setActiveTab('PRIVACY')} className="rounded border bg-white px-3 py-2 text-sm font-bold">Privasi & Permintaan Data</button>
           {/* Nav Tabs */}
           <div className="nh-settings-tabs flex bg-white border border-slate-200 p-1 rounded-xl gap-1 text-xs font-bold">
             <button
@@ -323,7 +325,7 @@ export const SettingsManager: React.FC = () => {
         </div>
       </div>
 
-      {activeTab === 'BILLING' ? (
+      {activeTab === 'PRIVACY' ? <PrivacyRequestsTab/> : activeTab === 'BILLING' ? (
         <SubscriptionBillingTab />
       ) : activeTab === 'USERS' ? (
         <UserManagementTab />

@@ -1256,7 +1256,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
         <div className="nh-container nh-footer-bottom">
           <span>© {new Date().getFullYear()} New Hope POS</span>
-          <span>Dibuat untuk langkah besar usaha kecil.</span>
+          <span><a href="/privacy">Privasi</a> · <a href="/terms">Syarat layanan</a> · <a href="/support">Bantuan & Privasi</a></span>
         </div>
       </footer>
     </div>

@@ -406,6 +406,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <span>{success}</span>
           </div>
         )}
+        {mode==='register'&&<label className="block text-sm"><input required type="checkbox"/> Saya menerima <a href="/terms" target="_blank" rel="noreferrer" className="underline">syarat layanan</a> dan telah membaca <a href="/privacy" target="_blank" rel="noreferrer" className="underline">pemberitahuan privasi</a>. Pilihan AI eksternal terpisah.</label>}
         <button
           type="submit"
           disabled={loading}

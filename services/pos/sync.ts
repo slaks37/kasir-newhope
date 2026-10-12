@@ -26,6 +26,7 @@ import type { Db } from '../shared/db';
 import { hasSchemaFeature } from '../shared/schemaFeatures';
 import { applyTenders } from './tenders';
 import { SECTORS, writeActivity, type Sector } from './activity';
+import {registerPrivacyRoutes} from './privacy';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
 import { registerSharedStateRoutes } from './sharedState';
 import { registerReportRoutes } from './reports';
@@ -147,6 +148,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
   registerReportRoutes(app,db);
