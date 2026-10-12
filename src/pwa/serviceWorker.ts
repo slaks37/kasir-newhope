@@ -21,8 +21,8 @@ function route(request) {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return 'network';
   if (url.pathname.startsWith('/api/') || url.pathname === '/api' || url.pathname.startsWith('/admin') || url.pathname === '/sw.js') return 'network';
-  // Server-rendered pages: never cached as the app shell.
-  if (url.pathname === '/blog' || url.pathname.startsWith('/blog/') || url.pathname === '/sitemap.xml' || url.pathname === '/rss.xml') return 'network';
+  // Server-rendered pages and AI discoverability files: never cached as the app shell.
+  if (url.pathname === '/blog' || url.pathname.startsWith('/blog/') || url.pathname === '/sitemap.xml' || url.pathname === '/rss.xml' || url.pathname === '/llms.txt' || url.pathname.startsWith('/.well-known/') || url.pathname === '/robots.txt') return 'network';
   if (request.mode === 'navigate') return 'shell';
   if (url.pathname.startsWith('/assets/')) return 'asset';
   return 'network';

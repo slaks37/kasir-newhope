@@ -127,11 +127,71 @@
       "destination": "/admin.html"
     },
     {
-      "source": "/((?!api|admin|google).*)",
+      "source": "/((?!api|admin|google|\\.well-known|.*\\.(?:txt|json|xml|ico|svg|png|jpg|jpeg|webp|webmanifest)$).*)",
       "destination": "/index.html"
     }
   ],
   "headers": [
+    {
+      "source": "/",
+      "headers": [
+        {
+          "key": "Link",
+          "value": "</.well-known/ai-catalog.json>; rel=\"ai-catalog\", </.well-known/ard.json>; rel=\"ard\", </llms.txt>; rel=\"describedby\""
+        }
+      ]
+    },
+    {
+      "source": "/llms.txt",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/markdown; charset=utf-8"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/.well-known/ai-catalog.json",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/.well-known/ard.json",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    },
     {
       "source": "/sw.js",
       "headers": [

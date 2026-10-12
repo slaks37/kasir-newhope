@@ -1,0 +1,48 @@
+# New Hope POS
+
+> New Hope POS adalah platform manajemen usaha dan aplikasi kasir (Point of Sale) multi-industri untuk UMKM Indonesia, mendukung sektor Kafe & Resto (F&B), Laundry Kiloan & Satuan, Toko & Ritel, Cuci Mobil & Motor (Carwash), serta Barbershop & Salon.
+
+New Hope POS dirancang dengan arsitektur offline-first berbasis Progressive Web App (PWA) dan sinkronisasi cloud real-time, memungkinkan operasional kasir tetap berjalan lancar tanpa henti meskipun koneksi internet terputus di gerai fisik.
+
+## Sektor Industri yang Didukung
+
+- Kafe, Resto & F&B: Pengaturan denah dan okupansi meja restoran, pemisahan tagihan (split bill), pesanan bawa pulang (takeaway) atau santap di tempat (dine-in), kitchen display system (KDS), dan catatan pesanan kustom.
+- Laundry Kiloan & Satuan: Layanan cuci reguler dan kilat (express), penimbangan berat kiloan, penomoran rak penyimpanan pakaian, tracking status cuci (antrean, proses, selesai), serta nota serah terima pelanggan.
+- Ritel, Toko & Minimarket: Pemindaian barcode produk, varian dan SKU dinamis, batas peringatan stok minimum, riwayat penyesuaian stok opname, dan pelacakan harga pokok penjualan (HPP).
+- Cuci Mobil & Motor (Carwash): Antrean pengerjaan kendaraan, pencatatan jenis dan nomor plat kendaraan, status proses cuci dan pengeringan, serta pemilihan paket layanan.
+- Barbershop & Salon: Antrean giliran pelanggan, penugasan kapster atau terapis tertentu, komisi staf per tindakan layanan, serta pencatatan produk perawatan.
+
+## Modul & Kemampuan Utama
+
+- Kasir & Pembayaran: Transaksi cepat, kalkulasi diskon dan pajak, integrasi QRIS dinamis dan statis, pembayaran tunai serta nontunai, pencetakan struk thermal Bluetooth/USB dan struk digital.
+- Manajemen Meja & Reservasi: Denah visual meja interaktif untuk tata letak restoran dan kafe, pemantauan status terisi, kosong, atau reservasi.
+- Inventori & Bahan Baku: Pemantauan saldo stok multi-outlet, peringatan otomatis saat stok kritis, mutasi inventori, serta rekap produk paling laris dan pergerakan lambat.
+- Pelanggan & Loyalitas: Direktori pelanggan terpusat, pengelompokan member setia, riwayat transaksi per pelanggan, dan analisis retensi pelanggan.
+- Laporan Keuangan & Analisis: Rekap penjualan harian dan bulanan, rekap metode pembayaran, rekapitulasi shift kasir dan setoran kas, laba kotor, dan ekspor laporan.
+- Asisten Bisnis AI (Business Intelligence): Analisis pola jam ramai, proyeksi pencapaian target omzet, deteksi anomali penjualan, dan rekomendasi operasional berbasis data agregat toko tanpa membocorkan data privat ke pihak luar.
+- Arsitektur Offline-First & Multi-Outlet: Antrean transaksi lokal tersimpan aman di peramban gerai, sinkronisasi otomatis ke cloud saat jaringan pulih, serta pemisahan data antar-cabang yang ketat.
+- Keamanan & Akses Pengguna: Kontrol otorisasi berbasis peran (Owner, Admin, Kasir) dengan autentikasi PIN cepat kasir dan isolasi data multi-tenant tingkat basis data.
+
+## Skema Layanan & Paket Langganan
+
+- Free Trial 45 Hari: Akses penuh seluruh fitur Tier Pro selama 45 hari untuk hingga 2 outlet toko tanpa memerlukan kartu kredit.
+- Free Selamanya: Paket gratis berkelanjutan setelah masa uji coba berakhir dengan kapasitas 1 outlet, 10 produk utama pilihan pemilik, dan akses akun owner.
+- Paket Berbayar (SaaS): Tier Plus (Rp 99.000/bulan) dan Tier Pro (Rp 199.000/bulan) dengan diskon 20% untuk penagihan tahunan, opsi penambahan outlet cabang tambahan, kuota asisten bisnis AI, dan dashboard manajemen lengkap.
+
+## Halaman Publik & Navigasi
+
+- [Beranda & Demo Kasir](https://kasir.newhope.space/): Halaman selamat datang resmi New Hope POS, pendaftaran akun toko UMKM baru, dan akses aplikasi kasir berbasis web.
+- [Blog & Panduan Usaha](https://kasir.newhope.space/blog): Artikel edukasi bisnis UMKM, tips operasional kasir, strategi penentuan harga pokok penjualan (HPP), dan manajemen ritel modern.
+- [Peta Situs (Sitemap)](https://kasir.newhope.space/sitemap.xml): Daftar tautan lengkap seluruh konten publik dan artikel blog yang dapat diindeks oleh peramban dan agen pencari.
+- [Umpan RSS Blog](https://kasir.newhope.space/rss.xml): Sindikasi konten artikel terbaru dari Blog New Hope POS dalam format RSS/XML standar.
+
+## Penemuan Agen & Metadata Standar
+
+- [Katalog Sumber Daya AI](https://kasir.newhope.space/.well-known/ai-catalog.json): Manifest katalog kapabilitas AI publik yang valid sesuai spesifikasi Agentic Resource Discovery (ARD).
+- [Manifest ARD](https://kasir.newhope.space/.well-known/ard.json): Titik masuk penemuan standar ARD resmi untuk agen otonom dan perayap AI.
+- [Protokol Robots](https://kasir.newhope.space/robots.txt): Petunjuk akses perayap mesin pencari publik dan deklarasi direktif Agentmap.
+
+## Optional
+
+- [Logo Resmi New Hope POS](https://kasir.newhope.space/new-hope-logo-mark.png): Aset gambar logo resmi New Hope POS (1024x1024 PNG).
+- [Manifest Web Aplikasi PWA](https://kasir.newhope.space/manifest.json): Konfigurasi metadata instalasi PWA untuk perangkat seluler dan desktop kasir.
