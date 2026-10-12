@@ -5,3 +5,5 @@ Disallow: /api/
 
 Sitemap: https://kasir.newhope.space/sitemap.xml
 Sitemap: https://kasir.newhope.space/blog/sitemap.xml
+Agentmap: https://kasir.newhope.space/.well-known/ai-catalog.json
+Agentmap: https://kasir.newhope.space/.well-known/ard.json

@@ -1,0 +1,9 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "New Hope POS",
+    "documentationUrl": "https://kasir.newhope.space/llms.txt",
+    "logoUrl": "https://kasir.newhope.space/new-hope-logo-mark.png"
+  },
+  "entries": []
+}

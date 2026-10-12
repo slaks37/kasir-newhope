@@ -46,7 +46,7 @@ online = false;
 assert.equal(await (await dispatch('/reports', { mode: 'navigate' }))!.text(), 'net:/pos', 'Offline navigation serves the last good index.html');
 // Hashed assets come from cache, even offline.
 assert.match(await (await dispatch('/assets/Pos-def.js'))!.text(), /cached:\/assets\/Pos-def\.js/);
-// Never intercepted: API, admin, non-GET, other origins.
-for (const [url, init] of [['/api/v1/sync/state', {}], ['/admin', { mode: 'navigate' }], ['/blog/cara-hitung-hpp', { mode: 'navigate' }], ['/sitemap.xml', {}], ['/assets/x.js', { method: 'POST' }], ['https://project.supabase.co/auth/v1/user', {}]] as const)
+// Never intercepted: API, admin, non-GET, other origins, or AI discoverability endpoints.
+for (const [url, init] of [['/api/v1/sync/state', {}], ['/admin', { mode: 'navigate' }], ['/blog/cara-hitung-hpp', { mode: 'navigate' }], ['/sitemap.xml', {}], ['/llms.txt', { mode: 'navigate' }], ['/.well-known/ai-catalog.json', {}], ['/robots.txt', {}], ['/assets/x.js', { method: 'POST' }], ['https://project.supabase.co/auth/v1/user', {}]] as const)
   assert.equal(await dispatch(url, init as any), null, url + ' must bypass the service worker');
 console.log('PASS: service worker precaches the cashier shell, serves offline refresh, caches hashed assets, cleans old builds and never touches API/admin/blog/non-GET/cross-origin');
