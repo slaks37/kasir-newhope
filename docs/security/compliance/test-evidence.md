@@ -26,3 +26,5 @@ CI uses Node22/Linux and isolated PostgreSQL fixtures; local run used Node24/mac
 ## Reproduce
 
 Fetch `codex/security-integration-validation`, use clean installed dependencies (`npm ci`), then run `npm run verify`. Confirm `git diff --exit-code -- api/` and run the staging checklist from [production readiness](production-readiness.md) against actual synthetic Auth owners and service logins. Never point these fixture scripts at production, apply both mirrored migration paths, or treat simulated PSP/LLM responses as real integration success.
+
+Additional read-only checks: local built `/privacy`, `/terms`, `/support` links were opened in Chrome and rendered the correct notice, current prices and missing-contact release gate. Two accessible New Hope n8n definitions were inspected without running/changing flows or exporting execution data; see [flow review](n8n-flow-review.md). Later n8n documentation commits do not change tested AI transport code.

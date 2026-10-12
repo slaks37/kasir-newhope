@@ -8,7 +8,7 @@ Production database inspection was read-only. No production SQL, historical data
 - PIN/grants/offline safeguards: [financial release](financial-release.md).
 - Notices/request intake: `/privacy`, `/terms`, `/support`, Settings → Privasi & Permintaan Data; [rights operations](privacy-rights-runbook.md).
 - Legal templates: [inventory/retention](data-inventory-retention.md), [DPA](dpa-template.md), [incident playbook](incident-response.md), [subprocessors](subprocessors.md).
-- Agnes/DeepSeek data/consent/retention gates: [AI governance](ai-governance.md).
+- Agnes/DeepSeek data/consent/retention gates: [AI governance](ai-governance.md), [read-only n8n definition review](n8n-flow-review.md).
 - Merchant settlement, DOKU separation, pricing/marketing/tax audit: [payment controls](payment-controls.md).
 
 Unmet release prerequisites are checklist gates, not silently completed work. In particular Supabase leaked-password protection is unavailable on the current Free plan; no paid upgrade occurred. Real staging, public verified privacy contact, final legal terms and actual licensed merchant-provider certification must be resolved before their affected production features are released.
