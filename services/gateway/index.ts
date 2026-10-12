@@ -362,7 +362,7 @@ async function start() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, isAdminPath(req.path) ? 'admin.html' : 'index.html'));
+      res.sendFile(path.join(distPath, isAdminPath(req.path) ? 'admin.html' : 'app.html'));
     });
   }
 

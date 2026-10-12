@@ -31,7 +31,7 @@ function cashierServiceWorker(): Plugin {
       };
       visit(entry.fileName);
       const assets = [...files].sort().map(file => '/' + file);
-      const buildId = createHash('sha256').update(assets.join('\n')).digest('hex').slice(0, 12);
+      const buildId = createHash('sha256').update(assets.join('\n') + serviceWorkerSource('', assets)).digest('hex').slice(0, 12);
       this.emitFile({type: 'asset', fileName: 'sw.js', source: serviceWorkerSource(buildId, assets)});
     },
   };

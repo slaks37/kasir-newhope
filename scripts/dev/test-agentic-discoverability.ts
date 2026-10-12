@@ -138,8 +138,8 @@ console.log('--- TEST 5: vercel.json routing & headers configuration ---');
 const vercelConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
 // Verify rewrite rule excludes .well-known and static file extensions from SPA catch-all
-const catchAll = vercelConfig.rewrites.find((r: any) => r.destination === '/index.html');
-assert.ok(catchAll, 'SPA catch-all rewrite to /index.html must exist');
+const catchAll = vercelConfig.rewrites.find((r: any) => r.destination === '/app.html');
+assert.ok(catchAll, 'SPA catch-all rewrite to /app.html must exist');
 assert.match(catchAll.source, /\\.well-known/, 'Catch-all rewrite must exclude .well-known');
 assert.match(catchAll.source, /txt\|json\|xml/, 'Catch-all rewrite must exclude .txt, .json, and .xml');
 
@@ -195,8 +195,8 @@ const server = http.createServer((req, res) => {
     /\.(txt|json|xml|ico|svg|png|jpg|jpeg|webp|webmanifest)$/.test(pathname);
 
   if (!isExcluded) {
-    // Rewrites to index.html
-    const indexHtml = path.join(distDir, 'index.html');
+    // Root is static marketing; account/workspace paths use the cashier shell.
+    const indexHtml = path.join(distDir, pathname === '/' ? 'index.html' : 'app.html');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fs.readFileSync(indexHtml));
     return;
@@ -250,12 +250,13 @@ try {
   const resPos = await fetch(`${baseUrl}/pos`);
   assert.equal(resPos.status, 200);
   const posBody = await resPos.text();
-  assert.ok(posBody.includes('<!doctype html>'), 'SPA navigation to /pos must serve index.html');
+  assert.ok(posBody.includes('<!doctype html>'), 'SPA navigation to /pos must serve the cashier shell');
+  assert.ok(posBody.includes('<div id="root"></div>'), 'Private routes must not receive prerendered marketing');
 
   const resLogin = await fetch(`${baseUrl}/login`);
   assert.equal(resLogin.status, 200);
   const loginBody = await resLogin.text();
-  assert.ok(loginBody.includes('<!doctype html>'), 'SPA navigation to /login must serve index.html');
+  assert.ok(loginBody.includes('<!doctype html>'), 'SPA navigation to /login must serve the cashier shell');
 
   console.log('PASS: Local routing simulation validates 200 for AI endpoints, 404 for missing static files, and SPA rewrite for client routes.');
 } finally {

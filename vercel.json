@@ -132,7 +132,7 @@
     },
     {
       "source": "/((?!api|admin|google|\\.well-known|.*\\.(?:txt|json|xml|ico|svg|png|jpg|jpeg|webp|webmanifest)$).*)",
-      "destination": "/index.html"
+      "destination": "/app.html"
     }
   ],
   "headers": [
