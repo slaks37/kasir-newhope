@@ -11,6 +11,13 @@ assert.equal(routes.find(route => route.source === '/')?.destination, '/landing.
 assert.ok(routes.some(route => route.destination === '/app.html'), 'Private navigation must use the cashier shell');
 assert.ok(page.includes('id="nh-hero-title"') && page.includes('id="pricing"'), 'Public copy and prices exist before JavaScript');
 assert.equal(/<link[^>]+rel="stylesheet"/.test(page), false, 'Landing has no render-blocking stylesheet requests');
+assert.equal(/<link[^>]+rel="modulepreload"/.test(page), false, 'Reading marketing must not preload React');
+assert.equal(/<script[^>]+type="module"[^>]+src=/.test(page), false, 'Inline bootstrap removes the initial script request chain');
+const bootstrap = /<script type="module" data-landing-bootstrap>([\s\S]*?)<\/script>/.exec(page)?.[1];
+assert.ok(bootstrap && bootstrap.includes('import('), 'Interactive features remain available on demand');
+assert.ok(Buffer.byteLength(bootstrap) < 12000, 'Initial bootstrap stays small');
+assert.equal(/react-dom|react\.production|hydrateRoot/.test(bootstrap), false, 'React runtime stays out of initial execution');
+assert.equal(/gtm\.js\?id=/.test(page), false, 'Empty GTM container has no runtime download');
 assert.equal(/fonts\.(googleapis|gstatic)\.com/.test(page), false, 'Public font is local');
 assert.ok(page.includes('google-site-verification') && page.includes('ai-catalog') && page.includes('rel="canonical"'), 'Search and AI discovery metadata preserved');
 assert.ok(app.includes('<div id="root"></div>'), 'Cashier keeps its independent session-aware shell');

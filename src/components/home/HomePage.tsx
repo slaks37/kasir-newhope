@@ -334,6 +334,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onOpenRegister,
   onOpenPOS,
   user = null,
+  isStandaloneLanding = false,
   onNavigate = (path) => window.location.assign(path),
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -464,6 +465,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <div className="nh-mobile-auth">
               <button
                 type="button"
+                data-landing-href={isStandaloneLanding ? "/login" : undefined}
                 onClick={() => {
                   navClose();
                   user ? openPOS() : onOpenLogin?.();
@@ -474,6 +476,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               <button
                 type="button"
                 className="nh-button nh-button-primary"
+                data-landing-href={isStandaloneLanding ? "/register" : undefined}
                 onClick={register}
               >
                 Coba Gratis
@@ -484,6 +487,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               className="nh-login"
+              data-landing-href={isStandaloneLanding ? "/login" : undefined}
               onClick={() => (user ? openPOS() : onOpenLogin?.())}
             >
               {user ? "Buka Kasir" : "Masuk"}
@@ -491,6 +495,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               className="nh-button nh-button-primary"
+              data-landing-href={isStandaloneLanding ? "/register" : undefined}
               onClick={register}
             >
               Coba Gratis
@@ -531,6 +536,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               <button
                 type="button"
                 className="nh-button nh-button-primary"
+                data-landing-href={isStandaloneLanding ? "/register" : undefined}
                 onClick={register}
               >
                 Coba Gratis 45 Hari
@@ -1091,6 +1097,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               className="nh-button nh-button-primary"
+              data-landing-href={isStandaloneLanding ? "/register" : undefined}
               onClick={register}
             >
               Coba Gratis 45 Hari
@@ -1224,7 +1231,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           <div>
             <strong>Solusi usaha</strong>
             {sectors.map((s) => (
-              <a key={s.id} href="#sektor" onClick={() => selectSector(s.id)}>
+              <a key={s.id} data-landing-interactive="" href="#sektor" onClick={() => selectSector(s.id)}>
                 {s.label}
               </a>
             ))}
