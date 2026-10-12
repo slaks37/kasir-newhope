@@ -46,8 +46,12 @@ release observation window closes. Do not reapply a snapshot blindly.
 
 ## Required dashboard action
 
-Supabase → Authentication → password security/settings → enable leaked password
-protection (Have I Been Pwned) where the project's plan supports it. If unavailable,
+Dashboard verified 12 October 2026: the project organization is FREE;
+Authentication → Sign In / Providers → Email → Prevent use of leaked passwords
+is disabled, and the UI states this is only available on Pro plan and above.
+The Attack Protection page also shows DISABLED. No settings were saved and no
+paid plan was purchased. Once a supported plan is owner-approved, enable this
+Email-provider switch and save; if unavailable,
 owner must approve a supported plan or document the residual risk; do not claim
 enabled from a SQL change. Verify with security advisors after the action.
 Do not change OAuth redirects, email verification or password policy silently.
