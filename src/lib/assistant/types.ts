@@ -567,7 +567,7 @@ export interface AssistantQueryRequest {
   insights?: MerchantInsight[];
   /** Set false to hard-disable the paid path for this call. */
   allowLlm?: boolean;
-  paidDataConsent?: 'deepseek-aggregate-member-v1';
+  paidDataConsent?: 'third-party-ai-agnes-deepseek-aggregate-v2';
   purpose?: 'ANALYSIS' | 'ACTION_PLAN';
   /**
    * Identifies WHICH business unit and WHO is asking. Injected into the model's

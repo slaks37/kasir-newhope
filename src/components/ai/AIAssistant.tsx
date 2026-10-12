@@ -1,3 +1,4 @@
+import {notify} from '../../lib/ui/notify';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
@@ -731,6 +732,7 @@ export const AIAssistant: React.FC = () => {
 
   const [promptInput, setPromptInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [consentBusy,setConsentBusy]=useState(false);
   const [paidEnabled, setPaidEnabled] = useState(false);
   const [draftMode, setDraftMode] = useState(false);
   const [dismissed, setDismissed] = useState<Record<string, true>>({});
@@ -739,6 +741,7 @@ export const AIAssistant: React.FC = () => {
   const [paywall, setPaywall] = useState<{ title: string; message: string; ctaLabel: string; addOnPriceIdr: number; addOnCredits: number } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  React.useEffect(()=>{let alive=true;void fetch('/api/v1/assistant/consent?businessId='+encodeURIComponent(tenant.businessId),{cache:'no-store'}).then(async r=>{const d=await r.json();if(alive&&r.ok&&d.ok)setPaidEnabled(d.granted===true);}).catch(()=>{});return()=>{alive=false;};},[tenant.businessId]);
   const scope = `${tenant.merchantId}:${tenant.businessId}:${tenant.userRole}`;
   const activeScope = useRef(scope);
   activeScope.current = scope;
@@ -928,7 +931,7 @@ export const AIAssistant: React.FC = () => {
             query: label,
             intent: forcedIntent,
             allowLlm: paidEnabled,
-            paidDataConsent: paidEnabled ? 'deepseek-aggregate-member-v1' : undefined,
+            paidDataConsent: paidEnabled ? 'third-party-ai-agnes-deepseek-aggregate-v2' : undefined,
             purpose: draftMode && paidEnabled ? 'ACTION_PLAN' : 'ANALYSIS',
             // Tetap dikirim: server memakainya HANYA untuk bidang yang belum
             // punya tabel (pelanggan, meja, staf bertugas). Seluruh angka uang
@@ -1120,10 +1123,10 @@ export const AIAssistant: React.FC = () => {
 
       {tenant.userRole === 'ADMIN' ? <section className="rounded-2xl border border-amber-200 bg-white p-4 text-sm">
         <label className="flex items-center gap-2 font-bold text-slate-800">
-          <input type="checkbox" checked={paidEnabled} onChange={e=>{setPaidEnabled(e.target.checked);if(!e.target.checked)setDraftMode(false);}} />
-          Izinkan analisis DeepSeek · 1 AI Credit / jawaban
+          <input type="checkbox" disabled={consentBusy} checked={paidEnabled} onChange={async e=>{if(consentBusy)return;setConsentBusy(true);const granted=e.target.checked;setPaidEnabled(false);setDraftMode(false);try{const r=await fetch('/api/v1/assistant/consent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:tenant.businessId,granted,noticeVersion:'third-party-ai-agnes-deepseek-aggregate-v2'}),signal:AbortSignal.timeout(15000)});const d=await r.json();if(!r.ok||!d.ok)throw new Error();setPaidEnabled(granted);}catch{notify('Persetujuan/penarikan AI belum tercatat di server. Coba lagi saat online.');}finally{setConsentBusy(false);}}} />
+          Izinkan AI pihak ketiga: Agnes AI & DeepSeek · 1 AI Credit / jawaban
         </label>
-        <p className="mt-2 text-xs text-slate-500">Kuota mengikuti akun member yang login dan dibagi di seluruh usahanya. Pertanyaan serta ringkasan angka usaha dikirim ke DeepSeek dengan ID tersamarkan; data pelanggan, staf, dan transaksi mentah tidak disertakan. Jangan ketik data pribadi dalam pertanyaan. Analisis terstruktur tetap tanpa token.</p>
+        <p className="mt-2 text-xs text-slate-500">Kuota mengikuti akun member yang login dan dibagi di seluruh usahanya. Pertanyaan serta ringkasan angka usaha dikirim ke Agnes AI atau DeepSeek dengan ID pseudonim; data pelanggan, staf, dan transaksi mentah tidak disertakan. Jangan ketik data pribadi dalam pertanyaan. Lokasi, retensi, dan pemrosesan mengikuti kebijakan/kontrak penyedia; tidak ada janji zero retention atau tidak dipakai pelatihan. Penarikan berlaku untuk panggilan berikutnya, bukan data yang sudah terkirim. Analisis terstruktur tetap tanpa token.</p>
         <label className="mt-3 flex items-center gap-2 text-slate-700">
           <input type="checkbox" disabled={!paidEnabled} checked={draftMode} onChange={e=>setDraftMode(e.target.checked)} />
           Buat draft rencana berbayar untuk ditinjau owner (tanpa eksekusi otomatis)
