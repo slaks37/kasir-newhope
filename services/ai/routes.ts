@@ -35,6 +35,7 @@ import { BillingError } from '../billing/engine';
 import { ownerOutletIntelligence } from './groupData';
 import { computeDailyBrief } from './dailyBrief';
 import { paidSystem, redactQuestion, PAID_DATA_CONSENT } from './paidPrivacy';
+import {providerConsent} from './providerConsent';
 import { assertAiAvailable } from './entitlement';
 
 export function registerAssistantRoutes(app: express.Express, database: Db) {
@@ -104,6 +105,22 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
    *   quick-chip bypass -> intent parse -> deterministic answer (Rp 0)
    *   -> only then credits -> only then the model.
    */
+  route.get('/api/v1/assistant/consent',async(req,res)=>{
+    const p=trustedPrincipal(req),business=String(req.query.businessId||'');
+    if(!p||p.subject==='local-development')return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+    if(!await canAccessBusiness(svc.db,p,business))return res.status(403).json({ok:false,error:'BUSINESS_NOT_OWNED'});
+    try{return res.json({ok:true,granted:await providerConsent(svc.db,p.subject,business),noticeVersion:PAID_DATA_CONSENT});}
+    catch{return res.status(503).json({ok:false,error:'AI_CONSENT_UNAVAILABLE'});}
+  });
+  route.post('/api/v1/assistant/consent',async(req,res)=>{
+    const principal=trustedPrincipal(req),body=req.body||{};
+    if(!principal||principal.subject==='local-development')return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+    if(typeof body.granted!=='boolean'||body.noticeVersion!==PAID_DATA_CONSENT||typeof body.businessId!=='string')return res.status(400).json({ok:false,error:'AI_CONSENT_VERSION_REQUIRED'});
+    if(!await canAccessBusiness(svc.db,principal,body.businessId))return res.status(403).json({ok:false,error:'BUSINESS_NOT_OWNED'});
+    try{return res.json({ok:true,granted:await providerConsent(svc.db,principal.subject,body.businessId,body.granted),noticeVersion:PAID_DATA_CONSENT,providers:['Agnes AI','DeepSeek']});}
+    catch{return res.status(503).json({ok:false,error:'AI_CONSENT_UNAVAILABLE'});}
+  });
+
   route.post('/api/v1/assistant/query', async (req, res) => {
     const startedAt = Date.now();
     const body = (req.body || {}) as AssistantQueryRequest;
@@ -112,6 +129,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
     const merchantId = verifiedPrincipal.subject;
     if (typeof body.query !== 'string' || body.query.length > 2000) return res.status(400).json({ok:false,error:'QUERY_MAX_2000_CHARACTERS'});
     const queryText = body.query.trim();
+    let actualProvider:string|undefined;
 
     /*
      * Tenant scope is resolved FIRST — before the responder, before parsing,
@@ -151,6 +169,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
         source: answer.source,
         creditsCharged: answer.costCredits,
         latencyMs,
+        provider:usage?actualProvider:null,
         model: usage ? getLlmConfig()?.model ?? null : null,
         promptTokens: usage?.promptTokens ?? null,
         completionTokens: usage?.completionTokens ?? null,
@@ -248,7 +267,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
       }
 
       if (!wallet) return respond({source:'ERROR',intent:parsed.intent,title:'Dompet perlu diperiksa',
-        markdown:'Dompet kredit belum tersedia atau perlu rekonsiliasi. Analisis tanpa token tetap dapat digunakan. Tidak ada panggilan DeepSeek.',costCredits:0});
+        markdown:'Dompet kredit belum tersedia atau perlu rekonsiliasi. Analisis tanpa token tetap dapat digunakan. Tidak ada panggilan AI pihak ketiga.',costCredits:0});
       if (wallet.balance <= 0) {
         return respond(
           {
@@ -291,6 +310,8 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
         source:'ERROR', intent:parsed.intent, title:'Data pusat belum tersedia',
         markdown:'Analisis berbayar memerlukan data pusat terverifikasi. Kredit tidak dipotong.',costCredits:0,
       });
+      if(!await providerConsent(svc.db,merchantId,ctx.businessId))return respond({source:'ERROR',intent:parsed.intent,title:'Persetujuan AI diperlukan',markdown:'Aktifkan persetujuan AI pihak ketiga: Agnes AI dan DeepSeek. Tidak ada data dikirim atau kredit dipotong.',costCredits:0});
+      actualProvider=llm.provider;
       const reservation=await reserveMemberCredit(svc.db, merchantId, ctx.businessId);
       if (!reservation) {
         return respond({
@@ -307,6 +328,7 @@ export function registerAssistantRoutes(app: express.Express, database: Db) {
 
       try {
         const result = await callLlm({
+          config:llm,
           system: systemInstruction,
           user: redactQuestion(queryText || 'Beri saya ringkasan kondisi toko.'),
           maxTokens: 1200,

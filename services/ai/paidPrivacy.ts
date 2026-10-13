@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { MerchantAggregates } from '../../src/lib/assistant/types';
 
-export const PAID_DATA_CONSENT = 'deepseek-aggregate-member-v1';
+export const PAID_DATA_CONSENT = 'third-party-ai-agnes-deepseek-aggregate-v2';
 const finite = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : null;
 /** Explicit allowlist. Never serialize a snapshot, client insights or names. */
 export function paidContext(memberId: string, a: MerchantAggregates) {
@@ -22,8 +22,13 @@ export function paidContext(memberId: string, a: MerchantAggregates) {
 /** User-authored question is consented; scrub common contact identifiers too. */
 export function redactQuestion(text: string) {
   return text.slice(0, 2000)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi,'[token dihapus]')
+    .replace(/\b(?:password|passwd|kata\s+sandi|pin|api[_ -]?key|secret|token)\s*[:=]\s*[^\s,;]+/gi,'[rahasia dihapus]')
+    .replace(/\b(?:sk-|sb_secret_)[A-Za-z0-9_-]{12,}\b/g,'[kunci dihapus]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,'[token dihapus]')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email dihapus]')
-    .replace(/(?:\+?62|0)[\d\s().-]{8,18}\d/g, '[nomor dihapus]');
+    .replace(/(?:\+?62|0)[\d\s().-]{8,18}\d/g, '[nomor dihapus]')
+    .replace(/\b\d(?:[ .-]?\d){7,19}\b/g,'[identitas/nomor dihapus]');
 }
 export function paidSystem(memberId: string, a: MerchantAggregates, plan = false) {
   return [
@@ -38,3 +43,6 @@ export function paidSystem(memberId: string, a: MerchantAggregates, plan = false
     JSON.stringify(paidContext(memberId, a)),
   ].join('\n');
 }
+
+/** Query content is unnecessary for credit/audit reporting. Do not retain it. */
+export function auditQueryMarker(query:string){return '[query-sha256:'+createHash('sha256').update(query).digest('hex')+']';}

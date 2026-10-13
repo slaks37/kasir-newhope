@@ -1,3 +1,4 @@
+import {registerFinancialApprovalRoutes,consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 import type { Express, Request } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal, tenantForPrincipal } from '../shared/auth';
@@ -11,7 +12,7 @@ const ID=/^[^\x00-\x1f\x7f]{1,128}$/;
 const money=(n:number)=>Math.round((n+Number.EPSILON)*100)/100;
 export class FinanceError extends Error { constructor(readonly status:number,code:string){super(code);} }
 export interface FinancialScope { tenantId:string; merchantId:string; outletId:string; sector:Sector; actorRef:string }
-export interface RefundCommand {clientRefundId:string;occurredAt?:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>}
+export interface RefundCommand {clientRefundId:string;occurredAt?:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>;approvalGrant?:string}
 function timestamp(value:unknown):string {
   if(typeof value!=='string'||!Number.isFinite(Date.parse(value)))throw new FinanceError(400,'INVALID_EVENT_DATE');
   return new Date(value).toISOString();
@@ -27,7 +28,7 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
     ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3 AND m.is_active
-      AND t.is_active AND t.merged_into IS NULL`,[outletId,tenantId,sector])).rows[0];
+      AND t.is_active AND t.merged_into IS NULL AND t.owner_user_ref=$4`,[outletId,tenantId,sector,principal.subject])).rows[0];
   if(!row)throw new FinanceError(403,'OUTLET_NOT_OWNED');
   if(!row.is_active)throw new FinanceError(409,'OUTLET_SETUP_REQUIRED');
   await assertTenantWritable(db,tenantId);
@@ -44,10 +45,12 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
     !Array.isArray(command.items)||!command.items.length||command.items.length>200)
     throw new FinanceError(400,'INVALID_REFUND');
   const occurredAt=timestamp(command.occurredAt||new Date().toISOString());
-  const normalized={...command,occurredAt,reason:command.reason.trim(),items:[...command.items].sort((a,b)=>a.clientItemId.localeCompare(b.clientItemId))};
+  const {approvalGrant:unusedGrant,...refundInput}=command;
+  const normalized={...refundInput,occurredAt,reason:command.reason.trim(),items:[...command.items].sort((a,b)=>a.clientItemId.localeCompare(b.clientItemId))};
   const txn=(await db.query(`SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE`,
     [transactionId,scope.tenantId,scope.merchantId,scope.outletId])).rows[0];
   if(!txn)throw new FinanceError(404,'TRANSACTION_NOT_FOUND');
+  await consumeFinancialApproval(db,scope,'REFUND',txn.client_txn_id,command,command.approvalGrant);
   const previous=(await db.query('SELECT * FROM pos.transaction_refunds WHERE tenant_id=$1 AND client_refund_id=$2',[scope.tenantId,command.clientRefundId])).rows[0];
   if(previous){
     if(previous.transaction_id!==transactionId||JSON.stringify(previous.command)!==JSON.stringify(normalized)){
@@ -115,14 +118,27 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
 }
 
 export function registerFinanceRoutes(app:Express,db:Db){
+  registerFinancialApprovalRoutes(app,db,scopeFor);
   const route=(path:string,run:(c:Db,s:FinancialScope,req:Request)=>Promise<unknown>)=>app.post(path,async(req,res)=>{
     try{const result=await db.tx(async c=>run(c,await scopeFor(c,req),req));res.json({ok:true,...result as object});}
-    catch(error){const known=error instanceof FinanceError||error instanceof BillingError;
+    catch(error){const known=error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
       if(!known&&!(error instanceof FreePlanAccessError)){
         const diagnostic=error as {code?:string;constraint?:string;column?:string};
         console.error('[finance] write failed',{route:path,code:diagnostic.code,constraint:diagnostic.constraint,column:diagnostic.column});
       }
       res.status(known?error.status:error instanceof FreePlanAccessError?403:500).json({ok:false,error:known||error instanceof FreePlanAccessError?error.message:'FINANCIAL_WRITE_FAILED'});}
+  });
+  app.get('/api/v1/finance/reconciliation',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    try{const data=await db.tx(async c=>{
+      const s=await scopeFor(c,req);
+      const totals=(await c.query(`SELECT verification_origin,count(*)::int count,COALESCE(sum(amount),0) amount
+        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`,[s.tenantId,s.merchantId,s.outletId])).rows;
+      const exceptions=(await c.query(`SELECT e.provider_event_ref,e.reason,e.received_at FROM pos.payment_reconciliation_events e
+        LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
+        AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`,[s.tenantId,s.merchantId,s.outletId])).rows;
+      return {totals,exceptions};
+    });res.json({ok:true,...data});}catch(e){res.status(e instanceof FinanceError||e instanceof BillingError?e.status:503).json({ok:false,error:e instanceof FinanceError||e instanceof BillingError?e.message:'RECONCILIATION_UNAVAILABLE'});}
   });
   app.get('/api/v1/finance/shift',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
@@ -178,6 +194,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
       typeof b.amount!=='number'||!Number.isFinite(b.amount)||b.amount<0||b.amount>9999999999||
       typeof b.description!=='string'||b.description.length>500||typeof b.category!=='string'||b.category.length>64)
       throw new FinanceError(400,'INVALID_CASH_EVENT');
+    if(b.type==='CASH_OUT')await consumeFinancialApproval(c,s,'CASH_OUT',b.clientEventId,b,b.approvalGrant);
     const amount=money(b.amount)*(b.type==='CASH_OUT'?-1:1),occurredAt=timestamp(b.occurredAt);
     const command={clientEventId:b.clientEventId,type:b.type,amount,occurredAt,category:b.category,description:b.description.trim(),shiftId:String(b.shiftId||''),recipientOrSource:String(b.recipientOrSource||'').slice(0,200)};
     const prev=(await c.query('SELECT id,command=$2::jsonb AS same,outlet_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3',[s.tenantId,JSON.stringify(command),b.clientEventId])).rows[0];
@@ -189,6 +206,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
   });
   route('/api/v1/finance/cash/reverse',async(c,s,req)=>{
     const b=req.body;if(!ID.test(b.clientEventId||'')||!ID.test(b.originalEventId||'')||typeof b.reason!=='string'||!b.reason.trim()||b.reason.length>500)throw new FinanceError(400,'INVALID_CASH_REVERSAL');
+    await consumeFinancialApproval(c,s,'CASH_REVERSE',b.originalEventId,b,b.approvalGrant);
     const original=(await c.query(`SELECT * FROM pos.cash_ledger WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_event_id=$4 FOR UPDATE`,[s.tenantId,s.merchantId,s.outletId,b.originalEventId])).rows[0];
     if(!original||!['CASH_IN','CASH_OUT','OPENING'].includes(original.event_type))throw new FinanceError(409,'CASH_EVENT_NOT_REVERSIBLE');
     const reused=(await c.query('SELECT reference_id,event_type FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$2',[s.tenantId,b.clientEventId])).rows[0];

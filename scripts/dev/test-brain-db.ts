@@ -8,10 +8,14 @@ import { reportAggregates } from '../../src/lib/assistant/reportAggregates';
 import type { Db } from '../../services/shared/db';
 import { ambilDompet, pakaiKredit, kembalikanKredit, catatAudit, ringkasanAudit } from '../../services/ai/wallet';
 import { registerAssistantRoutes } from '../../services/ai/routes';
-import { paidContext, PAID_DATA_CONSENT } from '../../services/ai/paidPrivacy';
+import { paidContext, redactQuestion, auditQueryMarker, PAID_DATA_CONSENT } from '../../services/ai/paidPrivacy';
 import { createAssistantHandler } from '../../src/server/assistantHandler';
 import { ensureSubscription } from '../../services/billing/engine';
 
+const secretQuestion='Email personal@fixture.invalid, NIK 3171012345678901, rekening 123456789012, kartu 4111 1111 1111 1111, telepon +6281234567890, password=not-for-provider, Bearer private-token';
+const redacted=redactQuestion(secretQuestion);
+for(const value of ['personal@fixture.invalid','3171012345678901','123456789012','4111 1111 1111 1111','6281234567890','not-for-provider','private-token'])assert.ok(!redacted.includes(value),value+' must be removed');
+assert.ok(!auditQueryMarker(secretQuestion).includes('personal@'));
 const pg=new PGlite();
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length};},exec:sql=>runner.exec(sql),tx:fn=>pg.transaction(tx=>fn(wrap(tx))),close:()=>pg.close()});
 const db=wrap(pg);
@@ -89,12 +93,16 @@ try {
   try {
     assert.equal((await call('POST','/api/v1/assistant/query',{...safeBody,paidDataConsent:undefined})).payload.answer.costCredits,0);
     assert.equal(providerCalls,0);
+    assert.equal((await call('POST','/api/v1/assistant/query',safeBody)).payload.answer.costCredits,0,'A client flag cannot substitute for server consent');
+    assert.equal(providerCalls,0);
+    assert.equal((await call('POST','/api/v1/assistant/consent',{businessId:'brain-test',granted:true,noticeVersion:PAID_DATA_CONSENT})).code,200);
     const answer=await call('POST','/api/v1/assistant/query',{...safeBody,purpose:'ACTION_PLAN'});
     assert.equal(answer.code,200);assert.equal(answer.payload.answer.costCredits,1);assert.equal(answer.payload.credits.balance,0);
     assert.equal(providerCalls,1);
     for(const secret of ['PRIVATE_STORE','PRIVATE_CUSTOMER',otherTenant,'brain-owner'])assert.ok(!wire.includes(secret));
     assert.ok(!wire.includes('Synthetic product')&&!wire.includes('Synthetic cashier')&&!wire.includes(sale));
     assert.ok(wire.includes(paidContext('brain-owner',report).member));
+    assert.equal((await db.query("SELECT provider FROM ai.ai_query_logs WHERE source='LLM'")).rows[0].provider,'DeepSeek');
     await call('POST','/api/v1/assistant/query',safeBody);
     assert.equal(providerCalls,1,'exhausted member cannot call model');
     assert.equal((await call('POST','/api/v1/assistant/query',safeBody,'other-owner')).code,403);
@@ -104,7 +112,21 @@ try {
     const failed=await call('POST','/api/v1/assistant/query',safeBody);
     assert.equal(failed.payload.answer.source,'ERROR');
     assert.equal((await ambilDompet(db,'brain-owner','brain-test')).balance,1,'failed model refunds credit');
+    process.env.AGNES_API_KEY='agnes-fixture-only';
+    globalThis.fetch=async(url:any,init:any)=>{assert.equal(String(url),'https://apihub.agnes-ai.com/v1/chat/completions');wire=String(init.body);return new Response(JSON.stringify({choices:[{message:{content:'Safe third-party response'}}]}),{status:200});};
+    const agnes=await call('POST','/api/v1/assistant/query',{...safeBody,purpose:'ACTION_PLAN',query:'Apa strategi usaha? '+secretQuestion});
+    assert.equal(agnes.payload.answer.costCredits,1,JSON.stringify(agnes));
+    for(const value of ['personal@fixture.invalid','3171012345678901','123456789012','4111 1111 1111 1111','6281234567890','not-for-provider','private-token','PRIVATE_STORE','PRIVATE_CUSTOMER'])assert.ok(!wire.includes(value));
+    assert.equal((await db.query("SELECT provider FROM ai.ai_query_logs WHERE source='LLM' ORDER BY asked_at DESC LIMIT 1")).rows[0].provider,'Agnes AI');
+    assert.ok((await db.query('SELECT query_text FROM ai.ai_query_logs')).rows.every((r:any)=>!r.query_text.includes('personal@')));
+    assert.equal((await call('POST','/api/v1/assistant/consent',{businessId:'brain-test',granted:false,noticeVersion:PAID_DATA_CONSENT})).code,200);
+    await kembalikanKredit(db,'brain-owner','brain-test',wallet.periodResetAt);
+    let revokedCalls=0;globalThis.fetch=async()=>{revokedCalls++;throw new Error('Revoked consent must not call provider');};
+    assert.equal((await call('POST','/api/v1/assistant/query',safeBody)).payload.answer.costCredits,0);assert.equal(revokedCalls,0);
+    await assert.rejects(()=>db.exec('DELETE FROM ai.provider_consent_events'),/AI_CONSENT_EVIDENCE_IMMUTABLE/);
+    await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_ai');assert.equal((await c.query('SELECT * FROM ai.provider_consent_events')).rows.length,0,'Unset tenant service context cannot read consent');});
     await catatAudit(db,{merchantId:'brain-owner',businessId:'second-business',query:'Other unit question',intent:'UNKNOWN',source:'RULE_ENGINE',creditsCharged:0,latencyMs:1});
+    assert.ok((await db.query('SELECT query_text FROM ai.ai_query_logs')).rows.every((r:any)=>r.query_text.startsWith('[query-sha256:')));
     const scopedAudit=await ringkasanAudit(db,'brain-owner',100,'brain-test');
     assert.ok(!scopedAudit.logs.some((row:any)=>row.query_text==='Other unit question'));
     const nextPeriod=new Date(Date.parse(wallet.periodResetAt)+40*86400000).toISOString();
@@ -122,11 +144,15 @@ try {
     assert.equal(deterministic.payload.answer.source,'RULE_ENGINE');
     assert.equal((await call('POST','/api/v1/assistant/query',safeBody)).payload.answer.title,'Dompet perlu diperiksa');
     assert.equal((await db.query('SELECT balance FROM ai.merchant_ai_credits WHERE merchant_id=$1',[secondTenant])).rows[0].balance,5);
+    // Withdraw while expired must remain available (without LLM entitlement).
     // Expired 45-day trial must deny AI before wallet/model.
     await ensureSubscription(db,tenant);
     await db.query("UPDATE billing.subscriptions SET status='TRIAL',current_period_end=now()-interval '1 day' WHERE tenant_id=$1",[tenant]);
     assert.equal((await call('POST','/api/v1/assistant/query',safeBody)).code,403);
-  } finally {globalThis.fetch=originalFetch;delete process.env.DEEPSEEK_API_KEY;}
+    assert.equal((await call('POST','/api/v1/assistant/consent',{businessId:'brain-test',granted:false,noticeVersion:PAID_DATA_CONSENT})).code,200);
+    assert.equal((await call('GET','/api/v1/assistant/consent',{},'brain-owner',{businessId:'brain-test'})).payload.granted,false);
+    assert.equal((await call('POST','/api/v1/assistant/consent',{businessId:'brain-test',granted:true,noticeVersion:PAID_DATA_CONSENT},'other-owner')).code,403);
+  } finally {globalThis.fetch=originalFetch;delete process.env.DEEPSEEK_API_KEY;delete process.env.AGNES_API_KEY;}
   let code=0;const authRes:any={setHeader:()=>{},status:(n:number)=>{code=n;return authRes;},json:()=>{}};
   await createAssistantHandler(async()=>null,async()=>{throw new Error('must not connect');})({url:'/api/v1/assistant/query',method:'POST',headers:{'x-auth-sub':'brain-owner'}},authRes);
   assert.equal(code,401,'forged principal header is not authentication');

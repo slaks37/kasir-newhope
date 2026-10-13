@@ -19,7 +19,7 @@ export type CashCommand = (
   | { action: 'cash'; body: CashEvent }
   | { action: 'reverse'; body: CashReversal }
   | { action: 'refund'; body: { sector:BusinessSector;outletId:string;clientEventId:string;clientTxnId:string;
-      refund:{clientRefundId:string;occurredAt:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>} } }
+      refund:{approvalGrant?:string;clientRefundId:string;occurredAt:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>} } }
 ) & { legacyMigration?: { sourceKey: string; fingerprint: string; originalBranchRef?: string } };
 
 function fingerprint(command: CashCommand): string {

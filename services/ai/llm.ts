@@ -1,13 +1,13 @@
 /**
- * Penyedia LLM — DeepSeek (REST kompatibel OpenAI, tanpa SDK).
+ * Penyedia LLM pihak ketiga — Agnes AI dan DeepSeek (REST kompatibel OpenAI).
  *
  * Dipindahkan utuh dari monolit ke ai-service. Inilah alasan utama ai-service
  * dipisah: panggilan ke penyedia eksternal bisa menggantung sampai 30 detik,
  * dan di dalam satu proses bersama, request kasir ikut mengantre di belakangnya.
- * Sebagai proses tersendiri, DeepSeek yang lambat hanya memperlambat AI.
+ * Sebagai proses tersendiri, penyedia yang lambat hanya memperlambat AI.
  *
  * Kunci API dibaca dari environment dan tidak pernah di-hardcode, tidak pernah
- * dicatat di log, dan dibersihkan dari pesan error lewat scrubSecret().
+ * dicatat di log; rincian error penyedia tidak diteruskan ke pengguna.
  */
 
 export interface LlmConfig {
@@ -40,7 +40,7 @@ export function getLlmConfig(): LlmConfig | null {
 
   const rawBase = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim();
   const baseUrl = rawBase.replace(/\/+$/, '');
-  // Consent is for DeepSeek only. No arbitrary gateway or redirect destination.
+  // Consent covers Agnes AI and DeepSeek; this branch is DeepSeek. No arbitrary gateway or redirect destination.
   if (!['https://api.deepseek.com', 'https://api.deepseek.com/v1'].includes(baseUrl)) return null;
   const model = (process.env.DEEPSEEK_MODEL || 'deepseek-chat').trim() || 'deepseek-chat';
 
@@ -48,12 +48,13 @@ export function getLlmConfig(): LlmConfig | null {
 }
 
 /** Provider name shown in logs and status text. Never includes the key. */
-export const LLM_PROVIDER_LABEL = 'DeepSeek';
+export const LLM_PROVIDER_LABEL = 'AI pihak ketiga: Agnes AI & DeepSeek';
 /** A hung provider must never pin an Express worker forever. */
 export const LLM_TIMEOUT_MS = 30_000;
 const LLM_DEFAULT_MAX_TOKENS = 1500;
 
 interface LlmCallOptions {
+  config?: LlmConfig;
   system?: string;
   user: string;
   /** Ask the provider for a strict JSON object reply. */
@@ -76,19 +77,13 @@ interface ChatCompletionResponse {
   error?: { message?: string } | null;
 }
 
-/** Defensive: strip the key from any text before it can reach a log or a client. */
-function scrubSecret(text: string, secret: string): string {
-  if (!secret) return text;
-  return text.split(secret).join('***');
-}
-
 /**
  * The single transport every AI route in this file goes through.
  * Throws on timeout and on any non-2xx reply; the thrown message is scrubbed of
  * the API key so it is safe to log.
  */
 export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
-  const cfg = getLlmConfig();
+  const cfg = opts.config || getLlmConfig();
   if (!cfg) {
     throw new Error('LLM provider belum dikonfigurasi di server ini.');
   }
@@ -147,18 +142,8 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
     });
 
     if (!response.ok) {
-      let detail = '';
-      try {
-        detail = (await response.text()).slice(0, 500);
-      } catch {
-        detail = '';
-      }
-      throw new Error(
-        scrubSecret(
-          `${cfg.provider || LLM_PROVIDER_LABEL} menolak permintaan (HTTP ${response.status})${detail ? `: ${detail}` : ''}`,
-          cfg.apiKey
-        )
-      );
+      await response.body?.cancel();
+      throw new Error('AI_PROVIDER_REJECTED_'+response.status);
     }
 
     const data = (await response.json()) as ChatCompletionResponse;
@@ -177,8 +162,8 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
     if (aborted && !(external && external.aborted)) {
       throw new Error(`Permintaan ke ${cfg?.provider || LLM_PROVIDER_LABEL} melewati batas waktu ${LLM_TIMEOUT_MS / 1000} detik.`);
     }
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(scrubSecret(message, cfg.apiKey));
+    // Provider/network errors may echo prompts or credentials. Never retain them.
+    throw new Error('AI_PROVIDER_REQUEST_FAILED');
   } finally {
     clearTimeout(timer);
     if (external) external.removeEventListener('abort', forwardAbort);

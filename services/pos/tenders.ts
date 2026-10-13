@@ -16,8 +16,8 @@ export async function applyTenders(db:Db,scope:FinancialScope,transactionId:stri
     if(previous){if(Number(previous.amount)!==tender.amount||previous.payment_method!==tender.method||new Date(previous.created_at).toISOString()!==new Date(tender.createdAt).toISOString())throw new FinanceError(409,'TENDER_ID_CONFLICT');continue;}
     const paid=Number((await db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM pos.payments WHERE transaction_id=$1 AND payment_status IN('PAID','SETTLED')",[transactionId])).rows[0].amount);
     if(Math.round((paid+tender.amount)*100)>Math.round(Number(txn.total_amount)*100))throw new FinanceError(409,'TENDER_EXCEEDS_BALANCE');
-    const row=(await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,paid_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH',$8,$8) RETURNING id`,[scope.tenantId,scope.merchantId,scope.outletId,transactionId,tender.clientPaymentId,tender.method,tender.amount,tender.createdAt])).rows[0];
+    const row=(await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,verification_origin,paid_at,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH','CASHIER_RECORDED',$8,$8) RETURNING id`,[scope.tenantId,scope.merchantId,scope.outletId,transactionId,tender.clientPaymentId,tender.method,tender.amount,tender.createdAt])).rows[0];
     if(tender.method==='CASH')await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,actor_ref,note,occurred_at)
       VALUES($1,$2,$3,$4,'SALE',$5,$6,$7,'Pembayaran tunai split',$8)`,[scope.tenantId,scope.merchantId,scope.outletId,'payment:'+row.id,tender.amount,transactionId,scope.actorRef,tender.createdAt]);
   }

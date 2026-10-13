@@ -4,6 +4,8 @@ import { registerSyncRoutes } from '../../services/pos/sync';
 import { createServerlessBoundary } from './serverlessBoundary';
 
 const allowedMethods: Record<string, readonly string[]> = {
+  '/api/v1/privacy/requests':['GET','POST'],
+  '/api/v1/privacy/notices':['POST'],
   '/api/v1/sync/business': ['GET','POST'],
   '/api/v1/sync/catalog': ['GET', 'POST'],
   '/api/v1/sync/transactions': ['POST'],
@@ -16,9 +18,12 @@ const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/receipt-logo': ['GET', 'PUT'],
   '/api/v1/reports/summary': ['GET'],
   '/api/v1/reports/transactions': ['GET'],
+  '/api/v1/finance/pin': ['POST'],
+  '/api/v1/finance/approve': ['POST'],
   '/api/v1/finance/refund': ['POST'],
   '/api/v1/finance/cash': ['POST'],
   '/api/v1/finance/cash/reverse': ['POST'],
+  '/api/v1/finance/reconciliation':['GET'],
   '/api/v1/finance/shift': ['GET'],
   '/api/v1/finance/shift/open': ['POST'],
   '/api/v1/finance/shift/close': ['POST'],

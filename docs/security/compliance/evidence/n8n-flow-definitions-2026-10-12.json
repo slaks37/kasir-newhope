@@ -1,0 +1,336 @@
+{
+  "observedDate": "2026-10-12",
+  "mode": "read-only definitions; no executions, payload exports, credential values or mutations",
+  "flows": [
+    {
+      "id": "LY2WqUqboTtPgBSE",
+      "name": "New Hope — Problem Intelligence Blog (FIXED / SAFE TEST)",
+      "active": true,
+      "versionId": "0817e423-e92e-4260-9400-93d14b432fcb",
+      "activeVersionId": "0817e423-e92e-4260-9400-93d14b432fcb",
+      "activeEqualsDraft": true,
+      "settings": {
+        "executionOrder": "v1",
+        "binaryMode": "separate",
+        "availableInMCP": true,
+        "timeSavedMode": "fixed",
+        "timezone": "Asia/Jakarta",
+        "callerPolicy": "workflowsFromSameOwner"
+      },
+      "nodes": [
+        {
+          "name": "Manual Test",
+          "type": "n8n-nodes-base.manualTrigger",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Load RSS Sources",
+          "type": "n8n-nodes-base.googleSheets",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Filter Active Radars",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Fetch Radar RSS",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "={{ $json.feed_url }}",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Collect Fresh News",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Get Blog RSS",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/rss.xml",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Build VPC Prompt",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Chat Completions",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/chat/completions",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Parse Agnes - Validate VPC",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Score >= 70 & Grounded?",
+          "type": "n8n-nodes-base.if",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Validate Draft - New Hope API",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/validate",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Validation 2xx?",
+          "type": "n8n-nodes-base.if",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Publish - New Hope API",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/posts",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Normalize Publish Result",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Normalize Validation Error",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Append Opportunities Audit",
+          "type": "n8n-nodes-base.googleSheets",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "SETUP - credentials & cutover",
+          "type": "n8n-nodes-base.stickyNote",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "LOGIC - publishing safety",
+          "type": "n8n-nodes-base.stickyNote",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Publish Enabled?",
+          "type": "n8n-nodes-base.if",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Normalize Dry Run",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Publish Mode - LIVE",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Schedule Hourly WIB",
+          "type": "n8n-nodes-base.scheduleTrigger",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Load Covers to Repair",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/posts?status=published&limit=200",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Select Repeated Covers",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Prepare Cover Jobs",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Generate Cover",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Store Cover - New Hope API",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/covers",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Attach Unique Cover",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Existing Cover Repair?",
+          "type": "n8n-nodes-base.if",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Wait Before Cover Retry 1",
+          "type": "n8n-nodes-base.wait",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Cover Retry 1",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Wait Before Cover Retry 2",
+          "type": "n8n-nodes-base.wait",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Cover Retry 2",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "id": "DV9clz1h6m1paeox",
+      "name": "New Hope — Repair Repeated Blog Covers",
+      "active": false,
+      "versionId": "fb082561-779d-4d82-becb-69e5aea2e7fd",
+      "activeVersionId": null,
+      "activeEqualsDraft": false,
+      "settings": {
+        "executionOrder": "v1",
+        "binaryMode": "separate",
+        "availableInMCP": true
+      },
+      "nodes": [
+        {
+          "name": "Repair Existing Covers",
+          "type": "n8n-nodes-base.manualTrigger",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Load Covers to Repair",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/posts?status=published&limit=200",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Select Repeated Covers",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Prepare Cover Jobs",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Generate Cover",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Store Cover - New Hope API",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://kasir.newhope.space/api/v1/blog-automation/covers",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Attach Unique Cover",
+          "type": "n8n-nodes-base.code",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Existing Cover Repair?",
+          "type": "n8n-nodes-base.if",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Repair One Cover at a Time",
+          "type": "n8n-nodes-base.splitInBatches",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Wait Between Cover Repairs",
+          "type": "n8n-nodes-base.wait",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Wait Before Cover Retry 1",
+          "type": "n8n-nodes-base.wait",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Cover Retry 1",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        },
+        {
+          "name": "Wait Before Cover Retry 2",
+          "type": "n8n-nodes-base.wait",
+          "usesManagedCredential": false,
+          "disabled": false
+        },
+        {
+          "name": "Agnes AI - Cover Retry 2",
+          "type": "n8n-nodes-base.httpRequest",
+          "endpoint": "https://apihub.agnes-ai.com/v1/images/generations",
+          "usesManagedCredential": true,
+          "disabled": false
+        }
+      ]
+    }
+  ]
+}

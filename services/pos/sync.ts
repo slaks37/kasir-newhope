@@ -1,3 +1,4 @@
+import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 /**
  * Jembatan dari aplikasi kasir (localStorage) ke database.
  *
@@ -26,6 +27,7 @@ import type { Db } from '../shared/db';
 import { hasSchemaFeature } from '../shared/schemaFeatures';
 import { applyTenders } from './tenders';
 import { SECTORS, writeActivity, type Sector } from './activity';
+import {registerPrivacyRoutes} from './privacy';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
 import { registerSharedStateRoutes } from './sharedState';
 import { registerReportRoutes } from './reports';
@@ -87,6 +89,8 @@ interface SyncItem {
 }
 
 interface SyncTxn {
+  approvalGrant?:string;
+  voidReason?:string;
   tenders?: import('./tenders').TenderCommand[];
   refunds?: RefundCommand[];
   clientTxnId: string;
@@ -138,7 +142,7 @@ export function invalidTransaction(x: SyncTxn): string | null {
 
 /** Deterministic per-sale failures are quarantined; anything else fails the batch so it is retried. */
 function perSaleRejection(error: unknown): string | null {
-  if (error instanceof FinanceError) return error.message;
+  if (error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String((error as { code?: string })?.code || '');
   if (/^(22|23)/.test(code)) return 'REJECTED_BY_DATABASE:' + ((error as { constraint?: string }).constraint || code);
   return null;
@@ -147,6 +151,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
   registerReportRoutes(app,db);
@@ -493,6 +498,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           const paymentMethod = str(x.paymentMethod, 20) ?? 'CASH';
           const paymentStatus = str(x.paymentStatus, 20) ?? 'PAID';
           const isVoid = paymentStatus === 'CANCELLED';
+          if(isVoid){
+            const prior=(await c.query('SELECT id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4',[tenantId,merchantId,outletId,clientId])).rows[0];
+            if(!prior)throw new FinanceError(409,'TRANSACTION_SYNC_REQUIRED');
+            await consumeFinancialApproval(c,financialScope,'VOID',clientId,x,x.approvalGrant);
+          }
           const orderStatus = isVoid ? 'VOIDED' : (paymentStatus === 'PENDING' ? 'PENDING_PAYMENT' : 'COMPLETED');
 
           const insertSale = (invoiceNumber: string | null) => c.query(
@@ -665,8 +675,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           else
           await c.query(
             `INSERT INTO pos.payments
-               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
+               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider, verification_origin)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH','CASHIER_RECORDED')
              ON CONFLICT DO NOTHING RETURNING id`,
             [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
           ).then(async payment=>{

@@ -1,0 +1,47 @@
+name: Security PostgreSQL17 rehearsal
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rehearsal:
+    name: PostgreSQL17 migrations, authorization and rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: newhope_security_rehearsal
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: rehearsal-only
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d newhope_security_rehearsal"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEW_HOPE_REHEARSAL_CONFIRM: DISPOSABLE_POSTGRES17
+      NEW_HOPE_REHEARSAL_DATABASE_URL: postgres://postgres:rehearsal-only@127.0.0.1:55432/newhope_security_rehearsal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Refuse production or populated rehearsal targets
+        run: node scripts/dev/test-rehearsal-target.mjs
+      - name: Apply reviewed migrations and exercise rollback with synthetic data
+        run: node scripts/dev/rehearse-security-postgres17.mjs
+      - name: Save bounded evidence even when a rehearsal fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres17-security-evidence
+          path: build/security-rehearsal/postgres17.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,3 +1,4 @@
+import {FinancialPinSetup} from './FinancialPinSetup';
 import React, { useState } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { ROLE_PERMISSIONS } from '../../data/rolePermissions';
@@ -30,7 +31,7 @@ export const UserManagementTab: React.FC = () => {
     name: '',
     username: '',
     role: 'CASHIER',
-    pin: '1234',
+    pin: '',
     status: 'ACTIVE',
   });
 
@@ -43,11 +44,11 @@ export const UserManagementTab: React.FC = () => {
       name: '',
       username: '',
       role: 'CASHIER',
-      pin: '1234',
+      pin: '',
       status: 'ACTIVE',
       createdAt: new Date().toISOString().split('T')[0],
     });
-    setPinInput('1234');
+    setPinInput('');
     setIsEditing(true);
   };
 
@@ -137,6 +138,7 @@ export const UserManagementTab: React.FC = () => {
 
   return (
     <div className="bg-white border border-slate-200 p-6 rounded-3xl space-y-6 shadow-xs">
+      <FinancialPinSetup/>
       {/* Tab Header & Sub-nav */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>

@@ -1,3 +1,4 @@
+import {PaymentReconciliationSummary} from './PaymentReconciliationSummary';
 import React, { useState, useMemo, useEffect } from 'react';
 import { useReportWorkspace } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -181,7 +182,7 @@ export const ReportsDashboard: React.FC = () => {
   const handleExportPDF=()=>void exportAll('pdf');
 
   // Cash Movement Submission Handler
-  const handleSaveCashMovement = (e: React.FormEvent) => {
+  const handleSaveCashMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = Number(cashAmount.replace(/[^0-9]/g, '')) || 0;
     if (amount <= 0) {
@@ -193,7 +194,7 @@ export const ReportsDashboard: React.FC = () => {
       return;
     }
 
-    addCashMovement(cashType, cashCategory, amount, cashDesc, cashRecipient);
+    try{await addCashMovement(cashType, cashCategory, amount, cashDesc, cashRecipient);}catch(error){notify(error instanceof Error?error.message:'Mutasi kas belum disetujui');return;}
     setShowCashMovementModal(false);
     setCashAmount('');
     setCashDesc('');
@@ -201,10 +202,10 @@ export const ReportsDashboard: React.FC = () => {
   };
 
   // Set Initial Cash Handler
-  const handleSaveInitialCash = (e: React.FormEvent) => {
+  const handleSaveInitialCash = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = Number(initialCashInput.replace(/[^0-9]/g, '')) || 0;
-    setInitialCash(amount);
+    try{await setInitialCash(amount);}catch(error){notify(error instanceof Error?error.message:'Koreksi belum disetujui');return;}
     setShowInitialCashModal(false);
   };
 
@@ -346,6 +347,7 @@ export const ReportsDashboard: React.FC = () => {
       {/* ========================================================================= */}
       {/* 🌟 HERO SECTION: DASHBOARD OMZET HARI INI & REKAP KAS FISIK DI LACI 🌟 */}
       {/* ========================================================================= */}
+      <PaymentReconciliationSummary/>
       <div className="nh-report-summary bg-white text-slate-900 rounded-3xl p-6 lg:p-7 shadow-xs border border-slate-200 relative overflow-hidden">
         {/* Background ambient glow */}
 
@@ -994,9 +996,9 @@ export const ReportsDashboard: React.FC = () => {
                           </td>
                           <td className="py-3 px-3 text-center">
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (confirm(`Hapus entri kas "${m.description}" (${formatRupiah(m.amount)})?`)) {
-                                  deleteCashMovement(m.id);
+                                  try{await deleteCashMovement(m.id);}catch(error){notify(error instanceof Error?error.message:'Koreksi belum disetujui');}
                                 }
                               }}
                               className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"

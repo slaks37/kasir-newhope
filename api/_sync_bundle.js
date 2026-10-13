@@ -202,6 +202,133 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
+// services/pos/financialAuthorization.ts
+import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
+var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
+var FinancialApprovalError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
+var commandHash = (command) => createHash("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash("sha256").update(token).digest("hex");
+function validFinancialPin(pin) {
+  return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
+}
+async function hashFinancialPin(pin) {
+  if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+  const salt = randomBytes(16).toString("hex");
+  const value = await scrypt(pin, salt);
+  return "scrypt-v1$" + salt + "$" + value.toString("hex");
+}
+async function verifyFinancialPin(pin, encoded) {
+  if (!validFinancialPin(pin)) return false;
+  const parts = encoded.split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt-v1" || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
+  const result = await scrypt(pin, parts[1]);
+  return timingSafeEqual(result, Buffer.from(parts[2], "hex"));
+}
+async function rateWindow(c, s) {
+  await c.query("INSERT INTO pos.financial_pin_attempts(tenant_id,actor_ref) VALUES($1,$2) ON CONFLICT DO NOTHING", [s.tenantId, s.actorRef]);
+  await c.query(`UPDATE pos.financial_pin_attempts SET failures=0,attempts=0,window_started_at=now()
+    WHERE tenant_id=$1 AND actor_ref=$2 AND window_started_at<now()-interval '15 minutes'`, [s.tenantId, s.actorRef]);
+  const row = (await c.query("SELECT * FROM pos.financial_pin_attempts WHERE tenant_id=$1 AND actor_ref=$2 FOR UPDATE", [s.tenantId, s.actorRef])).rows[0];
+  if (row.failures >= 5 || row.attempts >= 60) return false;
+  await c.query("UPDATE pos.financial_pin_attempts SET attempts=attempts+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return true;
+}
+async function credential(c, s) {
+  return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
+}
+async function failure(c, s) {
+  await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return { status: 403, error: "INVALID_FINANCIAL_PIN" };
+}
+async function reauthenticateOwner(req, subject) {
+  const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
+  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  let response;
+  try {
+    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
+  } catch {
+    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  }
+  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  if (!response.ok) return false;
+  const data = await response.json();
+  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
+}
+function registerFinancialApprovalRoutes(app, db, scopeFor3) {
+  const route = (path, run) => app.post(path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const result = await db.tx(async (c) => run(c, await scopeFor3(c, req), req));
+      if (result.error) {
+        if (result.status === 429) res.setHeader("Retry-After", "900");
+        return res.status(result.status).json({ ok: false, error: result.error });
+      }
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      const error = e;
+      return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : "FINANCIAL_AUTHORIZATION_UNAVAILABLE" });
+    }
+  });
+  route("/api/v1/finance/pin", async (c, s, req) => {
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+    if (!await reauthenticateOwner(req, s.actorRef)) {
+      await failure(c, s);
+      return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
+    }
+    const old = await credential(c, s);
+    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
+    const pinHash = await hashFinancialPin(req.body?.newPin);
+    await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
+      VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
+    await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
+    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest(randomBytes(32).toString("hex"))]);
+    return { enrolled: true };
+  });
+  route("/api/v1/finance/approve", async (c, s, req) => {
+    const { action, reference, reason, command, pin } = req.body || {};
+    if (!ACTIONS.has(action) || typeof reference !== "string" || !reference || reference.length > 128 || typeof reason !== "string" || !reason.trim() || reason.length > 500 || !command || typeof command !== "object" || JSON.stringify(command).length > 1e5)
+      throw new FinancialApprovalError(400, "INVALID_APPROVAL_REQUEST");
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    const row = await credential(c, s);
+    if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
+    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
+    const token = randomBytes(32).toString("base64url");
+    await c.query(
+      `INSERT INTO pos.financial_approval_grants
+      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
+      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
+      [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, reason.trim(), commandHash(command)]
+    );
+    return { approvalGrant: token, expiresInSeconds: 90, approverRef: s.actorRef };
+  });
+}
+async function consumeFinancialApproval(c, s, action, reference, command, token) {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_REQUIRED");
+  const row = (await c.query(
+    `SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
+    AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
+    AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
+    [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, commandHash(command)]
+  )).rows[0];
+  if (!row || !row.consumed_at && Date.parse(row.expires_at) <= Date.now()) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_INVALID_OR_EXPIRED");
+  if (row.consumed_at) return;
+  await c.query("UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1", [row.token_hash]);
+  await c.query(`INSERT INTO pos.financial_authorization_audit
+    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
+}
+
 // services/pos/businessDirectory.ts
 function registerBusinessDirectory(app, db) {
   app.get("/api/v1/sync/business", async (req, res) => {
@@ -288,7 +415,7 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
 }
 
 // services/pos/sync.ts
-import { randomBytes } from "node:crypto";
+import { randomBytes as randomBytes2 } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -571,7 +698,7 @@ async function scopeFor(db, req) {
     ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE o.id=$1 AND o.tenant_id=$2 AND m.business_sector=$3 AND m.is_active
-      AND t.is_active AND t.merged_into IS NULL`, [outletId, tenantId, sector])).rows[0];
+      AND t.is_active AND t.merged_into IS NULL AND t.owner_user_ref=$4`, [outletId, tenantId, sector, principal.subject])).rows[0];
   if (!row) throw new FinanceError(403, "OUTLET_NOT_OWNED");
   if (!row.is_active) throw new FinanceError(409, "OUTLET_SETUP_REQUIRED");
   await assertTenantWritable(db, tenantId);
@@ -585,12 +712,14 @@ async function applyRefund(db, scope, transactionId, command) {
   if (!command || !ID.test(command.clientRefundId || "") || !["CASH", "ORIGINAL_METHOD"].includes(command.refundMethod) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 500 || !Array.isArray(command.items) || !command.items.length || command.items.length > 200)
     throw new FinanceError(400, "INVALID_REFUND");
   const occurredAt = timestamp(command.occurredAt || (/* @__PURE__ */ new Date()).toISOString());
-  const normalized = { ...command, occurredAt, reason: command.reason.trim(), items: [...command.items].sort((a, b) => a.clientItemId.localeCompare(b.clientItemId)) };
+  const { approvalGrant: unusedGrant, ...refundInput } = command;
+  const normalized = { ...refundInput, occurredAt, reason: command.reason.trim(), items: [...command.items].sort((a, b) => a.clientItemId.localeCompare(b.clientItemId)) };
   const txn = (await db.query(
     `SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE`,
     [transactionId, scope.tenantId, scope.merchantId, scope.outletId]
   )).rows[0];
   if (!txn) throw new FinanceError(404, "TRANSACTION_NOT_FOUND");
+  await consumeFinancialApproval(db, scope, "REFUND", txn.client_txn_id, command, command.approvalGrant);
   const previous = (await db.query("SELECT * FROM pos.transaction_refunds WHERE tenant_id=$1 AND client_refund_id=$2", [scope.tenantId, command.clientRefundId])).rows[0];
   if (previous) {
     if (previous.transaction_id !== transactionId || JSON.stringify(previous.command) !== JSON.stringify(normalized)) {
@@ -656,17 +785,35 @@ async function applyRefund(db, scope, transactionId, command) {
   return { id: refund.id, clientRefundId: command.clientRefundId, amount, subtotal, discount, tax, service, replayed: false };
 }
 function registerFinanceRoutes(app, db) {
+  registerFinancialApprovalRoutes(app, db, scopeFor);
   const route = (path, run) => app.post(path, async (req, res) => {
     try {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
       res.json({ ok: true, ...result });
     } catch (error) {
-      const known2 = error instanceof FinanceError || error instanceof BillingError;
+      const known2 = error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
       if (!known2 && !(error instanceof FreePlanAccessError)) {
         const diagnostic = error;
         console.error("[finance] write failed", { route: path, code: diagnostic.code, constraint: diagnostic.constraint, column: diagnostic.column });
       }
       res.status(known2 ? error.status : error instanceof FreePlanAccessError ? 403 : 500).json({ ok: false, error: known2 || error instanceof FreePlanAccessError ? error.message : "FINANCIAL_WRITE_FAILED" });
+    }
+  });
+  app.get("/api/v1/finance/reconciliation", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const data = await db.tx(async (c) => {
+        const s = await scopeFor(c, req);
+        const totals = (await c.query(`SELECT verification_origin,count(*)::int count,COALESCE(sum(amount),0) amount
+        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        const exceptions = (await c.query(`SELECT e.provider_event_ref,e.reason,e.received_at FROM pos.payment_reconciliation_events e
+        LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
+        AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        return { totals, exceptions };
+      });
+      res.json({ ok: true, ...data });
+    } catch (e) {
+      res.status(e instanceof FinanceError || e instanceof BillingError ? e.status : 503).json({ ok: false, error: e instanceof FinanceError || e instanceof BillingError ? e.message : "RECONCILIATION_UNAVAILABLE" });
     }
   });
   app.get("/api/v1/finance/shift", async (req, res) => {
@@ -728,6 +875,7 @@ function registerFinanceRoutes(app, db) {
     const b = req.body;
     if (!ID.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
       throw new FinanceError(400, "INVALID_CASH_EVENT");
+    if (b.type === "CASH_OUT") await consumeFinancialApproval(c, s, "CASH_OUT", b.clientEventId, b, b.approvalGrant);
     const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp(b.occurredAt);
     const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
     const prev = (await c.query("SELECT id,command=$2::jsonb AS same,outlet_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3", [s.tenantId, JSON.stringify(command), b.clientEventId])).rows[0];
@@ -743,6 +891,7 @@ function registerFinanceRoutes(app, db) {
   route("/api/v1/finance/cash/reverse", async (c, s, req) => {
     const b = req.body;
     if (!ID.test(b.clientEventId || "") || !ID.test(b.originalEventId || "") || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500) throw new FinanceError(400, "INVALID_CASH_REVERSAL");
+    await consumeFinancialApproval(c, s, "CASH_REVERSE", b.originalEventId, b, b.approvalGrant);
     const original = (await c.query(`SELECT * FROM pos.cash_ledger WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_event_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.originalEventId])).rows[0];
     if (!original || !["CASH_IN", "CASH_OUT", "OPENING"].includes(original.event_type)) throw new FinanceError(409, "CASH_EVENT_NOT_REVERSIBLE");
     const reused = (await c.query("SELECT reference_id,event_type FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$2", [s.tenantId, b.clientEventId])).rows[0];
@@ -809,11 +958,64 @@ async function applyTenders(db, scope, transactionId, tenders) {
     }
     const paid = Number((await db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM pos.payments WHERE transaction_id=$1 AND payment_status IN('PAID','SETTLED')", [transactionId])).rows[0].amount);
     if (Math.round((paid + tender.amount) * 100) > Math.round(Number(txn.total_amount) * 100)) throw new FinanceError(409, "TENDER_EXCEEDS_BALANCE");
-    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,paid_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
+    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,verification_origin,paid_at,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH','CASHIER_RECORDED',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
     if (tender.method === "CASH") await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,actor_ref,note,occurred_at)
       VALUES($1,$2,$3,$4,'SALE',$5,$6,$7,'Pembayaran tunai split',$8)`, [scope.tenantId, scope.merchantId, scope.outletId, "payment:" + row.id, tender.amount, transactionId, scope.actorRef, tender.createdAt]);
   }
+}
+
+// src/config/legalNotices.ts
+var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
+
+// services/pos/privacy.ts
+var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var PrivacyError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function ownerScope(db, req) {
+  const p = trustedPrincipal(req);
+  if (!p || p.subject === "local-development") throw new PrivacyError(401, "UNAUTHENTICATED");
+  const t = (await db.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND is_active AND merged_into IS NULL ORDER BY created_at,id LIMIT 1", [p.subject])).rows[0];
+  if (!t) throw new PrivacyError(403, "OWNER_REQUIRED");
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [t.id]);
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["privacy:" + t.id]);
+  return { tenantId: t.id, actor: p.subject };
+}
+function registerPrivacyRoutes(app, db) {
+  const route = (method, path, run) => app[method](path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const data = await db.tx(async (c) => run(c, await ownerScope(c, req), req));
+      res.json({ ok: true, ...data });
+    } catch (e) {
+      res.status(e instanceof PrivacyError ? e.status : 503).json({ ok: false, error: e instanceof PrivacyError ? e.message : "PRIVACY_WORKFLOW_UNAVAILABLE" });
+    }
+  });
+  route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
+  route("post", "/api/v1/privacy/requests", async (c, s, req) => {
+    const { clientRequestId, type, message } = req.body || {};
+    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
+    if (previous) {
+      if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
+      return { requestId: previous.id, status: previous.status, replayed: true };
+    }
+    const count = (await c.query("SELECT count(*)::int n FROM internal.privacy_requests WHERE tenant_id=$1 AND created_at>now()-interval '24 hours'", [s.tenantId])).rows[0].n;
+    if (count >= 10) throw new PrivacyError(429, "PRIVACY_REQUEST_RATE_LIMITED");
+    const record = (await c.query("INSERT INTO internal.privacy_requests(tenant_id,actor_ref,client_request_id,request_type,message) VALUES($1,$2,$3,$4,$5) RETURNING id,status", [s.tenantId, s.actor, clientRequestId, type, message.trim()])).rows[0];
+    await c.query("INSERT INTO internal.privacy_request_events(request_id,tenant_id,actor_ref,event,reason) VALUES($1,$2,$3,'RECEIVED','Owner submitted request; identity and retention review required')", [record.id, s.tenantId, s.actor]);
+    return { requestId: record.id, status: record.status };
+  });
+  route("post", "/api/v1/privacy/notices", async (c, s, req) => {
+    if (req.body?.termsVersion !== LEGAL_NOTICE_VERSION || req.body?.privacyVersion !== LEGAL_NOTICE_VERSION) throw new PrivacyError(400, "NOTICE_VERSION_REQUIRED");
+    await c.query("INSERT INTO internal.legal_notice_acknowledgements(tenant_id,actor_ref,terms_version,privacy_version) VALUES($1,$2,$3,$3) ON CONFLICT DO NOTHING", [s.tenantId, s.actor, LEGAL_NOTICE_VERSION]);
+    return { version: LEGAL_NOTICE_VERSION };
+  });
 }
 
 // src/lib/sync/orderOperations.ts
@@ -1414,7 +1616,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -1441,10 +1643,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID2.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID2.test(merchantId) || tenantId && !UUID2.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -1742,7 +1944,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID2.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -1906,13 +2108,14 @@ function invalidTransaction(x) {
   return null;
 }
 function perSaleRejection(error) {
-  if (error instanceof FinanceError) return error.message;
+  if (error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String(error?.code || "");
   if (/^(22|23)/.test(code)) return "REJECTED_BY_DATABASE:" + (error.constraint || code);
   return null;
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
   registerReportRoutes(app, db);
@@ -2118,7 +2321,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes2(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -2137,7 +2340,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes2(32).toString("hex")]);
           }
           const verified = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -2211,6 +2414,11 @@ function registerSyncRoutes(app, db) {
           const paymentMethod = str(x.paymentMethod, 20) ?? "CASH";
           const paymentStatus = str(x.paymentStatus, 20) ?? "PAID";
           const isVoid = paymentStatus === "CANCELLED";
+          if (isVoid) {
+            const prior = (await c.query("SELECT id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4", [tenantId, merchantId, outletId, clientId])).rows[0];
+            if (!prior) throw new FinanceError(409, "TRANSACTION_SYNC_REQUIRED");
+            await consumeFinancialApproval(c, financialScope, "VOID", clientId, x, x.approvalGrant);
+          }
           const orderStatus = isVoid ? "VOIDED" : paymentStatus === "PENDING" ? "PENDING_PAYMENT" : "COMPLETED";
           const insertSale = (invoiceNumber2) => c.query(
             `INSERT INTO pos.transactions
@@ -2350,8 +2558,8 @@ function registerSyncRoutes(app, db) {
           } else
             await c.query(
               `INSERT INTO pos.payments
-               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider)
-             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH')
+               (id, tenant_id, merchant_id, outlet_id, transaction_id, payment_method, payment_status, amount, gateway_provider, verification_origin)
+             VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, 'MANUAL_CASH','CASHIER_RECORDED')
              ON CONFLICT DO NOTHING RETURNING id`,
               [tenantId, merchantId, outletId, txnId, paymentMethod, pStatus, total]
             ).then(async (payment) => {
@@ -2756,6 +2964,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/privacy/requests": ["GET", "POST"],
+  "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],
   "/api/v1/sync/catalog": ["GET", "POST"],
   "/api/v1/sync/transactions": ["POST"],
@@ -2768,9 +2978,12 @@ var allowedMethods = {
   "/api/v1/sync/receipt-logo": ["GET", "PUT"],
   "/api/v1/reports/summary": ["GET"],
   "/api/v1/reports/transactions": ["GET"],
+  "/api/v1/finance/pin": ["POST"],
+  "/api/v1/finance/approve": ["POST"],
   "/api/v1/finance/refund": ["POST"],
   "/api/v1/finance/cash": ["POST"],
   "/api/v1/finance/cash/reverse": ["POST"],
+  "/api/v1/finance/reconciliation": ["GET"],
   "/api/v1/finance/shift": ["GET"],
   "/api/v1/finance/shift/open": ["POST"],
   "/api/v1/finance/shift/close": ["POST"]
