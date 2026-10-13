@@ -12,11 +12,11 @@ const quote = value => '"' + value.replaceAll('"', '""') + '"';
 const relation = row => quote(row.schema) + '.' + quote(row.name);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const migrations = [
-  ['20261012091847_browser_role_least_privilege.sql', null],
-  ['20261012092414_server_financial_approvals.sql', '0059_server_financial_approvals.sql'],
-  ['20261012144654_privacy_request_workflow.sql', '0060_privacy_request_workflow.sql'],
-  ['20261012145413_ai_provider_consent_records.sql', '0061_ai_provider_consent_records.sql'],
-  ['20261012150628_merchant_payment_provenance.sql', '0062_merchant_payment_provenance.sql'],
+  ['20261013033203_browser_role_least_privilege.sql', null],
+  ['20261013033208_server_financial_approvals.sql', '0059_server_financial_approvals.sql'],
+  ['20261013033214_privacy_request_workflow.sql', '0060_privacy_request_workflow.sql'],
+  ['20261013033217_ai_provider_consent_records.sql', '0061_ai_provider_consent_records.sql'],
+  ['20261013033222_merchant_payment_provenance.sql', '0062_merchant_payment_provenance.sql'],
 ];
 const evidence = { status: 'RUNNING', scope: 'Disposable PostgreSQL17; synthetic identities; no Supabase Auth/API/runtime credentials or production data', startedAt: new Date().toISOString(), revision: process.env.GITHUB_SHA || 'local-unrecorded', migrations: [], checks: {} };
 async function sqlFile(path) {

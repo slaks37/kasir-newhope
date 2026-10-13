@@ -16,7 +16,7 @@ Repository editorial cover importer downloads allowed Agnes output images with b
 
 ## Migration / staging / rollback
 
-Apply additive Supabase `20261012145413_ai_provider_consent_records.sql` to staging before new code; `migrations/0061_...` is identical bootstrap SQL, not a second production application. Existing business RLS is unchanged. New consent records deny browsers; svc_ai reads/inserts only with explicit tenant context, no update/delete/truncate. Confirm real service role dependencies and TLS certificates.
+Apply additive Supabase `20261013033217_ai_provider_consent_records.sql` to staging before new code; `migrations/0061_...` is identical bootstrap SQL, not a second production application. Existing business RLS is unchanged. New consent records deny browsers; svc_ai reads/inserts only with explicit tenant context, no update/delete/truncate. Confirm real service role dependencies and TLS certificates.
 
 Test owner/foreign business denial; body consent without recorded grant; both providers through simulated transport; no raw sensitive fields in wire or audit; provider outage credit refund; expired trial withdrawal; immutable consent; absent tenant service context; five-sector deterministic reporting. Compare provider selection and disclosed names in deployed staging UI. Tests never call paid APIs or use production data.
 

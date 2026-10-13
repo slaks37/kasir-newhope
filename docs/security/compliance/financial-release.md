@@ -9,7 +9,7 @@ Ordinary offline sales/cash-in remain queued. Void/refund/cash-out/reversal requ
 ## Staging and deployment order
 
 1. Review database ACL PR separately; verify actual service connection roles and backend dependencies.
-2. Snapshot schema/grants (not customer data in this repository). Apply the additive Supabase migration `20261012092414_server_financial_approvals.sql` to staging, once. Local `migrations/0059_...` is the same migration for bootstrap, not an additional production application.
+2. Snapshot schema/grants (not customer data in this repository). Apply the additive Supabase migration `20261013033208_server_financial_approvals.sql` to staging, once. Local `migrations/0059_...` is the same migration for bootstrap, not an additional production application.
 3. Test service-role access/RLS plus anon/authenticated denial; exercise five sectors, tenant/outlet negatives, void/refund/drawer actions, no-grant/tampered/expired/replay requests and durable lockout. Verify enrollment contacts only the configured Supabase Auth HTTPS endpoint.
 4. Enroll a staging owner's strong PIN through Settings → users → PIN finansial server pemilik. Test fresh password failure and OAuth recovery flow. Train owners about changed offline behavior before release.
 5. Deploy server and client atomically only after schema exists. Verify online sale/approved void/refund/cash events and offline ordinary sales on two devices; compare stock/revenue and immutable audit. Inspect logs for absence of passwords/PINs/tokens.

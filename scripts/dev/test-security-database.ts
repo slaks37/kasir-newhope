@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {PGlite} from '@electric-sql/pglite';
 const pg=new PGlite();
-const migration=fs.readFileSync('supabase/migrations/20261012091847_browser_role_least_privilege.sql','utf8');
+const migration=fs.readFileSync('supabase/migrations/20261013033203_browser_role_least_privilege.sql','utf8');
 try {
   await pg.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE ROLE svc_pos; CREATE ROLE svc_ai; CREATE ROLE svc_billing; CREATE ROLE svc_internal;');
   for(const schema of ['public','pos','internal','billing','ai','contract']){

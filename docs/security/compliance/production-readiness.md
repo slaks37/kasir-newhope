@@ -1,6 +1,6 @@
 # Production readiness and release control
 
-Status: **NOT production-ready / no production SQL executed**. This is a reviewable remediation package, not legal approval or proof all external automations/providers were audited. Main reference is `90321d8`; five domain draft PRs: [database14](https://github.com/slaks37/kasir-newhope/pull/14), [financial15](https://github.com/slaks37/kasir-newhope/pull/15), [privacy16](https://github.com/slaks37/kasir-newhope/pull/16), [AI17](https://github.com/slaks37/kasir-newhope/pull/17), [payments18](https://github.com/slaks37/kasir-newhope/pull/18). Both Agnes AI and DeepSeek remain configured choices.
+Execution update: owner authorized production on 13 October 2026; the five reviewed migrations were applied and verified as recorded in [the rollout log](production-rollout-2026-10-13.md). The checklist below retains unproven managed-staging, backup and legal items; technical deployment is not their signoff or proof all external automations/providers were audited. Original main reference is `90321d8`; domain PRs: [database14](https://github.com/slaks37/kasir-newhope/pull/14), [financial15](https://github.com/slaks37/kasir-newhope/pull/15), [privacy16](https://github.com/slaks37/kasir-newhope/pull/16), [AI17](https://github.com/slaks37/kasir-newhope/pull/17), [payments18](https://github.com/slaks37/kasir-newhope/pull/18), integrated release [PR20](https://github.com/slaks37/kasir-newhope/pull/20). Both Agnes AI and DeepSeek remain configured choices.
 
 ## Review and staging checklist
 
@@ -23,11 +23,11 @@ Status: **NOT production-ready / no production SQL executed**. This is a reviewa
 
 | Sequence | Supabase migration | Mirrored local bootstrap | Purpose |
 |---|---|---|---|
-| 1 | 20261012091847_browser_role_least_privilege.sql | none; explicit ACL review only | Captured/reversible ACL cleanup, preserve existing RLS and service helpers. Stage backend consumers immediately. |
-| 2 | 20261012092414_server_financial_approvals.sql | 0059 | Private server PIN, attempts, grants, immutable financial evidence. |
-| 3 | 20261012144654_privacy_request_workflow.sql | 0060 | Private rights intake/events/versioned notice records. |
-| 4 | 20261012145413_ai_provider_consent_records.sql | 0061 | Private consent events and actual AI provider metadata. |
-| 5 | 20261012150628_merchant_payment_provenance.sql | 0062 | Origin metadata, private merchant account/link/reconciliation evidence. |
+| 1 | 20261013033203_browser_role_least_privilege.sql | none; explicit ACL review only | Captured/reversible ACL cleanup, preserve existing RLS and service helpers. Stage backend consumers immediately. |
+| 2 | 20261013033208_server_financial_approvals.sql | 0059 | Private server PIN, attempts, grants, immutable financial evidence. |
+| 3 | 20261013033214_privacy_request_workflow.sql | 0060 | Private rights intake/events/versioned notice records. |
+| 4 | 20261013033217_ai_provider_consent_records.sql | 0061 | Private consent events and actual AI provider metadata. |
+| 5 | 20261013033222_merchant_payment_provenance.sql | 0062 | Origin metadata, private merchant account/link/reconciliation evidence. |
 
 The ACL migration changes defaults only for its executing owner; later objects need explicit service grants, as new domain tables do. New tables have scoped RLS after dependency inspection. Existing data amounts/statuses/tenant ownership, existing table RLS and contract-view semantics are not rewritten. Additive metadata defaults distinguish historical unverified records; no historical verification backfill. Migration mirrors have identical SQL; do not run a duplicate migration.
 

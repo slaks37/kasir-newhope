@@ -21,7 +21,7 @@ Provider admin API: `GET /api/admin/privacy-requests?offset=0` (MFA/RBAC). Inter
 
 ## Migration and rollback
 
-Apply `20261012144654_privacy_request_workflow.sql` to staging after service role/dependency review. `0060_...` is its identical local bootstrap copy. Additive tables only; no existing RLS/grant revocation or operational data changes. New tables deny anon/authenticated; svc_pos has tenant-scoped SELECT/INSERT; svc_internal has workflow access behind MFA/RBAC, not unguarded public access. Verify actual direct DB role credentials before release.
+Apply `20261013033214_privacy_request_workflow.sql` to staging after service role/dependency review. `0060_...` is its identical local bootstrap copy. Additive tables only; no existing RLS/grant revocation or operational data changes. New tables deny anon/authenticated; svc_pos has tenant-scoped SELECT/INSERT; svc_internal has workflow access behind MFA/RBAC, not unguarded public access. Verify actual direct DB role credentials before release.
 
 Deploy schema before server/UI, configure public privacy email and approve notices/company details first. Failed workflow returns 503; do not say a request was received when not committed. Roll back UI/API exposure while keeping accepted requests, notice acknowledgements and audit; never DROP them or reenact unsafe destructive deletion. Before removal, export protected evidence and approve retention/hold procedures. No production migration/deletion was executed.
 

@@ -1,5 +1,7 @@
 # New Hope security and legal remediation review package
 
+Current execution record: [owner-authorized production rollout, 13 October 2026](production-rollout-2026-10-13.md). Earlier audit/review documents describe the pre-release state; they are not assertions that no SQL has ever been applied. Legal and operational verification items remain explicitly open.
+
 Read [risk register](risk-register.md), [test evidence](test-evidence.md) and [production readiness](production-readiness.md) first. Draft domain PRs: [database14](https://github.com/slaks37/kasir-newhope/pull/14), [financial15](https://github.com/slaks37/kasir-newhope/pull/15), [privacy16](https://github.com/slaks37/kasir-newhope/pull/16), [AI17](https://github.com/slaks37/kasir-newhope/pull/17), [payments18](https://github.com/slaks37/kasir-newhope/pull/18). Related domain documents arrive in their own PRs; relative links resolve in the combined validation branch/after integration.
 
 Production database inspection was read-only. No production SQL, historical data purge, payment account/adapter activation or application deployment was performed. Both Agnes AI and DeepSeek remain supported and named as third-party AI providers. Legal templates/company contacts/registration/tax/retention/provider terms require actual owner/counsel approval; no identity or approval was fabricated.
