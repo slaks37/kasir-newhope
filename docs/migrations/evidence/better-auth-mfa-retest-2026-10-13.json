@@ -1,0 +1,25 @@
+{
+  "scope": "Synthetic accounts only, isolated Neon child branch",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-icy-dust-azqi5vlc",
+  "startedAt": "2026-10-13T14:37:30.454Z",
+  "checks": {
+    "transport": {
+      "encrypted": true,
+      "certificateAuthorized": true,
+      "note": "Client-to-Neon proxy TLS; pg_stat_ssl reports the separate proxy-to-compute connection"
+    },
+    "auth": "PASS: email-link verification with local mail capture, unsigned/tampered token denial, live session authentication",
+    "scopeAndPin": "PASS: two tenants, own directory, foreign outlet denied, metadata cannot assign role/tenant, idempotent onboarding, random legacy PIN, weak PIN/wrong owner denied, native Better Auth password proof, short grant, missing grant denied",
+    "mfa": "PASS: encrypted enrollment, wrong/expired TOTP denied, mandatory login challenge, challenge replay denied, server proof and 10-minute step-up",
+    "recovery": "PASS: captured email-link password reset, token consumed once, prior sessions revoked; external email delivery NOT tested",
+    "logout": "PASS: signed bearer immediately rejected after logout and password reset",
+    "throttling": "PASS: persisted sign-in throttle, forged x-forwarded-for cannot evade limit, foreign Origin rejected",
+    "browserRoles": {
+      "status": "PASS",
+      "actualDeniedStatements": 306
+    }
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-13T14:38:00.675Z"
+}

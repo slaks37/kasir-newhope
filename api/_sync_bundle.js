@@ -329,6 +329,7 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
       customRules: {
         "/sign-in/email": { window: 60, max: 5 },
         "/two-factor/verify-totp": { window: 60, max: 5 },
+        "/two-factor/verify-backup-code": { window: 60, max: 5 },
         "/request-password-reset": { window: 3600, max: 3 },
         "/send-verification-email": { window: 3600, max: 3 }
       }

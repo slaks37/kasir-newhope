@@ -1,0 +1,39 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-icy-dust-azqi5vlc",
+  "scope": "Synthetic continuity fixtures only; NOT a source database restore or an automated identity migration",
+  "startedAt": "2026-10-13T14:51:39.966Z",
+  "checks": {
+    "remainingSectors": {
+      "status": "PASS",
+      "sectors": [
+        "RETAIL",
+        "CARWASH",
+        "BARBERSHOP"
+      ],
+      "twoOutlets": true,
+      "foreignOutletDenied": true,
+      "retryDoesNotChangeSector": true
+    },
+    "canonicalContinuity": {
+      "status": "PASS",
+      "emailCollisionDenied": true,
+      "reviewedFixtureBinding": true,
+      "metadataRoleIgnored": true,
+      "legacyOfflineAliasPreserved": true,
+      "paidBusinessFingerprintBefore": "727592b42cda5bd9e6e608f0e3cac5063423bf4b5caad8f8f404ca999588ea7b",
+      "paidBusinessFingerprintAfter": "727592b42cda5bd9e6e608f0e3cac5063423bf4b5caad8f8f404ca999588ea7b",
+      "note": "Synthetic restoration fixture; no customer import and no dual-proof enrollment endpoint claimed"
+    },
+    "rateLimitRespected": true,
+    "backupRecovery": {
+      "status": "PASS",
+      "singleUse": true,
+      "adminFreshProofNotGranted": true,
+      "mfaDisableWithoutFreshTotpDenied": true,
+      "trustedDeviceDenied": true
+    }
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-13T14:53:09.497Z"
+}

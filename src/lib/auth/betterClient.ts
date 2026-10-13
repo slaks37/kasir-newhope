@@ -51,6 +51,11 @@ export async function completeBetterTotp(code:string){
   if(result.error)throw error(result.error.message||'Kode autentikator tidak valid.');
   const mapped=await session();emit('SIGNED_IN',mapped);return mapped;
 }
+export async function completeBetterBackupCode(code:string){
+  const result=await betterClient.twoFactor.verifyBackupCode({code,trustDevice:false});
+  if(result.error)throw error('Kode pemulihan tidak valid atau sudah digunakan.');
+  const mapped=await session();emit('SIGNED_IN',mapped);return mapped;
+}
 /** Compatibility at the UI boundary only. Server authority always comes from
  * live Better Auth sessions and the canonical identity registry in Neon. */
 export function createBetterPilotClient():GoTrueClient {

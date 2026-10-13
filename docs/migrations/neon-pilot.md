@@ -143,6 +143,45 @@ for the exact final commit; earlier green runs do not establish this candidate.
 
 ## Risk register and cutover gates
 
+### Additional retest on 13 October 2026
+
+The `better-auth-mfa-retest-2026-10-13.json` receipt repeats the live isolated
+HTTP authorization, PIN, TOTP, logout/reset and 306 browser-role SQL denials.
+`better-auth-continuity-2026-10-13.json` additionally proves onboarding of Retail,
+Carwash and Barbershop with two outlets, complementing F&B/Laundry in the first
+rehearsal. Exact tenant/merchant/outlet/membership, paid subscription and AI-wallet
+fingerprints are unchanged after an explicitly seeded canonical binding; email
+collision alone is rejected. This is a synthetic restored-owner fixture, **not a
+customer import or an implementation of dual-identity ownership verification**.
+
+Native backup-code login is now exposed in the login UI. Actual HTTP checks prove
+single use, logout revocation, no fresh admin TOTP proof and no MFA-disable bypass.
+The recovery endpoint uses the same persistent five-attempt/minute throttle as
+TOTP. Browser retesting caught a successful MFA redirect to the marketing page
+at `/app`; the login helper now lets the existing auth route guard preserve the
+requested workspace path. Registration validation matches the native 12–128
+character password boundary in Better Auth mode.
+
+Run `node --import tsx scripts/neon/rehearse-better-continuity.mjs` after the core
+rehearsal. It uses only synthetic `.invalid` accounts, honors a bounded native
+`Retry-After` once, writes a sanitized receipt under ignored `build/neon`, and
+retains fixtures/audit records. Run HTTP rehearsals and browser sign-in tests
+sequentially: they share the persistent loopback-IP auth throttle. Never erase
+rate-limit rows or disable protection to make tests pass.
+
+For browser second-factor testing, first start `browser-pilot.mjs` with a fresh
+fixture, then run `prepare-browser-second-factor.mjs`. The latter refuses nonlocal
+origins and nonsynthetic accounts, enables native TOTP through HTTP and saves
+secrets only in ignored mode-600 fixtures. No external mail or customer account
+changes occur. Reset email token consumption/revocation is proven through HTTP
+with a local mail sink; real inbox delivery and HTTPS reset UI remain release gates.
+
+Read-only Resend inspection found sending DKIM/SPF verified for
+`kasir.newhope.space`; the separate receiving MX fails. This is not evidence of
+successful authentication email delivery. The pilot env has no enabled mailer,
+approved sender or Resend key and currently uses a loopback HTTP origin. No DNS,
+email-provider credentials or production settings were changed during retesting.
+
 | Severity | Classification | Issue / business impact | Release condition |
 | --- | --- | --- | --- |
 | P0 | Confirmed migration gap | No existing customer/auth import; automatic email linking could steal ownership | Dual-identity proof, reviewed canonical bindings, hash/MFA strategy and negative tests |

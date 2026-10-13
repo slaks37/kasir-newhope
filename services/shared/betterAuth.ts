@@ -27,6 +27,7 @@ export function createBetterAuthRuntime(config=betterAuthPilotConfig(),sendEmail
       sendVerificationEmail:async({user,url})=>sendEmail({kind:'VERIFY',email:user.email,url,baseUrl:config.baseUrl})},
     rateLimit:{enabled:true,storage:'database',window:60,max:100,
       customRules:{'/sign-in/email':{window:60,max:5},'/two-factor/verify-totp':{window:60,max:5},
+        '/two-factor/verify-backup-code':{window:60,max:5},
         '/request-password-reset':{window:3600,max:3},'/send-verification-email':{window:3600,max:3}}},
     plugins:[bearer({requireSignature:true}),twoFactor({issuer:'New Hope POS',skipVerificationOnEnable:false,
       accountLockout:{enabled:true,maxFailedAttempts:5,durationSeconds:900}})],

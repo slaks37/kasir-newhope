@@ -102,8 +102,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setError("Email dan password wajib diisi.");
       return;
     }
-    if (mode === "register" && password.length < 8) {
-      setError("Password minimal 8 karakter.");
+    const minimumPasswordLength = usesBetterAuth ? 12 : 8;
+    if (mode === "register" && password.length < minimumPasswordLength) {
+      setError(`Password minimal ${minimumPasswordLength} karakter.`);
+      return;
+    }
+    if (mode === "register" && usesBetterAuth && password.length > 128) {
+      setError("Password maksimal 128 karakter.");
       return;
     }
 
@@ -359,6 +364,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   mode === "login" ? "current-password" : "new-password"
                 }
                 minLength={mode === 'register' ? (usesBetterAuth?12:8) : undefined}
+                maxLength={mode === 'register' && usesBetterAuth ? 128 : undefined}
                 aria-describedby={
                   mode === "register" ? "password-hint" : undefined
                 }

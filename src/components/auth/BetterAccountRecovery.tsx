@@ -1,12 +1,14 @@
 import {useState,type FormEvent} from 'react';
-import {betterClient,completeBetterTotp} from '../../lib/auth/betterClient';
+import {betterClient,completeBetterTotp,completeBetterBackupCode} from '../../lib/auth/betterClient';
 import {AuthLayout} from './AuthLayout';
-import {navigate} from '../../lib/navigation/workspaceRouter';
 
 export function BetterLoginHelp() {
   const [email,setEmail]=useState(''),[code,setCode]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+  const [useBackup,setUseBackup]=useState(false);
   async function verify(e:FormEvent){e.preventDefault();setBusy(true);setMessage('');
-    try{await completeBetterTotp(code);navigate('/app',true);}catch(e){setMessage((e as Error).message);setCode('');}finally{setBusy(false);}}
+    // AuthContext and the route guard restore the requested workspace route.
+    // A second redirect would overwrite returnTo after successful MFA.
+    try{if(useBackup)await completeBetterBackupCode(code.trim());else await completeBetterTotp(code);}catch(e){setMessage((e as Error).message);setCode('');}finally{setBusy(false);}}
   async function send(kind:'verify'|'reset') {
     if(!email||busy)return;setBusy(true);setMessage('');
     try {
@@ -18,8 +20,11 @@ export function BetterLoginHelp() {
   return <div className="space-y-3 mt-6">
     <details><summary>Login dengan autentikator</summary><form onSubmit={verify} className="space-y-3 mt-3">
       <p>Masuk dengan email dan password terlebih dahulu, lalu masukkan kode autentikator.</p>
-      <label>Kode MFA<input autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" required maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label>
-      <button className="nh-app-button-primary nh-auth-submit" disabled={busy||code.length!==6}>Verifikasi MFA</button></form></details>
+      <button type="button" disabled={busy} onClick={()=>{setUseBackup(!useBackup);setCode('');setMessage('');}}>{useBackup?'Gunakan kode autentikator':'Gunakan kode pemulihan'}</button>
+      {useBackup?<><p>Setiap kode pemulihan hanya bisa dipakai sekali. Perubahan admin tetap memerlukan verifikasi autentikator.</p>
+        <label>Kode pemulihan<input type="password" autoComplete="off" required maxLength={64} value={code} disabled={busy} onChange={e=>setCode(e.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label></>:
+        <label>Kode MFA<input autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" required maxLength={6} value={code} disabled={busy} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label>}
+      <button className="nh-app-button-primary nh-auth-submit" disabled={busy||(useBackup?!code.trim():code.length!==6)}>{useBackup?'Masuk dengan kode pemulihan':'Verifikasi MFA'}</button></form></details>
     <details><summary>Verifikasi email atau lupa password</summary><div className="space-y-3 mt-3">
       <label>Email akun<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label>
       <button type="button" disabled={busy||!email} onClick={()=>void send('verify')}>Kirim tautan verifikasi</button>
