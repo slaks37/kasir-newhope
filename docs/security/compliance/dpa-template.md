@@ -1,6 +1,6 @@
 # Data processing agreement — TEMPLATE, counsel/owner approval required
 
-**Not executed.** Controller: [merchant legal name/address/registration — VERIFY]. Processor: [New Hope contracting entity/name/address/NIB/contacts — VERIFY]. Effective date, signatories, governing law, dispute forum, service locations and approved subprocessors: [VERIFY]. Do not replace placeholders with invented identities.
+**Not executed.** Controller: [merchant legal name/address/registration — VERIFY]. Processor/operator name supplied by the owner on 13 October 2026: **New System**. Contracting legal form/status, address, NIB/registration and active privacy/support contacts: [VERIFY]. Effective date, signatories, governing law, dispute forum, service locations and approved subprocessors: [VERIFY]. The supplied name is not proof of registration or approval. Do not replace remaining placeholders with invented identities.
 
 1. Scope: POS, multi-tenant operational sync, hosting/support and requested reporting for the five selected sectors. Controller gives documented instructions and confirms lawful collection, notices, necessity, employment/customer rights and accurate scope. New Hope's independent account/security/subscription processing is described separately.
 2. Data: controller staff/customers, necessary contact, sales/receipt/stock/payment records, approved attendance/location, account and support details. Do not upload government identifiers, full card data, biometric/health/children's data absent a separately approved assessment and supported feature.
