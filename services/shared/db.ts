@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import pg from 'pg';
 import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from './poolConfig';
 import { waitForDatabase } from './databaseStartup';
+import {databaseTransport} from './databaseTls';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
 // skor risiko kita memang mau angka, dan nilainya jauh di bawah batas aman
@@ -70,8 +71,9 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
 
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    ...( /(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname)
+      ? databaseTransport(connectionString)
+      : {connectionString,ssl:konfigurasiSsl(connectionString)} ),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.

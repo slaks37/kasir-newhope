@@ -30,13 +30,26 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
   };
 }
 
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
 // src/server/merchantHealthHandler.ts
 var pool = null;
 function getPool() {
   if (!pool) {
     pool = new pg.Pool({
-      connectionString: serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || ""),
-      ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false },
+      ...databaseTransport(serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || "")),
       ...databasePoolLimits(3)
     });
   }

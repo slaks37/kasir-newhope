@@ -1,5 +1,245 @@
+// services/shared/neonAuth.ts
+import { createRemoteJWKSet, jwtVerify, errors } from "jose";
+
+// services/shared/db.ts
+import fs2 from "node:fs";
+import pg from "pg";
+
+// services/shared/poolConfig.ts
+function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (vercel !== "1") return connectionString;
+  try {
+    const url = new URL(connectionString);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
+    url.port = "6543";
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  return {
+    // Each warm function owns a pool; keep the per-instance budget small.
+    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
+    connectionTimeoutMillis: 1e4
+  };
+}
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+
+// services/shared/databaseStartup.ts
+async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const attempts = vercel === "1" ? 1 : 15;
+  let cause;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await probe();
+      return;
+    } catch (error) {
+      cause = error;
+    }
+    if (attempt + 1 < attempts) await sleep(Math.min(250 * 2 ** attempt, 3e3));
+  }
+  throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
+}
+
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
+// services/shared/db.ts
+pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+function konfigurasiSsl(connectionString) {
+  const url = connectionString.toLowerCase();
+  const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
+  if (lokal) return void 0;
+  if (process.env.PGSSLROOTCERT) {
+    return { ca: fs2.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
+  }
+  return { rejectUnauthorized: false };
+}
+async function connectDb(opts) {
+  const connectionString = serverlessConnectionString(
+    opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
+  );
+  const pool = new pg.Pool({
+    .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
+    // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
+    // batas koneksi di db-server; pool besar per service akan menghabiskannya
+    // dan membuat service yang menyala terakhir gagal tersambung.
+    ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
+  });
+  void opts.schema;
+  pool.on("error", (err) => {
+    console.error("[db] koneksi idle bermasalah:", err.message);
+  });
+  await waitForDatabase(async () => {
+    const probe = await pool.connect();
+    probe.release();
+  }).catch(async (error) => {
+    await pool.end().catch(() => {
+    });
+    throw error;
+  });
+  const wrap = (runner) => ({
+    async query(sql, params) {
+      const r = await runner.query(sql, params);
+      const rows = r?.rows ?? [];
+      return { rows, rowCount: r?.rowCount ?? rows.length };
+    },
+    async exec(sql) {
+      await runner.query(sql);
+    },
+    async tx(fn) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
+        const out = await fn(wrap(client));
+        await client.query("COMMIT");
+        return out;
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {
+        });
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+    async close() {
+      await pool.end();
+    }
+  });
+  return wrap(pool);
+}
+
+// services/shared/neonPilot.ts
+function neonPilotConfig(env = process.env) {
+  if (env.NEON_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging")
+    throw new Error("NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED");
+  const base = new URL(env.NEON_AUTH_BASE_URL || "");
+  if (base.protocol !== "https:" || !/(?:^|\.)neon\.(?:tech|build)$/.test(base.hostname) || base.username || base.password)
+    throw new Error("INVALID_NEON_AUTH_CONFIGURATION");
+  const authUrl = base.href.replace(/\/$/, "");
+  const jwksUrl = authUrl + "/.well-known/jwks.json";
+  if (env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL !== jwksUrl) throw new Error("NEON_JWKS_BRANCH_MISMATCH");
+  return { authUrl, jwksUrl, issuer: base.origin };
+}
+
+// services/shared/neonAuth.ts
+var NeonAuthUnavailableError = class extends Error {
+};
+var verifier;
+var opening;
+async function verifyNeonToken(token, config = neonPilotConfig(), key) {
+  if (!key) {
+    if (verifier?.url !== config.jwksUrl) verifier = { url: config.jwksUrl, key: createRemoteJWKSet(new URL(config.jwksUrl), { timeoutDuration: 5e3, cooldownDuration: 3e4 }) };
+    key = verifier.key;
+  }
+  try {
+    const { payload: p } = await jwtVerify(token, key, {
+      issuer: config.issuer,
+      audience: config.issuer,
+      algorithms: ["EdDSA"],
+      requiredClaims: ["sub", "exp", "iat"],
+      maxTokenAge: "15m",
+      clockTolerance: 5
+    });
+    if (!p.sub || p.id !== p.sub || typeof p.email !== "string" || p.emailVerified !== true || p.banned === true) return null;
+    return { subject: p.sub, email: p.email, isEmailVerified: true, aal: "aal1" };
+  } catch (e) {
+    if (e instanceof errors.JOSEError && !(e instanceof errors.JWKSTimeout)) return null;
+    throw new NeonAuthUnavailableError("NEON_AUTH_UNAVAILABLE");
+  }
+}
+async function bindNeonIdentity(db, p, issuer) {
+  if (!p.isEmailVerified || !p.email) return null;
+  const email = p.email;
+  return db.tx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
+    const live = (await c.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
+    const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
+      FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+      WHERE b.provider='neon' AND b.issuer=$1 AND b.provider_subject=$2`, [issuer, p.subject])).rows[0];
+    if (binding) return binding.is_active && binding.canonical_active ? { ...p, subject: binding.canonical_user_id } : null;
+    const exists = (await c.query("SELECT 1 FROM internal.users WHERE id::text=$1 OR lower(email)=lower($2)", [p.subject, p.email])).rows.length;
+    if (exists) return null;
+    await c.query(`INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,$2,'Pemilik Toko',true)`, [p.subject, email.toLowerCase()]);
+    await c.query(`INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref)
+      VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`, [issuer, p.subject]);
+    return p;
+  });
+}
+async function authenticateNeonBearer(token) {
+  let config;
+  try {
+    config = neonPilotConfig();
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_CONFIG_UNAVAILABLE");
+  }
+  const p = await verifyNeonToken(token, config);
+  if (!p) return null;
+  try {
+    opening ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
+      opening = void 0;
+      throw e;
+    });
+    return await bindNeonIdentity(await opening, p, config.issuer);
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_IDENTITY_UNAVAILABLE");
+  }
+}
+async function reauthenticateNeonOwner(db, email, password, canonicalSubject) {
+  const config = neonPilotConfig();
+  let response;
+  try {
+    response = await fetch(config.authUrl + "/sign-in/email", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: config.issuer },
+      body: JSON.stringify({ email, password }),
+      redirect: "error",
+      signal: AbortSignal.timeout(5e3)
+    });
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_REAUTH_UNAVAILABLE");
+  }
+  if (response.status >= 500 || response.status === 429) throw new NeonAuthUnavailableError("NEON_REAUTH_UNAVAILABLE");
+  if (!response.ok) return false;
+  const data = await response.json();
+  const cookies = response.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+  try {
+    if (data.user?.emailVerified !== true || typeof data.user?.id !== "string") return false;
+    const binding = (await db.query(`SELECT canonical_user_id FROM internal.auth_identity_bindings
+      WHERE provider='neon' AND issuer=$1 AND provider_subject=$2 AND is_active`, [config.issuer, data.user.id])).rows[0];
+    return binding?.canonical_user_id === canonicalSubject;
+  } finally {
+    if (cookies) await fetch(config.authUrl + "/sign-out", {
+      method: "POST",
+      headers: { cookie: cookies, origin: config.issuer },
+      redirect: "error",
+      signal: AbortSignal.timeout(5e3)
+    }).catch(() => {
+    });
+  }
+}
+
 // services/shared/auth.ts
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+var LOCAL_BYPASS = () => process.env.AUTH_PROVIDER !== "neon" && process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
 }
@@ -19,6 +259,15 @@ async function authenticateBearer(req) {
   if (!match) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  if (process.env.AUTH_PROVIDER === "neon") {
+    try {
+      return await authenticateNeonBearer(match[1]);
+    } catch (e) {
+      if (e instanceof NeonAuthUnavailableError) throw new AuthUnavailableError();
+      throw e;
+    }
+  }
+  if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -89,119 +338,6 @@ async function tenantForPrincipal(db, principal) {
   return null;
 }
 
-// services/shared/db.ts
-import fs from "node:fs";
-import pg from "pg";
-
-// services/shared/poolConfig.ts
-function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
-  if (vercel !== "1") return connectionString;
-  try {
-    const url = new URL(connectionString);
-    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
-    url.port = "6543";
-    return url.toString();
-  } catch {
-    return connectionString;
-  }
-}
-function databasePoolLimits(max, vercel = process.env.VERCEL) {
-  return {
-    // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
-    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
-    connectionTimeoutMillis: 1e4
-  };
-}
-function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
-  const value = Number(raw);
-  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
-}
-
-// services/shared/databaseStartup.ts
-async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
-  const attempts = vercel === "1" ? 1 : 15;
-  let cause;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      await probe();
-      return;
-    } catch (error) {
-      cause = error;
-    }
-    if (attempt + 1 < attempts) await sleep(Math.min(250 * 2 ** attempt, 3e3));
-  }
-  throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
-}
-
-// services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
-function konfigurasiSsl(connectionString) {
-  const url = connectionString.toLowerCase();
-  const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
-  if (lokal) return void 0;
-  if (process.env.PGSSLROOTCERT) {
-    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
-  }
-  return { rejectUnauthorized: false };
-}
-async function connectDb(opts) {
-  const connectionString = serverlessConnectionString(
-    opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
-  );
-  const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
-    // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
-    // batas koneksi di db-server; pool besar per service akan menghabiskannya
-    // dan membuat service yang menyala terakhir gagal tersambung.
-    ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
-  });
-  void opts.schema;
-  pool.on("error", (err) => {
-    console.error("[db] koneksi idle bermasalah:", err.message);
-  });
-  await waitForDatabase(async () => {
-    const probe = await pool.connect();
-    probe.release();
-  }).catch(async (error) => {
-    await pool.end().catch(() => {
-    });
-    throw error;
-  });
-  const wrap = (runner) => ({
-    async query(sql, params) {
-      const r = await runner.query(sql, params);
-      const rows = r?.rows ?? [];
-      return { rows, rowCount: r?.rowCount ?? rows.length };
-    },
-    async exec(sql) {
-      await runner.query(sql);
-    },
-    async tx(fn) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
-        const out = await fn(wrap(client));
-        await client.query("COMMIT");
-        return out;
-      } catch (err) {
-        await client.query("ROLLBACK").catch(() => {
-        });
-        throw err;
-      } finally {
-        client.release();
-      }
-    },
-    async close() {
-      await pool.end();
-    }
-  });
-  return wrap(pool);
-}
-
 // services/pos/financialAuthorization.ts
 import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
@@ -247,9 +383,16 @@ async function failure(c, s) {
   await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
   return { status: 403, error: "INVALID_FINANCIAL_PIN" };
 }
-async function reauthenticateOwner(req, subject) {
+async function reauthenticateOwner(req, subject, db) {
   const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
   if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
+  if (process.env.AUTH_PROVIDER === "neon") {
+    try {
+      return await reauthenticateNeonOwner(db, principal.email, password, subject);
+    } catch {
+      throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+    }
+  }
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
@@ -282,7 +425,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
   route("/api/v1/finance/pin", async (c, s, req) => {
     if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
     if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-    if (!await reauthenticateOwner(req, s.actorRef)) {
+    if (!await reauthenticateOwner(req, s.actorRef, c)) {
       await failure(c, s);
       return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
     }
@@ -329,93 +472,8 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
 }
 
-// services/pos/businessDirectory.ts
-function registerBusinessDirectory(app, db) {
-  app.get("/api/v1/sync/business", async (req, res) => {
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    try {
-      const tenantId = await tenantForPrincipal(db, principal);
-      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
-      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
-        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
-        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
-        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
-        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
-      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
-      const businesses = /* @__PURE__ */ new Map();
-      for (const row of result.rows) {
-        let business = businesses.get(row.id);
-        if (!business) {
-          business = {
-            businessId: row.id,
-            tenantId: row.tenant_id,
-            name: row.name,
-            sector: row.business_sector,
-            status: row.is_active ? "ACTIVE" : "INACTIVE",
-            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
-            transportRef: row.external_ref || row.id,
-            outlets: []
-          };
-          businesses.set(row.id, business);
-        }
-        if (row.outlet_id) business.outlets.push({
-          outletId: row.outlet_id,
-          businessId: row.id,
-          name: row.outlet_name,
-          address: row.address || "",
-          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
-          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
-        });
-      }
-      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
-    } catch {
-      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
-    }
-  });
-}
-
-// services/pos/businessScope.ts
-var BusinessScopeError = class extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-};
-async function resolveBusinessScope(db, subject, sector, businessId) {
-  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
-    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) {
-    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-    return null;
-  }
-  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
-      AND m.business_sector=$3 AND m.is_active
-      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
-  const rows = result.rows;
-  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
-  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
-  if (!selected) {
-    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
-    return null;
-  }
-  return {
-    tenantId,
-    merchantId: selected.merchant_id,
-    businessName: selected.business_name,
-    transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
-  };
-}
-
-// services/pos/sync.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+// services/pos/neonOnboarding.ts
+import { randomUUID, randomBytes as randomBytes2 } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -534,6 +592,148 @@ var SAAS_PLANS = [
   }
 ];
 var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
+
+// services/pos/neonOnboarding.ts
+var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
+var label = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
+function registerNeonOnboarding(app, db) {
+  app.get("/api/v1/sync/identity", (req, res) => {
+    const p = trustedPrincipal(req);
+    res.setHeader("Cache-Control", "no-store");
+    return p ? res.json({ ok: true, subject: p.subject }) : res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+  });
+  app.post("/api/v1/sync/neon-onboarding", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (process.env.AUTH_PROVIDER !== "neon") return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    const p = trustedPrincipal(req);
+    if (!p?.isEmailVerified || !p.email) return res.status(403).json({ ok: false, error: "VERIFIED_ACCOUNT_REQUIRED" });
+    try {
+      const config = neonPilotConfig();
+      const result = await db.tx(async (c) => {
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["onboarding:" + p.subject]);
+        const binding = (await c.query(`SELECT verification_ref FROM internal.auth_identity_bindings
+          WHERE provider='neon' AND issuer=$1 AND canonical_user_id=$2 AND is_active`, [config.issuer, p.subject])).rows[0];
+        const existing = (await c.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1", [p.subject])).rows;
+        if (existing.length) return { tenantId: existing[0].id, created: false };
+        const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
+        if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member) throw Error("IDENTITY_REVIEW_REQUIRED");
+        const id = randomUUID(), name = label(req.body?.store_name, "Toko Baru", 100);
+        const fullName = label(req.body?.full_name, "Pemilik Toko", 150);
+        const sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
+        const second = label(req.body?.second_outlet_name, "", 150);
+        await c.query("UPDATE internal.users SET full_name=$2 WHERE id=$1", [p.subject, fullName]);
+        await c.query(`INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active)
+          VALUES($1,$2,$3,$4::text,$4::uuid,true)`, [id, name, sector, p.subject]);
+        await c.query("INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) VALUES($1,$2,$3,$4)", [id, name, sector, p.subject]);
+        await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$1,$2,$3)", [id, name, sector]);
+        for (const outlet of second && second !== first ? [first, second] : [first]) await c.query(
+          "INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)",
+          [randomUUID(), id, outlet]
+        );
+        await c.query(`INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active)
+          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID(), p.subject, id, randomBytes2(32).toString("hex")]);
+        await c.query(`INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,
+          grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
+          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID(), id]);
+        await c.query(`INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at)
+          VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')`, [id, SAAS_PLANS.find((p2) => p2.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
+        return { tenantId: id, created: true };
+      });
+      return res.json({ ok: true, ...result });
+    } catch {
+      return res.status(409).json({ ok: false, error: "NEON_ONBOARDING_REVIEW_REQUIRED" });
+    }
+  });
+}
+
+// services/pos/businessDirectory.ts
+function registerBusinessDirectory(app, db) {
+  app.get("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const tenantId = await tenantForPrincipal(db, principal);
+      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
+      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
+        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
+        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
+        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
+      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
+      const businesses = /* @__PURE__ */ new Map();
+      for (const row of result.rows) {
+        let business = businesses.get(row.id);
+        if (!business) {
+          business = {
+            businessId: row.id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            sector: row.business_sector,
+            status: row.is_active ? "ACTIVE" : "INACTIVE",
+            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
+            transportRef: row.external_ref || row.id,
+            outlets: []
+          };
+          businesses.set(row.id, business);
+        }
+        if (row.outlet_id) business.outlets.push({
+          outletId: row.outlet_id,
+          businessId: row.id,
+          name: row.outlet_name,
+          address: row.address || "",
+          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
+          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
+        });
+      }
+      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
+    } catch {
+      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
+    }
+  });
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
+}
+
+// services/pos/sync.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
 
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
@@ -1064,7 +1264,7 @@ var operationalKinds = /* @__PURE__ */ new Set([
   "users",
   "staff_members"
 ]);
-var sectors = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
+var sectors2 = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
 function presetSector(kind, id) {
   if (typeof id !== "string") return;
@@ -1081,7 +1281,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
     if (row.storeMode !== expected) return "WRONG_STORE_MODE:" + row.storeMode;
   }
   for (const field of ["businessSector", "sector"]) {
-    if (typeof row[field] === "string" && sectors.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
+    if (typeof row[field] === "string" && sectors2.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
   }
   if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
@@ -2115,6 +2315,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerNeonOnboarding(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -2321,7 +2522,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes3(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -2340,7 +2541,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes3(32).toString("hex")]);
           }
           const verified = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -2964,6 +3165,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/sync/identity": ["GET"],
+  "/api/v1/sync/neon-onboarding": ["POST"],
   "/api/v1/privacy/requests": ["GET", "POST"],
   "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],

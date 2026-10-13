@@ -7,6 +7,7 @@
  */
 import type { NextFunction, Request, Response } from 'express';
 import type { Db } from './db';
+import {authenticateNeonBearer,NeonAuthUnavailableError} from './neonAuth';
 
 export interface AuthPrincipal {
   subject: string;
@@ -16,7 +17,7 @@ export interface AuthPrincipal {
   mfaVerifiedAt?: number;
 }
 
-const LOCAL_BYPASS = () => process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
+const LOCAL_BYPASS = () => process.env.AUTH_PROVIDER!=='neon' && process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
 
 function firstHeader(value: string | string[] | undefined): string {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '');
@@ -45,6 +46,12 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
   if (!match) {
     return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
   }
+
+  if(process.env.AUTH_PROVIDER==='neon') {
+    try {return await authenticateNeonBearer(match[1]);}
+    catch(e) {if(e instanceof NeonAuthUnavailableError)throw new AuthUnavailableError();throw e;}
+  }
+  if(process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER!=='supabase')throw new AuthUnavailableError();
 
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {

@@ -1,7 +1,7 @@
 import {useState,type FormEvent} from 'react';
 import '../../styles/app-theme.css';
 import {useAuth} from '../../context/AuthContext';
-import {supabase} from '../../lib/supabase';
+import {supabase,usesNeonAuth} from '../../lib/supabase';
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {AuthLayout} from './AuthLayout';
 
@@ -24,6 +24,10 @@ export default function ResetPasswordPage() {
       setPassword('');setConfirmation('');setDone(true);
     }catch(e:any){setError(e.message);}finally{setBusy(false);}
   };
+  if(usesNeonAuth)return <AuthLayout><div className="space-y-4"><h1 className="text-2xl font-bold">Pemulihan akun uji Neon</h1>
+    <p>Pemulihan password Neon masih dalam pengujian. Tautan reset Supabase tidak dapat dipakai pada akun Neon. Akun produksi Anda tetap memakai alur pemulihan yang sudah ada.</p>
+    <a href="mailto:stefen@newsystem.space">Hubungi dukungan New System</a>
+  </div></AuthLayout>;
   return <AuthLayout><div className="space-y-4"><h1 className="text-2xl font-bold">Atur password baru</h1>
     {done?<><p role="status">Password berhasil diperbarui. Masuk kembali dengan password baru.</p><button className="nh-app-button-primary nh-auth-submit" disabled={busy} onClick={async()=>{setBusy(true);const result=await supabase.auth.signOut({scope:'local'});setBusy(false);if(result.error)setError('Belum bisa keluar dari sesi. Coba lagi.');else navigate('/login',true);}}>Ke halaman login</button></>:ready?<form onSubmit={submit} className="space-y-4">
       <p className="text-sm text-slate-500">Untuk akun {user.email}. Admin tidak menerima password ini.</p>

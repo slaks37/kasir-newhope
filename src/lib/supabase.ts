@@ -11,11 +11,15 @@
  */
 
 import { createAuthClient } from './authClient';
+import {createNeonPilotClient} from './auth/neonClient';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+export const usesNeonAuth=import.meta.env.VITE_AUTH_PROVIDER==='neon';
+const neonUrl=import.meta.env.VITE_NEON_AUTH_URL as string|undefined;
+if(usesNeonAuth && !neonUrl)throw new Error('NEON_AUTH_URL_REQUIRED');
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!usesNeonAuth && (!supabaseUrl || !supabaseAnonKey)) {
   console.warn(
     '[supabase] VITE_SUPABASE_URL atau VITE_SUPABASE_ANON_KEY belum diisi. ' +
     'OAuth tidak akan berfungsi. Isi kedua nilai itu di .env lalu restart dev server.'
@@ -27,11 +31,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
  * supaya storage/postgrest/realtime/functions tidak ikut ke bundle setiap halaman.
  */
 export const supabase = {
-  auth: createAuthClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key'),
+  auth: usesNeonAuth?createNeonPilotClient(neonUrl!):createAuthClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key'),
 };
 
 /** True kalau konfigurasi Supabase sudah terisi (bukan placeholder). */
 export const isSupabaseConfigured =
-  !!supabaseUrl &&
+  usesNeonAuth || (!!supabaseUrl &&
   !!supabaseAnonKey &&
-  !supabaseUrl.includes('placeholder');
+  !supabaseUrl.includes('placeholder'));

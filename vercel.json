@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/neon-auth-migration": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/daily-insights",

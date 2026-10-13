@@ -2,6 +2,7 @@ import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { isCronJobEnabled } from '../../services/shared/cron';
 import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
+import {databaseTransport} from '../../services/shared/databaseTls';
 
 type VercelRequest = any;
 type VercelResponse = any;
@@ -10,8 +11,7 @@ let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
     pool = new pg.Pool({
-      connectionString: serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || ''),
-      ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
+      ...databaseTransport(serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || '')),
       ...databasePoolLimits(3),
     });
   }

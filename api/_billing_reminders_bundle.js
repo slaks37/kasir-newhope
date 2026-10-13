@@ -1,5 +1,5 @@
 // services/shared/db.ts
-import fs from "node:fs";
+import fs2 from "node:fs";
 import pg from "pg";
 
 // services/shared/poolConfig.ts
@@ -43,6 +43,20 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
   throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
 }
 
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -51,7 +65,7 @@ function konfigurasiSsl(connectionString) {
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
   if (process.env.PGSSLROOTCERT) {
-    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
+    return { ca: fs2.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
@@ -60,8 +74,7 @@ async function connectDb(opts) {
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.

@@ -9,6 +9,8 @@
  */
 
 import React, { useState } from "react";
+import {usesNeonAuth} from '../../lib/supabase';
+import NeonEmailVerification from './NeonEmailVerification';
 import "../../styles/app-theme.css";
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
@@ -164,7 +166,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         } else if (requiresEmailConfirmation) {
           setPassword('');
-          setSuccess('Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
+          setSuccess(usesNeonAuth?'Akun uji dibuat. Verifikasi email dengan panel kode di bawah, lalu masuk.':'Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
           setMode('login');
         } else {
           if (storeName.trim()) {
@@ -205,6 +207,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   return (
     <AuthLayout register={mode === "register"} onBack={onBackToLanding}>
+      {usesNeonAuth&&<NeonEmailVerification/>}
       <div className="nh-auth-tabs" aria-label="Jenis akses akun">
         {(["login", "register"] as const).map((item) => (
           <button

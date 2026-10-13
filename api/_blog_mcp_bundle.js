@@ -2,7 +2,7 @@
 import express from "express";
 
 // services/shared/db.ts
-import fs from "node:fs";
+import fs2 from "node:fs";
 import pg from "pg";
 
 // services/shared/poolConfig.ts
@@ -46,6 +46,20 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
   throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
 }
 
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -54,7 +68,7 @@ function konfigurasiSsl(connectionString) {
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
   if (process.env.PGSSLROOTCERT) {
-    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
+    return { ca: fs2.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
@@ -63,8 +77,7 @@ async function connectDb(opts) {
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.
@@ -114,8 +127,89 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
+// services/shared/neonAuth.ts
+import { createRemoteJWKSet, jwtVerify, errors } from "jose";
+
+// services/shared/neonPilot.ts
+function neonPilotConfig(env = process.env) {
+  if (env.NEON_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging")
+    throw new Error("NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED");
+  const base = new URL(env.NEON_AUTH_BASE_URL || "");
+  if (base.protocol !== "https:" || !/(?:^|\.)neon\.(?:tech|build)$/.test(base.hostname) || base.username || base.password)
+    throw new Error("INVALID_NEON_AUTH_CONFIGURATION");
+  const authUrl = base.href.replace(/\/$/, "");
+  const jwksUrl = authUrl + "/.well-known/jwks.json";
+  if (env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL !== jwksUrl) throw new Error("NEON_JWKS_BRANCH_MISMATCH");
+  return { authUrl, jwksUrl, issuer: base.origin };
+}
+
+// services/shared/neonAuth.ts
+var NeonAuthUnavailableError = class extends Error {
+};
+var verifier;
+var opening;
+async function verifyNeonToken(token, config = neonPilotConfig(), key) {
+  if (!key) {
+    if (verifier?.url !== config.jwksUrl) verifier = { url: config.jwksUrl, key: createRemoteJWKSet(new URL(config.jwksUrl), { timeoutDuration: 5e3, cooldownDuration: 3e4 }) };
+    key = verifier.key;
+  }
+  try {
+    const { payload: p } = await jwtVerify(token, key, {
+      issuer: config.issuer,
+      audience: config.issuer,
+      algorithms: ["EdDSA"],
+      requiredClaims: ["sub", "exp", "iat"],
+      maxTokenAge: "15m",
+      clockTolerance: 5
+    });
+    if (!p.sub || p.id !== p.sub || typeof p.email !== "string" || p.emailVerified !== true || p.banned === true) return null;
+    return { subject: p.sub, email: p.email, isEmailVerified: true, aal: "aal1" };
+  } catch (e) {
+    if (e instanceof errors.JOSEError && !(e instanceof errors.JWKSTimeout)) return null;
+    throw new NeonAuthUnavailableError("NEON_AUTH_UNAVAILABLE");
+  }
+}
+async function bindNeonIdentity(db, p, issuer) {
+  if (!p.isEmailVerified || !p.email) return null;
+  const email = p.email;
+  return db.tx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
+    const live = (await c.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
+    const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
+      FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+      WHERE b.provider='neon' AND b.issuer=$1 AND b.provider_subject=$2`, [issuer, p.subject])).rows[0];
+    if (binding) return binding.is_active && binding.canonical_active ? { ...p, subject: binding.canonical_user_id } : null;
+    const exists = (await c.query("SELECT 1 FROM internal.users WHERE id::text=$1 OR lower(email)=lower($2)", [p.subject, p.email])).rows.length;
+    if (exists) return null;
+    await c.query(`INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,$2,'Pemilik Toko',true)`, [p.subject, email.toLowerCase()]);
+    await c.query(`INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref)
+      VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`, [issuer, p.subject]);
+    return p;
+  });
+}
+async function authenticateNeonBearer(token) {
+  let config;
+  try {
+    config = neonPilotConfig();
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_CONFIG_UNAVAILABLE");
+  }
+  const p = await verifyNeonToken(token, config);
+  if (!p) return null;
+  try {
+    opening ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
+      opening = void 0;
+      throw e;
+    });
+    return await bindNeonIdentity(await opening, p, config.issuer);
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_IDENTITY_UNAVAILABLE");
+  }
+}
+
 // services/shared/auth.ts
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+var LOCAL_BYPASS = () => process.env.AUTH_PROVIDER !== "neon" && process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
 }
@@ -135,6 +229,15 @@ async function authenticateBearer(req) {
   if (!match) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  if (process.env.AUTH_PROVIDER === "neon") {
+    try {
+      return await authenticateNeonBearer(match[1]);
+    } catch (e) {
+      if (e instanceof NeonAuthUnavailableError) throw new AuthUnavailableError();
+      throw e;
+    }
+  }
+  if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -290,35 +393,35 @@ var text = (value, max) => typeof value === "string" ? value.replace(/\s+/g, " "
 var between = (value, [min, max]) => value.length >= min && value.length <= max;
 var httpsUrl = (value) => typeof value === "string" && /^https:\/\/[^\s"'<>]+$/i.test(value.trim()) ? value.trim() : "";
 function checkArticle(input) {
-  const errors = [], warnings = [];
+  const errors2 = [], warnings = [];
   const title = text(input.title, 160);
   const excerpt = text(input.excerpt, 400);
   const content = typeof input.content === "string" ? input.content : "";
   const slug = slugify(text(input.slug, 120) || title);
   const seoIn = input.seo && typeof input.seo === "object" ? input.seo : {};
   const authorIn = input.author && typeof input.author === "object" ? input.author : {};
-  if (!between(title, ARTICLE_RULES.title)) errors.push(`title harus ${ARTICLE_RULES.title[0]}\u2013${ARTICLE_RULES.title[1]} karakter (sekarang ${title.length}).`);
-  if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) errors.push("slug tidak valid: hanya huruf kecil, angka dan tanda hubung.");
-  if (!between(excerpt, ARTICLE_RULES.excerpt)) errors.push(`excerpt harus ${ARTICLE_RULES.excerpt[0]}\u2013${ARTICLE_RULES.excerpt[1]} karakter (sekarang ${excerpt.length}).`);
-  if (!isBlogCategory(input.category)) errors.push(`category harus salah satu dari: ${BLOG_CATEGORIES.join(", ")}.`);
-  if (content.length > 12e4) errors.push("content melebihi 120.000 karakter.");
+  if (!between(title, ARTICLE_RULES.title)) errors2.push(`title harus ${ARTICLE_RULES.title[0]}\u2013${ARTICLE_RULES.title[1]} karakter (sekarang ${title.length}).`);
+  if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) errors2.push("slug tidak valid: hanya huruf kecil, angka dan tanda hubung.");
+  if (!between(excerpt, ARTICLE_RULES.excerpt)) errors2.push(`excerpt harus ${ARTICLE_RULES.excerpt[0]}\u2013${ARTICLE_RULES.excerpt[1]} karakter (sekarang ${excerpt.length}).`);
+  if (!isBlogCategory(input.category)) errors2.push(`category harus salah satu dari: ${BLOG_CATEGORIES.join(", ")}.`);
+  if (content.length > 12e4) errors2.push("content melebihi 120.000 karakter.");
   const rendered = renderArticle(content, title);
   const h2 = rendered.headings.filter((h) => h.level === 2).length, h3 = rendered.headings.filter((h) => h.level === 3).length;
-  if (rendered.words < ARTICLE_RULES.minWords) errors.push(`content terlalu tipis: ${rendered.words} kata (minimal ${ARTICLE_RULES.minWords}).`);
+  if (rendered.words < ARTICLE_RULES.minWords) errors2.push(`content terlalu tipis: ${rendered.words} kata (minimal ${ARTICLE_RULES.minWords}).`);
   else if (rendered.words < ARTICLE_RULES.recommendedWords) warnings.push(`content ${rendered.words} kata; ${ARTICLE_RULES.recommendedWords}+ kata biasanya lebih kompetitif.`);
-  if (h2 < ARTICLE_RULES.minH2) errors.push(`content butuh minimal ${ARTICLE_RULES.minH2} subjudul H2 (## ...), sekarang ${h2}.`);
+  if (h2 < ARTICLE_RULES.minH2) errors2.push(`content butuh minimal ${ARTICLE_RULES.minH2} subjudul H2 (## ...), sekarang ${h2}.`);
   if (/^#\s+/m.test(content)) warnings.push("H1 (# ...) di dalam content diubah menjadi H2; judul halaman memakai field title.");
   if (/<\s*(script|iframe|style)/i.test(content)) warnings.push("HTML mentah (script/iframe/style) tidak dirender dan tampil sebagai teks.");
   for (const [pattern, message] of FORBIDDEN_CLAIMS) if (pattern.test(`${title}
 ${excerpt}
-${content}`)) errors.push(message);
+${content}`)) errors2.push(message);
   const metaTitle = text(seoIn.metaTitle, 120) || title;
   if (metaTitle.length > ARTICLE_RULES.metaTitleMax) warnings.push(`seo.metaTitle ${metaTitle.length} karakter; Google biasanya memotong di atas \xB1${ARTICLE_RULES.metaTitleMax}.`);
   let metaDescription = text(seoIn.metaDescription, 300);
   if (!metaDescription) metaDescription = excerpt.length > 160 ? excerpt.slice(0, 157).replace(/\s+\S*$/, "") + "\u2026" : excerpt;
-  else if (!between(metaDescription, ARTICLE_RULES.metaDescription)) errors.push(`seo.metaDescription harus ${ARTICLE_RULES.metaDescription[0]}\u2013${ARTICLE_RULES.metaDescription[1]} karakter.`);
+  else if (!between(metaDescription, ARTICLE_RULES.metaDescription)) errors2.push(`seo.metaDescription harus ${ARTICLE_RULES.metaDescription[0]}\u2013${ARTICLE_RULES.metaDescription[1]} karakter.`);
   const tags = Array.isArray(input.tags) ? [...new Set(input.tags.map((t) => text(t, 40)).filter(Boolean))] : [];
-  if (tags.length > ARTICLE_RULES.maxTags) errors.push(`tags maksimal ${ARTICLE_RULES.maxTags}.`);
+  if (tags.length > ARTICLE_RULES.maxTags) errors2.push(`tags maksimal ${ARTICLE_RULES.maxTags}.`);
   const keywords = Array.isArray(seoIn.keywords) ? [...new Set(seoIn.keywords.map((k) => text(k, 60)).filter(Boolean))].slice(0, 10) : tags;
   const focusKeyword = text(seoIn.focusKeyword, 60);
   if (focusKeyword) {
@@ -328,15 +431,15 @@ ${content}`)) errors.push(message);
     if (!metaDescription.toLowerCase().includes(k)) warnings.push("focusKeyword tidak ada di meta description.");
   }
   const coverImage = httpsUrl(input.coverImage);
-  if (input.coverImage && !coverImage) errors.push("coverImage harus URL https.");
+  if (input.coverImage && !coverImage) errors2.push("coverImage harus URL https.");
   if (!coverImage) warnings.push("Tanpa coverImage, dipilih ilustrasi AI dari pustaka sampul editorial.");
   const faqIn = Array.isArray(input.faq) ? input.faq : [];
-  if (faqIn.length > ARTICLE_RULES.maxFaq) errors.push(`faq maksimal ${ARTICLE_RULES.maxFaq} pertanyaan.`);
+  if (faqIn.length > ARTICLE_RULES.maxFaq) errors2.push(`faq maksimal ${ARTICLE_RULES.maxFaq} pertanyaan.`);
   const faq = faqIn.slice(0, ARTICLE_RULES.maxFaq).map((item) => ({ question: text(item?.question, 200), answer: text(item?.answer, 800) }));
-  if (faq.some((f) => f.question.length < 10 || f.answer.length < 20)) errors.push("Setiap faq butuh question (\u226510 karakter) dan answer (\u226520 karakter).");
+  if (faq.some((f) => f.question.length < 10 || f.answer.length < 20)) errors2.push("Setiap faq butuh question (\u226510 karakter) dan answer (\u226520 karakter).");
   const avatar = httpsUrl(authorIn.avatar);
   const sources = [];
-  if (input.sources !== void 0 && (!Array.isArray(input.sources) || input.sources.length > 5)) errors.push("sources harus array, maksimal 5 sumber.");
+  if (input.sources !== void 0 && (!Array.isArray(input.sources) || input.sources.length > 5)) errors2.push("sources harus array, maksimal 5 sumber.");
   for (const item of Array.isArray(input.sources) ? input.sources.slice(0, 5) : []) {
     const source = item && typeof item === "object" ? item : {};
     const sourceTitle = text(source.title, 250), url = httpsUrl(source.url);
@@ -353,15 +456,15 @@ ${content}`)) errors.push(message);
     if (publishedAt && !Number.isFinite(Date.parse(publishedAt))) valid = false;
     if (input.sourceRequired === true && !publishedAt) valid = false;
     if (!valid) {
-      errors.push("Sumber membutuhkan judul dan URL https artikel (bukan beranda), dengan tanggal valid.");
+      errors2.push("Sumber membutuhkan judul dan URL https artikel (bukan beranda), dengan tanggal valid.");
       continue;
     }
     sources.push({ title: sourceTitle, url, ...publishedAt ? { publishedAt: new Date(publishedAt).toISOString() } : {}, ...text(source.publisher, 100) ? { publisher: text(source.publisher, 100) } : {} });
   }
-  if (input.sourceRequired === true && !sources.length) errors.push("Artikel berbasis berita wajib menyertakan sources.");
+  if (input.sourceRequired === true && !sources.length) errors2.push("Artikel berbasis berita wajib menyertakan sources.");
   if (input.sourceRequired === true) {
     const feed = typeof input.sourceFeed === "string" ? input.sourceFeed : "";
-    if (feed.length > 5e5) errors.push("sourceFeed melebihi 500.000 karakter.");
+    if (feed.length > 5e5) errors2.push("sourceFeed melebihi 500.000 karakter.");
     for (const source of sources) {
       const escapedUrl = source.url.replace(/&/g, "&amp;");
       const items = feed.match(/<item>[\s\S]*?<\/item>/g) || [];
@@ -372,7 +475,7 @@ ${content}`)) errors.push(message);
         const observedPublisher = item.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1];
         return observedTitle === source.title.replace(/&/g, "&amp;") && (observedLink === source.url || observedLink === escapedUrl) && (!source.publisher || observedPublisher === source.publisher.replace(/&/g, "&amp;")) && (!source.publishedAt || observedDate && Date.parse(observedDate) === Date.parse(source.publishedAt));
       }))
-        errors.push("Sumber berita tidak cocok dengan judul dan tautan dalam feed yang dibaca.");
+        errors2.push("Sumber berita tidak cocok dengan judul dan tautan dalam feed yang dibaca.");
     }
   }
   const record = {
@@ -389,7 +492,7 @@ ${content}`)) errors.push(message);
     author: { name: text(authorIn.name, 80) || "Tim Editorial New Hope POS", role: text(authorIn.role, 80) || "Editor", avatar },
     seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, ...typeof input.coverGenerated === "boolean" ? { coverGenerated: input.coverGenerated } : {}, faq, sources }
   };
-  return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
+  return { ok: errors2.length === 0, errors: errors2, warnings, record: errors2.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
 }
 
 // src/lib/blog/covers.ts

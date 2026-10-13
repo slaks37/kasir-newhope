@@ -1,4 +1,5 @@
 import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
+import {registerNeonOnboarding} from './neonOnboarding';
 /**
  * Jembatan dari aplikasi kasir (localStorage) ke database.
  *
@@ -151,6 +152,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerNeonOnboarding(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);

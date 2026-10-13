@@ -2,7 +2,7 @@
 import express from "express";
 
 // services/shared/db.ts
-import fs from "node:fs";
+import fs2 from "node:fs";
 import pg from "pg";
 
 // services/shared/poolConfig.ts
@@ -46,6 +46,20 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
   throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
 }
 
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -54,7 +68,7 @@ function konfigurasiSsl(connectionString) {
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
   if (process.env.PGSSLROOTCERT) {
-    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
+    return { ca: fs2.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
@@ -63,8 +77,7 @@ async function connectDb(opts) {
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.
@@ -114,8 +127,89 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
+// services/shared/neonAuth.ts
+import { createRemoteJWKSet, jwtVerify, errors } from "jose";
+
+// services/shared/neonPilot.ts
+function neonPilotConfig(env = process.env) {
+  if (env.NEON_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging")
+    throw new Error("NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED");
+  const base = new URL(env.NEON_AUTH_BASE_URL || "");
+  if (base.protocol !== "https:" || !/(?:^|\.)neon\.(?:tech|build)$/.test(base.hostname) || base.username || base.password)
+    throw new Error("INVALID_NEON_AUTH_CONFIGURATION");
+  const authUrl = base.href.replace(/\/$/, "");
+  const jwksUrl = authUrl + "/.well-known/jwks.json";
+  if (env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL !== jwksUrl) throw new Error("NEON_JWKS_BRANCH_MISMATCH");
+  return { authUrl, jwksUrl, issuer: base.origin };
+}
+
+// services/shared/neonAuth.ts
+var NeonAuthUnavailableError = class extends Error {
+};
+var verifier;
+var opening;
+async function verifyNeonToken(token, config = neonPilotConfig(), key) {
+  if (!key) {
+    if (verifier?.url !== config.jwksUrl) verifier = { url: config.jwksUrl, key: createRemoteJWKSet(new URL(config.jwksUrl), { timeoutDuration: 5e3, cooldownDuration: 3e4 }) };
+    key = verifier.key;
+  }
+  try {
+    const { payload: p } = await jwtVerify(token, key, {
+      issuer: config.issuer,
+      audience: config.issuer,
+      algorithms: ["EdDSA"],
+      requiredClaims: ["sub", "exp", "iat"],
+      maxTokenAge: "15m",
+      clockTolerance: 5
+    });
+    if (!p.sub || p.id !== p.sub || typeof p.email !== "string" || p.emailVerified !== true || p.banned === true) return null;
+    return { subject: p.sub, email: p.email, isEmailVerified: true, aal: "aal1" };
+  } catch (e) {
+    if (e instanceof errors.JOSEError && !(e instanceof errors.JWKSTimeout)) return null;
+    throw new NeonAuthUnavailableError("NEON_AUTH_UNAVAILABLE");
+  }
+}
+async function bindNeonIdentity(db, p, issuer) {
+  if (!p.isEmailVerified || !p.email) return null;
+  const email = p.email;
+  return db.tx(async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
+    const live = (await c.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
+    const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
+      FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+      WHERE b.provider='neon' AND b.issuer=$1 AND b.provider_subject=$2`, [issuer, p.subject])).rows[0];
+    if (binding) return binding.is_active && binding.canonical_active ? { ...p, subject: binding.canonical_user_id } : null;
+    const exists = (await c.query("SELECT 1 FROM internal.users WHERE id::text=$1 OR lower(email)=lower($2)", [p.subject, p.email])).rows.length;
+    if (exists) return null;
+    await c.query(`INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,$2,'Pemilik Toko',true)`, [p.subject, email.toLowerCase()]);
+    await c.query(`INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref)
+      VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`, [issuer, p.subject]);
+    return p;
+  });
+}
+async function authenticateNeonBearer(token) {
+  let config;
+  try {
+    config = neonPilotConfig();
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_CONFIG_UNAVAILABLE");
+  }
+  const p = await verifyNeonToken(token, config);
+  if (!p) return null;
+  try {
+    opening ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
+      opening = void 0;
+      throw e;
+    });
+    return await bindNeonIdentity(await opening, p, config.issuer);
+  } catch {
+    throw new NeonAuthUnavailableError("NEON_IDENTITY_UNAVAILABLE");
+  }
+}
+
 // services/shared/auth.ts
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+var LOCAL_BYPASS = () => process.env.AUTH_PROVIDER !== "neon" && process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
 }
@@ -135,6 +229,15 @@ async function authenticateBearer(req) {
   if (!match) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
   }
+  if (process.env.AUTH_PROVIDER === "neon") {
+    try {
+      return await authenticateNeonBearer(match[1]);
+    } catch (e) {
+      if (e instanceof NeonAuthUnavailableError) throw new AuthUnavailableError();
+      throw e;
+    }
+  }
+  if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -576,8 +679,8 @@ function registerMcpRoutes(app, db, authenticate = authenticateBearer) {
       }
       if (credential.revoked_at || Date.parse(credential.expires_at) <= Date.now() || Date.parse(credential.connection_expiry) <= Date.now()) return null;
       if (isCode) {
-        const verifier = scalar(b.code_verifier, 128);
-        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || createHash("sha256").update(verifier).digest("base64url") !== credential.challenge || b.redirect_uri !== credential.redirect_uri) return null;
+        const verifier2 = scalar(b.code_verifier, 128);
+        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier2) || createHash("sha256").update(verifier2).digest("base64url") !== credential.challenge || b.redirect_uri !== credential.redirect_uri) return null;
       }
       await authorizedBusiness(cx, credential.owner_ref, credential.business_id);
       const access = secret(), refresh = secret();
