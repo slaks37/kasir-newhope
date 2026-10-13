@@ -3,6 +3,7 @@ import type {Express} from 'express';
 import type {Db} from '../shared/db';
 import {trustedPrincipal} from '../shared/auth';
 import {neonPilotConfig} from '../shared/neonPilot';
+import {betterAuthPilotConfig} from '../shared/betterAuthPilot';
 import {SAAS_PLANS,TRIAL_PLAN_ID} from '../../src/config/saasPlans';
 
 const sectors=new Set(['FNB','RETAIL','LAUNDRY','CARWASH','BARBERSHOP']);
@@ -15,15 +16,15 @@ export function registerNeonOnboarding(app:Express,db:Db) {
   });
   app.post('/api/v1/sync/neon-onboarding',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
-    if(process.env.AUTH_PROVIDER!=='neon')return res.status(404).json({ok:false,error:'NOT_FOUND'});
+    if(!['neon','better-auth'].includes(process.env.AUTH_PROVIDER||''))return res.status(404).json({ok:false,error:'NOT_FOUND'});
     const p=trustedPrincipal(req);
     if(!p?.isEmailVerified || !p.email)return res.status(403).json({ok:false,error:'VERIFIED_ACCOUNT_REQUIRED'});
     try {
-      const config=neonPilotConfig();
+      const issuer=process.env.AUTH_PROVIDER==='better-auth'?betterAuthPilotConfig().baseUrl:neonPilotConfig().issuer;
       const result=await db.tx(async c=>{
         await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['onboarding:'+p.subject]);
         const binding=(await c.query(`SELECT verification_ref FROM internal.auth_identity_bindings
-          WHERE provider='neon' AND issuer=$1 AND canonical_user_id=$2 AND is_active`,[config.issuer,p.subject])).rows[0];
+          WHERE provider=$3 AND issuer=$1 AND canonical_user_id=$2 AND is_active`,[issuer,p.subject,process.env.AUTH_PROVIDER])).rows[0];
         const existing=(await c.query('SELECT id FROM internal.tenants WHERE owner_user_ref=$1',[p.subject])).rows;
         if(existing.length)return {tenantId:existing[0].id,created:false};
         // No provisioning of imported identities, staff, or inactive owners.

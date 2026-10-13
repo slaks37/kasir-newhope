@@ -169,22 +169,22 @@ async function verifyNeonToken(token, config = neonPilotConfig(), key) {
     throw new NeonAuthUnavailableError("NEON_AUTH_UNAVAILABLE");
   }
 }
-async function bindNeonIdentity(db, p, issuer) {
+async function bindNeonIdentity(db, p, issuer, provider = "neon") {
   if (!p.isEmailVerified || !p.email) return null;
   const email = p.email;
   return db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
-    const live = (await c.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    const live = (await c.query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
     if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
     const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
       FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
-      WHERE b.provider='neon' AND b.issuer=$1 AND b.provider_subject=$2`, [issuer, p.subject])).rows[0];
+      WHERE b.provider=$3 AND b.issuer=$1 AND b.provider_subject=$2`, [issuer, p.subject, provider])).rows[0];
     if (binding) return binding.is_active && binding.canonical_active ? { ...p, subject: binding.canonical_user_id } : null;
     const exists = (await c.query("SELECT 1 FROM internal.users WHERE id::text=$1 OR lower(email)=lower($2)", [p.subject, p.email])).rows.length;
     if (exists) return null;
     await c.query(`INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,$2,'Pemilik Toko',true)`, [p.subject, email.toLowerCase()]);
     await c.query(`INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref)
-      VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`, [issuer, p.subject]);
+      VALUES($3,$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`, [issuer, p.subject, provider]);
     return p;
   });
 }
@@ -208,8 +208,169 @@ async function authenticateNeonBearer(token) {
   }
 }
 
+// services/shared/betterAuth.ts
+import { betterAuth } from "better-auth";
+import { bearer, twoFactor } from "better-auth/plugins";
+import { createAuthMiddleware, APIError } from "better-auth/api";
+import { PostgresDialect } from "kysely";
+import pg2 from "pg";
+import { randomUUID } from "node:crypto";
+
+// services/shared/betterAuthPilot.ts
+function betterAuthPilotConfig(env = process.env) {
+  if (env.BETTER_AUTH_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") throw Error("BETTER_AUTH_PRODUCTION_CUTOVER_BLOCKED");
+  if (env.NEON_PROJECT_ID !== "steep-sea-66546931" || env.NEON_BRANCH_ID !== "br-icy-dust-azqi5vlc") throw Error("BETTER_AUTH_STAGING_BRANCH_MISMATCH");
+  if (!env.DATABASE_URL) throw Error("BETTER_AUTH_APPLICATION_DATABASE_REQUIRED");
+  const databaseUrl = env.BETTER_AUTH_DATABASE_URL || env.DATABASE_URL || env.NEON_STAGING_DATABASE_URL || "";
+  const database = new URL(databaseUrl), app = new URL(env.BETTER_AUTH_URL || "");
+  if (database.hostname.replace("-pooler", "") !== "ep-damp-pine-azrnsoge.c-3.ap-southeast-1.aws.neon.tech") throw Error("BETTER_AUTH_DATABASE_MISMATCH");
+  if (database.pathname !== "/neondb" || !["postgres:", "postgresql:"].includes(database.protocol)) throw Error("BETTER_AUTH_DATABASE_MISMATCH");
+  for (const value of [env.DATABASE_URL, env.BETTER_AUTH_DATABASE_URL, env.NEON_STAGING_DATABASE_URL].filter(Boolean)) {
+    const u = new URL(value);
+    if (u.hostname.replace("-pooler", "") !== database.hostname.replace("-pooler", "") || u.pathname !== "/neondb" || !["postgres:", "postgresql:"].includes(u.protocol) || u.port && u.port !== "5432" || u.hash || [...u.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("BETTER_AUTH_DATABASE_MISMATCH");
+  }
+  if (app.username || app.password || app.pathname !== "/" || app.search || app.hash) throw Error("INVALID_BETTER_AUTH_ORIGIN");
+  if (app.protocol !== "https:" && !(env.NODE_ENV !== "production" && ["127.0.0.1", "localhost"].includes(app.hostname))) throw Error("BETTER_AUTH_HTTPS_REQUIRED");
+  if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 48) throw Error("BETTER_AUTH_SECRET_REQUIRED");
+  return { databaseUrl, baseUrl: app.origin, secret: env.BETTER_AUTH_SECRET };
+}
+
+// services/shared/betterAuthEmail.ts
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+async function sendBetterAuthEmail(mail) {
+  const link = new URL(mail.url);
+  if (link.origin !== mail.baseUrl || !link.pathname.startsWith("/api/auth/")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
+  if (process.env.AUTH_EMAIL_ENABLED !== "1" || !process.env.RESEND_API_KEY || !process.env.AUTH_EMAIL_FROM)
+    throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
+  const text2 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
+  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(
+    {
+      from: process.env.AUTH_EMAIL_FROM,
+      to: mail.email,
+      replyTo: "stefen@newsystem.space",
+      subject: text2,
+      text: text2 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+      html: '<!doctype html><html lang="id"><body><h1>' + text2 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+    },
+    { idempotencyKey: "newhope-auth-" + key }
+  );
+  if (response.error || !response.data?.id) throw Error("AUTH_EMAIL_DELIVERY_FAILED");
+}
+
+// services/shared/betterAuth.ts
+function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = sendBetterAuthEmail) {
+  const pool = new pg2.Pool({ ...databaseTransport(config.databaseUrl), ...databasePoolLimits(2) });
+  const auth = betterAuth({
+    appName: "New Hope POS",
+    baseURL: config.baseUrl,
+    basePath: "/api/auth",
+    secret: config.secret,
+    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    trustedOrigins: [config.baseUrl],
+    telemetry: { enabled: false },
+    logger: { disabled: true },
+    advanced: { database: { generateId: () => randomUUID() }, useSecureCookies: config.baseUrl.startsWith("https://") },
+    user: { additionalFields: { isActive: { type: "boolean", defaultValue: true, required: true, input: false } } },
+    session: { expiresIn: 3600, updateAge: 900, cookieCache: { enabled: false }, freshAge: 3600 },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      resetPasswordTokenExpiresIn: 900,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => sendEmail({ kind: "RESET", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      expiresIn: 900,
+      sendVerificationEmail: async ({ user, url }) => sendEmail({ kind: "VERIFY", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    rateLimit: {
+      enabled: true,
+      storage: "database",
+      window: 60,
+      max: 100,
+      customRules: {
+        "/sign-in/email": { window: 60, max: 5 },
+        "/two-factor/verify-totp": { window: 60, max: 5 },
+        "/request-password-reset": { window: 3600, max: 3 },
+        "/send-verification-email": { window: 3600, max: 3 }
+      }
+    },
+    plugins: [bearer({ requireSignature: true }), twoFactor({
+      issuer: "New Hope POS",
+      skipVerificationOnEnable: false,
+      accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 }
+    })],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
+        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
+          const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
+          if (current?.user.twoFactorEnabled) {
+            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+              WHERE session_id=$1 AND user_id=$2 AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
+            if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
+          }
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/two-factor/verify-totp" || ctx.context.returned instanceof APIError) return;
+        const result = ctx.context.returned;
+        if (!result?.token || !result.user?.id) return;
+        const fresh = ctx.context.newSession;
+        const sessionToken = fresh?.session.token || result.token;
+        const userId = fresh?.user.id || result.user.id;
+        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,verified_at)
+          SELECT id,"userId",now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
+          ON CONFLICT(session_id) DO UPDATE SET verified_at=EXCLUDED.verified_at`, [sessionToken, userId]);
+      })
+    }
+  });
+  return { auth, pool, close: () => pool.end() };
+}
+var runtime;
+function getBetterAuthRuntime() {
+  return runtime ??= createBetterAuthRuntime();
+}
+
+// services/shared/betterAuthPrincipal.ts
+var BetterAuthUnavailableError = class extends Error {
+};
+var opening2;
+async function authenticateBetterBearer(token) {
+  try {
+    const config = betterAuthPilotConfig(), { auth, pool } = getBetterAuthRuntime();
+    const session = await auth.api.getSession({ headers: new Headers({ authorization: "Bearer " + token }), query: { disableCookieCache: true } });
+    if (!session?.user.emailVerified || !session.user.isActive) return null;
+    opening2 ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
+      opening2 = void 0;
+      throw e;
+    });
+    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth");
+    if (!p) return null;
+    if (session.user.twoFactorEnabled) {
+      const proof = (await pool.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
+      if (proof) {
+        p.aal = "aal2";
+        p.mfaVerifiedAt = new Date(proof.verified_at).getTime() / 1e3;
+      }
+    }
+    return p;
+  } catch (e) {
+    if (e?.status === "UNAUTHORIZED") return null;
+    throw new BetterAuthUnavailableError("BETTER_AUTH_UNAVAILABLE");
+  }
+}
+
 // services/shared/auth.ts
-var LOCAL_BYPASS = () => process.env.AUTH_PROVIDER !== "neon" && process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+var LOCAL_BYPASS = () => (!process.env.AUTH_PROVIDER || process.env.AUTH_PROVIDER === "supabase") && process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
 }
@@ -228,6 +389,14 @@ async function authenticateBearer(req) {
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  if (process.env.AUTH_PROVIDER === "better-auth") {
+    try {
+      return await authenticateBetterBearer(match[1]);
+    } catch (e) {
+      if (e instanceof BetterAuthUnavailableError) throw new AuthUnavailableError();
+      throw e;
+    }
   }
   if (process.env.AUTH_PROVIDER === "neon") {
     try {
@@ -273,7 +442,7 @@ async function authenticateBearer(req) {
 }
 
 // services/blog-mcp/routes.ts
-import { createHash as createHash2, randomBytes, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -283,7 +452,7 @@ function adminSecurityError(principal, method, now = Date.now()) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -652,7 +821,7 @@ function createBlogAutomation(getDb) {
             author_avatar=$9,reading_time_minutes=$10,tags=$11,seo=$12::jsonb,is_published=$13,is_featured=$14,updated_at=CURRENT_TIMESTAMP
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
-            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID()]);
+            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID2()]);
       if (existing?.is_published) changedSlugs.push(existing.slug);
       if (record.isPublished) changedSlugs.push(record.slug);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
@@ -714,7 +883,7 @@ var BLOG_MCP_TOOLS = [
 
 // services/blog-mcp/routes.ts
 var BLOG_SCOPE = "blog:write";
-var hash = (s) => createHash2("sha256").update(s).digest("hex");
+var hash = (s) => createHash3("sha256").update(s).digest("hex");
 var secret = () => randomBytes(32).toString("base64url");
 var scalar = (v, max = 2048) => typeof v === "string" && v.length <= max ? v : "";
 function fail(code) {
@@ -825,7 +994,7 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
       redirect.searchParams.set("error", "access_denied");
       return res.json({ redirect: redirect.href });
     }
-    const code = secret(), id = randomUUID2();
+    const code = secret(), id = randomUUID3();
     await db.tx(async (cx) => {
       await cx.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["blog-mcp:" + p.subject]);
       const n = (await cx.query("SELECT count(*)::int AS n FROM blog_mcp_private.connections WHERE owner_ref=$1 AND created_at>now()-interval '1 hour'", [p.subject])).rows[0].n;
@@ -860,7 +1029,7 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
       const k = (await cx.query(`SELECT k.*,c.owner_ref,c.client_id,c.resource,c.scope,c.revoked_at,c.expires_at AS connection_expiry
         FROM blog_mcp_private.credentials k JOIN blog_mcp_private.connections c ON c.id=k.connection_id WHERE k.hash=$1 FOR UPDATE OF c,k`, [hash(raw)])).rows[0];
       if (!k || k.resource !== config.resource || k.scope !== BLOG_SCOPE || k.client_id !== b.client_id || k.kind !== (isCode ? "code" : "refresh")) return null;
-      if (isCode && (!/^[A-Za-z0-9._~-]{43,128}$/.test(scalar(b.code_verifier, 128)) || createHash2("sha256").update(b.code_verifier).digest("base64url") !== k.challenge || b.redirect_uri !== k.redirect_uri)) return null;
+      if (isCode && (!/^[A-Za-z0-9._~-]{43,128}$/.test(scalar(b.code_verifier, 128)) || createHash3("sha256").update(b.code_verifier).digest("base64url") !== k.challenge || b.redirect_uri !== k.redirect_uri)) return null;
       if (k.consumed_at) {
         await cx.query("UPDATE blog_mcp_private.connections SET revoked_at=now() WHERE id=$1", [k.connection_id]);
         await audit(cx, k.connection_id, "credential_replay_revoked");
@@ -978,13 +1147,13 @@ function normalizeVercelUrl(req) {
 
 // src/server/blogMcpHandler.ts
 function createBlogMcpHandler(connect = () => connectDb({ schema: "blog_mcp_private", max: 2 }), authenticate = authenticateBearer) {
-  let runtime;
+  let runtime2;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     if (process.env.BLOG_MCP_ENABLED === "false") return res.status(503).json({ error: "BLOG_MCP_DISABLED" });
     try {
-      runtime ??= connect().then((db) => {
+      runtime2 ??= connect().then((db) => {
         const app = express();
         app.disable("x-powered-by");
         const json = express.json({ limit: "768kb" }), form = express.urlencoded({ extended: false, limit: "16kb" });
@@ -1014,10 +1183,10 @@ function createBlogMcpHandler(connect = () => connectDb({ schema: "blog_mcp_priv
         });
         return app;
       }).catch((error) => {
-        runtime = void 0;
+        runtime2 = void 0;
         throw error;
       });
-      (await runtime)(req, res);
+      (await runtime2)(req, res);
     } catch {
       res.status(503).json({ error: "BLOG_MCP_UNAVAILABLE" });
     }

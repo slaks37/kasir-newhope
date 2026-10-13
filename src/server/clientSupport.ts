@@ -1,4 +1,7 @@
 import {createClient} from '@supabase/supabase-js';
+import {betterOwnerIdentity} from '../../services/shared/betterAuthOwner';
+import {getBetterAuthRuntime} from '../../services/shared/betterAuth';
+import {betterAuthPilotConfig} from '../../services/shared/betterAuthPilot';
 import type {Express} from 'express';
 import type {Db} from '../../services/shared/db';
 import type {AuthPrincipal} from '../../services/shared/auth';
@@ -15,6 +18,13 @@ export interface ClientSupportProvider {
 class SupportError extends Error {constructor(readonly status:number,code:string){super(code);}}
 
 export function createClientSupportProvider():ClientSupportProvider {
+  if(process.env.AUTH_PROVIDER==='better-auth')return {
+    configured:process.env.AUTH_EMAIL_ENABLED==='1'&&!!process.env.RESEND_API_KEY&&!!process.env.AUTH_EMAIL_FROM,
+    ownerIdentity:betterOwnerIdentity,
+    async ownerEmail(subject){const u=await betterOwnerIdentity(subject);return u?.verified?u.email:null;},
+    async sendConfirmation(email){await getBetterAuthRuntime().auth.api.sendVerificationEmail({body:{email,callbackURL:betterAuthPilotConfig().baseUrl+'/login'}});},
+    async sendReset(email){await getBetterAuthRuntime().auth.api.requestPasswordReset({body:{email,redirectTo:betterAuthPilotConfig().baseUrl+'/reset-password'}});},
+  };
   const url=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL;
   const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
   // Server-only Auth client. No sessions, passwords or recovery links are

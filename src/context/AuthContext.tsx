@@ -144,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return restoreAuthSession<Session|null>(
-      supabase.auth.getSession().then(({data})=>data.session),
+      supabase.auth.getSession().then(({data,error})=>{if(error)throw error;return data.session;}),
       receive=>{
         const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>receive(session));
         return()=>subscription.unsubscribe();
@@ -278,18 +278,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     []
   );
   const signOut = useCallback(async () => {
+    if (isSupabaseConfigured) {
+      const {error}=await supabase.auth.signOut();
+      if(error)throw error;
+    }
     localStorage.removeItem(LOCAL_SESSION_KEY);
     localStorage.removeItem('newhope_pos_guest_mode');
     sessionStorage.removeItem('nhpos_internal_identity');
     localStorage.removeItem('nhpos_internal_identity');
-
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.auth.signOut();
-      } catch (e) {
-        console.error('Supabase signOut error', e);
-      }
-    }
 
     setUser(null);
     setSession(null);

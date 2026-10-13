@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import BetterAdminMfa from './BetterAdminMfa';
+import { supabase,usesBetterAuth } from '../lib/supabase';
 import { api, type Session } from './api';
 import { AuthLayout } from '../components/auth/AuthLayout';
 
-export default function AdminMfa({onVerified,onLogout,embedded=false}:{onVerified:(session:Session)=>void;onLogout:()=>void;embedded?:boolean}) {
+function SupabaseAdminMfa({onVerified,onLogout,embedded=false}:{onVerified:(session:Session)=>void;onLogout:()=>void;embedded?:boolean}) {
   const [factorId,setFactorId]=useState('');
   const [factors,setFactors]=useState<{id:string;friendly_name?:string}[]>([]);
   const [qr,setQr]=useState(''),[secret,setSecret]=useState(''),[code,setCode]=useState('');
@@ -77,3 +78,5 @@ export default function AdminMfa({onVerified,onLogout,embedded=false}:{onVerifie
     </>);
   return embedded?content:<AuthLayout admin>{content}</AuthLayout>;
 }
+
+export default function AdminMfa(props:Parameters<typeof SupabaseAdminMfa>[0]) {return usesBetterAuth?<BetterAdminMfa {...props}/>:<SupabaseAdminMfa {...props}/>;}

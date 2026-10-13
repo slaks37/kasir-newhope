@@ -27,23 +27,25 @@ export async function verifyNeonToken(token:string,config=neonPilotConfig(),key?
 
 /** A new verified identity receives an isolated UUID. Imported owners require
  * a reviewed issuer+subject binding. Matching email never claims an old tenant. */
-export async function bindNeonIdentity(db:Db,p:AuthPrincipal,issuer:string):Promise<AuthPrincipal|null> {
+export async function bindNeonIdentity(db:Db,p:AuthPrincipal,issuer:string,provider:'neon'|'better-auth'='neon'):Promise<AuthPrincipal|null> {
   if (!p.isEmailVerified || !p.email) return null;
   const email=p.email;
   return db.tx(async c=>{
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[issuer+':'+p.subject]);
-    const live=(await c.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1',[p.subject])).rows[0];
+    const live=(await c.query(provider==='better-auth'
+      ?'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1'
+      :'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1',[p.subject])).rows[0];
     if(!live || !live.emailVerified || live.banned || live.email.toLowerCase()!==email.toLowerCase())return null;
     const binding=(await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
       FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
-      WHERE b.provider='neon' AND b.issuer=$1 AND b.provider_subject=$2`,[issuer,p.subject])).rows[0];
+      WHERE b.provider=$3 AND b.issuer=$1 AND b.provider_subject=$2`,[issuer,p.subject,provider])).rows[0];
     if(binding) return binding.is_active&&binding.canonical_active?{...p,subject:binding.canonical_user_id}:null;
     // Refuse both UUID and email collisions with restored Supabase users.
     const exists=(await c.query('SELECT 1 FROM internal.users WHERE id::text=$1 OR lower(email)=lower($2)',[p.subject,p.email])).rows.length;
     if(exists) return null;
     await c.query(`INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,$2,'Pemilik Toko',true)`,[p.subject,email.toLowerCase()]);
     await c.query(`INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref)
-      VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`,[issuer,p.subject]);
+      VALUES($3,$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')`,[issuer,p.subject,provider]);
     return p;
   });
 }

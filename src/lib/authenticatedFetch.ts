@@ -11,7 +11,7 @@ export function installAuthenticatedFetch(): void {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const rawUrl = input instanceof Request ? input.url : String(input);
     const url = new URL(rawUrl, window.location.origin);
-    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) {
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/') || url.pathname==='/api/auth' || url.pathname.startsWith('/api/auth/')) {
       return nativeFetch(input, init);
     }
 

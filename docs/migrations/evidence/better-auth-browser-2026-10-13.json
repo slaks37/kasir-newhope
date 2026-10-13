@@ -1,0 +1,16 @@
+{
+  "scope": "Loopback browser, synthetic .invalid account, isolated Neon MFA branch; no production data or external mail",
+  "branchId": "br-icy-dust-azqi5vlc",
+  "checks": {
+    "cashierLogin": "PASS: sign-in, get-session, canonical identity, idempotent onboarding, business directory, subscription status and reports returned HTTP 200 and cashier overview rendered",
+    "reload": "PASS: same fixture remains authenticated on /overview after full reload",
+    "admin": "PASS: synthetic support identity sees mandatory native MFA enrollment UI; admin APIs remain gated until MFA",
+    "logout": "PASS: Keluar returns browser to admin login",
+    "uiMfaEnrollment": "NOT EXERCISED: QR enrollment/TOTP/reset are tested through actual HTTP in separate rehearsal; no full browser enrollment or real email delivery claim"
+  },
+  "screenshots": [
+    "/private/tmp/newhope-better-auth-overview.png",
+    "/private/tmp/newhope-better-auth-mfa.png"
+  ],
+  "status": "PASS_FOR_STATED_SCOPE"
+}

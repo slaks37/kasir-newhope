@@ -9,8 +9,8 @@
  */
 
 import React, { useState } from "react";
-import {usesNeonAuth} from '../../lib/supabase';
-import NeonEmailVerification from './NeonEmailVerification';
+import {BetterLoginHelp} from './BetterAccountRecovery';
+import {usesBetterAuth} from '../../lib/supabase';
 import "../../styles/app-theme.css";
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
@@ -166,7 +166,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         } else if (requiresEmailConfirmation) {
           setPassword('');
-          setSuccess(usesNeonAuth?'Akun uji dibuat. Verifikasi email dengan panel kode di bawah, lalu masuk.':'Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
+          setSuccess('Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
           setMode('login');
         } else {
           if (storeName.trim()) {
@@ -207,7 +207,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   return (
     <AuthLayout register={mode === "register"} onBack={onBackToLanding}>
-      {usesNeonAuth&&<NeonEmailVerification/>}
       <div className="nh-auth-tabs" aria-label="Jenis akses akun">
         {(["login", "register"] as const).map((item) => (
           <button
@@ -359,7 +358,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 autoComplete={
                   mode === "login" ? "current-password" : "new-password"
                 }
-                minLength={mode === 'register' ? 8 : undefined}
+                minLength={mode === 'register' ? (usesBetterAuth?12:8) : undefined}
                 aria-describedby={
                   mode === "register" ? "password-hint" : undefined
                 }
@@ -381,7 +380,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
             {mode === "register" && (
               <p id="password-hint" className="nh-field-hint">
-                {mode === 'register' ? 'Gunakan minimal 8 karakter.' : 'Masukkan kata sandi akun Anda.'}
+                {mode === 'register' ? (usesBetterAuth?'Gunakan minimal 12 karakter.':'Gunakan minimal 8 karakter.') : 'Masukkan kata sandi akun Anda.'}
               </p>
             )}
           </div>
@@ -428,6 +427,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           )}
         </button>
       </form>
+      {usesBetterAuth&&mode==='login'&&<BetterLoginHelp/>}
       <p className="nh-auth-switch">
         {mode === "login" ? "Baru di New Hope POS?" : "Sudah punya akun?"}{" "}
         <button

@@ -20,6 +20,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/auth/(.*)",
+      "destination": "/api/auth/[...slug]?__path=/api/auth/$1"
+    },
+    {
       "source": "/privacy",
       "destination": "/privacy.html"
     },
