@@ -79,7 +79,7 @@ try {
   evidence.baselineFiles = baselineFiles.map(path => ({ path, sha256: hash(fs.readFileSync(path)) }));
   // Deliberately reproduce unsafe browser/default ACLs with synthetic objects.
   for (const schema of schemas) await client.query(`
-    GRANT USAGE ON SCHEMA ${quote(schema)} TO anon,authenticated;
+    GRANT USAGE ON SCHEMA ${quote(schema)} TO anon,authenticated,service_role;
     CREATE TABLE ${quote(schema)}.security_rehearsal_fixture(tenant text,outlet text);
     INSERT INTO ${quote(schema)}.security_rehearsal_fixture VALUES('tenant-A','outlet-A'),('tenant-B','outlet-B');
     GRANT ALL ON ${quote(schema)}.security_rehearsal_fixture TO anon,authenticated,service_role,svc_pos;
@@ -112,7 +112,12 @@ try {
   let denials = 0;
   for (const role of browserRoles) for (const r of after) {
     if (r.relkind === 'S') await deny(role,`SELECT nextval('${relation(r)}')`);
-    else { await deny(role,`SELECT * FROM ${relation(r)} LIMIT 0`); await deny(role,`DELETE FROM ${relation(r)} WHERE false`); denials++; }
+    else {
+      await deny(role,`SELECT * FROM ${relation(r)} LIMIT 0`);
+      // PostgreSQL may reject non-updatable views during rewrite before ACL checking.
+      // Their write privileges are checked separately; direct write probes use base tables.
+      if (['r','p'].includes(r.relkind)) { await deny(role,`DELETE FROM ${relation(r)} WHERE false`); denials++; }
+    }
     denials++;
   }
   assert((await rights(after,browserRoles)).every(row => row[3] === false),'No residual browser relation/column/sequence rights');
