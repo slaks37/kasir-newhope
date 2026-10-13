@@ -5,6 +5,7 @@ Read [risk register](risk-register.md), [test evidence](test-evidence.md) and [p
 Production database inspection was read-only. No production SQL, historical data purge, payment account/adapter activation or application deployment was performed. Both Agnes AI and DeepSeek remain supported and named as third-party AI providers. Legal templates/company contacts/registration/tax/retention/provider terms require actual owner/counsel approval; no identity or approval was fabricated.
 
 - Database evidence/dependencies/rollback: [release plan](database-release.md), [catalog](evidence/database-catalog-2026-10-12.json), [captured rollback](rollback-browser-roles.sql).
+- Native PostgreSQL17 CI migration/rollback gate: [scope, reproduction and remaining managed staging prerequisites](postgres17-rehearsal.md).
 - PIN/grants/offline safeguards: [financial release](financial-release.md).
 - Notices/request intake: `/privacy`, `/terms`, `/support`, Settings → Privasi & Permintaan Data; [rights operations](privacy-rights-runbook.md).
 - Legal templates: [inventory/retention](data-inventory-retention.md), [DPA](dpa-template.md), [incident playbook](incident-response.md), [subprocessors](subprocessors.md).
