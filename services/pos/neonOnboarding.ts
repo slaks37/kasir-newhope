@@ -9,10 +9,21 @@ import {SAAS_PLANS,TRIAL_PLAN_ID} from '../../src/config/saasPlans';
 const sectors=new Set(['FNB','RETAIL','LAUNDRY','CARWASH','BARBERSHOP']);
 const label=(v:unknown,fallback:string,max:number)=>typeof v==='string'&&v.trim()?v.trim().slice(0,max):fallback;
 export function registerNeonOnboarding(app:Express,db:Db) {
-  app.get('/api/v1/sync/identity',(req,res)=>{
+  app.get('/api/v1/sync/identity',async(req,res)=>{
     const p=trustedPrincipal(req);
     res.setHeader('Cache-Control','no-store');
-    return p?res.json({ok:true,subject:p.subject}):res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
+    if(!p)return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
+    try{
+      const issuer=process.env.AUTH_PROVIDER==='better-auth'?betterAuthPilotConfig().baseUrl:neonPilotConfig().issuer;
+      const result=await db.query(`SELECT b.verification_ref,u.is_platform_user,u.platform_role,
+        EXISTS(SELECT 1 FROM internal.tenants t WHERE t.owner_user_ref=u.id::text) AS owns_tenant,
+        EXISTS(SELECT 1 FROM internal.memberships m WHERE m.user_id=u.id) AS has_membership
+        FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+        WHERE b.provider=$3 AND b.issuer=$1 AND b.canonical_user_id=$2 AND b.is_active AND u.is_active`,[issuer,p.subject,process.env.AUTH_PROVIDER]);
+      const row=result.rows[0];
+      const needsOnboarding=Boolean(row&&row.verification_ref==='NEW_VERIFIED_ACCOUNT'&&!row.owns_tenant&&!row.has_membership&&!row.is_platform_user&&!row.platform_role);
+      return res.json({ok:true,subject:p.subject,needsOnboarding});
+    }catch{return res.status(503).json({ok:false,error:'IDENTITY_DIRECTORY_UNAVAILABLE'});}
   });
   app.post('/api/v1/sync/neon-onboarding',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
@@ -23,13 +34,14 @@ export function registerNeonOnboarding(app:Express,db:Db) {
       const issuer=process.env.AUTH_PROVIDER==='better-auth'?betterAuthPilotConfig().baseUrl:neonPilotConfig().issuer;
       const result=await db.tx(async c=>{
         await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['onboarding:'+p.subject]);
-        const binding=(await c.query(`SELECT verification_ref FROM internal.auth_identity_bindings
-          WHERE provider=$3 AND issuer=$1 AND canonical_user_id=$2 AND is_active`,[issuer,p.subject,process.env.AUTH_PROVIDER])).rows[0];
+        const binding=(await c.query(`SELECT b.verification_ref,u.is_platform_user,u.platform_role
+          FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+          WHERE b.provider=$3 AND b.issuer=$1 AND b.canonical_user_id=$2 AND b.is_active AND u.is_active`,[issuer,p.subject,process.env.AUTH_PROVIDER])).rows[0];
         const existing=(await c.query('SELECT id FROM internal.tenants WHERE owner_user_ref=$1',[p.subject])).rows;
         if(existing.length)return {tenantId:existing[0].id,created:false};
         // No provisioning of imported identities, staff, or inactive owners.
         const member=(await c.query('SELECT 1 FROM internal.memberships WHERE user_id=$1',[p.subject])).rows.length;
-        if(!binding || binding.verification_ref!=='NEW_VERIFIED_ACCOUNT' || member)throw Error('IDENTITY_REVIEW_REQUIRED');
+        if(!binding || binding.verification_ref!=='NEW_VERIFIED_ACCOUNT' || member||binding.is_platform_user||binding.platform_role)throw Error('IDENTITY_REVIEW_REQUIRED');
         const id=randomUUID(),name=label(req.body?.store_name,'Toko Baru',100);
         const fullName=label(req.body?.full_name,'Pemilik Toko',150);
         const sector=sectors.has(req.body?.business_sector)?req.body.business_sector:'FNB';

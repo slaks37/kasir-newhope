@@ -70,6 +70,16 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
 
+  // Hosted full-Neon deployments never run application SQL as the migration
+  // owner or the auth/password role. Synthetic local rehearsals can continue
+  // using their explicit owner connection until role provisioning completes.
+  if(process.env.AUTH_PROVIDER==='better-auth' &&
+    (process.env.NEON_RUNTIME_ROLES_REQUIRED==='1'||process.env.VERCEL_ENV==='production')) {
+    const configured=new URL(process.env.DATABASE_URL||''),actual=new URL(connectionString);
+    if(decodeURIComponent(actual.username)!=='newhope_runtime_login'||
+      actual.hostname.replace('-pooler','')!==configured.hostname.replace('-pooler','')||actual.pathname!==configured.pathname)throw Error('NEON_APPLICATION_ROLE_REQUIRED');
+  }
+
   const pool = new pg.Pool({
     ...( /(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname)
       ? databaseTransport(connectionString)

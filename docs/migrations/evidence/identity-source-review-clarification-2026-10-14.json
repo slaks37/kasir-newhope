@@ -1,0 +1,9 @@
+{
+  "batch_id": "39b2db02-9cd6-498f-99d4-cffeeafc6408",
+  "original_reviewer_ref": "OWNER_REVIEW_EXPLICIT_SOURCE_UUID_CANDIDATES_20261014",
+  "clarification": "Agent technical review of verified source UUID evidence under the owner's general migration preparation instruction. The owner did not individually review the exact row plan. This is not legal approval, ownership reassignment approval or production cutover approval.",
+  "immutable_batch_rewritten": false,
+  "future_reviewer_ref_prefix": "AGENT_REVIEW_VERIFIED_SOURCE_UUID",
+  "owner_final_mapping_and_cutover_approval": "PENDING",
+  "source_exceptions": "Three identities remain blocked pending ownership evidence; no automatic email linking."
+}

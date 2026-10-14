@@ -27,12 +27,13 @@ export async function verifyNeonToken(token:string,config=neonPilotConfig(),key?
 
 /** A new verified identity receives an isolated UUID. Imported owners require
  * a reviewed issuer+subject binding. Matching email never claims an old tenant. */
-export async function bindNeonIdentity(db:Db,p:AuthPrincipal,issuer:string,provider:'neon'|'better-auth'='neon'):Promise<AuthPrincipal|null> {
+export async function bindNeonIdentity(db:Db,p:AuthPrincipal,issuer:string,provider:'neon'|'better-auth'='neon',authDb?:Pick<Db,'query'>):Promise<AuthPrincipal|null> {
   if (!p.isEmailVerified || !p.email) return null;
+  if(provider==='better-auth'&&!authDb)throw new NeonAuthUnavailableError('BETTER_AUTH_IDENTITY_AUTH_DATABASE_REQUIRED');
   const email=p.email;
   return db.tx(async c=>{
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[issuer+':'+p.subject]);
-    const live=(await c.query(provider==='better-auth'
+    const live=(await (provider==='better-auth'?authDb!:c).query(provider==='better-auth'
       ?'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1'
       :'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1',[p.subject])).rows[0];
     if(!live || !live.emailVerified || live.banned || live.email.toLowerCase()!==email.toLowerCase())return null;

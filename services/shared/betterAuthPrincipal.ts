@@ -12,7 +12,7 @@ export async function authenticateBetterBearer(token:string):Promise<AuthPrincip
     const session=await auth.api.getSession({headers:new Headers({authorization:'Bearer '+token}),query:{disableCookieCache:true}});
     if(!session?.user.emailVerified || !session.user.isActive)return null;
     opening??=connectDb({schema:'internal',max:2}).catch(e=>{opening=undefined;throw e;});
-    const p=await bindNeonIdentity(await opening,{subject:session.user.id,email:session.user.email,isEmailVerified:true,aal:'aal1'},config.baseUrl,'better-auth');
+    const p=await bindNeonIdentity(await opening,{subject:session.user.id,email:session.user.email,isEmailVerified:true,aal:'aal1'},config.baseUrl,'better-auth',pool as unknown as Pick<Db,'query'>);
     if(!p)return null;
     if(session.user.twoFactorEnabled){
       const proof=(await pool.query('SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2',[session.session.id,session.user.id])).rows[0];

@@ -76,6 +76,10 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
+  if (process.env.AUTH_PROVIDER === "better-auth" && (process.env.NEON_RUNTIME_ROLES_REQUIRED === "1" || process.env.VERCEL_ENV === "production")) {
+    const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
+    if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
+  }
   const pool = new pg.Pool({
     .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -172,12 +176,13 @@ async function verifyNeonToken(token, config = neonPilotConfig(), key) {
     throw new NeonAuthUnavailableError("NEON_AUTH_UNAVAILABLE");
   }
 }
-async function bindNeonIdentity(db, p, issuer, provider = "neon") {
+async function bindNeonIdentity(db, p, issuer, provider = "neon", authDb) {
   if (!p.isEmailVerified || !p.email) return null;
+  if (provider === "better-auth" && !authDb) throw new NeonAuthUnavailableError("BETTER_AUTH_IDENTITY_AUTH_DATABASE_REQUIRED");
   const email = p.email;
   return db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
-    const live = (await c.query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    const live = (await (provider === "better-auth" ? authDb : c).query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
     if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
     const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
       FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
@@ -252,14 +257,39 @@ import { PostgresDialect } from "kysely";
 import pg2 from "pg";
 import { randomUUID } from "node:crypto";
 
+// neon/targets/full-restore.json
+var full_restore_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-curly-truth-aze21ktf",
+  parentId: "br-falling-butterfly-az989m86",
+  host: "ep-plain-dream-azghoyf7.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  region: "aws-ap-southeast-1",
+  default: false,
+  purpose: "isolated full source restore and production-candidate rehearsal"
+};
+
+// services/shared/neonTargets.ts
+var neonMigrationTargets = [
+  { projectId: "steep-sea-66546931", branchId: "br-icy-dust-azqi5vlc", host: "ep-damp-pine-azrnsoge.c-3.ap-southeast-1.aws.neon.tech", database: "neondb", purpose: "synthetic" },
+  { ...full_restore_default, purpose: "restore" }
+];
+function verifiedNeonTarget(env) {
+  const target = neonMigrationTargets.find((t) => t.projectId === env.NEON_PROJECT_ID && t.branchId === env.NEON_BRANCH_ID);
+  if (!target) throw Error("BETTER_AUTH_STAGING_BRANCH_MISMATCH");
+  return target;
+}
+
 // services/shared/betterAuthPilot.ts
 function betterAuthPilotConfig(env = process.env) {
-  if (env.BETTER_AUTH_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") throw Error("BETTER_AUTH_PRODUCTION_CUTOVER_BLOCKED");
-  if (env.NEON_PROJECT_ID !== "steep-sea-66546931" || env.NEON_BRANCH_ID !== "br-icy-dust-azqi5vlc") throw Error("BETTER_AUTH_STAGING_BRANCH_MISMATCH");
+  const production = env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging";
+  if (env.BETTER_AUTH_MIGRATION_PILOT !== "1" || production && env.NEON_PRODUCTION_CUTOVER_APPROVED !== "1") throw Error("BETTER_AUTH_PRODUCTION_CUTOVER_BLOCKED");
+  const target = verifiedNeonTarget(env);
+  if (production && !["cutover-approved"].includes(target.purpose)) throw Error("BETTER_AUTH_PRODUCTION_CUTOVER_BLOCKED");
   if (!env.DATABASE_URL) throw Error("BETTER_AUTH_APPLICATION_DATABASE_REQUIRED");
   const databaseUrl = env.BETTER_AUTH_DATABASE_URL || env.DATABASE_URL || env.NEON_STAGING_DATABASE_URL || "";
   const database = new URL(databaseUrl), app = new URL(env.BETTER_AUTH_URL || "");
-  if (database.hostname.replace("-pooler", "") !== "ep-damp-pine-azrnsoge.c-3.ap-southeast-1.aws.neon.tech") throw Error("BETTER_AUTH_DATABASE_MISMATCH");
+  if (database.hostname.replace("-pooler", "") !== target.host) throw Error("BETTER_AUTH_DATABASE_MISMATCH");
   if (database.pathname !== "/neondb" || !["postgres:", "postgresql:"].includes(database.protocol)) throw Error("BETTER_AUTH_DATABASE_MISMATCH");
   for (const value of [env.DATABASE_URL, env.BETTER_AUTH_DATABASE_URL, env.NEON_STAGING_DATABASE_URL].filter(Boolean)) {
     const u = new URL(value);
@@ -268,32 +298,71 @@ function betterAuthPilotConfig(env = process.env) {
   if (app.username || app.password || app.pathname !== "/" || app.search || app.hash) throw Error("INVALID_BETTER_AUTH_ORIGIN");
   if (app.protocol !== "https:" && !(env.NODE_ENV !== "production" && ["127.0.0.1", "localhost"].includes(app.hostname))) throw Error("BETTER_AUTH_HTTPS_REQUIRED");
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 48) throw Error("BETTER_AUTH_SECRET_REQUIRED");
-  return { databaseUrl, baseUrl: app.origin, secret: env.BETTER_AUTH_SECRET };
+  const allowedOrigins = [.../* @__PURE__ */ new Set([app.origin, ...(env.BETTER_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)])];
+  for (const origin of allowedOrigins) {
+    const u = new URL(origin);
+    if (u.origin !== origin || u.username || u.password || u.protocol !== "https:" && !(env.NODE_ENV !== "production" && ["127.0.0.1", "localhost"].includes(u.hostname))) throw Error("INVALID_BETTER_AUTH_ORIGIN");
+  }
+  if (production) {
+    const application = new URL(env.DATABASE_URL);
+    if (application.username !== "newhope_runtime_login" || database.username !== "newhope_auth_runtime_login" || application.href === database.href) throw Error("BETTER_AUTH_LEAST_PRIVILEGE_REQUIRED");
+    if (app.origin !== "https://kasir.newhope.space" || allowedOrigins.length !== 2 || !allowedOrigins.includes("https://admin.newhope.space") || allowedOrigins.some((s) => !["https://kasir.newhope.space", "https://admin.newhope.space"].includes(s))) throw Error("BETTER_AUTH_PRODUCTION_ORIGIN_MISMATCH");
+    if (env.STORAGE_PROVIDER !== "neon" || env.AUTH_EMAIL_ENABLED !== "1") throw Error("BETTER_AUTH_PRODUCTION_DEPENDENCIES_REQUIRED");
+  }
+  return { databaseUrl, baseUrl: app.origin, secret: env.BETTER_AUTH_SECRET, allowedOrigins };
 }
 
 // services/shared/betterAuthEmail.ts
 import { createHash } from "node:crypto";
 import { Resend } from "resend";
-async function sendBetterAuthEmail(mail) {
-  const link = new URL(mail.url);
-  if (link.origin !== mail.baseUrl || !link.pathname.startsWith("/api/auth/")) throw Error("AUTH_EMAIL_URL_REJECTED");
+
+// services/shared/authReturnUrl.ts
+function authReturnUrl(kind, value, baseUrl, allowedOrigins = [baseUrl]) {
+  const path = kind === "RESET" ? "/reset-password" : "/login";
+  if (value === void 0 || value === null || value === "") return baseUrl + path;
+  if (typeof value !== "string") throw Error("AUTH_CALLBACK_REJECTED");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw Error("AUTH_CALLBACK_REJECTED");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== path || !allowedOrigins.includes(url.origin) || url.href !== url.origin + path) throw Error("AUTH_CALLBACK_REJECTED");
+  return url.href;
+}
+
+// services/shared/betterAuthEmail.ts
+function authEmailPayload(mail, env = process.env) {
+  const origin = new URL(mail.baseUrl), link = new URL(mail.url);
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
   if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
-  if (process.env.AUTH_EMAIL_ENABLED !== "1" || !process.env.RESEND_API_KEY || !process.env.AUTH_EMAIL_FROM)
+  const callbacks = link.searchParams.getAll("callbackURL");
+  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.BETTER_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
+  if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
     throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
+  const sender = env.AUTH_EMAIL_FROM.match(/^(?:[^<>\r\n]+<)?([^<>\s@,;]+@[^<>\s@,;]+)(?:>)?$/)?.[1];
+  if (!sender || sender.split("@")[1].toLowerCase() !== env.AUTH_EMAIL_VERIFIED_DOMAIN.toLowerCase()) throw Error("AUTH_EMAIL_SENDER_REJECTED");
+  if (env.VERCEL_ENV === "preview" || env.APP_ENV === "staging") {
+    const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
+  }
   const text3 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
-  const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
-  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(
-    {
-      from: process.env.AUTH_EMAIL_FROM,
-      to: mail.email,
-      replyTo: "stefen@newsystem.space",
-      subject: text3,
-      text: text3 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
-      html: '<!doctype html><html lang="id"><body><h1>' + text3 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text3 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
-    },
-    { idempotencyKey: "newhope-auth-" + key }
-  );
+  return { payload: {
+    from: env.AUTH_EMAIL_FROM,
+    to: mail.email,
+    replyTo: "stefen@newsystem.space",
+    subject: text3,
+    text: text3 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text3 + "</title></head><body><h1>" + text3 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text3 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+  }, idempotencyKey: "newhope-auth-" + key };
+}
+async function sendBetterAuthEmail(mail) {
+  const { payload, idempotencyKey } = authEmailPayload(mail);
+  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(payload, { idempotencyKey });
   if (response.error || !response.data?.id) throw Error("AUTH_EMAIL_DELIVERY_FAILED");
 }
 
@@ -306,7 +375,7 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
     basePath: "/api/auth",
     secret: config.secret,
     database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
-    trustedOrigins: [config.baseUrl],
+    trustedOrigins: config.allowedOrigins || [config.baseUrl],
     telemetry: { enabled: false },
     logger: { disabled: true },
     advanced: { database: { generateId: () => randomUUID() }, useSecureCookies: config.baseUrl.startsWith("https://") },
@@ -347,6 +416,14 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
     })],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (["/request-password-reset", "/sign-up/email", "/send-verification-email"].includes(ctx.path) && ctx.body) {
+          const reset = ctx.path === "/request-password-reset", field = reset ? "redirectTo" : "callbackURL";
+          try {
+            ctx.body[field] = authReturnUrl(reset ? "RESET" : "VERIFY", ctx.body[field], config.baseUrl, config.allowedOrigins);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Tautan kembali autentikasi tidak valid.", code: "AUTH_CALLBACK_REJECTED" });
+          }
+        }
         if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
         if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
           const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
@@ -390,7 +467,7 @@ async function authenticateBetterBearer(token) {
       opening2 = void 0;
       throw e;
     });
-    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth");
+    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth", pool);
     if (!p) return null;
     if (session.user.twoFactorEnabled) {
       const proof = (await pool.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
@@ -1814,9 +1891,76 @@ import { randomUUID as randomUUID4 } from "node:crypto";
 // src/lib/blog/photo.ts
 var BLOG_PHOTO_MAX_CHARS = 65e4;
 
+// services/shared/objectStorage.ts
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+var BLOG_MEDIA_BUCKET = "blog-media";
+function neonStorageConfig(env = process.env) {
+  if (env.NEON_PROJECT_ID !== "steep-sea-66546931" || !/^br-[a-z0-9-]+$/.test(env.NEON_BRANCH_ID || "")) throw Error("NEON_STORAGE_BRANCH_REQUIRED");
+  const endpoint = new URL(env.AWS_ENDPOINT_URL_S3 || "");
+  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.port || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || !endpoint.hostname.startsWith(env.NEON_BRANCH_ID + ".storage.") || !endpoint.hostname.endsWith(".ap-southeast-1.aws.neon.tech") || env.AWS_REGION !== "ap-southeast-1") throw Error("NEON_STORAGE_ENDPOINT_MISMATCH");
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("NEON_STORAGE_CREDENTIAL_REQUIRED");
+  return { endpoint: endpoint.origin, region: env.AWS_REGION, accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, branchId: env.NEON_BRANCH_ID };
+}
+function objectKey(key) {
+  if (!key || key.length > 1024 || /^[/.]|[\\\u0000-\u001f\u007f]/.test(key) || key.split("/").some((p) => !p || p === "." || p === "..")) throw Error("INVALID_OBJECT_KEY");
+  return key;
+}
+function publicObjectUrl(config, bucket, key) {
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) throw Error("INVALID_OBJECT_BUCKET");
+  return config.endpoint + "/" + bucket + "/" + objectKey(key).split("/").map(encodeURIComponent).join("/");
+}
+function createNeonObjectStorage(config = neonStorageConfig()) {
+  const client = new S3Client({
+    endpoint: config.endpoint,
+    region: config.region,
+    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+    forcePathStyle: true,
+    maxAttempts: 3,
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED"
+  });
+  return {
+    client,
+    config,
+    async upload(bytes, key, bucket = BLOG_MEDIA_BUCKET, contentType = "image/jpeg") {
+      objectKey(key);
+      await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: contentType, CacheControl: "public, max-age=31536000, immutable" }), { abortSignal: AbortSignal.timeout(18e3) });
+      return publicObjectUrl(config, bucket, key);
+    },
+    async download(key, bucket = BLOG_MEDIA_BUCKET) {
+      const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey(key) }), { abortSignal: AbortSignal.timeout(18e3) });
+      if (!result.Body) throw Error("NEON_STORAGE_EMPTY_BODY");
+      return new Uint8Array(await result.Body.transformToByteArray());
+    },
+    async exists(key, bucket = BLOG_MEDIA_BUCKET) {
+      try {
+        await client.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey(key) }), { abortSignal: AbortSignal.timeout(18e3) });
+        return true;
+      } catch (e) {
+        if (e.$metadata?.httpStatusCode === 404) return false;
+        throw e;
+      }
+    },
+    close() {
+      client.destroy();
+    }
+  };
+}
+
 // src/server/blogMedia.ts
 var BUCKET = "blog-media";
 function createBlogMediaProvider() {
+  if (process.env.STORAGE_PROVIDER === "neon") {
+    let storage;
+    return { async upload(bytes, path) {
+      if (bytes.length < 100 || bytes.length > 5e5) throw Error("INVALID_BLOG_PHOTO");
+      storage ??= createNeonObjectStorage();
+      return storage.upload(bytes, objectKey(path));
+    } };
+  }
+  if (process.env.AUTH_PROVIDER === "better-auth") return { async upload() {
+    throw Error("BLOG_STORAGE_NOT_CONFIGURED");
+  } };
   return { async upload(bytes, path) {
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -3940,9 +4084,8 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
       try {
         const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
         let q = `SELECT p.id, p.name, p.sku, p.price, p.cost_price, p.is_available, p.offering_type,
-                        c.name AS category_name
+                        p.category_name
                    FROM pos.products p
-                   LEFT JOIN pos.categories c ON c.id = p.category_id
                   WHERE p.offering_type = 'BUNDLE'`;
         const params = [];
         if (search) {
@@ -4396,10 +4539,23 @@ import { randomUUID as randomUUID8, randomBytes as randomBytes2 } from "node:cry
 var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
 var label = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
 function registerNeonOnboarding(app, db) {
-  app.get("/api/v1/sync/identity", (req, res) => {
+  app.get("/api/v1/sync/identity", async (req, res) => {
     const p = trustedPrincipal(req);
     res.setHeader("Cache-Control", "no-store");
-    return p ? res.json({ ok: true, subject: p.subject }) : res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    if (!p) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const issuer = process.env.AUTH_PROVIDER === "better-auth" ? betterAuthPilotConfig().baseUrl : neonPilotConfig().issuer;
+      const result = await db.query(`SELECT b.verification_ref,u.is_platform_user,u.platform_role,
+        EXISTS(SELECT 1 FROM internal.tenants t WHERE t.owner_user_ref=u.id::text) AS owns_tenant,
+        EXISTS(SELECT 1 FROM internal.memberships m WHERE m.user_id=u.id) AS has_membership
+        FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+        WHERE b.provider=$3 AND b.issuer=$1 AND b.canonical_user_id=$2 AND b.is_active AND u.is_active`, [issuer, p.subject, process.env.AUTH_PROVIDER]);
+      const row = result.rows[0];
+      const needsOnboarding = Boolean(row && row.verification_ref === "NEW_VERIFIED_ACCOUNT" && !row.owns_tenant && !row.has_membership && !row.is_platform_user && !row.platform_role);
+      return res.json({ ok: true, subject: p.subject, needsOnboarding });
+    } catch {
+      return res.status(503).json({ ok: false, error: "IDENTITY_DIRECTORY_UNAVAILABLE" });
+    }
   });
   app.post("/api/v1/sync/neon-onboarding", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -4410,12 +4566,13 @@ function registerNeonOnboarding(app, db) {
       const issuer = process.env.AUTH_PROVIDER === "better-auth" ? betterAuthPilotConfig().baseUrl : neonPilotConfig().issuer;
       const result = await db.tx(async (c) => {
         await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["onboarding:" + p.subject]);
-        const binding = (await c.query(`SELECT verification_ref FROM internal.auth_identity_bindings
-          WHERE provider=$3 AND issuer=$1 AND canonical_user_id=$2 AND is_active`, [issuer, p.subject, process.env.AUTH_PROVIDER])).rows[0];
+        const binding = (await c.query(`SELECT b.verification_ref,u.is_platform_user,u.platform_role
+          FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
+          WHERE b.provider=$3 AND b.issuer=$1 AND b.canonical_user_id=$2 AND b.is_active AND u.is_active`, [issuer, p.subject, process.env.AUTH_PROVIDER])).rows[0];
         const existing = (await c.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1", [p.subject])).rows;
         if (existing.length) return { tenantId: existing[0].id, created: false };
         const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
-        if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member) throw Error("IDENTITY_REVIEW_REQUIRED");
+        if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member || binding.is_platform_user || binding.platform_role) throw Error("IDENTITY_REVIEW_REQUIRED");
         const id = randomUUID8(), name = label(req.body?.store_name, "Toko Baru", 100);
         const fullName = label(req.body?.full_name, "Pemilik Toko", 150);
         const sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";

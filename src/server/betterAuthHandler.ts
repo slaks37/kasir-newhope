@@ -1,6 +1,7 @@
 import {getBetterAuthRuntime} from '../../services/shared/betterAuth';
 import {betterAuthPilotConfig} from '../../services/shared/betterAuthPilot';
 import {normalizeVercelUrl} from './vercelUrl';
+import {authReturnUrl} from '../../services/shared/authReturnUrl';
 
 /** Same-origin auth endpoint; native Better Auth handles CSRF, signed cookies,
  * password hashing, persistent throttling, email tokens and TOTP challenges. */
@@ -14,7 +15,14 @@ export function createBetterAuthHandler(runtime=getBetterAuthRuntime) {return as
     const config=betterAuthPilotConfig();
     // Native CSRF checks focus on cookie-bearing requests. Also reject an
     // explicit foreign browser Origin on public email/sign-in endpoints.
-    if(req.headers.origin && req.headers.origin!==config.baseUrl)return res.status(403).json({error:'INVALID_ORIGIN'});
+    if(req.headers.origin && !config.allowedOrigins.includes(req.headers.origin))return res.status(403).json({error:'INVALID_ORIGIN'});
+    if(relative.searchParams.has('callbackURL')) {
+      const callbacks=relative.searchParams.getAll('callbackURL');
+      try{
+        if(callbacks.length!==1)throw Error('AUTH_CALLBACK_REJECTED');
+        authReturnUrl(relative.pathname.startsWith('/api/auth/reset-password/')?'RESET':'VERIFY',callbacks[0],config.baseUrl,config.allowedOrigins);
+      }catch{return res.status(400).json({error:'AUTH_CALLBACK_REJECTED'});}
+    }
     const headers=new Headers();
     for(const [key,value] of Object.entries(req.headers)) {
       if(['host','content-length','connection','transfer-encoding'].includes(key))continue;

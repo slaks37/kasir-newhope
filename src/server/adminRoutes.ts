@@ -383,9 +383,8 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
       try {
         const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
         let q = `SELECT p.id, p.name, p.sku, p.price, p.cost_price, p.is_available, p.offering_type,
-                        c.name AS category_name
+                        p.category_name
                    FROM pos.products p
-                   LEFT JOIN pos.categories c ON c.id = p.category_id
                   WHERE p.offering_type = 'BUNDLE'`;
         const params: any[] = [];
         if (search) {

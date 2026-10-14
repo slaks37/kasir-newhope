@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {neonStorageConfig,objectKey,publicObjectUrl} from '../../services/shared/objectStorage';
+import {relocatePublicMedia} from './storage-reference';
+const env={NEON_PROJECT_ID:'steep-sea-66546931',NEON_BRANCH_ID:'br-curly-truth-aze21ktf',AWS_ENDPOINT_URL_S3:'https://br-curly-truth-aze21ktf.storage.c-3.ap-southeast-1.aws.neon.tech',AWS_REGION:'ap-southeast-1',AWS_ACCESS_KEY_ID:'synthetic',AWS_SECRET_ACCESS_KEY:'synthetic'};
+const config=neonStorageConfig(env);
+for(const bad of ['../outside.jpg','/outside.jpg','a/../outside.jpg','a//b.jpg','a\\b.jpg','a\n.jpg'])assert.throws(()=>objectKey(bad));
+assert.equal(publicObjectUrl(config,'blog-media','synthetic/a b.jpg'),env.AWS_ENDPOINT_URL_S3+'/blog-media/synthetic/a%20b.jpg');
+for(const [k,v] of [['AWS_ENDPOINT_URL_S3','https://br-icy-dust-azqi5vlc.storage.c-3.ap-southeast-1.aws.neon.tech'],['AWS_ENDPOINT_URL_S3','http://br-curly-truth-aze21ktf.storage.c-3.ap-southeast-1.aws.neon.tech'],['AWS_ENDPOINT_URL_S3',env.AWS_ENDPOINT_URL_S3+'/different'],['AWS_REGION','us-east-1'],['NEON_PROJECT_ID','unrelated'],['AWS_SECRET_ACCESS_KEY','']])assert.throws(()=>neonStorageConfig({...env,[k]:v}));
+const mapping={sourceUrl:'https://fqxrhumsgigcgjtlbfuo.supabase.co/storage/v1/object/public/blog-media/a.jpg',targetUrl:env.AWS_ENDPOINT_URL_S3+'/blog-media/a.jpg',sha256:'a'.repeat(64),bytes:100};
+const original={cover:mapping.sourceUrl,seo:{ogImage:mapping.sourceUrl},content:'Source https://example.org stays intact',date:'2026-10-01',amount:12000};
+const result=relocatePublicMedia(original,[mapping]);assert.equal(result.cover,mapping.targetUrl);assert.equal(result.seo.ogImage,mapping.targetUrl);assert.equal(result.content,original.content);assert.equal(result.date,original.date);assert.equal(result.amount,12000);assert.equal(original.cover,mapping.sourceUrl);
+assert.throws(()=>relocatePublicMedia(original,[{...mapping,sha256:'bad'}]));
+assert.throws(()=>relocatePublicMedia(original,[{...mapping,targetUrl:'https://evil.example/a.jpg'}]));
+console.log('PASS: storage branch binding, TLS-only endpoint, safe paths, exact verified media substitution and immutable input');

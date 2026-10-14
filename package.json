@@ -55,9 +55,10 @@
     "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
-    "test:neon-pilot": "node --import tsx scripts/dev/test-neon-pilot.ts && node --import tsx scripts/dev/test-better-auth-pilot.ts"
+    "test:neon-pilot": "node --import tsx scripts/dev/test-neon-pilot.ts && node --import tsx scripts/dev/test-better-auth-pilot.ts && node --import tsx scripts/dev/test-identity-import.ts && node --import tsx scripts/dev/test-auth-page-privacy.ts && node --import tsx scripts/neon/storage-tests.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1150.0",
     "@electric-sql/pglite-socket": "^0.2.8",
     "@supabase/auth-js": "^2.112.3",
     "@supabase/supabase-js": "^2.112.3",

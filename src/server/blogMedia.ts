@@ -2,10 +2,21 @@ import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
 import { BLOG_PHOTO_MAX_CHARS } from '../lib/blog/photo';
+import {createNeonObjectStorage,objectKey} from '../../services/shared/objectStorage';
 
 const BUCKET = 'blog-media';
 export interface BlogMediaProvider { upload(bytes: Buffer, path: string): Promise<string> }
 export function createBlogMediaProvider(): BlogMediaProvider {
+  if(process.env.STORAGE_PROVIDER==='neon') {
+    let storage:ReturnType<typeof createNeonObjectStorage>|undefined;
+    return {async upload(bytes,path){
+      if(bytes.length<100||bytes.length>500000)throw Error('INVALID_BLOG_PHOTO');
+      storage??=createNeonObjectStorage();
+      return storage.upload(bytes,objectKey(path));
+    }};
+  }
+  // A Neon migration deployment must never silently write new media to Supabase.
+  if(process.env.AUTH_PROVIDER==='better-auth')return {async upload(){throw Error('BLOG_STORAGE_NOT_CONFIGURED');}};
   return { async upload(bytes, path) {
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;

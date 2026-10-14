@@ -1,0 +1,31 @@
+{
+  "status": "PASS",
+  "scope": "Explicit additive actual-source runtime compatibility upgrade; no source/production writes",
+  "targetBranch": "br-curly-truth-aze21ktf",
+  "migration": "neon/migrations/0008_restored_runtime_compat.sql",
+  "migrationSha256": "69e7880c69598562d615d10f14ac705948a8e94f8139f419436bc5d8ccf37631",
+  "startedAt": "2026-10-14T01:05:23.518Z",
+  "checks": {
+    "allOriginalTablesUnchanged": {
+      "tables": 125,
+      "beforeFingerprint": "9a49980a7bbdbed87e3769cf9e42674278ed3323793690f92f7625cd0e7969c1",
+      "afterFingerprint": "9a49980a7bbdbed87e3769cf9e42674278ed3323793690f92f7625cd0e7969c1"
+    },
+    "walletsUnchanged": {
+      "rows": 15,
+      "fingerprint": "b39504047e977e9a35f4866bc5713d710034c5a260927e7fc53707f4a897d98a"
+    },
+    "derived": {
+      "openingentries": 15,
+      "walletdifferences": 0,
+      "sharedversions": 32,
+      "expectedsharedversions": 32,
+      "attendancerows": 0,
+      "payrollrows": 0
+    },
+    "idempotentReapply": true,
+    "noPeriodReset": true,
+    "noHistoricalCreditSpendInvented": true
+  },
+  "finishedAt": "2026-10-14T01:07:20.328Z"
+}

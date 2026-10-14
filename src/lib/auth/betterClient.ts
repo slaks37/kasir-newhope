@@ -2,8 +2,16 @@ import {createAuthClient} from 'better-auth/react';
 import {twoFactorClient} from 'better-auth/client/plugins';
 import {AuthError,type GoTrueClient,type Session,type AuthChangeEvent} from '@supabase/auth-js';
 
-const origin=import.meta.env.VITE_BETTER_AUTH_URL as string|undefined;
-if(import.meta.env.VITE_AUTH_PROVIDER==='better-auth' && (!origin || new URL(origin).origin!==window.location.origin))throw Error('BETTER_AUTH_SAME_ORIGIN_REQUIRED');
+const canonicalOrigin=import.meta.env.VITE_BETTER_AUTH_URL as string|undefined;
+const allowedOrigins=[canonicalOrigin,...String(import.meta.env.VITE_BETTER_AUTH_ALLOWED_ORIGINS||'').split(',')].filter((value):value is string=>Boolean(value)).map(value=>{
+  const parsed=new URL(value);
+  if(parsed.origin!==value||parsed.username||parsed.password)throw Error('BETTER_AUTH_INVALID_ALLOWED_ORIGIN');
+  return parsed.origin;
+});
+if(import.meta.env.VITE_AUTH_PROVIDER==='better-auth'&&(!canonicalOrigin||!allowedOrigins.includes(window.location.origin)))throw Error('BETTER_AUTH_SAME_ORIGIN_REQUIRED');
+// Both approved POS/admin hosts call their own auth endpoint. Canonical auth
+// issuer and migration bindings remain server-owned; no arbitrary-host redirect.
+const origin=canonicalOrigin?window.location.origin:undefined;
 const key='nh-better-auth:'+origin;
 const token=()=>localStorage.getItem(key+':token')||'';
 export const betterClient=createAuthClient({baseURL:origin,plugins:[twoFactorClient()],fetchOptions:{
@@ -35,8 +43,12 @@ async function readSession():Promise<Session|null> {
   if(!identity.ok)throw error('Identitas akun perlu ditinjau.');
   const id=await identity.json();
   let metadata={};try{const saved=JSON.parse(localStorage.getItem(key+':pending')||'null');if(saved?.email===current.data.user.email)metadata=saved.data;}catch{/* display only */}
-  const provision=await fetch('/api/v1/sync/neon-onboarding',{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(metadata)});
-  if(!provision.ok)throw error('Penyiapan akun memerlukan pemeriksaan migrasi.');
+  // Imported admin/staff/owners retain existing scope. Only the authenticated
+  // server can identify a genuinely new account eligible for owner onboarding.
+  if(id.needsOnboarding===true) {
+    const provision=await fetch('/api/v1/sync/neon-onboarding',{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(metadata)});
+    if(!provision.ok)throw error('Penyiapan akun memerlukan pemeriksaan migrasi.');
+  }
   localStorage.removeItem(key+':pending');
   const mapped={access_token:token(),refresh_token:'',token_type:'bearer',expires_in:3600,
     expires_at:Math.floor(new Date(current.data.session.expiresAt).getTime()/1000),

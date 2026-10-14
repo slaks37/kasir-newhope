@@ -1,0 +1,48 @@
+{
+  "status": "PASS",
+  "scope": "Static fully-qualified runtime relation audit plus actual catalog probes; dynamic SQL tested separately",
+  "sourceCiphertextSha256": "8ea8095f142e34637890b9dea51be1e6fa50659291ebd89fb476d77eb0b053a8",
+  "targetBranch": "br-curly-truth-aze21ktf",
+  "fullyQualifiedRuntimeRelations": 79,
+  "sourceMissing": [
+    {
+      "name": "pos.staff_attendances",
+      "files": [
+        "services/pos/laborProjection.ts"
+      ]
+    },
+    {
+      "name": "pos.staff_payrolls",
+      "files": [
+        "services/pos/laborProjection.ts"
+      ]
+    },
+    {
+      "name": "internal.auth_identity_bindings",
+      "files": [
+        "services/pos/neonOnboarding.ts",
+        "services/shared/betterAuthOwner.ts",
+        "services/shared/neonAuth.ts"
+      ]
+    },
+    {
+      "name": "pos.shared_state_versions",
+      "files": [
+        "services/pos/sharedState.ts"
+      ]
+    }
+  ],
+  "missingRuntime": [],
+  "capabilities": {
+    "topup": true,
+    "ledger": true,
+    "versions": true,
+    "attendance": true,
+    "payroll": true,
+    "receiptoutcomes": false
+  },
+  "limitations": [
+    "Not a SQL parser; dynamic relations and columns require integration tests",
+    "Optional syncReceiptOutcomes remains absent; current runtime explicitly uses compatible legacy replay path"
+  ]
+}

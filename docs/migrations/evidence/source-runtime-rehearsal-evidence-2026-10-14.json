@@ -1,0 +1,30 @@
+{
+  "status": "PASS",
+  "scope": "Actual restricted LOGIN role; all mutations rolled back; no source/provider/email calls",
+  "targetBranch": "br-curly-truth-aze21ktf",
+  "startedAt": "2026-10-14T01:11:37.195Z",
+  "checks": {
+    "aiWallet": {
+      "status": "PASS",
+      "consumptionLogged": true,
+      "topupLogged": true,
+      "refundLogged": true,
+      "reconciliationDifference": 0,
+      "directLedgerInsertUpdateDeleteDenied": true,
+      "negativeTopupDenied": true,
+      "migrationOpeningTypeCannotBeForged": true
+    },
+    "sharedVersionTrigger": {
+      "status": "PASS",
+      "actualRuntimeMutation": true,
+      "versionIncrementExactlyOne": true
+    },
+    "rollback": {
+      "status": "PASS",
+      "walletsFingerprint": "030e11988951f93525118c2e762c89a910329f41020dbcb7f4cef9e8337d3a38",
+      "sharedStateFingerprint": "c264d5830c7e6475ad2559b95ed7ab7e99bd3c95ff4767856624c4a1e2af8c61",
+      "persistedTestLedgerEntries": 0
+    }
+  },
+  "finishedAt": "2026-10-14T01:11:40.535Z"
+}

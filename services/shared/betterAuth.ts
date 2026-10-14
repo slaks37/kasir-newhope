@@ -8,6 +8,7 @@ import {databaseTransport} from './databaseTls';
 import {databasePoolLimits} from './poolConfig';
 import {betterAuthPilotConfig} from './betterAuthPilot';
 import {sendBetterAuthEmail,type AuthEmail} from './betterAuthEmail';
+import {authReturnUrl} from './authReturnUrl';
 
 /** Mounted on the app host. All auth queries qualify newhope_auth explicitly;
  * no SET search_path and no managed neon_auth credential/schema import. */
@@ -16,7 +17,7 @@ export function createBetterAuthRuntime(config=betterAuthPilotConfig(),sendEmail
   const auth=betterAuth({
     appName:'New Hope POS',baseURL:config.baseUrl,basePath:'/api/auth',secret:config.secret,
     database:{dialect:new PostgresDialect({pool}),type:'postgres',schemaName:'newhope_auth'},
-    trustedOrigins:[config.baseUrl],telemetry:{enabled:false},logger:{disabled:true},
+    trustedOrigins:config.allowedOrigins||[config.baseUrl],telemetry:{enabled:false},logger:{disabled:true},
     advanced:{database:{generateId:()=>randomUUID()},useSecureCookies:config.baseUrl.startsWith('https://')},
     user:{additionalFields:{isActive:{type:'boolean',defaultValue:true,required:true,input:false}}},
     session:{expiresIn:3600,updateAge:900,cookieCache:{enabled:false},freshAge:3600},
@@ -33,6 +34,11 @@ export function createBetterAuthRuntime(config=betterAuthPilotConfig(),sendEmail
       accountLockout:{enabled:true,maxFailedAttempts:5,durationSeconds:900}})],
     hooks:{
       before:createAuthMiddleware(async ctx=>{
+        if(['/request-password-reset','/sign-up/email','/send-verification-email'].includes(ctx.path)&&ctx.body) {
+          const reset=ctx.path==='/request-password-reset',field=reset?'redirectTo':'callbackURL';
+          try{ctx.body[field]=authReturnUrl(reset?'RESET':'VERIFY',ctx.body[field],config.baseUrl,config.allowedOrigins);}
+          catch{throw new APIError('BAD_REQUEST',{message:'Tautan kembali autentikasi tidak valid.',code:'AUTH_CALLBACK_REJECTED'});}
+        }
         // No remembered-device bypass for financial/admin assurance.
         if(ctx.path.startsWith('/two-factor/')&&ctx.body)ctx.body.trustDevice=false;
         if(['/two-factor/enable','/two-factor/disable','/two-factor/generate-backup-codes'].includes(ctx.path)) {

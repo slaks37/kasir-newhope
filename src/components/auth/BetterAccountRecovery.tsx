@@ -1,4 +1,4 @@
-import {useState,type FormEvent} from 'react';
+import {useEffect,useState,type FormEvent} from 'react';
 import {betterClient,completeBetterTotp,completeBetterBackupCode} from '../../lib/auth/betterClient';
 import {AuthLayout} from './AuthLayout';
 
@@ -26,6 +26,7 @@ export function BetterLoginHelp() {
         <label>Kode MFA<input autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" required maxLength={6} value={code} disabled={busy} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label>}
       <button className="nh-app-button-primary nh-auth-submit" disabled={busy||(useBackup?!code.trim():code.length!==6)}>{useBackup?'Masuk dengan kode pemulihan':'Verifikasi MFA'}</button></form></details>
     <details><summary>Verifikasi email atau lupa password</summary><div className="space-y-3 mt-3">
+      <p>Jika akun Anda baru dimigrasikan, gunakan tautan reset untuk menyiapkan password baru.</p>
       <label>Email akun<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900"/></label>
       <button type="button" disabled={busy||!email} onClick={()=>void send('verify')}>Kirim tautan verifikasi</button>
       <button type="button" disabled={busy||!email} onClick={()=>void send('reset')}>Kirim tautan reset password</button>
@@ -34,7 +35,12 @@ export function BetterLoginHelp() {
   </div>;
 }
 export function BetterResetPasswordPage() {
-  const token=new URLSearchParams(window.location.search).get('token');
+  const [token]=useState(()=>new URLSearchParams(window.location.search).get('token'));
+  useEffect(()=>{
+    // Keep the one-use credential in component memory, remove it from browser
+    // history and subsequent in-app navigation/referrer URLs.
+    const url=new URL(window.location.href);if(url.searchParams.has('token')){url.searchParams.delete('token');window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);}
+  },[]);
   const [password,setPassword]=useState(''),[confirmation,setConfirmation]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[done,setDone]=useState(false);
   async function submit(e:FormEvent){e.preventDefault();if(busy||!token)return;
     if(password!==confirmation){setError('Konfirmasi password harus sama.');return;}setBusy(true);setError('');

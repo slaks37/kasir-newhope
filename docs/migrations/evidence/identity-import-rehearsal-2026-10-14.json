@@ -1,0 +1,58 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-icy-dust-azqi5vlc",
+  "scope": "Synthetic reviewed credential-free identity import on isolated branch; NOT customer restore or real-email delivery",
+  "startedAt": "2026-10-14T00:50:44.300Z",
+  "checks": {
+    "reviewedImport": {
+      "status": "PASS",
+      "users": 3,
+      "sameCanonicalUUID": true,
+      "noCredentialsSessionsMfaTransferred": true,
+      "planReadOnly": true,
+      "targetDriftRejected": true,
+      "idempotent": true,
+      "businessDigest": "5a677a85272cc9cc5bd1ff54194a5e943440c1ee1bb1cac637656fa4389534e0"
+    },
+    "signinScope": {
+      "status": "PASS",
+      "existingOwnerUUIDAliasOutletsPreserved": true,
+      "importedPlatformStaffNoOnboarding": true,
+      "staffScopeNotWidened": true,
+      "newVerifiedOwnerStillOnboards": true
+    },
+    "nativeClaim": {
+      "status": "PASS",
+      "mailSinkOnly": true,
+      "resetCreatesNativeCredential": true,
+      "oldPasswordDenied": true,
+      "resetSingleUse": true,
+      "oldSupabaseSessionDenied": true,
+      "nativeSessionRevokedByReset": true
+    },
+    "collisions": {
+      "status": "PASS",
+      "matchingEmailDifferentUUIDDenied": true,
+      "unrelatedNativeAccountDenied": true,
+      "auditMutationDenied": true
+    },
+    "rollback": {
+      "status": "PASS",
+      "nativeSessionDenied": true,
+      "businessDigestUnchanged": true,
+      "repeatSafe": true,
+      "revokedBatchCannotReapply": true
+    },
+    "explicitCanonicalCreation": {
+      "status": "PASS",
+      "sameSourceUUIDOwnerRefRequired": true,
+      "noEmailLink": true,
+      "noPlatformRoleMembershipTenantTrialCreated": true,
+      "businessPreservedByRollback": true,
+      "noUUIDEvidenceDenied": true,
+      "differentUUIDEmailCollisionDenied": true
+    }
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-14T00:51:29.988Z"
+}

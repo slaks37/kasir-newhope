@@ -2,8 +2,11 @@
 
 Status: isolated staging candidate, **not a production cutover**. Owner selected
 Better Auth on Neon with native MFA on 2026-10-13. Supabase remains the default.
-This is a repository-schema rehearsal with synthetic `.invalid` accounts, not a
-restore or migration of existing customers, passwords, sessions or production data.
+The initial repository-schema rehearsal used synthetic `.invalid` accounts.
+Full preparation now also includes a credential-free source business snapshot
+restored into a separate child; see [data restore](data-restore.md) and the
+[full cutover runbook](full-cutover-runbook.md). Production passwords, sessions
+and MFA secrets are not migrated, and production remains on Supabase.
 
 ## Targets
 
