@@ -3,9 +3,10 @@ import {randomUUID} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {generateDigest,generateSignature} from '../../api/_doku';
+import {generateDigest,generateSignature,validateDokuBrandClientId} from '../../api/_doku';
 
 export async function captureSandboxCheckout(clientId:string,secret:string,transport:typeof fetch=fetch) {
+  clientId=validateDokuBrandClientId(clientId);
   if(!clientId || !secret)throw new Error('SANDBOX_CREDENTIALS_REQUIRED');
   const id=randomUUID(),timestamp=new Date().toISOString().slice(0,19)+'Z';
   const target='/checkout/v1/payment',endpoint='https://api-sandbox.doku.com'+target;

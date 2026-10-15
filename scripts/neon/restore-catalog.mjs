@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import pg from 'pg';
-import {loadBackup,restoreTarget,quote,relation,appSchemas,credentialColumns,publicSummary,sha} from './backup-common.mjs';
+import {loadBackup,restoreTarget,quote,relation,appSchemas,credentialColumns,publicSummary,sha,isHybridRestore} from './backup-common.mjs';
 const args=process.argv.slice(2),reviewed=args[args.indexOf('--reviewed-sha256')+1];
-const preserveBusinessCredentials=process.env.NEON_RESTORE_TARGET==='hybrid-staging';
+const preserveBusinessCredentials=isHybridRestore();
 const {snapshot:s,ciphertextSha256}=await loadBackup();
 if(!args.includes('--reviewed-sha256')||reviewed!==ciphertextSha256)throw Error('REVIEWED_BACKUP_SHA256_REQUIRED');
 assert(!s.unsupported?.length&&!s.inheritance?.length,'Unsupported domain/range/composite/inheritance must be reviewed through native pg_dump');

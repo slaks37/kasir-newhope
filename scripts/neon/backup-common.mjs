@@ -6,14 +6,15 @@ export const sourceProject='fqxrhumsgigcgjtlbfuo';
 export const projectId='steep-sea-66546931';
 export const appSchemas=['public','pos','internal','billing','ai','contract','mcp_private','blog_mcp_private'];
 export const credentialColumns=['password_hash','pin','pin_hash','token_hash'];
+export const isHybridRestore=()=>['hybrid-staging','hybrid-candidate'].includes(process.env.NEON_RESTORE_TARGET);
 export const quote=value=>'"'+String(value).replaceAll('"','""')+'"';
 export const relation=row=>quote(row.schema)+'.'+quote(row.name||row.table);
 export const sha=value=>createHash('sha256').update(value).digest('hex');
 export function privateFile(file){if((fs.statSync(file).mode&0o077)!==0)throw Error('PRIVATE_FILE_PERMISSIONS_REQUIRED');return fs.readFileSync(file);}
 export async function loadBackup(file,key='.env.neon-backup-keys.local/private.asc'){
- const hybrid=process.env.NEON_RESTORE_TARGET==='hybrid-staging';
+ const hybrid=isHybridRestore();
  const fresh=process.env.NEON_RESTORE_TARGET==='fresh-candidate';
- const reviewed=fresh||hybrid?JSON.parse(fs.readFileSync('neon/targets/'+(hybrid?'hybrid-staging':'fresh-candidate')+'.json','utf8')):null;
+ const reviewed=fresh||hybrid?JSON.parse(fs.readFileSync('neon/targets/'+(hybrid?process.env.NEON_RESTORE_TARGET:'fresh-candidate')+'.json','utf8')):null;
  file=file||(reviewed?.capture||'build/neon/source-2026-10-13-v3.pgp.b64');
  const openpgp=await import('../../build/neon-tools/node_modules/openpgp/dist/node/openpgp.mjs');
  const ciphertext=privateFile(file),privateKey=await openpgp.readPrivateKey({armoredKey:privateFile(key).toString('utf8')});
@@ -33,11 +34,12 @@ export async function loadBackup(file,key='.env.neon-backup-keys.local/private.a
 }
 export function restoreTarget(file){
  const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
- if(!['full-restore','clean-rehearsal','fresh-candidate','hybrid-staging'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
+ if(!['full-restore','clean-rehearsal','fresh-candidate','hybrid-staging','hybrid-candidate'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
  const clean=selection==='clean-rehearsal',fresh=selection==='fresh-candidate';
- file=file||(selection==='hybrid-staging'?'.env.neon-hybrid-restore.local':fresh?'.env.neon-fresh-candidate.local':clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
+ file=file||(selection==='hybrid-candidate'?'.env.neon-hybrid-candidate.local':selection==='hybrid-staging'?'.env.neon-hybrid-restore.local':fresh?'.env.neon-fresh-candidate.local':clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
  const env=parse(privateFile(file));
  const manifest=JSON.parse(fs.readFileSync('neon/targets/'+selection+'.json','utf8'));
+ if(selection==='hybrid-candidate'&&manifest.productionEligible!==false)throw Error('REFUSE_RESTORE_TO_RELEASE_APPROVED_CANDIDATE');
  const allowedBranch=manifest.branchId||manifest.branch_id;
  if(manifest.default!==false||env.NEON_PROJECT_ID!==projectId||env.NEON_BRANCH_ID!==allowedBranch||allowedBranch==='br-icy-dust-azqi5vlc'||allowedBranch==='br-falling-butterfly-az989m86')throw Error('RESTORE_CHILD_BRANCH_MISMATCH');
  const url=new URL(env.NEON_RESTORE_DATABASE_URL||'');

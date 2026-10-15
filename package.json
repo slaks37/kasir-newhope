@@ -25,7 +25,7 @@
     "test:workspace": "node --import tsx scripts/dev/test-workspace-architecture.ts && node --import tsx scripts/dev/test-offline-workspace.ts",
     "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-operational-repair.ts && node --import tsx scripts/dev/test-background-sync.ts && node --import tsx scripts/dev/test-sync-boundary.ts && node --import tsx scripts/dev/test-sync-poison.ts && node --import tsx scripts/dev/test-deploy-order.ts && node scripts/dev/test-device-diagnostics.mjs",
     "test:financial-cloud": "node --import tsx scripts/dev/test-financial-authorization.ts && node --import tsx scripts/dev/test-pool-config.ts && node --import tsx scripts/dev/test-financial-cloud.ts && node --import tsx scripts/dev/test-admin-reporting.ts && node --import tsx scripts/dev/test-legacy-financial-migration.ts",
-    "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts && node --import tsx scripts/dev/test-payment-provenance.ts",
+    "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts && node --import tsx scripts/dev/test-payment-provenance.ts && node --import tsx scripts/dev/test-prelaunch-payments.ts",
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",

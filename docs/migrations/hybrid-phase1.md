@@ -1,4 +1,4 @@
-> Pembaruan 16 Oktober: [diagnostik perangkat dan checkpoint DOKU](operational-checkpoints.md), dengan rekonsiliasi read-only sumber/Neon serta dua tindakan owner. Gate fleet/provider tetap PENDING.
+> Scope owner terbaru adalah **pre-launch tanpa pelanggan nyata**. Gunakan [kandidat bersih, bukti, dan rencana pre-launch](prelaunch-phase1.md) untuk keputusan saat ini. Gate fleet pelanggan tidak berlaku; perangkat development dan pembukaan pembayaran dinilai terpisah. Bukti dan batas teknis di bawah dipertahankan sebagai riwayat.
 
 # Phase 1 — Supabase Auth + Storage, Neon business PostgreSQL
 

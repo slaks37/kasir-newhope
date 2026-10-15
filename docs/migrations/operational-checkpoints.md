@@ -1,6 +1,6 @@
 # Diagnostik operasional read-only — PR #21
 
-**Status: PENDING bukti fleet/provider; produksi NO-GO.** Ini melanjutkan [Phase 1 hybrid](hybrid-phase1.md). Tidak ada perubahan produksi, pembayaran, pengiriman ulang webhook, sync paksa, penghapusan antrean, atau migrasi Auth.
+**Scope terbaru: [pre-launch tanpa pelanggan nyata](prelaunch-phase1.md), berdasarkan konfirmasi owner.** Gate fleet pelanggan diganti inventaris perangkat development yang benar-benar dipakai. Hasil pengumpulan di bawah dipertahankan sebagai riwayat; nol notifikasi tetap bukan bukti antrean provider global kosong. Tidak ada perubahan produksi, pembayaran, pengiriman ulang webhook, sync paksa, penghapusan antrean, atau migrasi Auth.
 
 ## Yang sudah dapat diverifikasi
 

@@ -442,6 +442,9 @@ export const SubscriptionPaymentPage: React.FC = () => {
       }
 
       const errMsg = result.message || result.error || result.detail;
+      if (errMsg === 'PAYMENTS_PAUSED') {
+        throw new Error('Pembayaran belum tersedia. Paket dan data Anda tetap tersimpan.');
+      }
       if (errMsg === 'AUTHENTICATION_REQUIRED') {
         throw new Error('Sesi otentikasi diperlukan. Silakan login terlebih dahulu.');
       }

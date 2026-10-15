@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import pg from 'pg';
-import {loadBackup,restoreTarget,appSchemas,quote,relation,credentialColumns,sha} from './backup-common.mjs';
-const hybrid=process.env.NEON_RESTORE_TARGET==='hybrid-staging';
+import {loadBackup,restoreTarget,appSchemas,quote,relation,credentialColumns,sha,isHybridRestore} from './backup-common.mjs';
+const hybrid=isHybridRestore();
 const {snapshot:s,ciphertextSha256}=await loadBackup();
 const {env,manifest,...config}=restoreTarget();
-const c=new pg.Client(config),evidence={status:'RUNNING',scope:process.env.NEON_RESTORE_TARGET==='hybrid-staging'?'Actual encrypted source business snapshot vs isolated Neon; all business credentials retained privately, Auth/Storage runtime excluded':'Actual encrypted source business snapshot vs isolated Neon restored business data; source credentials deliberately excluded',ciphertextSha256,sourceCapturedAt:s.capturedAt,targetProject:env.NEON_PROJECT_ID,targetBranch:env.NEON_BRANCH_ID,startedAt:new Date().toISOString(),tables:[],checks:{},exceptions:[]};
+const c=new pg.Client(config),evidence={status:'RUNNING',scope:hybrid?'Actual encrypted source business snapshot vs isolated Neon; all business credentials retained privately, Auth/Storage runtime excluded':'Actual encrypted source business snapshot vs isolated Neon restored business data; source credentials deliberately excluded',ciphertextSha256,sourceCapturedAt:s.capturedAt,targetProject:env.NEON_PROJECT_ID,targetBranch:env.NEON_BRANCH_ID,startedAt:new Date().toISOString(),tables:[],checks:{},exceptions:[]};
 const fingerprint=rows=>sha(rows.map(r=>r.row).sort().join('\n'));
 await c.connect();
 try{

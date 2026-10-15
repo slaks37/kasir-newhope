@@ -52,7 +52,14 @@ export function isDokuConfigured(): boolean {
 // DOKU_SANDBOX_* hanya untuk alat bukti sandbox (scripts/batch/doku-sandbox-evidence.ts),
 // tidak pernah menjadi cadangan kredensial checkout.
 export function getDokuClientId(): string {
-  return (process.env.DOKU_CLIENT_ID || '').replace(/["']/g, '').trim();
+  return validateDokuBrandClientId(process.env.DOKU_CLIENT_ID || '');
+}
+
+/** Gateway requests use the Brand Client ID, never the dashboard Business ID. */
+export function validateDokuBrandClientId(value: string): string {
+  const clientId = value.replace(/["']/g, '').trim();
+  if (/^BSN-/i.test(clientId)) throw new Error('DOKU_BRAND_CLIENT_ID_REQUIRED');
+  return clientId;
 }
 
 export function getDokuSecretKey(): string {

@@ -11,6 +11,15 @@ const env={NEON_DB_PHASE1:'1',AUTH_PROVIDER:'supabase',STORAGE_PROVIDER:'supabas
 const connection='postgresql://newhope_runtime_login:synthetic@ep-ancient-bar-azuss0by-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require';
 assertHybridDatabase(connection,env);for(const patch of [{AUTH_PROVIDER:'better-auth'},{STORAGE_PROVIDER:'neon'},{BETTER_AUTH_MIGRATION_PILOT:'1'},{SUPABASE_URL:'https://foreign.supabase.co'},{VERCEL_ENV:'production'},{NEON_BRANCH_ID:'main'}])assert.throws(()=>hybridPhase1Config({...env,...patch}));
 assert.throws(()=>assertHybridDatabase(connection.replace('newhope_runtime_login','neondb_owner'),env));assert.throws(()=>assertHybridDatabase('postgresql://postgres@localhost/postgres',env));assert.throws(()=>assertHybridDatabase(connection.replace('?sslmode=require','?host=evil.invalid'),env));
+const rehearsal=JSON.parse(fs.readFileSync('neon/targets/prelaunch-rehearsal.json','utf8'));
+const rehearsalEnv={...env,HYBRID_STAGING:'1',HYBRID_REHEARSAL_TARGET:'prelaunch-rehearsal',NEON_BRANCH_ID:rehearsal.branchId};
+const rehearsalConnection=connection.replace('ep-ancient-bar-azuss0by-pooler.c-3.ap-southeast-1.aws.neon.tech',rehearsal.host);
+assertHybridDatabase(rehearsalConnection,rehearsalEnv);
+for(const patch of [{VERCEL_ENV:'production'},{HYBRID_STAGING:'0'},{HYBRID_REHEARSAL_TARGET:'hybrid-candidate'},{NEON_BRANCH_ID:'br-plain-snow-azjwwq6u'}])assert.throws(()=>assertHybridDatabase(rehearsalConnection,{...rehearsalEnv,...patch}));
+assert.throws(()=>assertHybridDatabase(connection,rehearsalEnv));
+assert.throws(()=>assertHybridDatabase(rehearsalConnection,env));
+for(const patch of [{HYBRID_RELEASE_TARGET:'hybrid-candidate'},{HYBRID_RELEASE_TARGET:'unreviewed'},{HYBRID_RELEASE_TARGET:'hybrid-candidate',HYBRID_RELEASE_APPROVED:'1',VERCEL_ENV:'production'}])assert.throws(()=>hybridPhase1Config({...env,...patch}));
+assert.throws(()=>hybridPhase1Config({...rehearsalEnv,HYBRID_RELEASE_TARGET:'hybrid-candidate'}));
 const req={headers:{'x-auth-source-created-at':'2999-01-01','x-auth-sub':'forged'}};applyPrincipal(req,{subject:'verified'});assert.equal(req.headers['x-auth-source-created-at'],undefined);assert.equal(req.headers['x-auth-sub'],'verified');
 Object.assign(process.env,env);const pg=new PGlite();let server:any;
 const db=(r:any):Db=>({query:async(s,p)=>{const q=await r.query(s,p);return {rows:q.rows,rowCount:q.affectedRows??q.rows.length};},exec:s=>r.exec(s),tx:f=>pg.transaction(c=>f(db(c))),close:()=>pg.close()});
