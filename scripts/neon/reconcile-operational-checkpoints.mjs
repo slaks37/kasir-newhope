@@ -1,0 +1,6 @@
+import fs from 'node:fs';import {reconcileOperational} from './operational-reconciliation.mjs';
+const [sourcePath,stagingPath,...extra]=process.argv.slice(2);if(!sourcePath||!stagingPath)throw Error('USE source.json staging.json [device.json ...] [provider.json]');
+const read=p=>{if(fs.statSync(p).mode&0o077)throw Error('PRIVATE_FILE_MODE_600_REQUIRED');return JSON.parse(fs.readFileSync(p,'utf8'));};
+const source=read(sourcePath),staging=read(stagingPath),devices=[];let provider=null;for(const p of extra){const d=read(p);if(d.format==='newhope-doku-provider-checkpoint-v1'){if(provider)throw Error('ONE_PROVIDER_EXPORT_REQUIRED');provider=d;}else devices.push(d);}
+const r=reconcileOperational(source,staging,devices,provider);fs.writeFileSync('build/neon/private-operational-reconciliation.json',JSON.stringify(r,null,2)+'\n',{mode:0o600});const counts=rows=>rows.reduce((a,r)=>(a[r.status]=(a[r.status]||0)+1,a),{});
+const summary={...r,deviceFindings:counts(r.deviceFindings),receiptFindings:counts(r.receiptFindings),providerFindings:counts(r.providerFindings)};fs.writeFileSync('build/neon/operational-reconciliation-summary.json',JSON.stringify(summary,null,2)+'\n');console.log(JSON.stringify(summary));

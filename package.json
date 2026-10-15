@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node services/dev.mjs",
-    "build": "vite build && node scripts/build-landing.mjs && node scripts/build-legal.mjs && node scripts/dev/test-legal-build.mjs && node scripts/dev/test-landing-build.mjs && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
+    "build": "vite build && node scripts/build-diagnostics.mjs && node scripts/dev/test-diagnostics-build.mjs && node scripts/build-landing.mjs && node scripts/build-legal.mjs && node scripts/dev/test-legal-build.mjs && node scripts/dev/test-landing-build.mjs && esbuild services/gateway/index.ts services/pos/index.ts services/ai/index.ts services/billing/index.ts services/backoffice/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outdir=dist/services && npm run build:api",
     "start": "node dist/services/gateway/index.js",
     "preview": "vite preview",
     "test:mcp": "node --import tsx scripts/dev/test-mcp.ts",
@@ -23,7 +23,7 @@
     "test:product-photo": "node --import tsx scripts/dev/test-product-photo.ts && node --import tsx scripts/dev/test-blog-photo.ts && npm run -s test:blog-cover",
     "test:blog-cover": "node --import tsx scripts/dev/test-blog-cover.ts",
     "test:workspace": "node --import tsx scripts/dev/test-workspace-architecture.ts && node --import tsx scripts/dev/test-offline-workspace.ts",
-    "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-operational-repair.ts && node --import tsx scripts/dev/test-background-sync.ts && node --import tsx scripts/dev/test-sync-boundary.ts && node --import tsx scripts/dev/test-sync-poison.ts && node --import tsx scripts/dev/test-deploy-order.ts",
+    "test:sync": "node --import tsx scripts/dev/test-transaction-outbox.ts && node --import tsx scripts/dev/test-shared-state-client.ts && node --import tsx scripts/dev/test-operational-repair.ts && node --import tsx scripts/dev/test-background-sync.ts && node --import tsx scripts/dev/test-sync-boundary.ts && node --import tsx scripts/dev/test-sync-poison.ts && node --import tsx scripts/dev/test-deploy-order.ts && node scripts/dev/test-device-diagnostics.mjs",
     "test:financial-cloud": "node --import tsx scripts/dev/test-financial-authorization.ts && node --import tsx scripts/dev/test-pool-config.ts && node --import tsx scripts/dev/test-financial-cloud.ts && node --import tsx scripts/dev/test-admin-reporting.ts && node --import tsx scripts/dev/test-legacy-financial-migration.ts",
     "test:doku-client": "node --import tsx scripts/dev/test-doku-client.ts && node --import tsx scripts/dev/test-payment-provenance.ts",
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",

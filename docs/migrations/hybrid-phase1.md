@@ -1,3 +1,5 @@
+> Pembaruan 16 Oktober: [diagnostik perangkat dan checkpoint DOKU](operational-checkpoints.md), dengan rekonsiliasi read-only sumber/Neon serta dua tindakan owner. Gate fleet/provider tetap PENDING.
+
 # Phase 1 — Supabase Auth + Storage, Neon business PostgreSQL
 
 Decision: **NO-GO production; isolated engineering rehearsal and owner-operated live Preview login passed; operational cutover gates remain open.** This document supersedes full-auth cutover gates for Phase 1 only. Better Auth, identity reconciliation, encrypted recovery/escrow and GoTrue work remain intact for Phase 2. Do not merge/promote this branch into production as configured: the staging manifest explicitly rejects production.
