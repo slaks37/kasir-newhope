@@ -48,8 +48,9 @@ customer identities are unchanged. The only production-domain change is the
   old-session revocation and fresh TOTP enrollment passed; test sessions revoked.
   Password/MFA were generated for this isolated test, not owner device enrollment.
   React intentionally clears reset tokens from history after capturing them in
-  component memory; a cleared URL is not a callback failure. Owner inbox/spam
-  acceptance remains a separate external receipt unless actually confirmed.
+  component memory; a cleared URL is not a callback failure. Owner confirms **one message in inbox and one in spam** (latest correction,
+  superseding an earlier both-inbox reply). Reception is proven; clean inbox
+  deliverability is not. Do not send another message without authorization.
 - After the owner's explicit full-backup authorization, captured a separate
   **source-encrypted logical recovery archive of every visible non-system schema**
   at `2026-10-15T10:43:44.718189Z`: 165 tables/3,055 rows, including 27 auth tables.
@@ -71,7 +72,7 @@ customer identities are unchanged. The only production-domain change is the
 |---|---|---|
 | Full independent recovery | Encrypted off-source archive, private Drive/readback, offline auth data/constraint restore | Owner imports the local private key into a separate encrypted password-manager escrow and verifies recovery. Full native Supabase/GoTrue/platform-key recovery needs an approved isolated compatible runtime and a native source backup/DB connection. Current machine has no Docker/recovery service; existing unrelated projects were untouched. |
 | Three identity recoveries | Separate inactive accounts and immutable holds; no new access; activation attempts denied | Legitimate user reauthenticates at the authoritative source, provides nonce-bound UUID proof privately, and tenant/merchant authority is verified. Only then append evidence/owner scope approval and review exact mapping. Source provider metadata alone cannot prove ownership of the conflicting canonical UUID. |
-| Real email | Both delivered, hosted HTTPS callbacks and backend reset/revocation/TOTP passed | Owner confirms inbox/spam; owner device/recovery-code custody acceptance is not implied by automated TOTP. No further emails authorized. |
+| Real email | Both delivered, hosted HTTPS callbacks and backend reset/revocation/TOTP passed | Owner reception confirmed: one inbox/one spam. Identify the spam message and privately inspect recipient Authentication-Results before closing deliverability. Owner device/recovery-code custody is not implied by automated TOTP. No further emails authorized. |
 | Final source checkpoint | Fresh business source matched its capture; 68 articles and 65 objects copied | No source freeze approved/performed. The later full recovery capture is distinct, not a silent replacement for the earlier candidate. Repeat final DB/media delta capture/reconcile only within an approved single-writer window. |
 | Offline POS | Regression suite and server historical receipts | Device-side unsent outboxes/checkpoints unavailable. Device operators must provide durable drain/export receipts; server receipt count does not prove queues empty. |
 | DOKU | Signature/idempotency/provenance regression; captured source event/log tables empty | Provider-side retry/event checkpoint and late-event replay evidence unavailable. No real charge/refund/payment was attempted. |

@@ -1,6 +1,6 @@
 {
   "checkedAt": "2026-10-15T10:34:14.012777+00:00",
-  "status": "DELIVERED_AND_BACKEND_VERIFIED_INBOX_ACCEPTANCE_PENDING",
+  "status": "DELIVERED_BACKEND_VERIFIED_MIXED_INBOX_SPAM",
   "sender": "New Hope POS <auth@kasir.newhope.space>",
   "allowedRecipient": "stefen@newsystem.space",
   "providerDomainStatus": "partially_failed",
@@ -20,11 +20,15 @@
   "realMessagesSent": 2,
   "nativeStagingTestAccountsForRecipient": 1,
   "keyDomainSendingScope": "DEDICATED_DOMAIN_RESTRICTED_SENDING_ACCESS_KEY",
-  "actualInboxDelivery": "OWNER_CONFIRMATION_PENDING",
+  "actualInboxDelivery": "ONE_INBOX_ONE_SPAM",
   "httpsResetAndMfaCompletion": "HTTPS_CALLBACK_AND_BACKEND_RESET_TOTP_PASSED",
   "scope": "Provider read-only, DNS, private staging config and offline payload checks; no settings or identities changed",
   "actualProviderDelivery": "BOTH_DELIVERED",
   "nativeStagingBackendTestCompleted": true,
   "ownerDeviceMfaAcceptance": "NOT_ESTABLISHED",
-  "sourceIdentityMappingChangesByEmailTest": 0
+  "sourceIdentityMappingChangesByEmailTest": 0,
+  "ownerReceiptConfirmedAt": "2026-10-15T11:08:09.828711+00:00",
+  "ownerMailboxReceipt": "ONE_INBOX_ONE_SPAM",
+  "ownerCorrectionSupersedesEarlierBothInboxReply": true,
+  "deliverabilityAcceptance": "SPAM_CLASSIFICATION_REVIEW_OPEN_NO_ADDITIONAL_EMAIL_AUTHORIZED"
 }
