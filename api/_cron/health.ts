@@ -1,3 +1,4 @@
+import {assertHybridDatabase} from '../../services/shared/hybridPhase1';
 import pg from 'pg';
 import {databaseTransport} from '../../services/shared/databaseTls';
 import {databasePoolLimits,serverlessConnectionString} from '../../services/shared/poolConfig';
@@ -8,6 +9,7 @@ type VercelResponse = any;
 let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
+    assertHybridDatabase(process.env.DATABASE_URL || '');
     pool = new pg.Pool({
       ...databaseTransport(serverlessConnectionString(process.env.DATABASE_URL || '')),
       ...databasePoolLimits(2),

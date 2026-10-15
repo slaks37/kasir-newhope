@@ -1,3 +1,4 @@
+import {registerHybridOnboarding} from './hybridOnboarding';
 import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 import {registerNeonOnboarding} from './neonOnboarding';
 /**
@@ -152,6 +153,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerHybridOnboarding(app,db);
   registerNeonOnboarding(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
@@ -175,6 +177,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         await assertBusinessCanBeClaimed(c,businessId,principal.subject);
         let tenantId = await tenantForPrincipal(c,principal);
         if (!tenantId) {
+          if(process.env.NEON_DB_PHASE1==='1')throw new BillingError(409,'HYBRID_ONBOARDING_REQUIRED');
           const created = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
             VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
             DO UPDATE SET name=EXCLUDED.name RETURNING id`,[storeName,principal.subject]);

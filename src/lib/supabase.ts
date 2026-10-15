@@ -15,6 +15,7 @@ import {createBetterPilotClient} from './auth/betterClient';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+if(import.meta.env.VITE_NEON_DB_PHASE1==='1'&&(import.meta.env.VITE_AUTH_PROVIDER!=='supabase'||supabaseUrl!=='https://fqxrhumsgigcgjtlbfuo.supabase.co'))throw Error('HYBRID_FRONTEND_PROVIDER_MISMATCH');
 export const usesBetterAuth=import.meta.env.VITE_AUTH_PROVIDER==='better-auth';
 if(import.meta.env.VITE_AUTH_PROVIDER && !['supabase','better-auth'].includes(import.meta.env.VITE_AUTH_PROVIDER))throw new Error('UNSUPPORTED_AUTH_PROVIDER');
 

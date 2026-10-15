@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import pg from 'pg';
 import {loadBackup,restoreTarget,quote,relation,appSchemas,credentialColumns,publicSummary,sha} from './backup-common.mjs';
 const args=process.argv.slice(2),reviewed=args[args.indexOf('--reviewed-sha256')+1];
+const preserveBusinessCredentials=process.env.NEON_RESTORE_TARGET==='hybrid-staging';
 const {snapshot:s,ciphertextSha256}=await loadBackup();
 if(!args.includes('--reviewed-sha256')||reviewed!==ciphertextSha256)throw Error('REVIEWED_BACKUP_SHA256_REQUIRED');
 assert(!s.unsupported?.length&&!s.inheritance?.length,'Unsupported domain/range/composite/inheritance must be reviewed through native pg_dump');
@@ -55,8 +56,8 @@ try{
   for(let i=0;i<t.rows.length;i+=200){
    const records=t.rows.slice(i,i+200).map(raw=>{
     // Keep raw PostgreSQL JSON strings intact to preserve big integer/numeric precision.
-    if(t.schema.includes('mcp')&&t.name==='connections'){raw=raw.replace(/"revoked_at":\s*(?:null|"[^"]*")/, '"revoked_at": '+JSON.stringify(s.capturedAt));}
-    const reset=t.columns.filter(a=>credentialColumns.includes(a.name));
+    if(!preserveBusinessCredentials&&t.schema.includes('mcp')&&t.name==='connections'){raw=raw.replace(/"revoked_at":\s*(?:null|"[^"]*")/, '"revoked_at": '+JSON.stringify(s.capturedAt));}
+    const reset=preserveBusinessCredentials?[]:t.columns.filter(a=>credentialColumns.includes(a.name));
     if(reset.length){evidence.credentialResetRows++;const additions=t.columns.filter(a=>credentialColumns.includes(a.name)).map(a=>JSON.stringify(a.name)+':'+JSON.stringify(a.notNull?'!RESET!':null)).join(',');return raw.slice(0,-1)+','+additions+'}';}
     return raw;
    });

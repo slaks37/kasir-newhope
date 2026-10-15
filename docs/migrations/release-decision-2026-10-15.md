@@ -1,3 +1,5 @@
+> **Phase 1 terbaru:** [hybrid database-only readiness](hybrid-phase1.md). Auth dan Storage tetap Supabase; full GoTrue recovery bukan gate Phase 1. Bukti dan gate migrasi Auth di bawah tetap berlaku untuk Phase 2. Produksi tetap NO-GO.
+
 # Keputusan rilis PR #21 — NO-GO
 
 Kelanjutan dari `ee7e6fc2fe45091053765286ae56ebe6a4726d4c`.

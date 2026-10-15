@@ -1,3 +1,4 @@
+import {hybridExternalWritesBlocked} from '../shared/hybridPhase1';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import {betterOwnerIdentity} from '../shared/betterAuthOwner';
@@ -22,6 +23,7 @@ export function createReminderProvider(): ReminderDependencies {
       return user?.id === subject && user.email_confirmed_at && user.email ? user.email : null;
     },
     async send(mail,idempotencyKey) {
+      if(hybridExternalWritesBlocked())throw Error('HYBRID_STAGING_EMAIL_BLOCKED');
       const {data,error} = await resend.emails.send(mail,{idempotencyKey});
       if (error || !data?.id) throw new Error('EMAIL_PROVIDER_REJECTED');
       return data.id;

@@ -1,3 +1,4 @@
+import {assertHybridDatabase} from '../../services/shared/hybridPhase1';
 /**
  * Lapisan akses database — satu antarmuka, dua driver.
  *
@@ -64,6 +65,7 @@ export interface Db {
 /* -------------------------------------------------------------------------- */
 
 async function createPgDb(connectionString: string): Promise<Db> {
+  assertHybridDatabase(connectionString);
   const { default: pg } = await import('pg');
 
   // NUMERIC pulang sebagai string dari pg supaya presisi tidak hilang. Untuk

@@ -1,0 +1,14 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-weathered-tooth-azbwi2zz",
+  "host": "ep-ancient-bar-azuss0by.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "default": false,
+  "purpose": "hybrid-staging",
+  "capture": "build/neon/source-recovery-drive-readback.pgp.b64",
+  "ciphertextSha256": "377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136",
+  "authProvider": "supabase",
+  "storageProvider": "supabase",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "productionEligible": false
+}

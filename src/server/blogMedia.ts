@@ -1,3 +1,4 @@
+import {hybridExternalWritesBlocked} from '../../services/shared/hybridPhase1';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
@@ -18,6 +19,7 @@ export function createBlogMediaProvider(): BlogMediaProvider {
   // A Neon migration deployment must never silently write new media to Supabase.
   if(process.env.AUTH_PROVIDER==='better-auth')return {async upload(){throw Error('BLOG_STORAGE_NOT_CONFIGURED');}};
   return { async upload(bytes, path) {
+    if(hybridExternalWritesBlocked())throw Error('HYBRID_STAGING_STORAGE_WRITE_BLOCKED');
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw Error('BLOG_STORAGE_NOT_CONFIGURED');

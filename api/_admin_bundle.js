@@ -3,6 +3,45 @@ import express2 from "express";
 
 // services/shared/db.ts
 import fs2 from "node:fs";
+
+// neon/targets/hybrid-staging.json
+var hybrid_staging_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-weathered-tooth-azbwi2zz",
+  host: "ep-ancient-bar-azuss0by.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  default: false,
+  purpose: "hybrid-staging",
+  capture: "build/neon/source-recovery-drive-readback.pgp.b64",
+  ciphertextSha256: "377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136",
+  authProvider: "supabase",
+  storageProvider: "supabase",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  productionEligible: false
+};
+
+// services/shared/hybridPhase1.ts
+function hybridPhase1Config(env = process.env) {
+  if (env.NEON_DB_PHASE1 !== "1") throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+  if (env.AUTH_PROVIDER !== "supabase" || env.STORAGE_PROVIDER !== "supabase" || env.VITE_AUTH_PROVIDER !== "supabase" || env.BETTER_AUTH_MIGRATION_PILOT === "1" || env.NEON_MIGRATION_PILOT === "1") throw Error("HYBRID_PROVIDER_MISMATCH");
+  const source = "https://" + hybrid_staging_default.sourceProject + ".supabase.co";
+  if (env.SUPABASE_URL !== source || env.VITE_SUPABASE_URL !== source) throw Error("HYBRID_SOURCE_AUTH_MISMATCH");
+  if (env.NEON_PROJECT_ID !== hybrid_staging_default.projectId || env.NEON_BRANCH_ID !== hybrid_staging_default.branchId) throw Error("HYBRID_BRANCH_MISMATCH");
+  if (env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") throw Error("HYBRID_PRODUCTION_TARGET_NOT_APPROVED");
+  return { target: hybrid_staging_default, source, staging: env.HYBRID_STAGING === "1" };
+}
+function assertHybridDatabase(connectionString, env = process.env) {
+  const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (env.NEON_DB_PHASE1 !== "1") {
+    if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+    return;
+  }
+  const { target } = hybridPhase1Config(env);
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hostname.replace("-pooler", "") !== target.host || url.pathname !== "/" + target.database || decodeURIComponent(url.username) !== "newhope_runtime_login" || url.hash || url.port && url.port !== "5432" || [...url.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("HYBRID_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+var hybridExternalWritesBlocked = (env = process.env) => env.NEON_DB_PHASE1 === "1" && env.HYBRID_STAGING === "1";
+
+// services/shared/db.ts
 import pg from "pg";
 
 // services/shared/poolConfig.ts
@@ -79,6 +118,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
+  assertHybridDatabase(connectionString);
   if (process.env.AUTH_PROVIDER === "better-auth" && (process.env.NEON_RUNTIME_ROLES_REQUIRED === "1" || process.env.VERCEL_ENV === "production")) {
     const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
     if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
@@ -536,6 +576,13 @@ async function authenticateBearer(req) {
     }
   }
   if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
+  if (process.env.NEON_DB_PHASE1 === "1") {
+    try {
+      hybridPhase1Config();
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -560,6 +607,7 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      sourceCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -572,7 +620,7 @@ async function authenticateBearer(req) {
 function trustedPrincipal(req) {
   const subject = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject) return { subject, sourceCreatedAt: firstHeader(req.headers["x-auth-source-created-at"]) || void 0, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -1965,6 +2013,7 @@ function createBlogMediaProvider() {
     throw Error("BLOG_STORAGE_NOT_CONFIGURED");
   } };
   return { async upload(bytes, path) {
+    if (hybridExternalWritesBlocked()) throw Error("HYBRID_STAGING_STORAGE_WRITE_BLOCKED");
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
@@ -2856,6 +2905,7 @@ function createClientSupportProvider() {
       return u?.verified ? u.email : null;
     },
     async sendConfirmation(email) {
+      if (hybridExternalWritesBlocked()) throw new SupportError(403, "HYBRID_STAGING_EMAIL_BLOCKED");
       await getBetterAuthRuntime().auth.api.sendVerificationEmail({ body: { email, callbackURL: betterAuthPilotConfig().baseUrl + "/login" } });
     },
     async sendReset(email) {
@@ -2887,6 +2937,7 @@ function createClientSupportProvider() {
       return u?.verified ? u.email : null;
     },
     async sendConfirmation(email) {
+      if (hybridExternalWritesBlocked()) throw new SupportError(403, "HYBRID_STAGING_EMAIL_BLOCKED");
       if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
       const destination = new URL("/login", process.env.APP_URL || "https://kasir.newhope.space");
       if (destination.protocol !== "https:") throw new SupportError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
@@ -2894,6 +2945,7 @@ function createClientSupportProvider() {
       if (error) throw new SupportError(error.status === 429 ? 429 : 502, "EMAIL_CONFIRMATION_PROVIDER_REJECTED");
     },
     async sendReset(email) {
+      if (hybridExternalWritesBlocked()) throw new SupportError(403, "HYBRID_STAGING_EMAIL_BLOCKED");
       if (!auth) throw new SupportError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
       const destination = new URL("/reset-password", process.env.APP_URL || "https://kasir.newhope.space");
       if (destination.protocol !== "https:") throw new SupportError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
@@ -4000,12 +4052,12 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     "/api/admin/overview",
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (_req, res, db) => {
-      const [sectors3, totals, daily] = await Promise.all([
+      const [sectors4, totals, daily] = await Promise.all([
         sectorSummary(db),
         platformTotals(db),
         dailyRevenue(db, 30)
       ]);
-      res.json({ ok: true, sectors: sectors3, totals, daily, sectorLabels: SECTOR_LABEL });
+      res.json({ ok: true, sectors: sectors4, totals, daily, sectorLabels: SECTOR_LABEL });
     })
   );
   app.get(
@@ -4394,8 +4446,59 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   );
 }
 
+// services/pos/hybridOnboarding.ts
+import { randomUUID as randomUUID8, randomBytes } from "node:crypto";
+var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"]);
+var label = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
+function registerHybridOnboarding(app, db) {
+  if (process.env.NEON_DB_PHASE1 !== "1") return;
+  app.get("/api/v1/sync/identity", (req, res) => {
+    const p = trustedPrincipal(req);
+    res.setHeader("Cache-Control", "no-store");
+    if (!p) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.json({ ok: true, subject: p.subject, provider: "supabase", identityRemapped: false });
+  });
+  app.post("/api/v1/sync/hybrid-onboarding", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const p = trustedPrincipal(req);
+    if (!p?.isEmailVerified || !p.email) return res.status(403).json({ ok: false, error: "VERIFIED_SOURCE_ACCOUNT_REQUIRED" });
+    try {
+      hybridPhase1Config();
+      const result = await db.tx(async (c) => {
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["hybrid-onboarding:" + p.subject]);
+        const tenant2 = (await c.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1", [p.subject])).rows;
+        if (tenant2.length) return { created: false };
+        const profile = (await c.query("SELECT id FROM internal.users WHERE id=$1", [p.subject])).rows.length;
+        const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
+        const old = (await c.query("SELECT 1 FROM internal.hybrid_source_accounts WHERE source_uuid=$1", [p.subject])).rows.length;
+        if (profile || member || old) return { created: false, recoveryRequired: !member };
+        const state = (await c.query("SELECT source_cutover_at,signup_provisioning_enabled FROM internal.hybrid_phase1_state WHERE singleton")).rows[0];
+        if (!state?.signup_provisioning_enabled) throw Error("HYBRID_NEW_SIGNUPS_PAUSED");
+        const created = Date.parse(p.sourceCreatedAt || "");
+        if (!Number.isFinite(created) || created <= new Date(state.source_cutover_at).getTime() || created > Date.now() + 3e4) throw Error("SOURCE_CREATION_PROOF_REQUIRED");
+        if ((await c.query("SELECT 1 FROM internal.users WHERE lower(email)=lower($1)", [p.email])).rows.length) throw Error("SOURCE_UUID_EMAIL_CONFLICT_REQUIRES_REVIEW");
+        const id = randomUUID8(), name = label(req.body?.store_name, "Toko Baru", 100), owner = label(req.body?.full_name, "Pemilik Toko", 150), sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150), second = label(req.body?.second_outlet_name, "", 150);
+        await c.query("INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,lower($2),$3,true)", [p.subject, p.email, owner]);
+        await c.query("INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active) VALUES($1,$2,$3,$4::text,$4::uuid,true)", [id, name, sector, p.subject]);
+        await c.query("INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref,is_active) VALUES($1,$2,$3,$4,true)", [id, name, sector, p.subject]);
+        await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref,is_active) VALUES($1,$1,$2,$3,$4,true)", [id, name, sector, `${p.subject}_${sector}`]);
+        for (const outlet of second && second !== first ? [first, second] : [first]) await c.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$2,$3,true)", [randomUUID8(), id, outlet]);
+        await c.query("INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active) VALUES($1,$2,$3,$3,'OWNER',$4,true)", [randomUUID8(), p.subject, id, randomBytes(32).toString("hex")]);
+        await c.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial) VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)", [randomUUID8(), id]);
+        await c.query("INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at) VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')", [id, SAAS_PLANS.find((v) => v.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
+        return { created: true };
+      });
+      return res.json({ ok: true, identityRemapped: false, ...result });
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      return res.status(code === "HYBRID_NEW_SIGNUPS_PAUSED" ? 503 : 409).json({ ok: false, error: ["HYBRID_NEW_SIGNUPS_PAUSED", "SOURCE_CREATION_PROOF_REQUIRED", "SOURCE_UUID_EMAIL_CONFLICT_REQUIRES_REVIEW"].includes(code) ? code : "HYBRID_ONBOARDING_REVIEW_REQUIRED" });
+    }
+  });
+}
+
 // services/pos/financialAuthorization.ts
-import { createHash as createHash3, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes2, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -4412,7 +4515,7 @@ function validFinancialPin(pin) {
 }
 async function hashFinancialPin(pin) {
   if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-  const salt = randomBytes(16).toString("hex");
+  const salt = randomBytes2(16).toString("hex");
   const value = await scrypt(pin, salt);
   return "scrypt-v1$" + salt + "$" + value.toString("hex");
 }
@@ -4500,7 +4603,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
       VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
     await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
-    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest2(randomBytes(32).toString("hex"))]);
+    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest2(randomBytes2(32).toString("hex"))]);
     return { enrolled: true };
   });
   route("/api/v1/finance/approve", async (c, s, req) => {
@@ -4511,7 +4614,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     const row = await credential(c, s);
     if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
     if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
-    const token = randomBytes(32).toString("base64url");
+    const token = randomBytes2(32).toString("base64url");
     await c.query(
       `INSERT INTO pos.financial_approval_grants
       (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
@@ -4538,9 +4641,9 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
 }
 
 // services/pos/neonOnboarding.ts
-import { randomUUID as randomUUID8, randomBytes as randomBytes2 } from "node:crypto";
-var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
-var label = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
+import { randomUUID as randomUUID9, randomBytes as randomBytes3 } from "node:crypto";
+var sectors2 = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
+var label2 = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
 function registerNeonOnboarding(app, db) {
   app.get("/api/v1/sync/identity", async (req, res) => {
     const p = trustedPrincipal(req);
@@ -4576,11 +4679,11 @@ function registerNeonOnboarding(app, db) {
         if (existing.length) return { tenantId: existing[0].id, created: false };
         const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
         if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member || binding.is_platform_user || binding.platform_role) throw Error("IDENTITY_REVIEW_REQUIRED");
-        const id = randomUUID8(), name = label(req.body?.store_name, "Toko Baru", 100);
-        const fullName = label(req.body?.full_name, "Pemilik Toko", 150);
-        const sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
-        const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
-        const second = label(req.body?.second_outlet_name, "", 150);
+        const id = randomUUID9(), name = label2(req.body?.store_name, "Toko Baru", 100);
+        const fullName = label2(req.body?.full_name, "Pemilik Toko", 150);
+        const sector = sectors2.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const first = label2(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
+        const second = label2(req.body?.second_outlet_name, "", 150);
         await c.query("UPDATE internal.users SET full_name=$2 WHERE id=$1", [p.subject, fullName]);
         await c.query(`INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active)
           VALUES($1,$2,$3,$4::text,$4::uuid,true)`, [id, name, sector, p.subject]);
@@ -4588,13 +4691,13 @@ function registerNeonOnboarding(app, db) {
         await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$1,$2,$3,$4)", [id, name, sector, `${p.subject}_${sector}`]);
         for (const outlet of second && second !== first ? [first, second] : [first]) await c.query(
           "INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)",
-          [randomUUID8(), id, outlet]
+          [randomUUID9(), id, outlet]
         );
         await c.query(`INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active)
-          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID8(), p.subject, id, randomBytes2(32).toString("hex")]);
+          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID9(), p.subject, id, randomBytes3(32).toString("hex")]);
         await c.query(`INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,
           grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
-          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID8(), id]);
+          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID9(), id]);
         await c.query(`INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at)
           VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')`, [id, SAAS_PLANS.find((p2) => p2.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
         return { tenantId: id, created: true };
@@ -4654,7 +4757,7 @@ function registerBusinessDirectory(app, db) {
 }
 
 // services/pos/sync.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
@@ -5114,7 +5217,7 @@ var operationalKinds = /* @__PURE__ */ new Set([
   "users",
   "staff_members"
 ]);
-var sectors2 = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
+var sectors3 = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
 function presetSector(kind, id) {
   if (typeof id !== "string") return;
@@ -5131,7 +5234,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
     if (row.storeMode !== expected) return "WRONG_STORE_MODE:" + row.storeMode;
   }
   for (const field of ["businessSector", "sector"]) {
-    if (typeof row[field] === "string" && sectors2.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
+    if (typeof row[field] === "string" && sectors3.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
   }
   if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
@@ -6165,6 +6268,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerHybridOnboarding(app, db);
   registerNeonOnboarding(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
@@ -6186,6 +6290,7 @@ function registerSyncRoutes(app, db) {
         await assertBusinessCanBeClaimed(c, businessId, principal.subject);
         let tenantId = await tenantForPrincipal(c, principal);
         if (!tenantId) {
+          if (process.env.NEON_DB_PHASE1 === "1") throw new BillingError(409, "HYBRID_ONBOARDING_REQUIRED");
           const created2 = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
             VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
             DO UPDATE SET name=EXCLUDED.name RETURNING id`, [storeName, principal.subject]);
@@ -6372,7 +6477,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes3(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes4(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -6391,7 +6496,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes3(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes4(32).toString("hex")]);
           }
           const verified = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -6922,6 +7027,7 @@ function normalizeVercelUrl(req) {
 // src/server/serverlessBoundary.ts
 import express from "express";
 var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-source-created-at",
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
@@ -6935,6 +7041,7 @@ function stripIdentityHeaders(req) {
 function applyPrincipal(req, principal) {
   stripIdentityHeaders(req);
   req.headers["x-auth-sub"] = principal.subject;
+  if (principal.sourceCreatedAt) req.headers["x-auth-source-created-at"] = principal.sourceCreatedAt;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
 }

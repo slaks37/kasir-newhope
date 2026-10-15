@@ -1,3 +1,4 @@
+import {assertHybridDatabase} from '../../services/shared/hybridPhase1';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { isCronJobEnabled } from '../../services/shared/cron';
@@ -10,6 +11,7 @@ type VercelResponse = any;
 let pool: pg.Pool | null = null;
 function getPool() {
   if (!pool) {
+    assertHybridDatabase(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || '');
     pool = new pg.Pool({
       ...databaseTransport(serverlessConnectionString(process.env.ANALYTICS_DATABASE_URL || process.env.DATABASE_URL || '')),
       ...databasePoolLimits(3),

@@ -1,3 +1,4 @@
+import {hybridExternalWritesBlocked} from '../../services/shared/hybridPhase1';
 import {createClient} from '@supabase/supabase-js';
 import {betterOwnerIdentity} from '../../services/shared/betterAuthOwner';
 import {getBetterAuthRuntime} from '../../services/shared/betterAuth';
@@ -22,7 +23,8 @@ export function createClientSupportProvider():ClientSupportProvider {
     configured:process.env.AUTH_EMAIL_ENABLED==='1'&&!!process.env.RESEND_API_KEY&&!!process.env.AUTH_EMAIL_FROM,
     ownerIdentity:betterOwnerIdentity,
     async ownerEmail(subject){const u=await betterOwnerIdentity(subject);return u?.verified?u.email:null;},
-    async sendConfirmation(email){await getBetterAuthRuntime().auth.api.sendVerificationEmail({body:{email,callbackURL:betterAuthPilotConfig().baseUrl+'/login'}});},
+    async sendConfirmation(email){
+      if(hybridExternalWritesBlocked())throw new SupportError(403,'HYBRID_STAGING_EMAIL_BLOCKED');await getBetterAuthRuntime().auth.api.sendVerificationEmail({body:{email,callbackURL:betterAuthPilotConfig().baseUrl+'/login'}});},
     async sendReset(email){await getBetterAuthRuntime().auth.api.requestPasswordReset({body:{email,redirectTo:betterAuthPilotConfig().baseUrl+'/reset-password'}});},
   };
   const url=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL;
@@ -42,6 +44,7 @@ export function createClientSupportProvider():ClientSupportProvider {
   return {configured:!!auth,ownerIdentity:identity,
     async ownerEmail(subject){const u=await identity(subject);return u?.verified?u.email:null;},
     async sendConfirmation(email){
+      if(hybridExternalWritesBlocked())throw new SupportError(403,'HYBRID_STAGING_EMAIL_BLOCKED');
       if(!auth)throw new SupportError(503,'SUPPORT_AUTH_NOT_CONFIGURED');
       const destination=new URL('/login',process.env.APP_URL||'https://kasir.newhope.space');
       if(destination.protocol!=='https:')throw new SupportError(503,'SUPPORT_REDIRECT_NOT_CONFIGURED');
@@ -49,6 +52,7 @@ export function createClientSupportProvider():ClientSupportProvider {
       if(error)throw new SupportError(error.status===429?429:502,'EMAIL_CONFIRMATION_PROVIDER_REJECTED');
     },
     async sendReset(email){
+      if(hybridExternalWritesBlocked())throw new SupportError(403,'HYBRID_STAGING_EMAIL_BLOCKED');
       if(!auth)throw new SupportError(503,'SUPPORT_AUTH_NOT_CONFIGURED');
       const destination=new URL('/reset-password',process.env.APP_URL||'https://kasir.newhope.space');
       if(destination.protocol!=='https:')throw new SupportError(503,'SUPPORT_REDIRECT_NOT_CONFIGURED');

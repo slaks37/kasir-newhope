@@ -13,6 +13,7 @@
  */
 
 import fs from 'node:fs';
+import {assertHybridDatabase} from './hybridPhase1';
 import pg from 'pg';
 import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from './poolConfig';
 import { waitForDatabase } from './databaseStartup';
@@ -69,6 +70,8 @@ function konfigurasiSsl(connectionString: string) {
 export async function connectDb(opts: DbOptions): Promise<Db> {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
+
+  assertHybridDatabase(connectionString);
 
   // Hosted full-Neon deployments never run application SQL as the migration
   // owner or the auth/password role. Synthetic local rehearsals can continue

@@ -1,3 +1,39 @@
+// neon/targets/hybrid-staging.json
+var hybrid_staging_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-weathered-tooth-azbwi2zz",
+  host: "ep-ancient-bar-azuss0by.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  default: false,
+  purpose: "hybrid-staging",
+  capture: "build/neon/source-recovery-drive-readback.pgp.b64",
+  ciphertextSha256: "377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136",
+  authProvider: "supabase",
+  storageProvider: "supabase",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  productionEligible: false
+};
+
+// services/shared/hybridPhase1.ts
+function hybridPhase1Config(env = process.env) {
+  if (env.NEON_DB_PHASE1 !== "1") throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+  if (env.AUTH_PROVIDER !== "supabase" || env.STORAGE_PROVIDER !== "supabase" || env.VITE_AUTH_PROVIDER !== "supabase" || env.BETTER_AUTH_MIGRATION_PILOT === "1" || env.NEON_MIGRATION_PILOT === "1") throw Error("HYBRID_PROVIDER_MISMATCH");
+  const source = "https://" + hybrid_staging_default.sourceProject + ".supabase.co";
+  if (env.SUPABASE_URL !== source || env.VITE_SUPABASE_URL !== source) throw Error("HYBRID_SOURCE_AUTH_MISMATCH");
+  if (env.NEON_PROJECT_ID !== hybrid_staging_default.projectId || env.NEON_BRANCH_ID !== hybrid_staging_default.branchId) throw Error("HYBRID_BRANCH_MISMATCH");
+  if (env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") throw Error("HYBRID_PRODUCTION_TARGET_NOT_APPROVED");
+  return { target: hybrid_staging_default, source, staging: env.HYBRID_STAGING === "1" };
+}
+function assertHybridDatabase(connectionString, env = process.env) {
+  const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (env.NEON_DB_PHASE1 !== "1") {
+    if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+    return;
+  }
+  const { target } = hybridPhase1Config(env);
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hostname.replace("-pooler", "") !== target.host || url.pathname !== "/" + target.database || decodeURIComponent(url.username) !== "newhope_runtime_login" || url.hash || url.port && url.port !== "5432" || [...url.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("HYBRID_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+
 // services/shared/neonAuth.ts
 import { createRemoteJWKSet, jwtVerify, errors } from "jose";
 
@@ -79,6 +115,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
+  assertHybridDatabase(connectionString);
   if (process.env.AUTH_PROVIDER === "better-auth" && (process.env.NEON_RUNTIME_ROLES_REQUIRED === "1" || process.env.VERCEL_ENV === "production")) {
     const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
     if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
@@ -485,6 +522,13 @@ async function authenticateBearer(req) {
     }
   }
   if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
+  if (process.env.NEON_DB_PHASE1 === "1") {
+    try {
+      hybridPhase1Config();
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -509,6 +553,7 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      sourceCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -521,7 +566,7 @@ async function authenticateBearer(req) {
 function trustedPrincipal(req) {
   const subject = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject) return { subject, sourceCreatedAt: firstHeader(req.headers["x-auth-source-created-at"]) || void 0, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -5582,6 +5627,7 @@ function normalizeVercelUrl(req) {
 
 // src/server/serverlessBoundary.ts
 var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-source-created-at",
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
@@ -5595,6 +5641,7 @@ function stripIdentityHeaders(req) {
 function applyPrincipal(req, principal) {
   stripIdentityHeaders(req);
   req.headers["x-auth-sub"] = principal.subject;
+  if (principal.sourceCreatedAt) req.headers["x-auth-source-created-at"] = principal.sourceCreatedAt;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
 }

@@ -1,0 +1,46 @@
+{
+  "status": "PASS_WITH_LIVE_AUTH_AND_EXTERNAL_CUTOVER_GATES",
+  "scope": "Isolated Neon database-only hybrid rehearsal; Supabase Auth contract fixtures for successful sign-in, actual source invalid-token rejection; no source writes/email/payments",
+  "startedAt": "2026-10-15T15:57:53.380Z",
+  "targetBranch": "br-weathered-tooth-azbwi2zz",
+  "rollbackSurrogate": "br-bold-mud-azibt3jb",
+  "checks": {
+    "restrictedRoleDenials": 6,
+    "sourceAuthorizationMatrix": {
+      "sourceAccounts": 10,
+      "merchantChecks": 130,
+      "uuidRewrites": 0
+    },
+    "httpDirectorySubscription": {
+      "sectors": 5,
+      "spoofedPrincipalIgnored": true,
+      "nativeAuth404": true,
+      "anonymousDenied": true,
+      "authentication": "CONTRACT_FIXTURE_NOT_MANAGED_POSITIVE_LOGIN"
+    },
+    "realSupabaseInvalidTokenDenied": true,
+    "isolatedCutoverFreezeToNewWriteMs": 5654,
+    "isolatedRollbackAfterNeonWriteMs": 6613,
+    "originalTransactionRowsUnchanged": true,
+    "reverseDelta": {
+      "events": 2,
+      "amount": "3000.00",
+      "financialUuidsPreserved": true,
+      "fullRowEquality": true,
+      "reapplyIdempotent": true,
+      "conflictDenied": true,
+      "customerRowsModified": 0
+    },
+    "sourceStorageRead": {
+      "existingUrlPreserved": true,
+      "representativePublicGet": 200,
+      "sourceWrites": 0
+    },
+    "productionDowntimeEstimate": null,
+    "timingLimit": "Actual isolated database/API rehearsal only; successful Auth responses are contract fixtures. Fleet drain, provider checkpoint, source freeze and production promotion not measured."
+  },
+  "realSupabaseValidSessionVerified": false,
+  "productionDecision": "NO-GO",
+  "fixtureCount": 5,
+  "finishedAt": "2026-10-15T15:58:31.486Z"
+}

@@ -11,23 +11,31 @@ export const relation=row=>quote(row.schema)+'.'+quote(row.name||row.table);
 export const sha=value=>createHash('sha256').update(value).digest('hex');
 export function privateFile(file){if((fs.statSync(file).mode&0o077)!==0)throw Error('PRIVATE_FILE_PERMISSIONS_REQUIRED');return fs.readFileSync(file);}
 export async function loadBackup(file,key='.env.neon-backup-keys.local/private.asc'){
+ const hybrid=process.env.NEON_RESTORE_TARGET==='hybrid-staging';
  const fresh=process.env.NEON_RESTORE_TARGET==='fresh-candidate';
- const reviewed=fresh?JSON.parse(fs.readFileSync('neon/targets/fresh-candidate.json','utf8')):null;
+ const reviewed=fresh||hybrid?JSON.parse(fs.readFileSync('neon/targets/'+(hybrid?'hybrid-staging':'fresh-candidate')+'.json','utf8')):null;
  file=file||(reviewed?.capture||'build/neon/source-2026-10-13-v3.pgp.b64');
  const openpgp=await import('../../build/neon-tools/node_modules/openpgp/dist/node/openpgp.mjs');
  const ciphertext=privateFile(file),privateKey=await openpgp.readPrivateKey({armoredKey:privateFile(key).toString('utf8')});
  if(reviewed&&(file!==reviewed.capture||sha(ciphertext)!==reviewed.ciphertextSha256))throw Error('FRESH_CAPTURE_REVIEW_MISMATCH');
  const message=await openpgp.readMessage({binaryMessage:Buffer.from(ciphertext.toString('utf8'),'base64')});
  const decrypted=await openpgp.decrypt({message,decryptionKeys:privateKey});
- const snapshot=JSON.parse(decrypted.data);
- if(snapshot.format!=='newhope-pg-catalog-v1'||snapshot.sourceProject!==sourceProject||snapshot.schemas.join(',')!==appSchemas.join(',')||!snapshot.dataPolicy.startsWith('credential-free'))throw Error('UNTRUSTED_BACKUP_SCOPE');
+ let snapshot=JSON.parse(decrypted.data);
+ if(hybrid){
+  if(snapshot.format!=='newhope-pg-recovery-v1'||snapshot.sourceProject!==sourceProject)throw Error('HYBRID_RECOVERY_ARCHIVE_SCOPE_REQUIRED');
+  const source=snapshot;snapshot={...source,format:'newhope-pg-catalog-v1',dataPolicy:'phase1 business-only; existing business credentials retained privately; no auth/storage runtime imported',schemas:appSchemas,omittedTables:[],redactedColumns:[],redactedNestedPaths:[]};
+  for(const key of ['tables','enums','views','indexes','policies','triggers','functions','schemaAcl','sequences','acl','constraints','defaultAcl','unsupported'])snapshot[key]=(source[key]||[]).filter(r=>appSchemas.includes(r.schema));
+  snapshot.inheritance=(source.inheritance||[]).filter(r=>appSchemas.some(n=>r.child?.startsWith(n+'.')));
+ }
+
+ if(snapshot.format!=='newhope-pg-catalog-v1'||snapshot.sourceProject!==sourceProject||snapshot.schemas.join(',')!==appSchemas.join(',')||!(snapshot.dataPolicy.startsWith('credential-free')||hybrid&&snapshot.dataPolicy.startsWith('phase1 business-only')))throw Error('UNTRUSTED_BACKUP_SCOPE');
  return {snapshot,ciphertextSha256:sha(ciphertext),file:path.resolve(file)};
 }
 export function restoreTarget(file){
  const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
- if(!['full-restore','clean-rehearsal','fresh-candidate'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
+ if(!['full-restore','clean-rehearsal','fresh-candidate','hybrid-staging'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
  const clean=selection==='clean-rehearsal',fresh=selection==='fresh-candidate';
- file=file||(fresh?'.env.neon-fresh-candidate.local':clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
+ file=file||(selection==='hybrid-staging'?'.env.neon-hybrid-restore.local':fresh?'.env.neon-fresh-candidate.local':clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
  const env=parse(privateFile(file));
  const manifest=JSON.parse(fs.readFileSync('neon/targets/'+selection+'.json','utf8'));
  const allowedBranch=manifest.branchId||manifest.branch_id;

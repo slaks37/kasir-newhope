@@ -1,0 +1,807 @@
+{
+  "format": "newhope-release-checkpoint-v1",
+  "finance": {
+    "refunds": {
+      "rows": 0,
+      "amount": "0"
+    },
+    "payments": {
+      "rows": 8,
+      "amount": "747000.00",
+      "latestAt": "2026-10-04T01:28:32.047751+00:00"
+    },
+    "cashLedger": {
+      "rows": 11,
+      "amount": "653000.00"
+    },
+    "transactions": {
+      "rows": 8,
+      "amount": "747000.00",
+      "latestAt": "2026-10-01T15:54:44.385+00:00",
+      "missingClientKeys": 0
+    },
+    "subscriptions": {
+      "rows": 10,
+      "recurringAmount": "0.00"
+    },
+    "duplicatePaymentClientKeys": 0,
+    "duplicateTransactionClientKeys": 0
+  },
+  "snapshot": "22707:22707:",
+  "capturedAt": "2026-10-15T16:01:24.349435+00:00",
+  "fingerprints": [
+    {
+      "name": "ai_query_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "ai"
+    },
+    {
+      "name": "batch_job_runs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "ai"
+    },
+    {
+      "name": "business_intelligence_cache",
+      "rows": 11,
+      "digest": "6b87d9edd7db78aae134bd55dbe9afc1",
+      "schema": "ai"
+    },
+    {
+      "name": "daily_merchant_insights",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "ai"
+    },
+    {
+      "name": "merchant_ai_credits",
+      "rows": 8,
+      "digest": "aa92eee7eb9fed1c793446e770de6e7e",
+      "schema": "ai"
+    },
+    {
+      "name": "provider_consent_events",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "ai"
+    },
+    {
+      "name": "device_fingerprints",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "billing"
+    },
+    {
+      "name": "invoices",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "billing"
+    },
+    {
+      "name": "payment_events",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "billing"
+    },
+    {
+      "name": "plans",
+      "rows": 6,
+      "digest": "43ef1e17b14e892d83b15716585e2fd2",
+      "schema": "billing"
+    },
+    {
+      "name": "reminder_deliveries",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "billing"
+    },
+    {
+      "name": "subscriptions",
+      "rows": 10,
+      "digest": "1684e8a67d6a883d2ac396e0fa8553c4",
+      "schema": "billing"
+    },
+    {
+      "name": "webhook_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "billing"
+    },
+    {
+      "name": "audit",
+      "rows": 43,
+      "digest": "1bafc6fb1002eaf892bbef5a4ffacb7e",
+      "schema": "blog_mcp_private"
+    },
+    {
+      "name": "connections",
+      "rows": 1,
+      "digest": "40b75330f815bcf3c9563099cb2d3aaf",
+      "schema": "blog_mcp_private"
+    },
+    {
+      "name": "credentials",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "blog_mcp_private"
+    },
+    {
+      "name": "attendances",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "audit_logs",
+      "rows": 328,
+      "digest": "26ca5b65d0ecf675b45b82baf08752ba",
+      "schema": "internal"
+    },
+    {
+      "name": "business_targets",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "feature_usage_events",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "internal_access_log",
+      "rows": 87,
+      "digest": "842445258a446287aaf53a91deb2025f",
+      "schema": "internal"
+    },
+    {
+      "name": "internal_users",
+      "rows": 8,
+      "digest": "98c1845fb9dc878f0ea477cc6d9fc24c",
+      "schema": "internal"
+    },
+    {
+      "name": "legal_notice_acknowledgements",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "memberships",
+      "rows": 3,
+      "digest": "e00feb175aba6f991adbbdd93ca22511",
+      "schema": "internal"
+    },
+    {
+      "name": "merchant_health_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "merchant_settings",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "merchants",
+      "rows": 13,
+      "digest": "d42df69bd9d8cdb83ec704af9341fa29",
+      "schema": "internal"
+    },
+    {
+      "name": "outlets",
+      "rows": 11,
+      "digest": "5d29e6fe483de18072182b82aed0c46d",
+      "schema": "internal"
+    },
+    {
+      "name": "platform_integrations",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "privacy_request_events",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "privacy_requests",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "internal"
+    },
+    {
+      "name": "security_acl_rollback",
+      "rows": 1630,
+      "digest": "b3e338a3c2e9e47b99ef8d09ac186b5b",
+      "schema": "internal"
+    },
+    {
+      "name": "support_actions",
+      "rows": 4,
+      "digest": "beef5e3a743d7c23c19b293e110831bd",
+      "schema": "internal"
+    },
+    {
+      "name": "tenant_identity_recovery",
+      "rows": 2,
+      "digest": "bea8043d65591f76e4aff891723a3d4f",
+      "schema": "internal"
+    },
+    {
+      "name": "tenants",
+      "rows": 11,
+      "digest": "5cec761b541afe11b86eda62a8851aa3",
+      "schema": "internal"
+    },
+    {
+      "name": "users",
+      "rows": 25,
+      "digest": "9ec8a5ca9b2d1e7552e1c7d1f6f24be6",
+      "schema": "internal"
+    },
+    {
+      "name": "audit",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "mcp_private"
+    },
+    {
+      "name": "connections",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "mcp_private"
+    },
+    {
+      "name": "credentials",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "mcp_private"
+    },
+    {
+      "name": "bays",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "branch_settings",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "cash_ledger",
+      "rows": 11,
+      "digest": "cb1017087c22ba7f34ccc4ec5e9b12e3",
+      "schema": "pos"
+    },
+    {
+      "name": "cash_registers",
+      "rows": 5,
+      "digest": "c4dd29af757cfb22a1570633b01352ac",
+      "schema": "pos"
+    },
+    {
+      "name": "chairs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "customers",
+      "rows": 1,
+      "digest": "bff2b473971b58641388607711176d00",
+      "schema": "pos"
+    },
+    {
+      "name": "financial_approval_grants",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "financial_authorization_audit",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "financial_pin_attempts",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "financial_pin_credentials",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "ingredients",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "inventory_balances",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "inventory_items",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "inventory_locations",
+      "rows": 5,
+      "digest": "38e7477419e8a6fae378f9d5c0b82466",
+      "schema": "pos"
+    },
+    {
+      "name": "inventory_transactions",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "kds_stations",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "loyalty_accounts",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "loyalty_transactions",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "merchant_activity_log",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "merchant_audit_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "merchant_payment_accounts",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "modifiers",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "operational_jobs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "operational_stages",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "order_context_barber",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "order_context_carwash",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "order_context_fnb",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "order_context_laundry",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "order_context_retail",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "payment_provider_links",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "payment_reconciliation_events",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "payments",
+      "rows": 8,
+      "digest": "534191c841b92f58b78240b7f2b34096",
+      "schema": "pos"
+    },
+    {
+      "name": "pos_settings",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "product_recipes",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "product_variants",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "products",
+      "rows": 38,
+      "digest": "5d859b7238524cca52bd235d2ccb56a1",
+      "schema": "pos"
+    },
+    {
+      "name": "receipt_settings",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "recipe_items",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "recipes",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "shared_state_records",
+      "rows": 125,
+      "digest": "78480eaf50c0cef321e0d51357036f1f",
+      "schema": "pos"
+    },
+    {
+      "name": "shifts",
+      "rows": 5,
+      "digest": "b5696ef839d773b8ce8676f5acd9e14c",
+      "schema": "pos"
+    },
+    {
+      "name": "staff_assignments",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "staff_commissions",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "sync_receipts",
+      "rows": 5,
+      "digest": "36e85d795379c35c4db964be7149e59c",
+      "schema": "pos"
+    },
+    {
+      "name": "tables",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "tax_settings",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "tenants",
+      "rows": 10,
+      "digest": "dcee10e94fc418a7ff644a6ffb5057ed",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_adjustments",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_item_components",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_item_modifiers",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_items",
+      "rows": 9,
+      "digest": "918cb5d60547cca9cf2a8d8f7f5f8a17",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_refund_items",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "transaction_refunds",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "transactions",
+      "rows": 8,
+      "digest": "bf8787e56658101c40ee328e3af224af",
+      "schema": "pos"
+    },
+    {
+      "name": "users",
+      "rows": 5,
+      "digest": "ce8bbebff536b28a5c13050f7f96a5bf",
+      "schema": "pos"
+    },
+    {
+      "name": "vehicles",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "pos"
+    },
+    {
+      "name": "admin_users",
+      "rows": 6,
+      "digest": "bf2a8a23e6b97a12e82b888efb8ffcb7",
+      "schema": "public"
+    },
+    {
+      "name": "ai_merchant_insights",
+      "rows": 2,
+      "digest": "f19b9de46c77f63957bdf44fe2694417",
+      "schema": "public"
+    },
+    {
+      "name": "attendance_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "blog_posts",
+      "rows": 71,
+      "digest": "ad96b4060215421ab0503cf45f78dbce",
+      "schema": "public"
+    },
+    {
+      "name": "bundle_items",
+      "rows": 4,
+      "digest": "d2148c2933ca8a6cd77c23b11a571194",
+      "schema": "public"
+    },
+    {
+      "name": "categories",
+      "rows": 3,
+      "digest": "00865f5014ba599f48e725332afab655",
+      "schema": "public"
+    },
+    {
+      "name": "customers",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "inventory_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "merchant_health_scores",
+      "rows": 6,
+      "digest": "071732c3121ede7a3fb473188d9e7b87",
+      "schema": "public"
+    },
+    {
+      "name": "merchant_settings",
+      "rows": 6,
+      "digest": "785d737b672a93c98a2ed20e542e66c8",
+      "schema": "public"
+    },
+    {
+      "name": "merchants",
+      "rows": 6,
+      "digest": "db360de6cbbe498e89f5a62dcbd583ef",
+      "schema": "public"
+    },
+    {
+      "name": "order_items",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "order_tax_breakdowns",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "orders",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "platform_audit_logs",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "product_bundles",
+      "rows": 2,
+      "digest": "fcfe743d38aa455e636441bf54f77741",
+      "schema": "public"
+    },
+    {
+      "name": "product_modifiers",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "product_recipes",
+      "rows": 4,
+      "digest": "c994ee54483f36235f10ff93e04dda79",
+      "schema": "public"
+    },
+    {
+      "name": "product_variants",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "products",
+      "rows": 4,
+      "digest": "8506cc41367a094faad4e0db2d139138",
+      "schema": "public"
+    },
+    {
+      "name": "promo_codes",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "raw_materials",
+      "rows": 4,
+      "digest": "a284c08a21b32f2f51a8a475934ce212",
+      "schema": "public"
+    },
+    {
+      "name": "saas_invoices",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "saas_plans",
+      "rows": 3,
+      "digest": "3ce22c9b339875f90cfdd716a52c948e",
+      "schema": "public"
+    },
+    {
+      "name": "saas_subscriptions",
+      "rows": 6,
+      "digest": "680c28466dd4b61cc4a79d61d85c167a",
+      "schema": "public"
+    },
+    {
+      "name": "schema_migrations",
+      "rows": 12,
+      "digest": "259cb2159fe733d477c9c2d17fa297db",
+      "schema": "public"
+    },
+    {
+      "name": "staff_members",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "store_branches",
+      "rows": 2,
+      "digest": "f44a27eb96d1fd527dcb0af7b627f6d4",
+      "schema": "public"
+    },
+    {
+      "name": "user_shifts",
+      "rows": 0,
+      "digest": "d41d8cd98f00b204e9800998ecf8427e",
+      "schema": "public"
+    },
+    {
+      "name": "users",
+      "rows": 3,
+      "digest": "20f2e481b20149a8259a0b10d1f54a3c",
+      "schema": "public"
+    }
+  ],
+  "sourceFrozen": false,
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "cutoverAllowed": false,
+  "dokuDatabaseCheckpoint": {
+    "webhookLogs": {
+      "rows": 0,
+      "unprocessed": 0,
+      "latestProcessedAt": null
+    },
+    "billingEvents": {
+      "rows": 0,
+      "latestAt": null
+    },
+    "duplicateWebhookIds": 0,
+    "duplicatePosEventKeys": 0,
+    "posReconciliationEvents": {
+      "rows": 0,
+      "latestAt": null
+    },
+    "duplicateBillingEventKeys": 0,
+    "externalProviderQueueVerified": false
+  },
+  "clientOfflineQueuesVerified": false
+}

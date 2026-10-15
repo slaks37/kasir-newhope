@@ -1,3 +1,39 @@
+// neon/targets/hybrid-staging.json
+var hybrid_staging_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-weathered-tooth-azbwi2zz",
+  host: "ep-ancient-bar-azuss0by.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  default: false,
+  purpose: "hybrid-staging",
+  capture: "build/neon/source-recovery-drive-readback.pgp.b64",
+  ciphertextSha256: "377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136",
+  authProvider: "supabase",
+  storageProvider: "supabase",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  productionEligible: false
+};
+
+// services/shared/hybridPhase1.ts
+function hybridPhase1Config(env = process.env) {
+  if (env.NEON_DB_PHASE1 !== "1") throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+  if (env.AUTH_PROVIDER !== "supabase" || env.STORAGE_PROVIDER !== "supabase" || env.VITE_AUTH_PROVIDER !== "supabase" || env.BETTER_AUTH_MIGRATION_PILOT === "1" || env.NEON_MIGRATION_PILOT === "1") throw Error("HYBRID_PROVIDER_MISMATCH");
+  const source = "https://" + hybrid_staging_default.sourceProject + ".supabase.co";
+  if (env.SUPABASE_URL !== source || env.VITE_SUPABASE_URL !== source) throw Error("HYBRID_SOURCE_AUTH_MISMATCH");
+  if (env.NEON_PROJECT_ID !== hybrid_staging_default.projectId || env.NEON_BRANCH_ID !== hybrid_staging_default.branchId) throw Error("HYBRID_BRANCH_MISMATCH");
+  if (env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") throw Error("HYBRID_PRODUCTION_TARGET_NOT_APPROVED");
+  return { target: hybrid_staging_default, source, staging: env.HYBRID_STAGING === "1" };
+}
+function assertHybridDatabase(connectionString, env = process.env) {
+  const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (env.NEON_DB_PHASE1 !== "1") {
+    if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+    return;
+  }
+  const { target } = hybridPhase1Config(env);
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hostname.replace("-pooler", "") !== target.host || url.pathname !== "/" + target.database || decodeURIComponent(url.username) !== "newhope_runtime_login" || url.hash || url.port && url.port !== "5432" || [...url.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("HYBRID_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+
 // services/shared/neonAuth.ts
 import { createRemoteJWKSet, jwtVerify, errors } from "jose";
 
@@ -79,6 +115,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
+  assertHybridDatabase(connectionString);
   if (process.env.AUTH_PROVIDER === "better-auth" && (process.env.NEON_RUNTIME_ROLES_REQUIRED === "1" || process.env.VERCEL_ENV === "production")) {
     const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
     if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
@@ -530,6 +567,13 @@ async function authenticateBearer(req) {
     }
   }
   if (process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER !== "supabase") throw new AuthUnavailableError();
+  if (process.env.NEON_DB_PHASE1 === "1") {
+    try {
+      hybridPhase1Config();
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
@@ -554,6 +598,7 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      sourceCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -566,7 +611,7 @@ async function authenticateBearer(req) {
 function trustedPrincipal(req) {
   const subject = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject) return { subject, sourceCreatedAt: firstHeader(req.headers["x-auth-source-created-at"]) || void 0, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -600,151 +645,8 @@ async function tenantForPrincipal(db, principal) {
   return null;
 }
 
-// services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
-var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
-var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
-var FinancialApprovalError = class extends Error {
-  constructor(status, code) {
-    super(code);
-    this.status = status;
-  }
-};
-var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash2("sha256").update(token).digest("hex");
-function validFinancialPin(pin) {
-  return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
-}
-async function hashFinancialPin(pin) {
-  if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-  const salt = randomBytes(16).toString("hex");
-  const value = await scrypt(pin, salt);
-  return "scrypt-v1$" + salt + "$" + value.toString("hex");
-}
-async function verifyFinancialPin(pin, encoded) {
-  if (!validFinancialPin(pin)) return false;
-  const parts = encoded.split("$");
-  if (parts.length !== 3 || parts[0] !== "scrypt-v1" || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
-  const result = await scrypt(pin, parts[1]);
-  return timingSafeEqual(result, Buffer.from(parts[2], "hex"));
-}
-async function rateWindow(c, s) {
-  await c.query("INSERT INTO pos.financial_pin_attempts(tenant_id,actor_ref) VALUES($1,$2) ON CONFLICT DO NOTHING", [s.tenantId, s.actorRef]);
-  await c.query(`UPDATE pos.financial_pin_attempts SET failures=0,attempts=0,window_started_at=now()
-    WHERE tenant_id=$1 AND actor_ref=$2 AND window_started_at<now()-interval '15 minutes'`, [s.tenantId, s.actorRef]);
-  const row = (await c.query("SELECT * FROM pos.financial_pin_attempts WHERE tenant_id=$1 AND actor_ref=$2 FOR UPDATE", [s.tenantId, s.actorRef])).rows[0];
-  if (row.failures >= 5 || row.attempts >= 60) return false;
-  await c.query("UPDATE pos.financial_pin_attempts SET attempts=attempts+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
-  return true;
-}
-async function credential(c, s) {
-  return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
-}
-async function failure(c, s) {
-  await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
-  return { status: 403, error: "INVALID_FINANCIAL_PIN" };
-}
-async function reauthenticateOwner(req, subject, db) {
-  const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
-  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
-  if (process.env.AUTH_PROVIDER === "better-auth") {
-    const token = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""))?.[1];
-    if (!token) return false;
-    try {
-      return await reauthenticateBetterOwner(token, password, subject);
-    } catch {
-      throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-    }
-  }
-  if (process.env.AUTH_PROVIDER === "neon") {
-    try {
-      return await reauthenticateNeonOwner(db, principal.email, password, subject);
-    } catch {
-      throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-    }
-  }
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  let response;
-  try {
-    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
-  } catch {
-    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  }
-  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  if (!response.ok) return false;
-  const data = await response.json();
-  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
-}
-function registerFinancialApprovalRoutes(app, db, scopeFor3) {
-  const route = (path, run) => app.post(path, async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    try {
-      const result = await db.tx(async (c) => run(c, await scopeFor3(c, req), req));
-      if (result.error) {
-        if (result.status === 429) res.setHeader("Retry-After", "900");
-        return res.status(result.status).json({ ok: false, error: result.error });
-      }
-      return res.json({ ok: true, ...result });
-    } catch (e) {
-      const error = e;
-      return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : "FINANCIAL_AUTHORIZATION_UNAVAILABLE" });
-    }
-  });
-  route("/api/v1/finance/pin", async (c, s, req) => {
-    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
-    if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-    if (!await reauthenticateOwner(req, s.actorRef, c)) {
-      await failure(c, s);
-      return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
-    }
-    const old = await credential(c, s);
-    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
-    const pinHash = await hashFinancialPin(req.body?.newPin);
-    await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
-      VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
-    await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
-    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest(randomBytes(32).toString("hex"))]);
-    return { enrolled: true };
-  });
-  route("/api/v1/finance/approve", async (c, s, req) => {
-    const { action, reference, reason, command, pin } = req.body || {};
-    if (!ACTIONS.has(action) || typeof reference !== "string" || !reference || reference.length > 128 || typeof reason !== "string" || !reason.trim() || reason.length > 500 || !command || typeof command !== "object" || JSON.stringify(command).length > 1e5)
-      throw new FinancialApprovalError(400, "INVALID_APPROVAL_REQUEST");
-    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
-    const row = await credential(c, s);
-    if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
-    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
-    const token = randomBytes(32).toString("base64url");
-    await c.query(
-      `INSERT INTO pos.financial_approval_grants
-      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
-      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
-      [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, reason.trim(), commandHash(command)]
-    );
-    return { approvalGrant: token, expiresInSeconds: 90, approverRef: s.actorRef };
-  });
-}
-async function consumeFinancialApproval(c, s, action, reference, command, token) {
-  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_REQUIRED");
-  const row = (await c.query(
-    `SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
-    AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
-    AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
-    [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, commandHash(command)]
-  )).rows[0];
-  if (!row || !row.consumed_at && Date.parse(row.expires_at) <= Date.now()) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_INVALID_OR_EXPIRED");
-  if (row.consumed_at) return;
-  await c.query("UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1", [row.token_hash]);
-  await c.query(`INSERT INTO pos.financial_authorization_audit
-    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
-}
-
-// services/pos/neonOnboarding.ts
-import { randomUUID as randomUUID2, randomBytes as randomBytes2 } from "node:crypto";
+// services/pos/hybridOnboarding.ts
+import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -864,9 +766,203 @@ var SAAS_PLANS = [
 ];
 var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
 
-// services/pos/neonOnboarding.ts
-var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
+// services/pos/hybridOnboarding.ts
+var sectors = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"]);
 var label = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
+function registerHybridOnboarding(app, db) {
+  if (process.env.NEON_DB_PHASE1 !== "1") return;
+  app.get("/api/v1/sync/identity", (req, res) => {
+    const p = trustedPrincipal(req);
+    res.setHeader("Cache-Control", "no-store");
+    if (!p) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    return res.json({ ok: true, subject: p.subject, provider: "supabase", identityRemapped: false });
+  });
+  app.post("/api/v1/sync/hybrid-onboarding", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const p = trustedPrincipal(req);
+    if (!p?.isEmailVerified || !p.email) return res.status(403).json({ ok: false, error: "VERIFIED_SOURCE_ACCOUNT_REQUIRED" });
+    try {
+      hybridPhase1Config();
+      const result = await db.tx(async (c) => {
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["hybrid-onboarding:" + p.subject]);
+        const tenant = (await c.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1", [p.subject])).rows;
+        if (tenant.length) return { created: false };
+        const profile = (await c.query("SELECT id FROM internal.users WHERE id=$1", [p.subject])).rows.length;
+        const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
+        const old = (await c.query("SELECT 1 FROM internal.hybrid_source_accounts WHERE source_uuid=$1", [p.subject])).rows.length;
+        if (profile || member || old) return { created: false, recoveryRequired: !member };
+        const state = (await c.query("SELECT source_cutover_at,signup_provisioning_enabled FROM internal.hybrid_phase1_state WHERE singleton")).rows[0];
+        if (!state?.signup_provisioning_enabled) throw Error("HYBRID_NEW_SIGNUPS_PAUSED");
+        const created = Date.parse(p.sourceCreatedAt || "");
+        if (!Number.isFinite(created) || created <= new Date(state.source_cutover_at).getTime() || created > Date.now() + 3e4) throw Error("SOURCE_CREATION_PROOF_REQUIRED");
+        if ((await c.query("SELECT 1 FROM internal.users WHERE lower(email)=lower($1)", [p.email])).rows.length) throw Error("SOURCE_UUID_EMAIL_CONFLICT_REQUIRES_REVIEW");
+        const id = randomUUID2(), name = label(req.body?.store_name, "Toko Baru", 100), owner = label(req.body?.full_name, "Pemilik Toko", 150), sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150), second = label(req.body?.second_outlet_name, "", 150);
+        await c.query("INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,lower($2),$3,true)", [p.subject, p.email, owner]);
+        await c.query("INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active) VALUES($1,$2,$3,$4::text,$4::uuid,true)", [id, name, sector, p.subject]);
+        await c.query("INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref,is_active) VALUES($1,$2,$3,$4,true)", [id, name, sector, p.subject]);
+        await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref,is_active) VALUES($1,$1,$2,$3,$4,true)", [id, name, sector, `${p.subject}_${sector}`]);
+        for (const outlet of second && second !== first ? [first, second] : [first]) await c.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$2,$3,true)", [randomUUID2(), id, outlet]);
+        await c.query("INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active) VALUES($1,$2,$3,$3,'OWNER',$4,true)", [randomUUID2(), p.subject, id, randomBytes(32).toString("hex")]);
+        await c.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial) VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)", [randomUUID2(), id]);
+        await c.query("INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at) VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')", [id, SAAS_PLANS.find((v) => v.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
+        return { created: true };
+      });
+      return res.json({ ok: true, identityRemapped: false, ...result });
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      return res.status(code === "HYBRID_NEW_SIGNUPS_PAUSED" ? 503 : 409).json({ ok: false, error: ["HYBRID_NEW_SIGNUPS_PAUSED", "SOURCE_CREATION_PROOF_REQUIRED", "SOURCE_UUID_EMAIL_CONFLICT_REQUIRES_REVIEW"].includes(code) ? code : "HYBRID_ONBOARDING_REVIEW_REQUIRED" });
+    }
+  });
+}
+
+// services/pos/financialAuthorization.ts
+import { createHash as createHash2, randomBytes as randomBytes2, scrypt as derive, timingSafeEqual } from "node:crypto";
+var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
+var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
+var FinancialApprovalError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
+var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash2("sha256").update(token).digest("hex");
+function validFinancialPin(pin) {
+  return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
+}
+async function hashFinancialPin(pin) {
+  if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+  const salt = randomBytes2(16).toString("hex");
+  const value = await scrypt(pin, salt);
+  return "scrypt-v1$" + salt + "$" + value.toString("hex");
+}
+async function verifyFinancialPin(pin, encoded) {
+  if (!validFinancialPin(pin)) return false;
+  const parts = encoded.split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt-v1" || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
+  const result = await scrypt(pin, parts[1]);
+  return timingSafeEqual(result, Buffer.from(parts[2], "hex"));
+}
+async function rateWindow(c, s) {
+  await c.query("INSERT INTO pos.financial_pin_attempts(tenant_id,actor_ref) VALUES($1,$2) ON CONFLICT DO NOTHING", [s.tenantId, s.actorRef]);
+  await c.query(`UPDATE pos.financial_pin_attempts SET failures=0,attempts=0,window_started_at=now()
+    WHERE tenant_id=$1 AND actor_ref=$2 AND window_started_at<now()-interval '15 minutes'`, [s.tenantId, s.actorRef]);
+  const row = (await c.query("SELECT * FROM pos.financial_pin_attempts WHERE tenant_id=$1 AND actor_ref=$2 FOR UPDATE", [s.tenantId, s.actorRef])).rows[0];
+  if (row.failures >= 5 || row.attempts >= 60) return false;
+  await c.query("UPDATE pos.financial_pin_attempts SET attempts=attempts+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return true;
+}
+async function credential(c, s) {
+  return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
+}
+async function failure(c, s) {
+  await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return { status: 403, error: "INVALID_FINANCIAL_PIN" };
+}
+async function reauthenticateOwner(req, subject, db) {
+  const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
+  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
+  if (process.env.AUTH_PROVIDER === "better-auth") {
+    const token = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ""))?.[1];
+    if (!token) return false;
+    try {
+      return await reauthenticateBetterOwner(token, password, subject);
+    } catch {
+      throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+    }
+  }
+  if (process.env.AUTH_PROVIDER === "neon") {
+    try {
+      return await reauthenticateNeonOwner(db, principal.email, password, subject);
+    } catch {
+      throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+    }
+  }
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  let response;
+  try {
+    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
+  } catch {
+    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  }
+  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  if (!response.ok) return false;
+  const data = await response.json();
+  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
+}
+function registerFinancialApprovalRoutes(app, db, scopeFor3) {
+  const route = (path, run) => app.post(path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const result = await db.tx(async (c) => run(c, await scopeFor3(c, req), req));
+      if (result.error) {
+        if (result.status === 429) res.setHeader("Retry-After", "900");
+        return res.status(result.status).json({ ok: false, error: result.error });
+      }
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      const error = e;
+      return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : "FINANCIAL_AUTHORIZATION_UNAVAILABLE" });
+    }
+  });
+  route("/api/v1/finance/pin", async (c, s, req) => {
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+    if (!await reauthenticateOwner(req, s.actorRef, c)) {
+      await failure(c, s);
+      return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
+    }
+    const old = await credential(c, s);
+    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
+    const pinHash = await hashFinancialPin(req.body?.newPin);
+    await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
+      VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
+    await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
+    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest(randomBytes2(32).toString("hex"))]);
+    return { enrolled: true };
+  });
+  route("/api/v1/finance/approve", async (c, s, req) => {
+    const { action, reference, reason, command, pin } = req.body || {};
+    if (!ACTIONS.has(action) || typeof reference !== "string" || !reference || reference.length > 128 || typeof reason !== "string" || !reason.trim() || reason.length > 500 || !command || typeof command !== "object" || JSON.stringify(command).length > 1e5)
+      throw new FinancialApprovalError(400, "INVALID_APPROVAL_REQUEST");
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    const row = await credential(c, s);
+    if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
+    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
+    const token = randomBytes2(32).toString("base64url");
+    await c.query(
+      `INSERT INTO pos.financial_approval_grants
+      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
+      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
+      [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, reason.trim(), commandHash(command)]
+    );
+    return { approvalGrant: token, expiresInSeconds: 90, approverRef: s.actorRef };
+  });
+}
+async function consumeFinancialApproval(c, s, action, reference, command, token) {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_REQUIRED");
+  const row = (await c.query(
+    `SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
+    AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
+    AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
+    [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, commandHash(command)]
+  )).rows[0];
+  if (!row || !row.consumed_at && Date.parse(row.expires_at) <= Date.now()) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_INVALID_OR_EXPIRED");
+  if (row.consumed_at) return;
+  await c.query("UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1", [row.token_hash]);
+  await c.query(`INSERT INTO pos.financial_authorization_audit
+    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
+}
+
+// services/pos/neonOnboarding.ts
+import { randomUUID as randomUUID3, randomBytes as randomBytes3 } from "node:crypto";
+var sectors2 = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
+var label2 = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
 function registerNeonOnboarding(app, db) {
   app.get("/api/v1/sync/identity", async (req, res) => {
     const p = trustedPrincipal(req);
@@ -902,11 +998,11 @@ function registerNeonOnboarding(app, db) {
         if (existing.length) return { tenantId: existing[0].id, created: false };
         const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
         if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member || binding.is_platform_user || binding.platform_role) throw Error("IDENTITY_REVIEW_REQUIRED");
-        const id = randomUUID2(), name = label(req.body?.store_name, "Toko Baru", 100);
-        const fullName = label(req.body?.full_name, "Pemilik Toko", 150);
-        const sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
-        const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
-        const second = label(req.body?.second_outlet_name, "", 150);
+        const id = randomUUID3(), name = label2(req.body?.store_name, "Toko Baru", 100);
+        const fullName = label2(req.body?.full_name, "Pemilik Toko", 150);
+        const sector = sectors2.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const first = label2(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
+        const second = label2(req.body?.second_outlet_name, "", 150);
         await c.query("UPDATE internal.users SET full_name=$2 WHERE id=$1", [p.subject, fullName]);
         await c.query(`INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active)
           VALUES($1,$2,$3,$4::text,$4::uuid,true)`, [id, name, sector, p.subject]);
@@ -914,13 +1010,13 @@ function registerNeonOnboarding(app, db) {
         await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$1,$2,$3,$4)", [id, name, sector, `${p.subject}_${sector}`]);
         for (const outlet of second && second !== first ? [first, second] : [first]) await c.query(
           "INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)",
-          [randomUUID2(), id, outlet]
+          [randomUUID3(), id, outlet]
         );
         await c.query(`INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active)
-          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID2(), p.subject, id, randomBytes2(32).toString("hex")]);
+          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID3(), p.subject, id, randomBytes3(32).toString("hex")]);
         await c.query(`INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,
           grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
-          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID2(), id]);
+          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID3(), id]);
         await c.query(`INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at)
           VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')`, [id, SAAS_PLANS.find((p2) => p2.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
         return { tenantId: id, created: true };
@@ -1018,7 +1114,7 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
 }
 
 // services/pos/sync.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
@@ -1549,7 +1645,7 @@ var operationalKinds = /* @__PURE__ */ new Set([
   "users",
   "staff_members"
 ]);
-var sectors2 = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
+var sectors3 = /* @__PURE__ */ new Set(["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"]);
 var presets = { fnb: "FNB", ld: "LAUNDRY", rt: "RETAIL", cw: "CARWASH", bb: "BARBERSHOP" };
 function presetSector(kind, id) {
   if (typeof id !== "string") return;
@@ -1566,7 +1662,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
     if (row.storeMode !== expected) return "WRONG_STORE_MODE:" + row.storeMode;
   }
   for (const field of ["businessSector", "sector"]) {
-    if (typeof row[field] === "string" && sectors2.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
+    if (typeof row[field] === "string" && sectors3.has(row[field]) && row[field] !== sector) return `WRONG_SECTOR:${row[field]}`;
   }
   if (typeof row.businessId === "string" && row.businessId !== businessId)
     return "WRONG_BUSINESS:" + row.businessId;
@@ -2600,6 +2696,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerHybridOnboarding(app, db);
   registerNeonOnboarding(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
@@ -2621,6 +2718,7 @@ function registerSyncRoutes(app, db) {
         await assertBusinessCanBeClaimed(c, businessId, principal.subject);
         let tenantId = await tenantForPrincipal(c, principal);
         if (!tenantId) {
+          if (process.env.NEON_DB_PHASE1 === "1") throw new BillingError(409, "HYBRID_ONBOARDING_REQUIRED");
           const created2 = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
             VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
             DO UPDATE SET name=EXCLUDED.name RETURNING id`, [storeName, principal.subject]);
@@ -2807,7 +2905,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes3(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes4(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -2826,7 +2924,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes3(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes4(32).toString("hex")]);
           }
           const verified = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -3344,6 +3442,7 @@ function normalizeVercelUrl(req) {
 
 // src/server/serverlessBoundary.ts
 var TRUSTED_IDENTITY_HEADERS = [
+  "x-auth-source-created-at",
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
@@ -3357,6 +3456,7 @@ function stripIdentityHeaders(req) {
 function applyPrincipal(req, principal) {
   stripIdentityHeaders(req);
   req.headers["x-auth-sub"] = principal.subject;
+  if (principal.sourceCreatedAt) req.headers["x-auth-source-created-at"] = principal.sourceCreatedAt;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
 }
@@ -3451,6 +3551,7 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 // src/server/syncHandler.ts
 var allowedMethods = {
   "/api/v1/sync/identity": ["GET"],
+  "/api/v1/sync/hybrid-onboarding": ["POST"],
   "/api/v1/sync/neon-onboarding": ["POST"],
   "/api/v1/privacy/requests": ["GET", "POST"],
   "/api/v1/privacy/notices": ["POST"],

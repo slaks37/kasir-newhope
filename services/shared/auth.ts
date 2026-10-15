@@ -1,3 +1,4 @@
+import {hybridPhase1Config} from './hybridPhase1';
 /**
  * Boundary keamanan untuk seluruh API merchant.
  *
@@ -16,6 +17,7 @@ export interface AuthPrincipal {
   isEmailVerified?: boolean;
   aal?: 'aal1' | 'aal2';
   mfaVerifiedAt?: number;
+  sourceCreatedAt?: string;
 }
 
 const LOCAL_BYPASS = () => (!process.env.AUTH_PROVIDER || process.env.AUTH_PROVIDER==='supabase') && process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
@@ -58,6 +60,7 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
   }
   if(process.env.AUTH_PROVIDER && process.env.AUTH_PROVIDER!=='supabase')throw new AuthUnavailableError();
 
+  if(process.env.NEON_DB_PHASE1==='1'){try{hybridPhase1Config();}catch{throw new AuthUnavailableError();}}
   const { url, apiKey } = supabaseConfig();
   if (!url || !apiKey) {
     return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
@@ -81,6 +84,7 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
       email?: unknown;
       email_confirmed_at?: unknown;
       confirmed_at?: unknown;
+      created_at?: unknown;
     };
     if (typeof user.id !== 'string' || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
@@ -92,6 +96,7 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
       Number.isFinite(a.timestamp) && a.timestamp<=Date.now()/1000+30).map((a:any)=>a.timestamp) : [];
     return {
       subject: user.id,
+      sourceCreatedAt:typeof user.created_at==='string'?user.created_at:undefined,
       email: typeof user.email === 'string' ? user.email : undefined,
       isEmailVerified,
       aal: claims.aal === 'aal2' ? 'aal2' : 'aal1',
@@ -134,7 +139,7 @@ export function requireTrustedGateway(req: Request, res: Response, next: NextFun
 export function trustedPrincipal(req: Request): AuthPrincipal | null {
   const subject = firstHeader(req.headers['x-auth-sub']);
   const isEmailVerified = firstHeader(req.headers['x-auth-email-verified']) === 'true';
-  if (subject) return { subject, email: firstHeader(req.headers['x-auth-email']) || undefined, isEmailVerified };
+  if (subject) return { subject, sourceCreatedAt:firstHeader(req.headers['x-auth-source-created-at'])||undefined, email: firstHeader(req.headers['x-auth-email']) || undefined, isEmailVerified };
   return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
 }
 
