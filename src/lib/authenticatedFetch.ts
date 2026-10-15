@@ -1,4 +1,5 @@
-import { isSupabaseConfigured, supabase } from './supabase';
+import { isSupabaseConfigured, supabase, usesBetterAuth } from './supabase';
+import {authenticatedTransport,betterBearerToken} from './auth/authenticatedTransport';
 
 /**
  * Tambahkan access token hanya ke API milik origin ini. Satu tempat ini
@@ -8,18 +9,13 @@ export function installAuthenticatedFetch(): void {
   if (typeof window === 'undefined' || !isSupabaseConfigured) return;
   const nativeFetch = window.fetch.bind(window);
 
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const rawUrl = input instanceof Request ? input.url : String(input);
-    const url = new URL(rawUrl, window.location.origin);
-    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/') || url.pathname==='/api/auth' || url.pathname.startsWith('/api/auth/')) {
-      return nativeFetch(input, init);
-    }
-
-    const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
-    if (!headers.has('authorization')) {
-      const { data } = await supabase.auth.getSession();
-      if (data.session?.access_token) headers.set('authorization', `Bearer ${data.session.access_token}`);
-    }
-    return nativeFetch(input, { ...init, headers });
-  };
+  window.fetch = authenticatedTransport(nativeFetch,window.location.origin,async()=>{
+    // Native getSession performs remote auth + identity resolution. Repeating
+    // that chain before EACH business read consumes its 15s AbortSignal budget
+    // before the actual API request starts on a cold Preview. Attach the signed
+    // native token directly; API middleware still verifies the live session.
+    if(usesBetterAuth)return betterBearerToken(localStorage,window.location.origin);
+    const {data}=await supabase.auth.getSession();
+    return data.session?.access_token||'';
+  });
 }

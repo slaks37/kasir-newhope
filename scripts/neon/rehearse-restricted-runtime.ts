@@ -6,6 +6,8 @@ import pg from 'pg';
 import express from 'express';
 import {createOTP} from '@better-auth/utils/otp';
 import {base32} from '@better-auth/utils/base32';
+import {readBusinessDirectory} from '../../src/lib/workspace/businessDirectory';
+import {verifiedSelection} from '../../src/lib/workspace/selection';
 
 const roleEnv=parse(fs.readFileSync('.env.neon-runtime-roles.local'));
 const ownerEnv=parse(fs.readFileSync('.env.neon-data-restore.local'));
@@ -72,6 +74,10 @@ try {
     assert.equal(onboard.status,200,'Onboarding:'+sector+':'+onboard.data.error);assert(onboard.data.created);
     const replay=await call('/api/v1/sync/neon-onboarding',{business_sector:sector},owner);assert.equal(replay.status,200);assert.equal(replay.data.created,false);
     const directory=await call('/api/v1/sync/business',null,owner);assert.equal(directory.status,200);assert.equal(directory.data.businesses.length,1);assert.equal(directory.data.businesses[0].outlets.length,2);owner.business=directory.data.businesses[0];
+    const validated=readBusinessDirectory(directory.data);
+    assert.equal(owner.business.legacyAlias,principal.subject+'_'+sector,'New native owner must work with source-shaped sector namespaces');
+    const selectable=validated.businesses.filter(b=>b.legacyAlias||validated.capabilities?.multiBusiness);
+    assert.equal(verifiedSelection(principal.subject,validated.tenantId!,selectable,null,{sector})?.businessId,owner.business.businessId,'UI must be able to select the native store');
     assert.equal((await appDb.query('SELECT role FROM internal.memberships WHERE user_id=$1',[principal.subject])).rows[0].role,'OWNER');
     const identity=await betterOwnerIdentity(principal.subject);assert.equal(identity?.email,email);assert.equal(identity?.verified,true);
   }

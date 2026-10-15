@@ -1,6 +1,7 @@
 import {createAuthClient} from 'better-auth/react';
 import {twoFactorClient} from 'better-auth/client/plugins';
 import {AuthError,type GoTrueClient,type Session,type AuthChangeEvent} from '@supabase/auth-js';
+import {betterBearerToken} from './authenticatedTransport';
 
 const canonicalOrigin=import.meta.env.VITE_BETTER_AUTH_URL as string|undefined;
 const allowedOrigins=[canonicalOrigin,...String(import.meta.env.VITE_BETTER_AUTH_ALLOWED_ORIGINS||'').split(',')].filter((value):value is string=>Boolean(value)).map(value=>{
@@ -13,7 +14,7 @@ if(import.meta.env.VITE_AUTH_PROVIDER==='better-auth'&&(!canonicalOrigin||!allow
 // issuer and migration bindings remain server-owned; no arbitrary-host redirect.
 const origin=canonicalOrigin?window.location.origin:undefined;
 const key='nh-better-auth:'+origin;
-const token=()=>localStorage.getItem(key+':token')||'';
+const token=()=>betterBearerToken(localStorage,String(origin));
 export const betterClient=createAuthClient({baseURL:origin,plugins:[twoFactorClient()],fetchOptions:{
   auth:{type:'Bearer',token},
   onSuccess:async context=>{const signed=context.response.headers.get('set-auth-token');if(signed)localStorage.setItem(key+':token',signed);},

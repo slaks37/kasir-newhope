@@ -4585,7 +4585,7 @@ function registerNeonOnboarding(app, db) {
         await c.query(`INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active)
           VALUES($1,$2,$3,$4::text,$4::uuid,true)`, [id, name, sector, p.subject]);
         await c.query("INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) VALUES($1,$2,$3,$4)", [id, name, sector, p.subject]);
-        await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$1,$2,$3)", [id, name, sector]);
+        await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$1,$2,$3,$4)", [id, name, sector, `${p.subject}_${sector}`]);
         for (const outlet of second && second !== first ? [first, second] : [first]) await c.query(
           "INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)",
           [randomUUID8(), id, outlet]

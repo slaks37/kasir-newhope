@@ -51,7 +51,11 @@ export function registerNeonOnboarding(app:Express,db:Db) {
         await c.query(`INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active)
           VALUES($1,$2,$3,$4::text,$4::uuid,true)`,[id,name,sector,p.subject]);
         await c.query('INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) VALUES($1,$2,$3,$4)',[id,name,sector,p.subject]);
-        await c.query('INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$1,$2,$3)',[id,name,sector]);
+        // A source-shaped restore can still use the legacy sector namespace.
+        // The initial native store must have a server-derived transport alias;
+        // otherwise the directory deliberately disables it until multi-business
+        // namespace support is present. Never take this reference from the client.
+        await c.query('INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$1,$2,$3,$4)',[id,name,sector,`${p.subject}_${sector}`]);
         for(const outlet of second && second!==first?[first,second]:[first])await c.query(
           'INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)',[randomUUID(),id,outlet]);
         await c.query(`INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active)

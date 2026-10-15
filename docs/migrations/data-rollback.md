@@ -86,3 +86,11 @@ If staging fixtures are eventually removed, that deletion is a separate explicit
 operator action. After future production target writes, preserve acknowledged
 financial/provider/offline events and follow the documented reconciliation procedure;
 never replace current balances with the earlier snapshot.
+
+Native onboarding transport correction 0009 changes only previously absent
+aliases on verified NEW native single-merchant accounts. Source merchants,
+canonical UUIDs and financial rows are fingerprinted before/after. Once a device
+has used a corrected transport reference, do not unset it as an automatic
+rollback: retain queues and references and reconcile them through the chosen
+writer. Imported/conflicting owners require review; an environment rollback is
+not permission to reassign an alias or erase namespace/audit records.

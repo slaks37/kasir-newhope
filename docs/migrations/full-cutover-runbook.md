@@ -35,6 +35,20 @@ exactly. Real reset-email delivery, three identity exceptions, independent
 backup acceptance, final offline/provider delta and production approval remain
 open gates. Existing source credentials, production env and domains stay intact.
 
+Hosted acceptance additionally found that native initial stores need the
+server-derived canonical owner/sector transport alias while a source-shaped
+catalog lacks multi-business namespaces. New onboarding now supplies it.
+`0009_native_onboarding_transport.sql` repairs only NEW verified native accounts
+with one merchant, no existing alias and no BUSINESS namespace data; collisions
+abort. Its staging runner proves original source merchants and financial rows
+are unchanged and reapplication is idempotent. Do not use it to reconcile
+ownership of imported accounts.
+
+Establish authorized Vercel access before asserting Preview application JSON.
+A 200 SSO HTML page is not an API success. Native browser transport forwards the
+signed bearer without repeating the remote session/identity/bootstrap chain
+for each request. Server live-session, ownership and MFA checks stay mandatory.
+
 ## Evidence and acceptance gates
 
 | Gate | Evidence / acceptance condition |

@@ -1,0 +1,29 @@
+{
+  "status": "PASS",
+  "baseCommit": "1f7a50025d14a6f5ca496f6ccc00af6ebcefa642",
+  "scope": "Complete local verification after hosted onboarding/transport fixes; exact hosted SHA is recorded in PR #21",
+  "checks": {
+    "fullVerify": true,
+    "bothTypechecks": true,
+    "build": true,
+    "migrationHarness": true,
+    "completeSecurityAndRegressionSuite": true,
+    "sourceShapedUiSelection": true,
+    "transportOriginAndLogoutIsolation": true,
+    "secretScan": true
+  },
+  "codeSha256": {
+    "api/_admin_bundle.js": "42a0e05d72ea15642dbcd155701dbabc412730c807aa6bbcf1a1a76d9ab43758",
+    "api/_sync_bundle.js": "4c4acec1abd1ea007f42b72786a7dae108409a72cdfb4c572975596858535c1a",
+    "neon/migrations/0009_native_onboarding_transport.sql": "0aa64967ed3b09035ee24a12b2ef78fc8c7371ad0e6d5a0f88b298b1d9055621",
+    "package.json": "3b5bb9f7ffb3203b191f6bbbea74f340436a0c3eaef7d7d7a49faa383d84e02b",
+    "scripts/dev/test-authenticated-transport.ts": "b093025bc27be8cb2ddd694cc1272bdeaa9cc7692f709414f2142901516133f5",
+    "scripts/dev/test-neon-onboarding.ts": "bd9b05b29f2effd1bb46e25a2c1bccfc339ee7146be8fca8ac2551e97348ea24",
+    "scripts/neon/onboarding-transport-upgrade.mjs": "d3501bc8094e382fad3f53c79941e41c4f92a7c66d41f37702c2731e5b73b0e7",
+    "scripts/neon/rehearse-restricted-runtime.ts": "e9196ccd31767c630156387f82ff89e831af6f24658a897709a6779aea53180b",
+    "services/pos/neonOnboarding.ts": "494984f33db878cdebcec44f7cd16f43cd4f0beb46c81d0dca40baac2de94cd6",
+    "src/lib/auth/authenticatedTransport.ts": "9ec9c9fb0a67a59a1bb61499b13f03ec150bdd0ea3d05f326dd7fde276a6a62b",
+    "src/lib/auth/betterClient.ts": "43323c8c19074d6e31cb3102503e2ca83359bc48efcb42a2bc3485c22438ff8b",
+    "src/lib/authenticatedFetch.ts": "de334f3ab4a9d75b2b116eacaaa540e104678d3ebf587836e9775c39dc0a467e"
+  }
+}

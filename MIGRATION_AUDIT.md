@@ -37,6 +37,18 @@ production database mutation, production env change or authentication cutover.
 | Invalid pool values could defeat bounded budgets | Invalid values fall back to four locally/two on Vercel; local cap 20. Six actual pooled staging requests used at most two clients and cleared transaction-local state. |
 | `db:verify` seeded obsolete unqualified tables after schema separation | Replace legacy demo/BI harness with disposable PG18 catalog verification: 70 migrations, all markers, 18 required relations, 198 FKs and 48 executable views, zero demo financial rows. Business regression remains in `npm test`. |
 
+Hosted acceptance found two additional defects. Native onboarding omitted the
+canonical owner/sector transport alias needed by a source-shaped catalog; new
+stores now receive it from the server. Reviewed corrective 0009 repairs only
+unambiguous NEW native single-merchant accounts, aborts on namespace/conflict
+risks, and leaves imported identities and financial records unchanged.
+
+The native browser request wrapper also repeated remote session/identity
+resolution before every business API request, exhausting its timeout budget.
+Native requests now attach the signed origin-scoped bearer directly. The API
+still verifies live sessions, tenant ownership and MFA. Supabase's existing
+session lookup behavior remains unchanged.
+
 Historical migration SQL was not rewritten. No new grants were issued to make
 runtime access the migration registry: its `42501` denial is expected and tested.
 No automatic retry of financial mutations was added.
