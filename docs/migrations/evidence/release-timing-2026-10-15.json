@@ -1,0 +1,16 @@
+{
+  "status": "PARTIAL_PHASE_MEASUREMENTS_ONLY",
+  "unit": "seconds",
+  "existingEvidenceReusedWithoutRerunning": true,
+  "phases": {
+    "source-restore": 6.822,
+    "source-reconcile": 7.551,
+    "runtime-upgrade": 7.614,
+    "native-schema": 8.333,
+    "restricted-logins": 2.93,
+    "storage-copy": 16.411,
+    "auth-recovery-drill": 1.279
+  },
+  "productionDowntimeEstimate": null,
+  "reason": "No measured end-to-end write freeze, device drain, DOKU provider checkpoint, final delta application, production alias switch or rollback after Neon writes. Do not add these independent measurements into an asserted downtime SLA."
+}

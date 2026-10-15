@@ -1,0 +1,27 @@
+{
+  "status": "DRIFT_REQUIRES_FROZEN_DELTA",
+  "baselineCapture": "2026-10-15T10:16:16.489064+00:00",
+  "baselineCiphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "checkpointAt": "2026-10-15T11:59:53.327479+00:00",
+  "tablesCompared": 125,
+  "changes": [
+    {
+      "table": "billing.plans",
+      "before": 6,
+      "after": 6,
+      "kind": "DATA_DRIFT",
+      "requiresFrozenSnapshotReview": true
+    },
+    {
+      "table": "blog_mcp_private.audit",
+      "before": 42,
+      "after": 43,
+      "kind": "DATA_DRIFT",
+      "requiresFrozenSnapshotReview": true
+    }
+  ],
+  "elapsedMs": 1205,
+  "scope": "Credential-free table fingerprint comparison only; no source/target writes, no backup recreated, no final snapshot or device/provider assertion",
+  "productionDecision": "NO-GO",
+  "cutoverDowntimeEstimate": null
+}

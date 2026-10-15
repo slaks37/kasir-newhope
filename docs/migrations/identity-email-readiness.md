@@ -1,5 +1,7 @@
 # Auth email and HTTPS staging acceptance
 
+> Status terbaru dan instruksi operator: [keputusan rilis 15 Oktober 2026](release-decision-2026-10-15.md). Bagian sebelumnya adalah bukti historis; izin email/DMARC/backup yang telah diberikan tidak perlu diminta ulang. Full service recovery, key custody, tiga claimant dan checkpoint cutover tetap belum diterima.
+
 No real email has been sent by the identity migration work. Recipient send
 authorization is a separate final action, even if an address is a support contact.
 

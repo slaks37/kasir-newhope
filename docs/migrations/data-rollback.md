@@ -1,5 +1,7 @@
 # Source restore and cutover rollback
 
+> Status terbaru dan instruksi operator: [keputusan rilis 15 Oktober 2026](release-decision-2026-10-15.md). Bagian sebelumnya adalah bukti historis; izin email/DMARC/backup yang telah diberikan tidak perlu diminta ulang. Full service recovery, key custody, tiga claimant dan checkpoint cutover tetap belum diterima.
+
 Production Supabase is unchanged. `br-curly-truth-aze21ktf` is an isolated restored
 candidate, so present rollback is to leave production on Supabase and disable
 candidate traffic; it does not require production data repair or deletion.

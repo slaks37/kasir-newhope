@@ -1,5 +1,7 @@
 # Full Neon migration release runbook
 
+> Status terbaru dan instruksi operator: [keputusan rilis 15 Oktober 2026](release-decision-2026-10-15.md). Bagian sebelumnya adalah bukti historis; izin email/DMARC/backup yang telah diberikan tidak perlu diminta ulang. Full service recovery, key custody, tiga claimant dan checkpoint cutover tetap belum diterima.
+
 Prepared 14 October 2026 (Asia/Jakarta). **Staging preparation only; production
 has not switched.** Source is Supabase `fqxrhumsgigcgjtlbfuo`. Target is the
 Singapore Free project `steep-sea-66546931`, isolated child

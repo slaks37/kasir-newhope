@@ -1,5 +1,7 @@
 # Independent source backup and recovery — operator packet
 
+> Status terbaru dan instruksi operator: [keputusan rilis 15 Oktober 2026](release-decision-2026-10-15.md). Bagian sebelumnya adalah bukti historis; izin email/DMARC/backup yang telah diberikan tidak perlu diminta ulang. Full service recovery, key custody, tiga claimant dan checkpoint cutover tetap belum diterima.
+
 Status: **PARTIAL RECOVERY VERIFIED, not independently accepted**.
 
 Update after explicit owner authorization: a source-encrypted full visible-schema
@@ -110,10 +112,11 @@ backup object version/checksum, key fingerprint, isolation proof and independent
 operator acceptance signature/reference. Only that evidence closes the backup
 gate. Securely dispose of plaintext working files per owner policy after acceptance.
 
-Current missing resources: approved native source connection/export job; complete
-auth recovery archive and required platform keys; owner-managed external escrow;
-isolated recovery project/access/cost approval; independent operator acceptance.
-All remain open. An authorized encrypted all-visible-schema/auth archive and offline native auth
+Current missing resources: authorized native source connection/export job, required
+platform encryption keys/settings, independent key custody and operator acceptance,
+and a running compatible local recovery runtime. The encrypted all-visible-schema
+auth archive and owner-private Drive readback already exist; do not recreate them
+without a specific compatibility/recovery gap. No paid recovery project is approved. An authorized encrypted all-visible-schema/auth archive and offline native auth
 table restore have since run successfully; a complete Supabase service/platform
 restore and independent owner/key acceptance have not.
 
