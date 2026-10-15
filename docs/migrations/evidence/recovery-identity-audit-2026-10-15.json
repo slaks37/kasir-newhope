@@ -1,0 +1,29 @@
+{
+  "checkedAt": "2026-10-15T03:15:14.478Z",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "scope": "Read-only sanitized import audit; no account addresses, names, credential hashes, sessions, reset links or MFA secrets",
+  "reviewSemantics": "Technical agent review under general owner migration-preparation authorization; exact final account mapping/cutover approval is not established by reviewer_ref",
+  "batches": [
+    {
+      "batch_id": "39b2db02-9cd6-498f-99d4-cffeeafc6408",
+      "source_project": "fqxrhumsgigcgjtlbfuo",
+      "source_digest": "76620c375340c1109a9a397d26d4018c81ec8bd263d43cf19d24f15e4e5b9c85",
+      "source_backup_ref": "8ea8095f142e34637890b9dea51be1e6fa50659291ebd89fb476d77eb0b053a8",
+      "issuer": "https://kasir-newhope-neon-staging.vercel.app",
+      "row_count": 7,
+      "business_digest": "b671d0507eef0b0c4821e4dea50a86381faddb5ca148036e35ecde0e23daac77",
+      "created_at": "2026-10-14T00:59:26.358Z",
+      "explicit_canonical_creates": 5,
+      "revoked": false
+    }
+  ],
+  "totals": {
+    "native_users": 18,
+    "verified_native_users": 18,
+    "native_credentials": 11,
+    "native_sessions": 4,
+    "enrolled_native_totp": 1,
+    "active_canonical_bindings": 14
+  }
+}

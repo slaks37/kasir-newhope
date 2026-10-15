@@ -18,9 +18,10 @@ function serverlessConnectionString(connectionString, vercel = process.env.VERCE
   }
 }
 function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  const budget = Number.isInteger(max) && max > 0 ? Math.min(max, 20) : 4;
   return {
     // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    max: vercel === "1" ? Math.min(budget, 2) : budget,
     idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
     connectionTimeoutMillis: 1e4
   };
@@ -52,6 +53,8 @@ function databaseTransport(connectionString, env = process.env) {
   const url = new URL(connectionString);
   const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
   if (neon) {
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hash || [...url.searchParams.keys()].some((key) => !["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "channel_binding", "application_name"].includes(key)))
+      throw Error("DATABASE_CONNECTION_OVERRIDE_REJECTED");
     for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
     return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
   }

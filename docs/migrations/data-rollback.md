@@ -70,3 +70,19 @@ runbook does not claim that a full live after-write reverse migration has been
 executed. Supabase backup/PITR and separated durable key/ciphertext escrow remain
 required because scoped catalog backups omit provider credentials/platform state.
 Six-hour Neon retained history is not an independent backup.
+# Recovery rehearsal boundary — 15 October 2026
+
+The new clean child `br-mute-hat-azuw3aag` contains the earlier credential-free
+source capture plus reviewed runtime correction only. The original 125 table
+fingerprints and wallet values survived correction/reapplication; five source
+sequence states matched during strict reconciliation. No customer native
+identity was imported into this branch. This proves a scoped restore, not an
+independent full-source authentication recovery or a tested post-cutover merge.
+
+Do not drop/reset the old fixture-bearing child to manufacture a clean result.
+Both old rehearsal data and the clean proof are retained. A rollback from the
+current preparation needs no production change because no cutover occurred.
+If staging fixtures are eventually removed, that deletion is a separate explicit
+operator action. After future production target writes, preserve acknowledged
+financial/provider/offline events and follow the documented reconciliation procedure;
+never replace current balances with the earlier snapshot.

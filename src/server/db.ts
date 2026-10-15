@@ -262,6 +262,7 @@ async function ensureMigrationTable(db: Db): Promise<void> {
 }
 
 export async function runMigrations(db: Db, log: (m: string) => void = () => {}): Promise<void> {
+  if (db.driver !== 'pglite') throw Error('REMOTE_RUNTIME_MIGRATIONS_DISABLED');
   await ensureMigrationTable(db);
 
   const done = new Set(
@@ -315,12 +316,16 @@ export async function getDb(log: (m: string) => void = () => {}): Promise<Db> {
 
   opening = (async () => {
     const url = (process.env.DATABASE_URL || '').trim();
+    if (!url && (process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'))
+      throw Error('DATABASE_URL_NOT_CONFIGURED');
     const db = url
       ? await createPgDb(url)
       : await createPgliteDb(path.resolve(process.cwd(), process.env.PGLITE_DIR || '.pgdata'));
 
     log(`🗄️  Database: ${db.label}`);
-    await runMigrations(db, log);
+    // Remote databases are provisioned separately. Runtime credentials never
+    // replay historical bootstrap files over an imported customer catalog.
+    if (db.driver === 'pglite') await runMigrations(db, log);
     instance = db;
     return db;
   })();

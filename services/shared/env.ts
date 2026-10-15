@@ -31,8 +31,8 @@ export function ringkasEnv(): string {
 }
 
 /** Tujuan database dalam bentuk yang aman dicetak — kata sandi tidak pernah ikut. */
-export function ringkasTujuanDb(): string {
-  const url = (process.env.DATABASE_URL || '').trim();
+export function ringkasTujuanDb(connectionString = process.env.DATABASE_URL): string {
+  const url = (connectionString || '').trim();
   if (!url) return 'PGlite lokal (DATABASE_URL kosong)';
   try {
     const u = new URL(url);

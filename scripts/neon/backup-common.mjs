@@ -19,14 +19,19 @@ export async function loadBackup(file='build/neon/source-2026-10-13-v3.pgp.b64',
  if(snapshot.format!=='newhope-pg-catalog-v1'||snapshot.sourceProject!==sourceProject||snapshot.schemas.join(',')!==appSchemas.join(',')||!snapshot.dataPolicy.startsWith('credential-free'))throw Error('UNTRUSTED_BACKUP_SCOPE');
  return {snapshot,ciphertextSha256:sha(ciphertext),file:path.resolve(file)};
 }
-export function restoreTarget(file='.env.neon-data-restore.local'){
+export function restoreTarget(file){
+ const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
+ if(!['full-restore','clean-rehearsal'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
+ const clean=selection==='clean-rehearsal';
+ file=file||(clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
  const env=parse(privateFile(file));
- const manifest=JSON.parse(fs.readFileSync('neon/targets/full-restore.json','utf8'));
+ const manifest=JSON.parse(fs.readFileSync(clean?'neon/targets/clean-rehearsal.json':'neon/targets/full-restore.json','utf8'));
  const allowedBranch=manifest.branchId||manifest.branch_id;
- if(env.NEON_PROJECT_ID!==projectId||env.NEON_BRANCH_ID!==allowedBranch||allowedBranch==='br-icy-dust-azqi5vlc'||allowedBranch==='br-falling-butterfly-az989m86')throw Error('RESTORE_CHILD_BRANCH_MISMATCH');
+ if(manifest.default!==false||env.NEON_PROJECT_ID!==projectId||env.NEON_BRANCH_ID!==allowedBranch||allowedBranch==='br-icy-dust-azqi5vlc'||allowedBranch==='br-falling-butterfly-az989m86')throw Error('RESTORE_CHILD_BRANCH_MISMATCH');
  const url=new URL(env.NEON_RESTORE_DATABASE_URL||'');
  url.hostname=url.hostname.replace('-pooler','');
- if(url.protocol!=='postgresql:'||url.hostname!==env.NEON_RESTORE_HOST||url.hostname!==manifest.host||url.hostname.includes('-pooler')||url.pathname!=='/neondb'||!url.hostname.endsWith('.ap-southeast-1.aws.neon.tech'))throw Error('RESTORE_ENDPOINT_MISMATCH');
+ if(url.protocol!=='postgresql:'||url.hostname!==env.NEON_RESTORE_HOST||url.hostname!==manifest.host||url.hostname.includes('-pooler')||url.pathname!=='/neondb'||!url.hostname.endsWith('.ap-southeast-1.aws.neon.tech')||
+   url.hash||(url.port&&url.port!=='5432')||[...url.searchParams.keys()].some(k=>!['sslmode','channel_binding','application_name'].includes(k)))throw Error('RESTORE_ENDPOINT_MISMATCH');
  for(const key of ['sslmode','sslcert','sslkey','sslrootcert','uselibpqcompat'])url.searchParams.delete(key);
  return {env,manifest,connectionString:url.href,ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000};
 }

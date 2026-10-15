@@ -6,6 +6,35 @@ Singapore Free project `steep-sea-66546931`, isolated child
 `br-curly-truth-aze21ktf`; never the empty root or another project's database.
 Draft PR #21 is the review boundary.
 
+## Recovery addendum — 15 October 2026
+
+See [recovery validation](recovery-2026-10-15.md) and the repository-root
+`MIGRATION_AUDIT.md`, `DATABASE_RECONCILIATION.md` and `SCHEMA_DIFF.md`.
+The interrupted local safeguards were recovered. Generic remote runtime DDL,
+remote demo bootstrap/seeding and generic migration replay on a populated import
+with pending historical files are blocked. Do not backfill applied markers or
+checksums to make that rejection disappear. Use the reviewed corrective path.
+
+Clean branch `br-mute-hat-azuw3aag` / `pr21-clean-restore-2026-10-15` proves the
+credential-free baseline restore and idempotent 0008 correction without synthetic
+customers or new financial records. It is **not** a final frozen capture and has
+no customer native-auth import or cutover approval. It is deliberately absent
+from the runtime/cutover target allowlist. Preserve it for independent review.
+
+To repeat its reviewed, non-production checks, use private scoped env inputs
+with `NEON_RESTORE_TARGET=clean-rehearsal`. `restore-catalog.mjs` still requires
+the exact reviewed encrypted backup SHA and refuses populated targets. Never
+reapply it to a branch that is already restored. `reconcile-catalog.mjs` is
+read-only; `source-runtime-upgrade.mjs` verifies that original rows are unchanged
+and tests reapplication inside its transaction. A new final snapshot requires a
+separately reviewed target and backup, not a change to this rehearsal manifest.
+
+Local full verification and actual staging SQL/HTTP/MFA/storage results are
+recorded in recovery receipts. Hosted checks must identify the pushed commit
+exactly. Real reset-email delivery, three identity exceptions, independent
+backup acceptance, final offline/provider delta and production approval remain
+open gates. Existing source credentials, production env and domains stay intact.
+
 ## Evidence and acceptance gates
 
 | Gate | Evidence / acceptance condition |

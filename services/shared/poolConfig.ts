@@ -18,9 +18,10 @@ export function serverlessConnectionString(connectionString: string, vercel = pr
 }
 
 export function databasePoolLimits(max: number, vercel = process.env.VERCEL) {
+  const budget = Number.isInteger(max) && max > 0 ? Math.min(max, 20) : 4;
   return {
     // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === '1' ? Math.min(Math.max(1, max), 2) : max,
+    max: vercel === '1' ? Math.min(budget, 2) : budget,
     idleTimeoutMillis: vercel === '1' ? 5_000 : 30_000,
     connectionTimeoutMillis: 10_000,
   };
