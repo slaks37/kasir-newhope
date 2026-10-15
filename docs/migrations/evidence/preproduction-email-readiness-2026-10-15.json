@@ -30,5 +30,8 @@
   "ownerReceiptConfirmedAt": "2026-10-15T11:08:09.828711+00:00",
   "ownerMailboxReceipt": "ONE_INBOX_ONE_SPAM",
   "ownerCorrectionSupersedesEarlierBothInboxReply": true,
-  "deliverabilityAcceptance": "SPAM_CLASSIFICATION_REVIEW_OPEN_NO_ADDITIONAL_EMAIL_AUTHORIZED"
+  "deliverabilityAcceptance": "SPAM_CLASSIFICATION_REVIEW_OPEN_NO_ADDITIONAL_EMAIL_AUTHORIZED",
+  "ownerVerificationEmailFolder": "SPAM",
+  "ownerPasswordResetEmailFolder": "INBOX",
+  "authenticationResultsFromRecipientHeaders": "NOT_INSPECTED"
 }

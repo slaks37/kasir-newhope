@@ -16,12 +16,16 @@
     {
       "kind": "VERIFY",
       "providerEmailId": "01a13f2f-96db-72cb-9231-cc439d2ad02c",
-      "status": "PROVIDER_ACCEPTED"
+      "status": "PROVIDER_ACCEPTED",
+      "providerLatestEvent": "delivered",
+      "ownerMailboxFolder": "SPAM"
     },
     {
       "kind": "RESET",
       "providerEmailId": "01a13f31-63fc-7329-9cb2-c7b5ade72ec0",
-      "status": "PROVIDER_ACCEPTED"
+      "status": "PROVIDER_ACCEPTED",
+      "providerLatestEvent": "delivered",
+      "ownerMailboxFolder": "INBOX"
     }
   ],
   "scope": "Owner-approved separate staging test identity; exact two real messages; native handler + hosted HTTPS callback; private tokens/password/MFA omitted; owner device enrollment and inbox/spam acceptance still external",
@@ -29,5 +33,8 @@
   "ownerMailboxReceipt": "ONE_INBOX_ONE_SPAM",
   "ownerCorrectionSupersedesEarlierBothInboxReply": true,
   "deliverabilityAcceptance": "SPAM_CLASSIFICATION_REVIEW_OPEN_NO_ADDITIONAL_EMAIL_AUTHORIZED",
-  "actualInboxDelivery": "ONE_INBOX_ONE_SPAM"
+  "actualInboxDelivery": "ONE_INBOX_ONE_SPAM",
+  "ownerVerificationEmailFolder": "SPAM",
+  "ownerPasswordResetEmailFolder": "INBOX",
+  "authenticationResultsFromRecipientHeaders": "NOT_INSPECTED"
 }
