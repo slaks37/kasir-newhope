@@ -1,0 +1,10 @@
+{
+  "status": "APPLIED",
+  "batchId": "cc0bbb8f-463f-4311-bade-86000757e7b6",
+  "rowCount": 7,
+  "sourceDigest": "bc5d927f6d26800ff53e4faf9b2f427f5042c8cfc053481e56a2b5220314e3f9",
+  "businessDigest": "b671d0507eef0b0c4821e4dea50a86381faddb5ca148036e35ecde0e23daac77",
+  "credentialsImported": false,
+  "sessionsImported": false,
+  "mfaSecretsImported": false
+}

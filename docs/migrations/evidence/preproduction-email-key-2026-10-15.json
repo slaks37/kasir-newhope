@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-10-15T10:35:41.181Z",
+  "scope": "Read-only sending-key provider diagnostic; no messages or key values",
+  "httpStatus": 401,
+  "providerErrorClass": "restricted_api_key",
+  "domainReadAvailable": false,
+  "keyCreationPermission": "sending_access",
+  "keyCreationDomainRestricted": true,
+  "domainManagementPermissionDenied": false,
+  "sendingEnabled": false,
+  "messagesSent": 0,
+  "domainSendingAcceptance": "Requires owner-approved live test",
+  "domainManagementAccessDenied": true,
+  "keyValidityForSending": "NOT_TESTED_NO_EMAIL_AUTHORIZATION",
+  "previewBranchKeyInstalled": true,
+  "productionEnvironmentModified": false
+}

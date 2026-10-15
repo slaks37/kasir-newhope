@@ -94,3 +94,12 @@ has used a corrected transport reference, do not unset it as an automatic
 rollback: retain queues and references and reconcile them through the chosen
 writer. Imported/conflicting owners require review; an environment rollback is
 not permission to reassign an alias or erase namespace/audit records.
+
+
+## Latest pre-production packet
+
+See [preproduction-2026-10-15.md](preproduction-2026-10-15.md) for the fresh
+source candidate, current DNS/email/account findings, private identity review
+boundary and open gates. [Independent recovery process](independent-backup-recovery.md)
+provides the owner/operator packet. No backup acceptance, identity approval, real
+email/MFA acceptance, source freeze or production cutover is established.

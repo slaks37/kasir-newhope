@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "scope": "Private encrypted scoped capture validation and target/secret guard negative tests; no database writes",
+  "ciphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "checks": {
+    "staleCaptureRejectedForFreshCandidate": true,
+    "wrongProjectBranchAndEndpointDenied": 5,
+    "insecureSecretFilePermissionsDenied": true,
+    "ciphertextTamperingDenied": true,
+    "residualCustomerCredentialKeys": 0,
+    "authManifestContainsNoCredentials": true,
+    "nestedRecoveryPinsExplicitlyRemoved": true,
+    "backupStoredAsCiphertext": true
+  }
+}

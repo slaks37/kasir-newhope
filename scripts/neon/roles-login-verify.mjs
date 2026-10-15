@@ -3,8 +3,12 @@ import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {parse} from 'dotenv';
 import pg from 'pg';
-const env=parse(fs.readFileSync('.env.neon-runtime-roles.local'));
-const target=JSON.parse(fs.readFileSync('neon/targets/full-restore.json','utf8'));
+import {privateFile} from './backup-common.mjs';
+const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
+assert(['full-restore','fresh-candidate'].includes(selection),'ROLE_TARGET_NOT_REVIEWED');
+const prefix=selection==='fresh-candidate'?'fresh-':'';
+const env=parse(privateFile(selection==='fresh-candidate'?'.env.neon-fresh-runtime-roles.local':'.env.neon-runtime-roles.local'));
+const target=JSON.parse(fs.readFileSync('neon/targets/'+selection+'.json','utf8'));
 assert.equal(target.projectId,'steep-sea-66546931');assert.equal(target.default,false);assert.equal(env.NEON_BRANCH_ID,target.branchId);
 const evidence={scope:'Actual restricted LOGIN sessions; synthetic writes rolled back; no production access',branchId:target.branchId,startedAt:new Date().toISOString(),checks:{},status:'RUNNING'};
 async function verify(key,login,group,allow,deny,write) {
@@ -51,4 +55,4 @@ try {
     });
   evidence.status='PASS';console.log(JSON.stringify({status:'PASS',branchId:target.branchId,checks:evidence.checks}));
 }catch(e){evidence.status='FAIL';evidence.failure=e.code||e.message;throw e;}
-finally{evidence.finishedAt=new Date().toISOString();fs.mkdirSync('build/neon',{recursive:true});fs.writeFileSync('build/neon/roles-login-evidence.json',JSON.stringify(evidence,null,2)+'\n');}
+finally{evidence.finishedAt=new Date().toISOString();fs.mkdirSync('build/neon',{recursive:true});fs.writeFileSync('build/neon/'+prefix+'roles-login-evidence.json',JSON.stringify(evidence,null,2)+'\n');}

@@ -64,3 +64,12 @@ The missing HTTPS/secret/owner delivery acceptance remains a production gate.
 Primary references:
 [Resend idempotency](https://resend.com/changelog/idempotency-keys) and
 [Better Auth email/password](https://github.com/better-auth/better-auth/blob/main/docs/content/docs/authentication/email-password.mdx).
+
+
+## Latest pre-production packet
+
+See [preproduction-2026-10-15.md](preproduction-2026-10-15.md) for the fresh
+source candidate, current DNS/email/account findings, private identity review
+boundary and open gates. [Independent recovery process](independent-backup-recovery.md)
+provides the owner/operator packet. No backup acceptance, identity approval, real
+email/MFA acceptance, source freeze or production cutover is established.

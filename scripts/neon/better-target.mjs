@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import {parse} from 'dotenv';
 import restore from '../../neon/targets/full-restore.json' with {type:'json'};
+import fresh from '../../neon/targets/fresh-candidate.json' with {type:'json'};
 
 // Never fall back to DATABASE_URL, the default branch, or another Neon project.
 export const projectId='steep-sea-66546931';
 const selectedFile=process.env.NEON_STAGING_ENV_FILE||'.env.better-auth-staging.local';
 const selectedIdentity=fs.existsSync(selectedFile)?parse(fs.readFileSync(selectedFile)):{};
 export const branchId=selectedIdentity.NEON_BRANCH_ID||'br-icy-dust-azqi5vlc';
-const targets=[{projectId,branchId:'br-icy-dust-azqi5vlc',host:'ep-damp-pine-azrnsoge.c-3.ap-southeast-1.aws.neon.tech',database:'neondb'},restore];
+const targets=[{projectId,branchId:'br-icy-dust-azqi5vlc',host:'ep-damp-pine-azrnsoge.c-3.ap-southeast-1.aws.neon.tech',database:'neondb'},restore,fresh];
 export function stagingTarget(file=selectedFile) {
   const env=parse(fs.readFileSync(file));
   const target=targets.find(t=>t.projectId===env.NEON_PROJECT_ID&&t.branchId===env.NEON_BRANCH_ID);

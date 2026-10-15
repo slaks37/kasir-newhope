@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-10-15T10:33:34.933Z",
+  "scope": "Read-only attested runtime endpoint diagnostic; no endpoint strings or credential values",
+  "connectionMode": "NEON_TRANSACTION_POOL",
+  "sourceProjectMatches": false,
+  "neonIsRehearsalBranch": true,
+  "verifiedClientTls": true,
+  "postgresBackendSslObserved": false,
+  "internalTransportAttestation": "NOT_ESTABLISHED_BY_THIS_DIAGNOSTIC",
+  "readOnlyTransaction": true,
+  "roleIsLeastPrivilege": true,
+  "productionCutoverApproval": "NOT_ESTABLISHED",
+  "runtimeProvenance": "Operator must attest this environment belongs to the active deployment; a local file alone cannot prove it"
+}

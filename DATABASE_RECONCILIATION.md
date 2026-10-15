@@ -55,3 +55,19 @@ The scoped backup is not an independent full-source/authentication rollback
 backup. Owner backup/restore acceptance and private key escrow remain open.
 Rollback after any target write requires reconciliation of acknowledged events,
 not an environment-only reversal. See [data rollback](docs/migrations/data-rollback.md).
+
+
+## Fresh pre-production capture — 15 October 2026
+
+New unfrozen encrypted capture at 10:16:16Z contains 125 tables/2,576 rows
+(68 articles, 42 blog audit rows). Strict full-table reconciliation, 466
+constraints and five sequences passed in `br-wandering-snow-azcqie4c`.
+65 public JPEG objects/5,674,590 bytes copied and hash-verified; exact article
+reference relocation, rollback, full source reconciliation and reapply passed.
+No source write, owner reassignment or payment occurred. Two owner-approved
+staging auth emails were subsequently delivered; their separate acceptance
+receipt never changes financial reconciliation. Native
+identity approvals, independent full DB/auth recovery, final frozen/provider/
+device delta and cutover authorization remain open. See
+[pre-production packet](docs/migrations/preproduction-2026-10-15.md) and its
+public aggregate receipts; private UUID/object/key manifests are excluded.

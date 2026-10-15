@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "scope": "Owner-authorized separate inactive source identities; no guessed canonical mapping or business permission; no production changes",
+  "branchId": "br-wandering-snow-azcqie4c",
+  "sourceBackupSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "startedAt": "2026-10-15T10:58:44.456Z",
+  "totals": {
+    "holds": 3,
+    "resolutions": 0,
+    "active_held_users": 0,
+    "active_held_bindings": 0
+  },
+  "originalBusinessFingerprint": "68b19a56f18d748793245ecd3a5db7bff96794795c6efefa237bfe857fd70352",
+  "businessUnchanged": true,
+  "canonicalAssignmentsChanged": 0,
+  "activePermissionGrants": 0,
+  "activationNegativeTests": 3,
+  "finishedAt": "2026-10-15T10:58:50.674Z"
+}

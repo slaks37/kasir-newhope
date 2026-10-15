@@ -60,3 +60,18 @@ See [recovery results](docs/migrations/recovery-2026-10-15.md),
 and the [cutover runbook](docs/migrations/full-cutover-runbook.md).
 Local results are distinct from exact-commit hosted CI/Preview acceptance.
 Production remains NO-GO until the runbook's owner gates are actually satisfied.
+
+
+## Owner-authorized pre-production continuation — 15 October 2026
+
+See [current decision](docs/migrations/GO-NO-GO-2026-10-15.md) and
+[complete evidence packet](docs/migrations/preproduction-2026-10-15.md).
+Fresh business candidate/65 objects, seven UUID-evidenced imports, three
+separate inactive guarded identities, restricted real LOGINs and scoped
+owner-approved email/reset/TOTP checks were completed. The exact approved
+DMARC TXT is the only production-domain change; application/DB/environment
+production remains on the prior deployment. A separately authorized all-visible
+source recovery archive is encrypted, owner-only offsite and checksum verified;
+offline native auth-table restore passed, while full Supabase service/platform
+recovery and key/independent acceptance remain open. Never relabel this as
+production GO or silently treat the live captures as a final frozen checkpoint.

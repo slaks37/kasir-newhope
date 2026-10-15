@@ -6,11 +6,17 @@ import {parse} from 'dotenv';
 import {loadBackup,restoreTarget,privateFile,sha} from './backup-common.mjs';
 const {snapshot:s,ciphertextSha256,file}=await loadBackup();
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'newhope-backup-negative-'));
-const original=fs.readFileSync('.env.neon-data-restore.local','utf8');
+const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
+const original=fs.readFileSync(selection==='fresh-candidate'?'.env.neon-fresh-candidate.local':selection==='clean-rehearsal'?'.env.neon-clean-restore.local':'.env.neon-data-restore.local','utf8');
 const results={status:'RUNNING',scope:'Private encrypted scoped capture validation and target/secret guard negative tests; no database writes',ciphertextSha256,checks:{}};
 function envFile(change){const env={...parse(original),...change},f=path.join(temp,'target-'+Object.keys(change).join('-')+'.env');fs.writeFileSync(f,Object.entries(env).map(([k,v])=>k+'='+JSON.stringify(v)).join('\n'),{mode:0o600});return f;}
 try{
- assert.equal(restoreTarget().env.NEON_BRANCH_ID,'br-curly-truth-aze21ktf');
+ assert.equal(restoreTarget().env.NEON_BRANCH_ID,restoreTarget().manifest.branchId);
+ if(selection==='fresh-candidate'){
+  assert.equal(ciphertextSha256,restoreTarget().manifest.ciphertextSha256);
+  await assert.rejects(()=>loadBackup('build/neon/source-2026-10-13-v3.pgp.b64'),/FRESH_CAPTURE_REVIEW_MISMATCH/);
+  results.checks.staleCaptureRejectedForFreshCandidate=true;
+ }
  for(const change of [{NEON_PROJECT_ID:'unrelated-project'},{NEON_BRANCH_ID:'br-icy-dust-azqi5vlc'},{NEON_BRANCH_ID:'br-falling-butterfly-az989m86'},{NEON_RESTORE_HOST:'other.ap-southeast-1.aws.neon.tech'},{NEON_RESTORE_DATABASE_URL:'postgresql://synthetic:synthetic@other.ap-southeast-1.aws.neon.tech/neondb'}])assert.throws(()=>restoreTarget(envFile(change)));
  results.checks.wrongProjectBranchAndEndpointDenied=5;
  const permission=path.join(temp,'public-private-file');fs.writeFileSync(permission,'synthetic',{mode:0o644});assert.throws(()=>privateFile(permission));results.checks.insecureSecretFilePermissionsDenied=true;

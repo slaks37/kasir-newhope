@@ -1,0 +1,87 @@
+{
+  "status": "PASS",
+  "scope": "Fresh isolated empty native auth schema and NOLOGIN role preparation; no identity import or activation, no source writes",
+  "targetBranch": "br-wandering-snow-azcqie4c",
+  "startedAt": "2026-10-15T10:37:32.064Z",
+  "files": [
+    {
+      "path": "neon/migrations/0001_identity_bindings.sql",
+      "sha256": "5cc386e8ab2a9d346ae535071c19ab93669ea95f7b05643fb7a24470560251c5"
+    },
+    {
+      "path": "neon/migrations/0002_better_auth_core.sql",
+      "sha256": "1ba8353b91c83c469e11060d9a58b03e8989f23c66f06a1f40afdefb62271e1d"
+    },
+    {
+      "path": "neon/migrations/0003_better_auth_evidence.sql",
+      "sha256": "0aab54cbe92ee131e415c37d8bc92c861ddae3b622f4808dfd3ea835e1e07469"
+    },
+    {
+      "path": "neon/migrations/0004_better_auth_identity_provider.sql",
+      "sha256": "dc0d3c0148344dfffaa7ae9fa8dc164a27e71566b510be2a43c50958b46bade7"
+    },
+    {
+      "path": "neon/migrations/0005_runtime_roles.sql",
+      "sha256": "789923a2e04f89b8eed8fd248fb65a210f424b277a40daefaa1ae0546efed41d"
+    },
+    {
+      "path": "neon/migrations/0006_identity_import_audit.sql",
+      "sha256": "844aa2ede06c7c40aa19ccc8e4bde56819bdcd3cfc005544eeb8b79da64711a4"
+    },
+    {
+      "path": "neon/migrations/0007_identity_canonical_create_evidence.sql",
+      "sha256": "19f50bcad7eff2d398b2915a7c70e1b0b6367c7f241238512ca21dcc1aeae0bc"
+    },
+    {
+      "path": "neon/migrations/0009_native_onboarding_transport.sql",
+      "sha256": "0aa64967ed3b09035ee24a12b2ef78fc8c7371ad0e6d5a0f88b298b1d9055621"
+    }
+  ],
+  "checks": {
+    "allOriginalBusinessRowsPreserved": true,
+    "beforeFingerprint": "68b19a56f18d748793245ecd3a5db7bff96794795c6efefa237bfe857fd70352",
+    "afterFingerprint": "68b19a56f18d748793245ecd3a5db7bff96794795c6efefa237bfe857fd70352",
+    "originalTables": 125,
+    "nativeIdentityCounts": {
+      "users": 0,
+      "accounts": 0,
+      "sessions": 0,
+      "mfa": 0,
+      "bindings": 0,
+      "imports": 0
+    },
+    "roles": [
+      {
+        "rolname": "newhope_auth_runtime",
+        "rolcanlogin": false,
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolreplication": false,
+        "rolbypassrls": false
+      },
+      {
+        "rolname": "newhope_migrator",
+        "rolcanlogin": false,
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolreplication": false,
+        "rolbypassrls": false
+      },
+      {
+        "rolname": "newhope_runtime",
+        "rolcanlogin": false,
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolcreaterole": false,
+        "rolreplication": false,
+        "rolbypassrls": false
+      }
+    ],
+    "sourceWrites": 0,
+    "customerIdentityChanges": 0,
+    "loginCredentialsProvisioned": 0
+  },
+  "finishedAt": "2026-10-15T10:37:40.397Z"
+}

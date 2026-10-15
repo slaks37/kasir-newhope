@@ -1,0 +1,28 @@
+{
+  "status": "BACKEND_ACCEPTANCE_PASSED_OWNER_INBOX_CONFIRMATION_PENDING",
+  "completedAt": "2026-10-15T10:56:11.851Z",
+  "checks": {
+    "httpsVerification": true,
+    "httpsResetCallback": true,
+    "resetCompleted": true,
+    "spentResetDenied": true,
+    "oldSessionRevoked": true,
+    "freshTotpEnrolled": true,
+    "remainingSessions": 0,
+    "sourceMappingChanges": 0,
+    "businessAuthorityGranted": 0
+  },
+  "messages": [
+    {
+      "kind": "VERIFY",
+      "providerEmailId": "01a13f2f-96db-72cb-9231-cc439d2ad02c",
+      "status": "PROVIDER_ACCEPTED"
+    },
+    {
+      "kind": "RESET",
+      "providerEmailId": "01a13f31-63fc-7329-9cb2-c7b5ade72ec0",
+      "status": "PROVIDER_ACCEPTED"
+    }
+  ],
+  "scope": "Owner-approved separate staging test identity; exact two real messages; native handler + hosted HTTPS callback; private tokens/password/MFA omitted; owner device enrollment and inbox/spam acceptance still external"
+}

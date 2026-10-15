@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {parse} from 'dotenv';
 import pg from 'pg';
-const owner=parse(fs.readFileSync('.env.neon-data-restore.local'));
-const target=JSON.parse(fs.readFileSync('neon/targets/full-restore.json','utf8'));
-assert.equal(target.projectId,'steep-sea-66546931');assert.equal(target.default,false);assert.equal(owner.NEON_BRANCH_ID,target.branchId);
-const url=new URL(owner.NEON_RESTORE_DATABASE_URL||'');assert.equal(url.hostname.replace('-pooler',''),target.host);assert.equal(url.pathname,'/'+target.database);url.hostname=url.hostname.replace('-pooler','');
-for(const k of ['sslmode','channel_binding'])url.searchParams.delete(k);assert.equal(url.search,'');
-const file='.env.neon-runtime-roles.local',existing=fs.existsSync(file)?parse(fs.readFileSync(file)):null;
+import {restoreTarget,privateFile} from './backup-common.mjs';
+const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
+assert(['full-restore','fresh-candidate'].includes(selection),'ROLE_TARGET_NOT_REVIEWED');
+const {manifest:target,...ownerConfig}=restoreTarget();
+const file=selection==='fresh-candidate'?'.env.neon-fresh-runtime-roles.local':'.env.neon-runtime-roles.local',existing=fs.existsSync(file)?parse(privateFile(file)):null;
 if(existing){assert.equal(existing.NEON_PROJECT_ID,target.projectId);assert.equal(existing.NEON_BRANCH_ID,target.branchId);}
-const c=new pg.Client({connectionString:url.href,ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000});await c.connect();
+const {env,...config}=ownerConfig;const c=new pg.Client(config);await c.connect();
+assert(c.connection.stream.encrypted&&c.connection.stream.authorized);
 const entries=[['DATABASE_URL','newhope_runtime_login','newhope_runtime'],['BETTER_AUTH_DATABASE_URL','newhope_auth_runtime_login','newhope_auth_runtime']];
 const credentials={NEON_PROJECT_ID:target.projectId,NEON_BRANCH_ID:target.branchId,NEON_RUNTIME_ROLES_REQUIRED:'1'};
 try {

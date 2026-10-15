@@ -10,9 +10,13 @@ export const quote=value=>'"'+String(value).replaceAll('"','""')+'"';
 export const relation=row=>quote(row.schema)+'.'+quote(row.name||row.table);
 export const sha=value=>createHash('sha256').update(value).digest('hex');
 export function privateFile(file){if((fs.statSync(file).mode&0o077)!==0)throw Error('PRIVATE_FILE_PERMISSIONS_REQUIRED');return fs.readFileSync(file);}
-export async function loadBackup(file='build/neon/source-2026-10-13-v3.pgp.b64',key='.env.neon-backup-keys.local/private.asc'){
+export async function loadBackup(file,key='.env.neon-backup-keys.local/private.asc'){
+ const fresh=process.env.NEON_RESTORE_TARGET==='fresh-candidate';
+ const reviewed=fresh?JSON.parse(fs.readFileSync('neon/targets/fresh-candidate.json','utf8')):null;
+ file=file||(reviewed?.capture||'build/neon/source-2026-10-13-v3.pgp.b64');
  const openpgp=await import('../../build/neon-tools/node_modules/openpgp/dist/node/openpgp.mjs');
  const ciphertext=privateFile(file),privateKey=await openpgp.readPrivateKey({armoredKey:privateFile(key).toString('utf8')});
+ if(reviewed&&(file!==reviewed.capture||sha(ciphertext)!==reviewed.ciphertextSha256))throw Error('FRESH_CAPTURE_REVIEW_MISMATCH');
  const message=await openpgp.readMessage({binaryMessage:Buffer.from(ciphertext.toString('utf8'),'base64')});
  const decrypted=await openpgp.decrypt({message,decryptionKeys:privateKey});
  const snapshot=JSON.parse(decrypted.data);
@@ -21,11 +25,11 @@ export async function loadBackup(file='build/neon/source-2026-10-13-v3.pgp.b64',
 }
 export function restoreTarget(file){
  const selection=process.env.NEON_RESTORE_TARGET||'full-restore';
- if(!['full-restore','clean-rehearsal'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
- const clean=selection==='clean-rehearsal';
- file=file||(clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
+ if(!['full-restore','clean-rehearsal','fresh-candidate'].includes(selection))throw Error('RESTORE_TARGET_NOT_REVIEWED');
+ const clean=selection==='clean-rehearsal',fresh=selection==='fresh-candidate';
+ file=file||(fresh?'.env.neon-fresh-candidate.local':clean?'.env.neon-clean-restore.local':'.env.neon-data-restore.local');
  const env=parse(privateFile(file));
- const manifest=JSON.parse(fs.readFileSync(clean?'neon/targets/clean-rehearsal.json':'neon/targets/full-restore.json','utf8'));
+ const manifest=JSON.parse(fs.readFileSync('neon/targets/'+selection+'.json','utf8'));
  const allowedBranch=manifest.branchId||manifest.branch_id;
  if(manifest.default!==false||env.NEON_PROJECT_ID!==projectId||env.NEON_BRANCH_ID!==allowedBranch||allowedBranch==='br-icy-dust-azqi5vlc'||allowedBranch==='br-falling-butterfly-az989m86')throw Error('RESTORE_CHILD_BRANCH_MISMATCH');
  const url=new URL(env.NEON_RESTORE_DATABASE_URL||'');
