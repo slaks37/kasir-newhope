@@ -1,13 +1,13 @@
 # Phase 1 — Supabase Auth + Storage, Neon business PostgreSQL
 
-Decision: **NO-GO production; isolated engineering rehearsal passed with live-login and operational gates open.** This document supersedes full-auth cutover gates for Phase 1 only. Better Auth, identity reconciliation, encrypted recovery/escrow and GoTrue work remain intact for Phase 2. Do not merge/promote this branch into production as configured: the staging manifest explicitly rejects production.
+Decision: **NO-GO production; isolated engineering rehearsal and owner-operated live Preview login passed; operational cutover gates remain open.** This document supersedes full-auth cutover gates for Phase 1 only. Better Auth, identity reconciliation, encrypted recovery/escrow and GoTrue work remain intact for Phase 2. Do not merge/promote this branch into production as configured: the staging manifest explicitly rejects production.
 
 ## Scope and evidence
 
 - Dedicated Neon staging `br-weathered-tooth-azbwi2zz`; rollback surrogate `br-bold-mud-azibt3jb`, neither production eligible. Restricted pooled runtime login, pool limit 2, certificate-verified TLS. No native Auth runtime, UUID rewriting or Better Auth activation.
 - Existing independent encrypted source recovery archive reused, capture 2026-10-15 10:43:44 UTC. Ciphertext SHA256 `377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136`. Business-only restore: 125 tables, 2,635 rows, 466 constraints, five sequences; exact reconciliation passed, business PIN/token credentials preserved privately, original Supabase Storage URLs retained. No Auth/Storage table rows imported.
 - Additive compatibility upgrade preserved all 125 original table fingerprints and eight wallets; eight opening entries, 32 shared versions, idempotent reapply passed. Synthetic fixtures added later mean this staging branch is no longer a clean final candidate.
-- Actual Neon HTTP rehearsal passed: five business sectors, 130 source-account/merchant authorization checks, spoofed principals ignored, anonymous requests denied, native Auth endpoint absent, six restricted-role privilege denials. Successful Auth responses used explicit contract fixtures; **real managed Supabase positive login remains unverified**. Actual source invalid-token rejection passed. Existing public Storage URL returned HTTP 200; no Storage upload.
+- Actual Neon HTTP rehearsal passed: five business sectors, 130 source-account/merchant authorization checks, spoofed principals ignored, anonymous requests denied, native Auth endpoint absent, six restricted-role privilege denials. Successful Auth responses used explicit contract fixtures; **subsequently the owner confirmed real Supabase login, correct merchant/outlet, dashboard and business data with no error**; see the separate owner-attestation receipt (not an automated credential/server trace). Actual source invalid-token rejection passed. Existing public Storage URL returned HTTP 200; no Storage upload.
 - Forward and reverse synthetic financial delta retained UUIDs, exact row equality, duplicate-safe reapply and conflict rejection; two synthetic sales total 3,000.00, original transaction rows unchanged. Failed attempts exposed omitted historical FK dependencies in the test journal; users/products/inventory dependencies are now included. No customer rows deleted or overwritten.
 - Measured isolated freeze-to-new-write **5,654 ms** and rollback-after-Neon-write **6,613 ms**. These exclude real Auth login, device drain, DOKU provider, source freeze, full production delta and deployment propagation. **Production downtime is not measured and cannot be quoted yet.**
 - Full `npm run verify` passed: hygiene, both TypeScript checks, migration validation, build, runtime/migration recovery/security and complete regression suite including hybrid tests. Final OAuth staging restriction gets affected lint/build verification separately.
@@ -15,6 +15,8 @@ Decision: **NO-GO production; isolated engineering rehearsal passed with live-lo
 Receipts: [restore](evidence/hybrid-business-restore.json), [reconciliation](evidence/hybrid-business-reconciliation.json), [compatibility](evidence/hybrid-runtime-upgrade.json), [HTTP and rollback](evidence/hybrid-http-rollback.json), [read-only source checkpoint](evidence/hybrid-source-checkpoint.json).
 
 Read-only source checkpoint at 2026-10-15 16:01:24 UTC: eight transactions/payments total 747,000.00, eleven cash-ledger rows total 653,000.00, ten subscriptions; duplicate client/provider keys zero. Against the earlier credential-free baseline (10:16 UTC), drift exists in billing plans, blog audit (42→43) and blog posts (68→71). This is not a new frozen snapshot and does not replace the 10:43 recovery archive. See [drift receipt](evidence/hybrid-source-drift.json).
+
+Additional actual-Neon operations passed: cross-tenant write denial, three concurrent/replayed requests yielding exactly one sale and one stock deduction (10→9), transaction-abort stock rollback, signed synthetic DOKU signature/timestamp/raw-body checks, channel/amount/currency review, FAILED→SUCCESS, duplicate/conflict handling, injected payment rollback, 12-hour retry and Plus/Pro monthly/yearly activation. All provider HTTP was prohibited; real provider acceptance is not claimed. See [operations receipt](evidence/hybrid-operations.json) and [owner live login](evidence/hybrid-owner-live-login.json).
 
 ## Dependency disposition
 
@@ -32,7 +34,7 @@ Read-only source checkpoint at 2026-10-15 16:01:24 UTC: eight transactions/payme
 
 ## Final cutover sequence — prepared, not authorized to execute
 
-1. Owner completes real Supabase login on hybrid Preview, verifies expected merchant/outlet access and denial to another tenant. OAuth requires separately reviewed callback configuration; do not redirect through production or assume email/password exists. Do not paste credentials/tokens into chat. Accept service-role support/Storage paths using isolated credentials or explicitly approved read-only production diagnostics.
+1. Owner-operated real Supabase login, expected merchant/outlet, dashboard and business data are now PASS by explicit owner report. Synthetic actual-Neon cross-tenant denial also passed. Retain these receipts; do not repeat login unnecessarily. OAuth requires separately reviewed callback configuration; do not redirect through production or assume email/password exists. Do not paste credentials/tokens into chat. Accept service-role support/Storage paths using isolated credentials or explicitly approved read-only production diagnostics.
 2. Accept separate owner custody of existing backup decryption key and decrypt/readback. Full business restore already passed on isolated Neon; Docker or full GoTrue restore is **not a Phase 1 prerequisite**, since Auth/Storage remain Supabase. Independent backup acceptance remains open until custody evidence exists.
 3. Inventory all writers/devices/jobs/integrations. Record device outbox counts and server ACKs; settle held/conflicting/unsaved operations explicitly. Record DOKU provider event IDs/delivery statuses/retry queue and compare database keys. Zero DB events does not prove provider empty.
 4. Only after explicit production cutover approval: stop business writers/jobs and drain in-flight requests/provider deliveries with a documented replay cursor. Coordinate source Auth signup business trigger handoff; keep login/token/MFA running on Supabase. Record freeze time and all writer acknowledgements.
@@ -48,7 +50,7 @@ After any Neon write: **do not merely revert DATABASE_URL**. Freeze both busines
 
 ## Exact remaining actions
 
-- Owner: sign into hybrid Preview with an existing Supabase account on their own device; show expected business access. No new email authorized or needed.
+- Completed: owner confirmed real Supabase login and expected business access on hybrid Preview, with no error. No password/token collected and no additional email sent.
 - Owner: accept separate key custody/recovery, provide actual device fleet/outbox ACK evidence and DOKU provider queue checkpoint/access. Do not send keys/passwords/customer records through GitHub/chat.
 - Engineering after evidence: final clean frozen candidate, full dependency-complete delta/reverse-delta rehearsal and production endpoint/env validation. Production DATABASE_URL is write-only and current live endpoint equivalence is not yet proved.
 - Owner: explicit approval of the final freeze, source signup writer handoff, production env/promotion/cutover only after above mandatory gates pass.
