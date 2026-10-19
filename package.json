@@ -29,7 +29,7 @@
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",
-    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts && node --import tsx scripts/dev/test-blog-seed.ts && node --import tsx scripts/dev/test-blog.ts && npm run -s test:admin-integrations",
+    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts && node --import tsx scripts/dev/test-blog-seed.ts && node --import tsx scripts/dev/test-blog.ts && npm run -s test:admin-integrations && npm run -s test:blog-seo",
     "test:client-support": "node --import tsx scripts/dev/test-client-support.ts && node --import tsx scripts/dev/test-privacy-controls.ts",
     "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
@@ -57,7 +57,8 @@
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
     "test:neon-pilot": "node --import tsx scripts/dev/test-neon-pilot.ts && node --import tsx scripts/dev/test-better-auth-pilot.ts && node --import tsx scripts/dev/test-identity-import.ts && node --import tsx scripts/dev/test-identity-review-holds.ts && node --import tsx scripts/dev/test-auth-page-privacy.ts && node --import tsx scripts/neon/storage-tests.ts && node --import tsx scripts/dev/test-neon-onboarding.ts && npm run -s test:release-readiness && npm run -s test:hybrid-phase1",
     "test:release-readiness": "node scripts/dev/test-release-readiness.mjs && node scripts/dev/test-business-delta.mjs && node --import tsx scripts/dev/test-release-runtime.ts && node scripts/dev/test-delta-sequence.mjs",
-    "test:hybrid-phase1": "node --import tsx scripts/dev/test-hybrid-phase1.ts"
+    "test:hybrid-phase1": "node --import tsx scripts/dev/test-hybrid-phase1.ts",
+    "test:blog-seo": "node --import tsx scripts/dev/test-blog-seo-recovery.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1150.0",

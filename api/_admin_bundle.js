@@ -2468,18 +2468,17 @@ function renderNotFound() {
 }
 function renderSitemap(posts, blogOnly = false) {
   const base = siteUrl();
-  const latest = posts.reduce((m, p) => p.updatedAt > m ? p.updatedAt : m, "2026-10-01T00:00:00.000Z");
   const urls = [
     ...!blogOnly ? [
-      { loc: `${base}/`, lastmod: latest, priority: "1.0" },
-      { loc: `${base}/blog`, lastmod: latest, priority: "0.9" },
-      ...BLOG_CATEGORIES.filter((c) => posts.some((p) => p.category === c)).map((c) => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: "0.6" }))
+      { loc: `${base}/`, priority: "1.0" },
+      { loc: `${base}/blog`, priority: "0.9" },
+      ...BLOG_CATEGORIES.filter((c) => posts.some((p) => p.category === c)).map((c) => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, priority: "0.6" }))
     ] : [],
     ...posts.map((p) => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: "0.8", image: p.coverImage }))
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc><lastmod>${esc(u.lastmod)}</lastmod><priority>${u.priority}</priority>${"image" in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ""}</url>`).join("\n")}
+${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc>${"lastmod" in u && u.lastmod ? `<lastmod>${esc(u.lastmod)}</lastmod>` : ""}<priority>${u.priority}</priority>${"image" in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ""}</url>`).join("\n")}
 </urlset>`;
 }
 function renderRss(posts) {
@@ -2536,11 +2535,8 @@ function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
       await fn(req, res, await getDb());
     } catch (error) {
       console.error(`[blog] ${req.method} ${req.path}:`, error.message, error.code ?? "");
-      if (isMissingStore(error) && req.path === "/blog") {
-        res.setHeader("Cache-Control", "no-store");
-        return res.status(200).type("html").send(renderBlogIndex([]).html);
-      }
       res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Retry-After", "300");
       res.status(503).type("html").send(renderNotFound().replace("Artikel tidak ditemukan", "Blog sedang tidak tersedia"));
     }
   };
@@ -2574,12 +2570,7 @@ function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
     res.type("text/plain").send(BLOG_INDEXNOW_KEY);
   });
   app.get(["/sitemap.xml", "/blog/sitemap.xml"], page2(async (req, res, db) => {
-    let posts = [];
-    try {
-      posts = await publishedPosts(db);
-    } catch (error) {
-      if (!isMissingStore(error)) throw error;
-    }
+    const posts = await publishedPosts(db);
     res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("application/xml").send(renderSitemap(posts, req.path === "/blog/sitemap.xml"));
   }));

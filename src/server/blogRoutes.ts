@@ -54,8 +54,8 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
       try { await fn(req, res, await getDb()); }
       catch (error) {
         console.error(`[blog] ${req.method} ${req.path}:`, (error as Error).message, (error as { code?: string }).code ?? '');
-        if (isMissingStore(error) && req.path === '/blog') { res.setHeader('Cache-Control', 'no-store'); return res.status(200).type('html').send(renderBlogIndex([]).html); }
         res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '300');
         res.status(503).type('html').send(renderNotFound().replace('Artikel tidak ditemukan', 'Blog sedang tidak tersedia'));
       }
     };
@@ -90,8 +90,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
   app.get(BLOG_INDEXNOW_PATH, (_req, res) => { res.type('text/plain').send(BLOG_INDEXNOW_KEY); });
 
   app.get(['/sitemap.xml', '/blog/sitemap.xml'], page(async (req, res, db) => {
-    let posts: PublicPost[] = [];
-    try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
+    const posts = await publishedPosts(db);
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('application/xml').send(renderSitemap(posts, req.path === '/blog/sitemap.xml'));
   }));
