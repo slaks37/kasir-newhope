@@ -43,8 +43,8 @@ var hybrid_candidate_default = {
   database: "neondb",
   sourceProject: "fqxrhumsgigcgjtlbfuo",
   purpose: "Prelaunch hybrid business-only clean candidate; no Better Auth or identity remapping",
-  capture: "build/neon/source-business-prelaunch-2026-10-16.pgp.b64",
-  ciphertextSha256: "9693057f6a384874b0c5b5dc544176aec298c6d8fb249704b37a0dfcefc8df6f",
+  capture: "build/neon/source-business-release-2026-10-19.pgp.b64",
+  ciphertextSha256: "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
   sourceFrozen: false
 };
 
@@ -1640,6 +1640,12 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   app.all(DOKU_NOTIFICATION_PATH, (_req, res) => res.set("Allow", "POST").status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" }));
 }
 
+// services/shared/blogAnalytics.ts
+function blogViewTrackingEnabled(env = process.env) {
+  if (env.BUSINESS_WRITES_PAUSED === "1" || env.NEON_DB_PHASE1 === "1" && env.HYBRID_STAGING === "1") return false;
+  return env.BLOG_VIEW_TRACKING_ENABLED === void 0 || env.BLOG_VIEW_TRACKING_ENABLED.trim() === "1";
+}
+
 // src/server/adminRoutes.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
 
@@ -2588,7 +2594,7 @@ function registerBlogRoutes(app, getDb, coverImporter = createCoverImporter()) {
     const post = rowToPublicPost(rows[0]);
     const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
       ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
-    if (req.method !== "HEAD") void db.query("UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1", [post.id]).catch(() => {
+    if (req.method !== "HEAD" && blogViewTrackingEnabled()) void db.query("UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1", [post.id]).catch(() => {
     });
     res.setHeader("Cache-Control", PAGE_CACHE);
     res.type("html").send(renderBlogPost(post, related));
@@ -4323,7 +4329,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
         [slug]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: "POST_NOT_FOUND" });
-      void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {
+      if (req.method !== "HEAD" && blogViewTrackingEnabled()) void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {
       });
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })

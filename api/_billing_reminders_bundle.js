@@ -40,8 +40,8 @@ var hybrid_candidate_default = {
   database: "neondb",
   sourceProject: "fqxrhumsgigcgjtlbfuo",
   purpose: "Prelaunch hybrid business-only clean candidate; no Better Auth or identity remapping",
-  capture: "build/neon/source-business-prelaunch-2026-10-16.pgp.b64",
-  ciphertextSha256: "9693057f6a384874b0c5b5dc544176aec298c6d8fb249704b37a0dfcefc8df6f",
+  capture: "build/neon/source-business-release-2026-10-19.pgp.b64",
+  ciphertextSha256: "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
   sourceFrozen: false
 };
 

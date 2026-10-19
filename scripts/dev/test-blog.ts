@@ -74,6 +74,21 @@ try {
   assert.match(page.text, /"@type":"BlogPosting"/); assert.match(page.text, /"@type":"BreadcrumbList"/);
   assert.match(page.text, /<title>[^<|]+\| Blog New Hope POS<\/title>/, 'One brand suffix, old "Blog Harapan Baru" suffixes removed');
   assert.ok(!page.text.includes('**'), 'Markdown is rendered, not printed');
+  // A public read may increment analytics normally, but migration/Preview reads
+  // and HEAD must preserve the exact business snapshot.
+  const savedAnalytics = process.env.BLOG_VIEW_TRACKING_ENABLED;
+  const savedPause = process.env.BUSINESS_WRITES_PAUSED;
+  const slug = 'cara-membuka-kafe-modal-10-juta-sukses';
+  const views = async () => (await db.query('SELECT view_count FROM public.blog_posts WHERE slug=$1',[slug])).rows[0].view_count;
+  const stableViews=await views();
+  process.env.BLOG_VIEW_TRACKING_ENABLED='0';
+  assert.equal((await get('/blog/'+slug)).status,200);assert.equal(await views(),stableViews);
+  process.env.BLOG_VIEW_TRACKING_ENABLED='1';process.env.BUSINESS_WRITES_PAUSED='1';
+  assert.equal((await get('/blog/'+slug)).status,200);assert.equal(await views(),stableViews);
+  delete process.env.BUSINESS_WRITES_PAUSED;
+  assert.equal((await fetch(base+'/blog/'+slug,{method:'HEAD'})).status,200);assert.equal(await views(),stableViews);
+  if(savedAnalytics===undefined)delete process.env.BLOG_VIEW_TRACKING_ENABLED;else process.env.BLOG_VIEW_TRACKING_ENABLED=savedAnalytics;
+  if(savedPause===undefined)delete process.env.BUSINESS_WRITES_PAUSED;else process.env.BUSINESS_WRITES_PAUSED=savedPause;
   assert.equal((await get('/blog/tidak-ada')).status, 404);
   assert.equal((await get('/blog/Cara-Membuka-Kafe-Modal-10-Juta-Sukses')).status, 301);
   assert.equal((await get('/blog?kategori=tidak-ada')).status, 404);

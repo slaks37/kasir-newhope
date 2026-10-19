@@ -1,3 +1,4 @@
+import { blogViewTrackingEnabled } from '../../services/shared/blogAnalytics';
 /**
  * Public blog pages and the article automation surface.
  *
@@ -103,7 +104,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     const post = rowToPublicPost(rows[0]);
     const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
       ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
-    if (req.method !== 'HEAD') void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
+    if (req.method !== 'HEAD' && blogViewTrackingEnabled()) void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('html').send(renderBlogPost(post, related));
   }));

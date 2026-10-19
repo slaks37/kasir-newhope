@@ -1,0 +1,26 @@
+{
+  "status": "PASS_AT_UNFROZEN_CHECKPOINT",
+  "snapshotAt": "2026-10-19T03:20:30.728125Z",
+  "checkpointAt": "2026-10-19T03:25:42.739710Z",
+  "sourceFrozen": false,
+  "tables": 125,
+  "rows": 2695,
+  "matchingTables": 125,
+  "driftTables": [],
+  "ciphertextSha256": "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
+  "privateDriveBackup": {
+    "bytes": 565679,
+    "ownerOnlyMetadataVerified": true,
+    "byteIdenticalReadback": true,
+    "privateKeyUploaded": false,
+    "independentKeyCustodyAccepted": false
+  },
+  "storage": {
+    "checkedAt": "2026-10-19T03:26:27Z",
+    "posts": 104,
+    "publicReferences": 101,
+    "matchingObjects": 101,
+    "storageProvider": "supabase"
+  },
+  "cutoverAllowed": false
+}

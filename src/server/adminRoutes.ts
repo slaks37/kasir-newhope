@@ -1,3 +1,4 @@
+import { blogViewTrackingEnabled } from '../../services/shared/blogAnalytics';
 /**
  * API admin panel — semuanya membaca database, tidak ada lagi Map di memori.
  *
@@ -542,7 +543,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
         [slug]
       );
       if (!rows.length) return res.status(404).json({ ok: false, error: 'POST_NOT_FOUND' });
-      void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {});
+      if(req.method!=='HEAD' && blogViewTrackingEnabled()) void db.query(`UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1`, [rows[0].id]).catch(() => {});
       res.json({ ok: true, post: rowToBlogPost(rows[0]) });
     })
   );
