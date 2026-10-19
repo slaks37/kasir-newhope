@@ -1243,13 +1243,13 @@ export const HomePage: React.FC<HomePageProps> = ({
               {ONBOARDING ? 'Bantuan input produk' : 'Panduan bantuan'}
             </a>
             <a href="/blog">Blog New Hope POS</a>
-            <a href="/blog/cara-membuka-kafe-modal-10-juta-sukses">
-              Panduan membuka kafe
+            <a href="/blog?kategori=kuliner-fnb">
+              Panduan kuliner & F&B
             </a>
-            <a href="/blog/rahasia-sukses-bisnis-laundry-kiloan-omset-puluhan-juta">
+            <a href="/blog?kategori=laundry-jasa">
               Tips usaha laundry
             </a>
-            <a href="/blog/revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin">
+            <a href="/blog?kategori=fintech-qris">
               Panduan QRIS
             </a>
           </div>

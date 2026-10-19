@@ -1,3 +1,4 @@
+import { discoverEditorial, type EditorialCandidate } from './editorialDiscovery';
 /**
  * Public blog pages and the article automation surface.
  *
@@ -53,8 +54,8 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
       try { await fn(req, res, await getDb()); }
       catch (error) {
         console.error(`[blog] ${req.method} ${req.path}:`, (error as Error).message, (error as { code?: string }).code ?? '');
-        if (isMissingStore(error) && req.path === '/blog') { res.setHeader('Cache-Control', 'no-store'); return res.status(200).type('html').send(renderBlogIndex([]).html); }
         res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '300');
         res.status(503).type('html').send(renderNotFound().replace('Artikel tidak ditemukan', 'Blog sedang tidak tersedia'));
       }
     };
@@ -89,8 +90,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
   app.get(BLOG_INDEXNOW_PATH, (_req, res) => { res.type('text/plain').send(BLOG_INDEXNOW_KEY); });
 
   app.get(['/sitemap.xml', '/blog/sitemap.xml'], page(async (req, res, db) => {
-    let posts: PublicPost[] = [];
-    try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
+    const posts = await publishedPosts(db);
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('application/xml').send(renderSitemap(posts, req.path === '/blog/sitemap.xml'));
   }));
@@ -162,7 +162,7 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
     const status = args.status === 'draft' ? false : args.status === 'all' ? null : true;
     const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts
       WHERE ($1::boolean IS NULL OR is_published = $1) AND ($2::text IS NULL OR category = $2)
-      ORDER BY created_at DESC LIMIT $3 OFFSET $4`, [status, args.category || null, limit, offset]);
+      ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`, [status, args.category || null, limit, offset]);
     return { posts: rows.map(rowToPublicPost).map(summary), limit, offset };
   }
 
@@ -234,7 +234,7 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
     },
   });
 
-  return { listPosts, getPost, validate, create: (input: ArticleInput) => save(input, 'create'), update: (slug: string, input: ArticleInput) => save(input, 'update', slug), unpublish, guide };
+  return { checkDuplicate: (candidate: EditorialCandidate) => discoverEditorial(getDb, candidate), listPosts, getPost, validate, create: (input: ArticleInput) => save(input, 'create'), update: (slug: string, input: ArticleInput) => save(input, 'update', slug), unpublish, guide };
 }
 
 const ARTICLE_SCHEMA = {
@@ -263,6 +263,7 @@ const ARTICLE_SCHEMA = {
 export const BLOG_MCP_TOOLS = [
   { name: 'blog_guide', description: 'Kategori, aturan kualitas, dan format penulisan artikel. Panggil sebelum menulis.', inputSchema: { type: 'object', properties: {} } },
   { name: 'list_posts', description: 'Daftar artikel (judul, slug, URL, status).', inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['published', 'draft', 'all'] }, category: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' } } } },
+  { name: 'check_duplicate', description: 'Read-only published archive duplicate check; incomplete archives are INCONCLUSIVE.', inputSchema: { type: 'object', required: ['title'], properties: { title: { type: 'string', maxLength: 300 }, slug: { type: 'string' }, keyword: { type: 'string' }, category: { type: 'string' }, sourceUrls: { type: 'array', items: { type: 'string' }, maxItems: 20 } } } },
   { name: 'get_post', description: 'Isi lengkap satu artikel berdasarkan slug.', inputSchema: { type: 'object', required: ['slug'], properties: { slug: { type: 'string' } } } },
   { name: 'validate_article', description: 'Cek artikel tanpa menyimpan: error yang memblokir, peringatan SEO, jumlah kata/subjudul.', inputSchema: ARTICLE_SCHEMA },
   { name: 'create_post', description: 'Buat artikel baru. Langsung terbit bila lolos validasi (kecuali publish:false).', inputSchema: ARTICLE_SCHEMA },
@@ -287,6 +288,7 @@ function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>, 
       }
     };
   const base = '/api/v1/blog-automation';
+  app.post(`${base}/duplicate-check`, api(false, req => blog.checkDuplicate(req.body || {})));
   app.get(`${base}/guide`, api(false, () => blog.guide()));
   app.get(`${base}/posts`, api(false, req => blog.listPosts(req.query as any)));
   app.get(`${base}/posts/:slug`, api(false, req => blog.getPost(String(req.params.slug))));
@@ -337,6 +339,7 @@ function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>, 
       if (write) allowWrite(req);
       const result = name === 'blog_guide' ? blog.guide()
         : name === 'list_posts' ? await blog.listPosts(args)
+        : name === 'check_duplicate' ? await blog.checkDuplicate(args as EditorialCandidate)
         : name === 'get_post' ? await blog.getPost(args.slug)
         : name === 'validate_article' ? blog.validate(args)
         : name === 'create_post' ? await blog.create(args)

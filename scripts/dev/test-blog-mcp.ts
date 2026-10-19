@@ -44,7 +44,7 @@ try {
   assert.equal((await call('/api/blog-mcp/register',{redirect_uris:['https://evil.example']})).status,400);
   assert.equal((await call('/api/blog-mcp/register',{redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']})).status,201);
   const publicTools=(await call('/api/blog-mcp',rpc('tools/list'))).body.result.tools;
-  assert.equal(publicTools.length,7);assert.equal(publicTools.find((t:any)=>t.name==='create_post').inputSchema.properties.publish.default,false);
+  assert.equal(publicTools.length,8);assert.equal(publicTools.find((t:any)=>t.name==='check_duplicate').annotations.readOnlyHint,true);assert.equal(publicTools.find((t:any)=>t.name==='create_post').inputSchema.properties.publish.default,false);
   assert.ok(publicTools.every((t:any)=>t.securitySchemes[0].scopes[0]==='blog:write'));
   assert.equal((await call('/api/blog-mcp',rpc('tools/call',{name:'blog_guide'}))).status,401);
   const args={client_id:'newhope-blog-chatgpt',redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',response_type:'code',code_challenge_method:'S256',code_challenge:createHash('sha256').update('a'.repeat(64)).digest('base64url'),resource,scope:'blog:write',state:'synthetic-state'};
@@ -76,6 +76,7 @@ try {
   assert.equal((await call('/api/v1/blog-automation/mcp',rpc('tools/list'),access)).status,401,'editorial token rejected by API-key publisher');
   assert.equal((await tool('list_transactions')).body.error.code,-32602);
   assert.equal((await tool('blog_guide')).body.result.structuredContent.oauthEditorial.publishDefault,false);
+  const discovery=(await tool('check_duplicate',{title:'Jadwal staf laundry'})).body.result;assert.equal(discovery.isError,false);assert.equal(discovery.structuredContent.archive.complete,true);assert.equal(discovery.structuredContent.classification,'UNIQUE');
   const para='Pencatatan harian membantu pemilik usaha melihat angka dan stok secara jelas. Catat setiap transaksi kemudian tinjau selisih fisik pada akhir shift supaya kesalahan cepat ditemukan dan diperbaiki dengan langkah praktis bagi usaha kecil yang sedang tumbuh.';
   const content=['Pembukaan artikel pengujian.','## Pencatatan harian',...Array(7).fill(para),'## Tinjau setiap shift',...Array(7).fill(para),'## Kesalahan yang sering terjadi',...Array(7).fill(para)].join('\n\n');
   const article={title:'Panduan Pencatatan Harian untuk Usaha Kedai Kecil',excerpt:'Panduan pencatatan harian untuk kedai kecil, lengkap dengan langkah praktis meninjau stok dan transaksi pada akhir shift.',category:'Kuliner & F&B',content};

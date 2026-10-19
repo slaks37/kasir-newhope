@@ -207,6 +207,7 @@ export function registerBlogMcpRoutes(app: express.Express, db: Db, authenticate
       try {
         const data=name==='blog_guide'?{...blog.guide(),oauthEditorial:{publishDefault:false,scope:BLOG_SCOPE}}
           : name==='list_posts'?await blog.listPosts(args)
+          : name==='check_duplicate'?await blog.checkDuplicate(args)
           : name==='get_post'?await blog.getPost(args.slug)
           : name==='validate_article'?blog.validate(args)
           : name==='create_post'?await blog.create({...args,publish:args.publish===true})
