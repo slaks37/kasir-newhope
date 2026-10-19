@@ -29,7 +29,7 @@
     "doku:sandbox-evidence": "node --import tsx scripts/batch/doku-sandbox-evidence.ts",
     "test:billing-reminders": "node --import tsx scripts/dev/test-billing-reminders.ts",
     "test:cron-scope": "node --import tsx scripts/dev/test-cron-scope.ts",
-    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts && node --import tsx scripts/dev/test-blog-seed.ts && node --import tsx scripts/dev/test-blog.ts && npm run -s test:admin-integrations",
+    "test:admin-security": "node --import tsx scripts/dev/test-admin-security.ts && node --import tsx scripts/dev/test-native-api-boundary.ts && node --import tsx scripts/dev/test-admin-linking.ts && node --import tsx scripts/dev/test-blog-seed.ts && node --import tsx scripts/dev/test-blog.ts && npm run -s test:admin-integrations && npm run -s test:blog-seo",
     "test:client-support": "node --import tsx scripts/dev/test-client-support.ts && node --import tsx scripts/dev/test-privacy-controls.ts",
     "test:intelligence": "node --import tsx scripts/dev/test-business-brain.ts && node --import tsx scripts/dev/test-insight-time.ts && node --import tsx scripts/dev/test-shared-batch.ts && node --import tsx scripts/dev/test-brain-db.ts && node --import tsx scripts/dev/smoke-assistant.ts",
     "batch:insights": "node scripts/batch/daily-insights.mjs",
@@ -54,7 +54,8 @@
     "test:agentic": "node --import tsx scripts/dev/test-agentic-discoverability.ts",
     "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
-    "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts"
+    "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
+    "test:blog-seo": "node --import tsx scripts/dev/test-blog-seo-recovery.ts && node --import tsx scripts/dev/test-editorial-discovery.ts"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

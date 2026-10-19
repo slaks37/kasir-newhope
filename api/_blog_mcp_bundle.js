@@ -179,9 +179,6 @@ function adminSecurityError(principal, method, now = Date.now()) {
   return null;
 }
 
-// src/server/blogRoutes.ts
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
   "Tips Bisnis & Strategi",
@@ -219,7 +216,7 @@ function similar(a, b) {
   return !!x && !!y && (x === y || y.startsWith(x) || x.startsWith(y));
 }
 function renderArticle(markdown, title = "") {
-  const source = normalizeArticleMarkdown(markdown, title);
+  const source2 = normalizeArticleMarkdown(markdown, title);
   const headings = [];
   const used = /* @__PURE__ */ new Map();
   const marked = new Marked({ gfm: true, breaks: false });
@@ -228,8 +225,8 @@ function renderArticle(markdown, title = "") {
       html({ text: text2 }) {
         return escapeHtml(text2);
       },
-      heading({ tokens, depth }) {
-        const inner = this.parser.parseInline(tokens);
+      heading({ tokens: tokens2, depth }) {
+        const inner = this.parser.parseInline(tokens2);
         const level = Math.min(Math.max(depth, 2), 4);
         const text2 = plain(inner);
         const base = slugify(text2) || "bagian";
@@ -240,8 +237,8 @@ function renderArticle(markdown, title = "") {
         return `<h${level} id="${id}">${inner}</h${level}>
 `;
       },
-      link({ href, title: linkTitle, tokens }) {
-        const inner = this.parser.parseInline(tokens);
+      link({ href, title: linkTitle, tokens: tokens2 }) {
+        const inner = this.parser.parseInline(tokens2);
         const url = safeUrl(href);
         if (!url) return inner;
         const external = /^https?:\/\//i.test(url) && !/^https?:\/\/(www\.)?kasir\.newhope\.space/i.test(url);
@@ -262,11 +259,85 @@ function renderArticle(markdown, title = "") {
       }
     }
   });
-  const html = marked.parse(source, { async: false });
+  const html = marked.parse(source2, { async: false });
   const words = plain(html).split(/\s+/).filter(Boolean).length;
   return { html, headings, words };
 }
 var readingMinutes = (words) => Math.max(1, Math.round(words / 200));
+
+// src/lib/blog/covers.ts
+function generatedBlogCover(title) {
+  return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
+}
+
+// src/server/blogPages.ts
+function siteUrl() {
+  const raw = process.env.PUBLIC_SITE_URL || process.env.PUBLIC_APP_URL || "https://kasir.newhope.space";
+  return raw.replace(/\/+$/, "");
+}
+
+// src/server/editorialDiscovery.ts
+var normalizeEditorial = (s) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("id").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+var stop = new Set("cara untuk dan di ke dari yang dengan pada anda bisnis usaha umkm panduan tips mengapa bagaimana".split(" "));
+var tokens = (s) => new Set(normalizeEditorial(s).split(" ").filter((t) => t.length > 1 && !stop.has(t)));
+var overlap = (a, b) => {
+  const shared = [...a].filter((t) => b.has(t));
+  return { shared, jaccard: shared.length / ((/* @__PURE__ */ new Set([...a, ...b])).size || 1) };
+};
+var source = (s) => {
+  try {
+    const u = new URL(s);
+    if (!["http:", "https:"].includes(u.protocol)) return "";
+    u.hash = "";
+    for (const k of [...u.searchParams.keys()]) if (/^(utm_|fbclid$|gclid$)/.test(k)) u.searchParams.delete(k);
+    u.searchParams.sort();
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+};
+async function discoverEditorial(db, candidate) {
+  const base = { candidateTitle: candidate.title, candidateKeyword: candidate.keyword || "" };
+  if (typeof candidate.title !== "string" || !normalizeEditorial(candidate.title) || candidate.title.length > 300 || [candidate.slug, candidate.keyword, candidate.category].some((v) => v !== void 0 && (typeof v !== "string" || v.length > 300)) || candidate.sourceUrls !== void 0 && (!Array.isArray(candidate.sourceUrls) || candidate.sourceUrls.length > 20 || candidate.sourceUrls.some((v) => typeof v !== "string" || v.length > 2048)))
+    return { ...base, classification: "INCONCLUSIVE", matches: [], archive: { complete: false, count: 0 }, explanation: "Invalid candidate metadata." };
+  try {
+    const { rows } = await (typeof db === "function" ? await db() : db).query(`SELECT id, slug, title, category, seo FROM public.blog_posts WHERE is_published = true ORDER BY created_at DESC, id DESC`);
+    const title = normalizeEditorial(candidate.title), ts = tokens(candidate.title), keywords = tokens(candidate.keyword || "");
+    const urls = new Set((candidate.sourceUrls || []).map(source).filter(Boolean));
+    const matches = rows.flatMap((p) => {
+      const seo = typeof p.seo === "string" ? JSON.parse(p.seo) : p.seo || {};
+      const similarity = overlap(ts, tokens(p.title));
+      const keyword = overlap(keywords, tokens([seo.focusKeyword || "", ...seo.metaKeywords || []].join(" ")));
+      const sameCategory = Boolean(candidate.category && normalizeEditorial(candidate.category) === normalizeEditorial(p.category));
+      const sources = (seo.sources || []).map((s) => source(s.url)).filter((s) => s && urls.has(s));
+      const exact = title === normalizeEditorial(p.title) || Boolean(candidate.slug && normalizeEditorial(candidate.slug) === normalizeEditorial(p.slug));
+      const near = similarity.shared.length >= 3 && similarity.jaccard >= 0.65;
+      const topic = similarity.shared.length >= 2 && similarity.jaccard >= 0.4 || keyword.shared.length >= 2 && keyword.jaccard >= 0.6 && (sameCategory || similarity.shared.length >= 1);
+      if (!exact && !near && !topic && !sources.length) return [];
+      return [{
+        title: p.title,
+        slug: p.slug,
+        url: siteUrl() + "/blog/" + encodeURIComponent(p.slug),
+        classification: exact ? "EXACT_DUPLICATE" : "TOPIC_OVERLAP",
+        indicators: { titleJaccard: similarity.jaccard, sharedTitleTokens: similarity.shared, keywordJaccard: keyword.jaccard, sharedKeywordTokens: keyword.shared, sameCategory, sharedSourceUrls: sources },
+        explanation: exact ? "Normalized title or slug matches." : sources.length ? "Stored source URL matches; editorial review required." : near ? "Near-duplicate title tokens." : "Shared topic tokens or keyword and category evidence."
+      }];
+    });
+    return {
+      ...base,
+      classification: matches.some((m) => m.classification === "EXACT_DUPLICATE") ? "EXACT_DUPLICATE" : matches.length ? "TOPIC_OVERLAP" : "UNIQUE",
+      matches,
+      archive: { complete: true, count: rows.length },
+      explanation: "All published records retrieved in one database statement. Rule-based matches require editorial judgment; UNIQUE means no rule matched."
+    };
+  } catch {
+    console.warn("[editorial-discovery] published archive unavailable");
+    return { ...base, classification: "INCONCLUSIVE", matches: [], archive: { complete: false, count: 0 }, explanation: "Published archive retrieval or metadata parsing failed. Retry before making an editorial decision." };
+  }
+}
+
+// src/server/blogRoutes.ts
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/articleInput.ts
 var ARTICLE_RULES = {
@@ -338,8 +409,8 @@ ${content}`)) errors.push(message);
   const sources = [];
   if (input.sources !== void 0 && (!Array.isArray(input.sources) || input.sources.length > 5)) errors.push("sources harus array, maksimal 5 sumber.");
   for (const item of Array.isArray(input.sources) ? input.sources.slice(0, 5) : []) {
-    const source = item && typeof item === "object" ? item : {};
-    const sourceTitle = text(source.title, 250), url = httpsUrl(source.url);
+    const source2 = item && typeof item === "object" ? item : {};
+    const sourceTitle = text(source2.title, 250), url = httpsUrl(source2.url);
     let valid = sourceTitle.length >= 10 && Boolean(url);
     if (url) {
       try {
@@ -349,28 +420,28 @@ ${content}`)) errors.push(message);
         valid = false;
       }
     }
-    const publishedAt = text(source.publishedAt, 80);
+    const publishedAt = text(source2.publishedAt, 80);
     if (publishedAt && !Number.isFinite(Date.parse(publishedAt))) valid = false;
     if (input.sourceRequired === true && !publishedAt) valid = false;
     if (!valid) {
       errors.push("Sumber membutuhkan judul dan URL https artikel (bukan beranda), dengan tanggal valid.");
       continue;
     }
-    sources.push({ title: sourceTitle, url, ...publishedAt ? { publishedAt: new Date(publishedAt).toISOString() } : {}, ...text(source.publisher, 100) ? { publisher: text(source.publisher, 100) } : {} });
+    sources.push({ title: sourceTitle, url, ...publishedAt ? { publishedAt: new Date(publishedAt).toISOString() } : {}, ...text(source2.publisher, 100) ? { publisher: text(source2.publisher, 100) } : {} });
   }
   if (input.sourceRequired === true && !sources.length) errors.push("Artikel berbasis berita wajib menyertakan sources.");
   if (input.sourceRequired === true) {
     const feed = typeof input.sourceFeed === "string" ? input.sourceFeed : "";
     if (feed.length > 5e5) errors.push("sourceFeed melebihi 500.000 karakter.");
-    for (const source of sources) {
-      const escapedUrl = source.url.replace(/&/g, "&amp;");
+    for (const source2 of sources) {
+      const escapedUrl = source2.url.replace(/&/g, "&amp;");
       const items = feed.match(/<item>[\s\S]*?<\/item>/g) || [];
       if (!items.some((item) => {
         const observedTitle = item.match(/<title>([\s\S]*?)<\/title>/)?.[1];
         const observedLink = item.match(/<link>([\s\S]*?)<\/link>/)?.[1];
         const observedDate = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1];
         const observedPublisher = item.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1];
-        return observedTitle === source.title.replace(/&/g, "&amp;") && (observedLink === source.url || observedLink === escapedUrl) && (!source.publisher || observedPublisher === source.publisher.replace(/&/g, "&amp;")) && (!source.publishedAt || observedDate && Date.parse(observedDate) === Date.parse(source.publishedAt));
+        return observedTitle === source2.title.replace(/&/g, "&amp;") && (observedLink === source2.url || observedLink === escapedUrl) && (!source2.publisher || observedPublisher === source2.publisher.replace(/&/g, "&amp;")) && (!source2.publishedAt || observedDate && Date.parse(observedDate) === Date.parse(source2.publishedAt));
       }))
         errors.push("Sumber berita tidak cocok dengan judul dan tautan dalam feed yang dibaca.");
     }
@@ -390,11 +461,6 @@ ${content}`)) errors.push(message);
     seo: { metaTitle, metaDescription, metaKeywords: keywords, ...focusKeyword ? { focusKeyword } : {}, ...text(input.coverAlt, 160) ? { coverAlt: text(input.coverAlt, 160) } : {}, ...typeof input.coverGenerated === "boolean" ? { coverGenerated: input.coverGenerated } : {}, faq, sources }
   };
   return { ok: errors.length === 0, errors, warnings, record: errors.length ? void 0 : record, stats: { words: rendered.words, h2, h3 } };
-}
-
-// src/lib/blog/covers.ts
-function generatedBlogCover(title) {
-  return /bahan baku|cabai|per porsi|menu|f&b|kopi|kuliner/i.test(title) ? "/blog/covers/hpp-ingredients-ai.jpg" : "/blog/covers/cash-reconciliation-ai.jpg";
 }
 
 // src/server/blogDiscovery.ts
@@ -428,12 +494,6 @@ import sharp from "sharp";
 
 // src/server/blogMedia.ts
 import { createClient } from "@supabase/supabase-js";
-
-// src/server/blogPages.ts
-function siteUrl() {
-  const raw = process.env.PUBLIC_SITE_URL || process.env.PUBLIC_APP_URL || "https://kasir.newhope.space";
-  return raw.replace(/\/+$/, "");
-}
 
 // src/server/blogRoutes.ts
 var COLUMNS = `id, slug, title, excerpt, content, category, cover_image, author_name, author_role, author_avatar,
@@ -496,7 +556,7 @@ function createBlogAutomation(getDb) {
     const status = args.status === "draft" ? false : args.status === "all" ? null : true;
     const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts
       WHERE ($1::boolean IS NULL OR is_published = $1) AND ($2::text IS NULL OR category = $2)
-      ORDER BY created_at DESC LIMIT $3 OFFSET $4`, [status, args.category || null, limit, offset]);
+      ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`, [status, args.category || null, limit, offset]);
     return { posts: rows.map(rowToPublicPost).map(summary), limit, offset };
   }
   async function getPost(slug) {
@@ -574,7 +634,7 @@ function createBlogAutomation(getDb) {
       optional: ["slug", "tags", "coverImage (kosong: ilustrasi AI dari pustaka sampul)", "coverAlt", "author{name,role,avatar}", "seo{metaTitle,metaDescription,focusKeyword,keywords[]}", "faq[{question,answer}]", "sources[{title,url,publisher,publishedAt}]", "sourceRequired + sourceFeed (wajib untuk automation berita)", "isFeatured", "publish (default true)"]
     }
   });
-  return { listPosts, getPost, validate, create: (input) => save(input, "create"), update: (slug, input) => save(input, "update", slug), unpublish, guide };
+  return { checkDuplicate: (candidate) => discoverEditorial(getDb, candidate), listPosts, getPost, validate, create: (input) => save(input, "create"), update: (slug, input) => save(input, "update", slug), unpublish, guide };
 }
 var ARTICLE_SCHEMA = {
   type: "object",
@@ -602,6 +662,7 @@ var ARTICLE_SCHEMA = {
 var BLOG_MCP_TOOLS = [
   { name: "blog_guide", description: "Kategori, aturan kualitas, dan format penulisan artikel. Panggil sebelum menulis.", inputSchema: { type: "object", properties: {} } },
   { name: "list_posts", description: "Daftar artikel (judul, slug, URL, status).", inputSchema: { type: "object", properties: { status: { type: "string", enum: ["published", "draft", "all"] }, category: { type: "string" }, limit: { type: "number" }, offset: { type: "number" } } } },
+  { name: "check_duplicate", description: "Read-only published archive duplicate check; incomplete archives are INCONCLUSIVE.", inputSchema: { type: "object", required: ["title"], properties: { title: { type: "string", maxLength: 300 }, slug: { type: "string" }, keyword: { type: "string" }, category: { type: "string" }, sourceUrls: { type: "array", items: { type: "string" }, maxItems: 20 } } } },
   { name: "get_post", description: "Isi lengkap satu artikel berdasarkan slug.", inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } } } },
   { name: "validate_article", description: "Cek artikel tanpa menyimpan: error yang memblokir, peringatan SEO, jumlah kata/subjudul.", inputSchema: ARTICLE_SCHEMA },
   { name: "create_post", description: "Buat artikel baru. Langsung terbit bila lolos validasi (kecuali publish:false).", inputSchema: ARTICLE_SCHEMA },
@@ -824,7 +885,7 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
       const blog = createBlogAutomation(async () => scoped);
       await cx.query("SAVEPOINT editorial_tool");
       try {
-        const data = name === "blog_guide" ? { ...blog.guide(), oauthEditorial: { publishDefault: false, scope: BLOG_SCOPE } } : name === "list_posts" ? await blog.listPosts(args) : name === "get_post" ? await blog.getPost(args.slug) : name === "validate_article" ? blog.validate(args) : name === "create_post" ? await blog.create({ ...args, publish: args.publish === true }) : name === "update_post" ? await blog.update(String(args.slug || ""), { ...args, publish: args.publish === true }) : await blog.unpublish(args.slug);
+        const data = name === "blog_guide" ? { ...blog.guide(), oauthEditorial: { publishDefault: false, scope: BLOG_SCOPE } } : name === "list_posts" ? await blog.listPosts(args) : name === "check_duplicate" ? await blog.checkDuplicate(args) : name === "get_post" ? await blog.getPost(args.slug) : name === "validate_article" ? blog.validate(args) : name === "create_post" ? await blog.create({ ...args, publish: args.publish === true }) : name === "update_post" ? await blog.update(String(args.slug || ""), { ...args, publish: args.publish === true }) : await blog.unpublish(args.slug);
         await audit(cx, conn.id, writeTools.has(name) ? "tool_write" : "tool_read", name, scalar(data.post?.slug || args.slug, 200) || null);
         await cx.query("RELEASE SAVEPOINT editorial_tool");
         return { data: { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data, isError: false } };
