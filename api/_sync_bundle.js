@@ -150,7 +150,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool = new pg.Pool({
+  const pool2 = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -159,14 +159,14 @@ async function connectDb(opts) {
     ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
-  pool.on("error", (err) => {
+  pool2.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
   await waitForDatabase(async () => {
-    const probe = await pool.connect();
+    const probe = await pool2.connect();
     probe.release();
   }).catch(async (error) => {
-    await pool.end().catch(() => {
+    await pool2.end().catch(() => {
     });
     throw error;
   });
@@ -180,7 +180,7 @@ async function connectDb(opts) {
       await runner.query(sql);
     },
     async tx(fn) {
-      const client = await pool.connect();
+      const client = await pool2.connect();
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
@@ -196,10 +196,169 @@ async function connectDb(opts) {
       }
     },
     async close() {
-      await pool.end();
+      await pool2.end();
+    }
+  });
+  return wrap(pool2);
+}
+
+// src/server/growth/db.ts
+import pg2 from "pg";
+var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
+function growthEnabled(env = process.env) {
+  return env.GROWTH_ENGINE_ENABLED === "1" && env.VERCEL_ENV !== "production";
+}
+var pool;
+async function growthDb() {
+  if (!growthEnabled() || !process.env.GROWTH_DATABASE_URL)
+    throw Error("GROWTH_NOT_CONFIGURED");
+  if (!pool) {
+    const u = new URL(process.env.GROWTH_DATABASE_URL);
+    const local = ["localhost", "127.0.0.1"].includes(u.hostname);
+    if (!local && !u.hostname.endsWith(".neon.tech"))
+      throw Error("GROWTH_DATABASE_HOST_NOT_APPROVED");
+    for (const k of [
+      "sslmode",
+      "sslcert",
+      "sslkey",
+      "sslrootcert",
+      "uselibpqcompat"
+    ])
+      u.searchParams.delete(k);
+    pool = new pg2.Pool({
+      connectionString: u.toString(),
+      ssl: local ? void 0 : { rejectUnauthorized: true },
+      max: 3,
+      connectionTimeoutMillis: 5e3,
+      idleTimeoutMillis: 1e4,
+      statement_timeout: 5e3
+    });
+    pool.on("error", () => console.error("[growth] database pool unavailable"));
+  }
+  const wrap = (q) => ({
+    query: async (s, p) => {
+      const r = await q.query(s, p);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    },
+    exec: async (s) => {
+      await q.query(s);
+    },
+    tx: async (fn) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        const result = await fn(wrap(c));
+        await c.query("COMMIT");
+        return result;
+      } catch (e) {
+        await c.query("ROLLBACK");
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    close: async () => {
+      await pool?.end();
+      pool = void 0;
     }
   });
   return wrap(pool);
+}
+async function inWorkspace(db, fn, workspace = GROWTH_WORKSPACE) {
+  return db.tx(async (c) => {
+    await c.query("SELECT set_config('app.growth_workspace',$1,true)", [
+      workspace
+    ]);
+    return fn(c);
+  });
+}
+
+// src/lib/growth/model.ts
+var SIGNALS = {
+  signup: 10,
+  business_setup: 10,
+  outlet_setup: 10,
+  catalog_setup: 10,
+  test_transaction: 5,
+  synced_transaction: 20,
+  report_viewed: 5,
+  repeat_usage: 15,
+  demo_requested: 10,
+  referral: 5,
+  pricing_interest: 5
+};
+
+// src/server/growth/service.ts
+var GrowthError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+};
+var fail = (code, status = 400) => {
+  throw new GrowthError(status, code);
+};
+var uuid = (v) => typeof v === "string" && /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(
+  v
+) ? v : fail("INVALID_ID");
+async function findLead(db, id) {
+  const row = (await db.query(
+    "SELECT * FROM growth.leads WHERE workspace_id=$1 AND id=$2",
+    [GROWTH_WORKSPACE, uuid(id)]
+  )).rows[0];
+  if (!row) return fail("LEAD_NOT_FOUND", 404);
+  return row;
+}
+async function recordEvent(db, b, origin, verified) {
+  if (!Object.hasOwn(SIGNALS, b.signal) || typeof b.key !== "string" || b.key.length < 1 || b.key.length > 200 || !Number.isFinite(Date.parse(b.occurredAt)) || Date.parse(b.occurredAt) > Date.now() + 3e5)
+    return fail("INVALID_EVENT");
+  if (b.signal === "pricing_interest" && b.leadId) {
+    const l = await findLead(db, b.leadId);
+    if (l.opted_out_at || !l.consent_basis)
+      return fail("TRACKING_CONSENT_REQUIRED");
+  }
+  const row = (await db.query(
+    `INSERT INTO growth.events(workspace_id,lead_id,subject_ref,signal,event_key,verified,origin,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(workspace_id,event_key) DO NOTHING RETURNING id`,
+    [
+      GROWTH_WORKSPACE,
+      b.leadId ? uuid(b.leadId) : null,
+      b.subject ? uuid(b.subject) : null,
+      b.signal,
+      b.key,
+      verified,
+      origin,
+      b.occurredAt
+    ]
+  )).rows[0];
+  if (!row) {
+    const old = (await db.query(
+      "SELECT lead_id,subject_ref,signal FROM growth.events WHERE workspace_id=$1 AND event_key=$2",
+      [GROWTH_WORKSPACE, b.key]
+    )).rows[0];
+    if (old && (old.lead_id !== (b.leadId ?? null) || old.subject_ref !== (b.subject ?? null) || old.signal !== b.signal))
+      return fail("EVENT_KEY_CONFLICT", 409);
+  }
+  return { inserted: !!row };
+}
+
+// src/server/growth/capture.ts
+function captureGrowthSignal(subject, signal, key, now = /* @__PURE__ */ new Date(), sink = async () => {
+  const db = await growthDb();
+  await inWorkspace(
+    db,
+    (c) => recordEvent(
+      c,
+      { subject, signal, key, occurredAt: now.toISOString() },
+      "server",
+      true
+    )
+  );
+}) {
+  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
+  void Promise.resolve().then(sink).catch(() => {
+    console.warn("[growth] optional telemetry not recorded");
+  });
 }
 
 // services/pos/financialAuthorization.ts
@@ -625,7 +784,7 @@ async function hasSchemaFeature(db, feature, now = Date.now()) {
 }
 
 // services/pos/activity.ts
-var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
+var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES = [
   "POS",
   "TABLES",
@@ -643,7 +802,7 @@ function pick(allowed, v) {
   return typeof v === "string" && allowed.includes(v) ? v : null;
 }
 async function writeActivity(db, a) {
-  const sector = pick(SECTORS, a.businessSector);
+  const sector = pick(SECTORS2, a.businessSector);
   const mod = pick(APP_MODULES, a.appModule);
   if (!sector || !mod || !UUID_RE.test(a.merchantId)) return null;
   const { rows } = await db.query(
@@ -691,7 +850,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS2.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -1213,7 +1372,7 @@ async function projectLabor(c, scope, sector, op) {
 }
 
 // services/pos/sharedState.ts
-var SECTOR_SET = new Set(SECTORS);
+var SECTOR_SET = new Set(SECTORS2);
 var GLOBAL_KINDS = /* @__PURE__ */ new Set(["users", "staff_members"]);
 var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "categories",
@@ -1648,7 +1807,7 @@ function parseReportFilter(query) {
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
   if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
-  if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
+  if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
   const to = dateQuery(query.to, "TO_DATE");
   if (from && to && from > to) throw new ReportRequestError(400, "INVALID_DATE_RANGE");
@@ -2051,7 +2210,7 @@ function registerReportRoutes(app, db) {
 }
 
 // services/pos/sync.ts
-var SECTOR_SET2 = new Set(SECTORS);
+var SECTOR_SET2 = new Set(SECTORS2);
 var MAX_BATCH = 500;
 var SyncAccessError = class extends Error {
 };
@@ -2162,6 +2321,7 @@ function registerSyncRoutes(app, db) {
         if (!created.rows.length) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
         return { tenantId, merchantId: created.rows[0].id };
       });
+      captureGrowthSignal(principal.subject, "business_setup", "business:" + result.merchantId);
       return res.json({ ok: true, ...result });
     } catch (error) {
       return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
@@ -2216,7 +2376,7 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({
         ok: false,
         error: "BAD_REQUEST",
-        detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS.join(", ")
+        detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS2.join(", ")
       });
     }
     if (body.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
@@ -2686,6 +2846,7 @@ function registerSyncRoutes(app, db) {
         }
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
+      if (out.accepted > 0) captureGrowthSignal(principal.subject, "synced_transaction", "sync:" + principal.subject + ":" + (idemKey ?? (/* @__PURE__ */ new Date()).toISOString()));
       res.json({ ok: true, ...out });
     } catch (err) {
       if (err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });

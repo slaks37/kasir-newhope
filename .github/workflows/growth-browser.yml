@@ -1,0 +1,29 @@
+name: Growth browser acceptance
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  synthetic-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium --only-shell
+      - name: React to API to PostgreSQL synthetic acceptance
+        run: npm run test:growth:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: growth-synthetic-browser-evidence
+          path: |
+            build/growth-browser/*.png
+            build/growth-browser/result.json
+          retention-days: 7
