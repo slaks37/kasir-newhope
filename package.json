@@ -56,7 +56,7 @@
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
     "test:neon-pilot": "node --import tsx scripts/dev/test-neon-pilot.ts && node --import tsx scripts/dev/test-better-auth-pilot.ts && node --import tsx scripts/dev/test-identity-import.ts && node --import tsx scripts/dev/test-identity-review-holds.ts && node --import tsx scripts/dev/test-auth-page-privacy.ts && node --import tsx scripts/neon/storage-tests.ts && node --import tsx scripts/dev/test-neon-onboarding.ts && npm run -s test:release-readiness && npm run -s test:hybrid-phase1",
-    "test:release-readiness": "node scripts/dev/test-release-readiness.mjs",
+    "test:release-readiness": "node scripts/dev/test-release-readiness.mjs && node scripts/dev/test-business-delta.mjs && node --import tsx scripts/dev/test-release-runtime.ts",
     "test:hybrid-phase1": "node --import tsx scripts/dev/test-hybrid-phase1.ts"
   },
   "dependencies": {
@@ -96,5 +96,8 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

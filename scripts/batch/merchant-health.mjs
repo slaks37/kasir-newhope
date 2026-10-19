@@ -292,7 +292,12 @@ async function main() {
     return;
   }
 
-  const client = new pg.Client({ connectionString: dbUrl });
+  const { tsImport } = await import('tsx/esm/api');
+  const { assertHybridDatabase } = await tsImport('../../services/shared/hybridPhase1.ts', import.meta.url);
+  const { databaseTransport } = await tsImport('../../services/shared/databaseTls.ts', import.meta.url);
+  const { statementTimeoutMs } = await tsImport('../../services/shared/poolConfig.ts', import.meta.url);
+  assertHybridDatabase(dbUrl);
+  const client = new pg.Client({...databaseTransport(dbUrl),connectionTimeoutMillis:10000,statement_timeout:statementTimeoutMs()});
   const runId = `run-health-${Date.now()}`;
   await client.connect();
   try {
@@ -336,6 +341,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  log('FATAL', err && err.stack ? err.stack : err);
+  log('FATAL', 'MERCHANT_HEALTH_FAILED'); // Never log SQL, credentials or customer records.
   process.exit(1);
 });

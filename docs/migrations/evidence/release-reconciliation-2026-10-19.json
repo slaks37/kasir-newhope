@@ -1,0 +1,90 @@
+{
+  "status": "DRIFT_REQUIRES_REVIEW",
+  "source": "2026-10-19T01:55:50.076793+00:00",
+  "sourceFrozen": false,
+  "sourceTables": 125,
+  "targetAdditionalTables": 6,
+  "sourceRows": 2690,
+  "matching": 119,
+  "changes": [
+    {
+      "schema": "ai",
+      "name": "business_intelligence_cache",
+      "source": {
+        "rows": 11,
+        "sha256": "b72ac50e9eee83fb29efd2af256d09f4c12f685caf6c4c6029bbf658676ade3e"
+      },
+      "target": {
+        "rows": 11,
+        "sha256": "66049c81f210d7fbaf17b368ee1734fc268e52e5e3a8fbe455b8483913e01b14"
+      },
+      "match": false
+    },
+    {
+      "schema": "billing",
+      "name": "plans",
+      "source": {
+        "rows": 6,
+        "sha256": "61a769289114c4c5bae58f78eba0ff8f1d7ee02d4641f387549e7cad225b495d"
+      },
+      "target": {
+        "rows": 6,
+        "sha256": "d013ac34ea2a7dfcab0f3df2d3096e7112aa3ba89e8047ae5a3612da33704ff1"
+      },
+      "match": false
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "audit",
+      "source": {
+        "rows": 51,
+        "sha256": "b2113f68d4b4aae2ebbe57a1e9123bd0d1bb86c8b895a2ce67e6f7aefff6fbda"
+      },
+      "target": {
+        "rows": 43,
+        "sha256": "1c45026e1393d69692d36498a3b340aeac6a76c71ca3353f4ff1614332bb9d02"
+      },
+      "match": false
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "connections",
+      "source": {
+        "rows": 1,
+        "sha256": "097d47aa08e4e13acde2753eeaebb1ad3cd9b986225ba8f90f3a7d86a13a2bb2"
+      },
+      "target": {
+        "rows": 1,
+        "sha256": "3425c0004f72b78f6d77f78da293cee178d5cef7a94bcf1ad36ce8703a9bd174"
+      },
+      "match": false
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "credentials",
+      "source": {
+        "rows": 71,
+        "sha256": "3ea86fc34f0ac11d5c4c978c2d567f5cc4a6490dbbdafef4420fb365b3dd0e7f"
+      },
+      "target": {
+        "rows": 61,
+        "sha256": "9a7ce071e5d5c266c5efcb6207f223f8d1d3538e4ea3d9d7f7569abd835c3b79"
+      },
+      "match": false
+    },
+    {
+      "schema": "public",
+      "name": "blog_posts",
+      "source": {
+        "rows": 102,
+        "sha256": "0ad0601db60014b29c5457d2106425028c5164e0cc4c19731a87756545f30c08"
+      },
+      "target": {
+        "rows": 75,
+        "sha256": "c60cd7f9ac7f4f89ef010ed10459aac85540e5c94a30c6aed6fd59a90ae958a1"
+      },
+      "match": false
+    }
+  ],
+  "cutoverAllowed": false
+}

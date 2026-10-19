@@ -7202,9 +7202,45 @@ async function proxyToGateway(req, res) {
   await handleNativeApi(req, res);
 }
 
+// src/server/releaseLatency.ts
+import pg3 from "pg";
+import { performance } from "node:perf_hooks";
+function createReleaseLatencyHandler(factory = (config) => new pg3.Client(config)) {
+  return async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (process.env.VERCEL_ENV !== "preview" || process.env.HYBRID_STAGING !== "1" || process.env.NEON_DB_PHASE1 !== "1") return res.status(404).json({ ok: false });
+    if (req.method !== "GET") return res.status(405).json({ ok: false });
+    let c;
+    try {
+      const url = process.env.DATABASE_URL || "";
+      assertHybridDatabase(url);
+      c = factory({ ...databaseTransport(url), connectionTimeoutMillis: 1e4, statement_timeout: 2e3 });
+      const at = performance.now();
+      await c.connect();
+      const connectionMs = performance.now() - at;
+      await c.query("BEGIN READ ONLY");
+      const samples = [];
+      for (let i = 0; i < 5; i++) {
+        const at2 = performance.now();
+        await c.query("SELECT 1");
+        samples.push(Math.round((performance.now() - at2) * 100) / 100);
+      }
+      await c.query("ROLLBACK");
+      return res.status(200).json({ ok: true, scope: "bounded SELECT 1; no business rows or writes", region: process.env.VERCEL_REGION || "unknown", node: process.versions.node, connectionMs: Math.round(connectionMs), queryMs: samples });
+    } catch {
+      return res.status(503).json({ ok: false, error: "BENCHMARK_UNAVAILABLE" });
+    } finally {
+      if (c) await c.end().catch(() => {
+      });
+    }
+  };
+}
+var releaseLatencyHandler = createReleaseLatencyHandler();
+
 // src/server/adminHandler.ts
 async function handler(req, res) {
   normalizeVercelUrl(req);
+  if (req.url?.split("?")[0] === "/api/admin/release-latency") return releaseLatencyHandler(req, res);
   return proxyToGateway(req, res);
 }
 export {

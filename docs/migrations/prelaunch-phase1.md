@@ -1,3 +1,5 @@
+> Pembaruan 19 Oktober: sumber kembali berubah; gunakan [review rilis terbaru](release-2026-10-19.md). Hasil16Oktober di bawah adalah bukti historis, bukan kandidat yang masih sinkron.
+
 # Phase 1 pre-launch — kandidat dan rencana keputusan
 
 Dokumen ini menyesuaikan gate operasional pada [runbook hybrid](hybrid-phase1.md) dengan pernyataan owner 16 Oktober 2026: New Hope masih development/testing, belum memiliki pelanggan nyata dan belum menerima pembayaran pelanggan melalui DOKU. Tidak mengasumsikan fleet pelanggan aktif. Pernyataan owner dipisahkan dari bukti teknis; tidak menghapus atau mengubah label data sumber.
