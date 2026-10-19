@@ -3336,7 +3336,8 @@ async function activityBreakdown(db, merchantId = null) {
 import pg2 from "pg";
 var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
 function growthEnabled(env = process.env) {
-  return env.GROWTH_ENGINE_ENABLED === "1" && env.VERCEL_ENV !== "production";
+  const staging = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || !env.VERCEL_ENV && env.NODE_ENV !== "production";
+  return env.GROWTH_ENGINE_ENABLED === "1" && staging && env.APP_ENV !== "production";
 }
 var pool;
 async function growthDb() {

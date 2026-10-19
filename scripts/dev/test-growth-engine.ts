@@ -113,6 +113,18 @@ try {
   );
   process.env.VERCEL_ENV = "production";
   assert.equal(growthEnabled(), false);
+  assert.equal(
+    growthEnabled({ GROWTH_ENGINE_ENABLED: "1", NODE_ENV: "production" }),
+    false,
+  );
+  assert.equal(
+    growthEnabled({
+      GROWTH_ENGINE_ENABLED: "1",
+      VERCEL_ENV: "preview",
+      APP_ENV: "production",
+    }),
+    false,
+  );
   assert.equal((await call("/overview")).status, 404);
   process.env.VERCEL_ENV = "preview";
   ok("Production disabled and stale MFA mutations rejected");
