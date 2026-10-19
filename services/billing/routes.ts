@@ -107,10 +107,13 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     res.json({ok:true,...quote,netProratedAmount:quote.amount,proratedAmountIdr:quote.amount,breakdown:{newPlanPrice:quote.recurringAmount,unusedCredit:quote.unusedCredit,total:quote.amount}});
   }));
   app.post('/api/v1/subscription/checkout',run(async(req,res)=>{
+    // Explicit pre-launch hold: no tenant provisioning, invoice or provider call.
+    if(process.env.DOKU_PAYMENTS_ENABLED!==undefined&&process.env.DOKU_PAYMENTS_ENABLED.trim()!=='1')throw new BillingError(503,'PAYMENTS_PAUSED');
     const tenantId=await tenant(req);
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');
-    if (!isDokuConfigured()) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
+    let configured=false;try{configured=isDokuConfigured();}catch{/* Invalid Business ID must not reach the gateway. */}
+    if (!configured) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
     let allowedChannels:string[];
     try{allowedChannels=getDokuAllowedChannels();}catch{throw new BillingError(503,'DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');}
     const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels};

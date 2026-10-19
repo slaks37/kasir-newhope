@@ -37,6 +37,7 @@ import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
 import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
 import mcpHandler from '../../src/server/mcpHandler';
+import betterAuthHandler from '../../src/server/betterAuthHandler';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -74,6 +75,7 @@ const breakers: Record<string, Breaker> = {
 
 const app = express();
 app.use((req, res, next) => {
+  if (req.path.startsWith('/api/auth/')) return void betterAuthHandler(req,res);
   if (req.path === '/api/mcp' || req.path.startsWith('/api/mcp/') || req.path.startsWith('/.well-known/oauth-')) return void mcpHandler(req, res);
   next();
 });
@@ -201,7 +203,7 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
-        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+        'x-auth-source-created-at', 'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
       ]);
 
       const headers: Record<string, string> = {};
@@ -222,6 +224,7 @@ app.use('/api', async (req, res, next) => {
       const principal = res.locals.principal as AuthPrincipal | undefined;
       if (principal) {
         headers['x-auth-sub'] = principal.subject;
+        if (principal.sourceCreatedAt) headers['x-auth-source-created-at']=principal.sourceCreatedAt;
         if (principal.email) headers['x-auth-email'] = principal.email;
         if (principal.isEmailVerified) headers['x-auth-email-verified'] = 'true';
       }

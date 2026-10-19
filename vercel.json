@@ -1,4 +1,10 @@
 {
+  "regions": ["sin1"],
+  "git": {
+    "deploymentEnabled": {
+      "codex/neon-auth-migration": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/daily-insights",
@@ -14,6 +20,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/auth/(.*)",
+      "destination": "/api/auth/[...slug]?__path=/api/auth/$1"
+    },
     {
       "source": "/privacy",
       "destination": "/privacy.html"
@@ -152,6 +162,22 @@
     }
   ],
   "headers": [
+    {
+      "source": "/reset-password",
+      "headers": [
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
+      ]
+    },
+    {
+      "source": "/api/auth/(.*)",
+      "headers": [
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
+      ]
+    },
     {
       "source": "/",
       "headers": [

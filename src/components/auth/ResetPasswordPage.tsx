@@ -1,12 +1,13 @@
+import {BetterResetPasswordPage} from './BetterAccountRecovery';
 import {useState,type FormEvent} from 'react';
 import '../../styles/app-theme.css';
 import {useAuth} from '../../context/AuthContext';
-import {supabase} from '../../lib/supabase';
+import {supabase,usesBetterAuth} from '../../lib/supabase';
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {AuthLayout} from './AuthLayout';
 
 /** Recovery uses the existing Supabase session restored from the email link. */
-export default function ResetPasswordPage() {
+function SupabaseResetPasswordPage() {
   const {user,session,configured}=useAuth();
   const [password,setPassword]=useState(''),[confirmation,setConfirmation]=useState('');
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[done,setDone]=useState(false);
@@ -34,3 +35,5 @@ export default function ResetPasswordPage() {
     {error&&<p role="alert" className="text-red-700">{error}</p>}
   </div></AuthLayout>;
 }
+
+export default function ResetPasswordPage(){return usesBetterAuth?<BetterResetPasswordPage/>:<SupabaseResetPasswordPage/>;}

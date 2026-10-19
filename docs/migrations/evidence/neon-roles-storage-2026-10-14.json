@@ -1,0 +1,165 @@
+{
+  "scope": "Isolated Neon full-restore child only; source and production unchanged",
+  "verifiedAt": "2026-10-14T01:12:24.529Z",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "groups": {
+    "status": "PASS",
+    "checks": {
+      "app": {
+        "allowed": 181,
+        "denied": 14
+      },
+      "auth": {
+        "allowed": 9,
+        "denied": 8
+      },
+      "anon": {
+        "allowed": 0,
+        "denied": 177
+      },
+      "authenticated": {
+        "allowed": 0,
+        "denied": 177
+      },
+      "roleAttributes": "PASS: no login, superuser, bypass RLS, role/database creation or replication on privilege groups",
+      "membership": "PASS: groups have no owner membership; SET ROLE owner denial must additionally be tested using actual runtime LOGIN (admin session SET LOCAL ROLE cannot test this)",
+      "rollback": {
+        "allowed": 0,
+        "denied": 1
+      },
+      "reapply": {
+        "allowed": 1,
+        "denied": 0
+      }
+    }
+  },
+  "actualLogin": {
+    "status": "PASS",
+    "checks": {
+      "app": {
+        "allowed": 5,
+        "denied": 16,
+        "syntheticWriteRollback": true,
+        "tlsVerified": true,
+        "currentUser": "newhope_runtime_login"
+      },
+      "auth": {
+        "allowed": 5,
+        "denied": 9,
+        "syntheticWriteRollback": true,
+        "tlsVerified": true,
+        "currentUser": "newhope_auth_runtime_login"
+      }
+    }
+  },
+  "restrictedHttp": {
+    "status": "PASS",
+    "checks": {
+      "rateLimitObserved": 1,
+      "fiveSectors": {
+        "status": "PASS",
+        "sectors": [
+          "FNB",
+          "RETAIL",
+          "LAUNDRY",
+          "CARWASH",
+          "BARBERSHOP"
+        ],
+        "outletsEach": 2,
+        "idempotentOnboarding": true,
+        "metadataRoleIgnored": true,
+        "nativeOwnerLookup": true
+      },
+      "financial": {
+        "status": "PASS",
+        "foreignOutletDenied": true,
+        "defaultPinDenied": true,
+        "wrongPasswordDenied": true,
+        "missingApprovalDenied": true,
+        "changedAmountDenied": true,
+        "idempotentCash": true
+      },
+      "mfa": {
+        "status": "PASS",
+        "wrongAndExpiredDenied": true,
+        "challengeReplayDenied": true,
+        "nativeProofRecorded": true,
+        "passwordAloneNoSession": true,
+        "rememberedDeviceDisabled": true
+      },
+      "recovery": {
+        "status": "PASS",
+        "resetLinkCaptured": true,
+        "oneTimeToken": true,
+        "oldSessionRevoked": true,
+        "externalMailSent": false
+      },
+      "sourceExistingRows": {
+        "internal.tenants": {
+          "status": "UNCHANGED",
+          "rows": 13
+        },
+        "internal.merchants": {
+          "status": "UNCHANGED",
+          "rows": 15
+        },
+        "internal.outlets": {
+          "status": "UNCHANGED",
+          "rows": 15
+        },
+        "billing.plans": {
+          "status": "UNCHANGED",
+          "rows": 6
+        },
+        "billing.subscriptions": {
+          "status": "UNCHANGED",
+          "rows": 12
+        },
+        "billing.invoices": {
+          "status": "UNCHANGED",
+          "rows": 0
+        },
+        "ai.merchant_ai_credits": {
+          "status": "UNCHANGED",
+          "rows": 10
+        },
+        "pos.transactions": {
+          "status": "UNCHANGED",
+          "rows": 8
+        },
+        "pos.cash_ledger": {
+          "status": "UNCHANGED",
+          "rows": 11
+        }
+      }
+    }
+  },
+  "storage": {
+    "status": "PASS",
+    "objectCount": 39,
+    "totalBytes": 3428274,
+    "allFullBodySha256Readbacks": true,
+    "allAnonymousPublicReads": true,
+    "anonymousWriteDenied": true,
+    "refs": {
+      "status": "PASS",
+      "branchId": "br-curly-truth-aze21ktf",
+      "rewrittenPosts": 39,
+      "remainingSupabaseBlogReferences": 0,
+      "manifestSha256": "8480b7078aa1a3017182d568c9559e4303323240f020d40e055acf2677770617",
+      "editorialTimestampsPreserved": true,
+      "sourceUnchanged": true
+    },
+    "rollbackAndReapply": {
+      "status": "PASS",
+      "restoredPostReferences": 39
+    }
+  },
+  "limits": [
+    "External email delivery not tested; local capture only",
+    "Current target contains synthetic test data and is a rehearsal branch",
+    "Source snapshot and storage delta must be refreshed at final freeze",
+    "Production cutover not performed"
+  ]
+}

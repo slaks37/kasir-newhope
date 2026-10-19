@@ -1,0 +1,45 @@
+{
+  "status": "PASS",
+  "scope": "Isolated staging native-store transport repair; no source writes, identity activation or ownership changes",
+  "branchId": "br-curly-truth-aze21ktf",
+  "migration": "neon/migrations/0009_native_onboarding_transport.sql",
+  "sha256": "0aa64967ed3b09035ee24a12b2ef78fc8c7371ad0e6d5a0f88b298b1d9055621",
+  "startedAt": "2026-10-15T04:07:55.724Z",
+  "checks": {
+    "aliasesAdded": 18,
+    "idempotentReapply": true,
+    "sourceMerchantsAndFinancialRowsUnchanged": [
+      {
+        "table": "internal.merchants",
+        "rows": 13,
+        "fingerprint": "fa1f0dc44222eeb71ea62cfc705bc4b0"
+      },
+      {
+        "table": "pos.transactions",
+        "rows": 8,
+        "fingerprint": "d1c14eab74549c5a8c1bac8c489e1e46"
+      },
+      {
+        "table": "pos.payments",
+        "rows": 8,
+        "fingerprint": "af068905adc2bf30c3365c25f0ddbf24"
+      },
+      {
+        "table": "pos.cash_ledger",
+        "rows": 14,
+        "fingerprint": "4dbf44fca8a72731940878e7a7b12f67"
+      },
+      {
+        "table": "billing.subscriptions",
+        "rows": 28,
+        "fingerprint": "c117544385c6b672df8fe78b1edb04cf"
+      },
+      {
+        "table": "ai.merchant_ai_credits",
+        "rows": 26,
+        "fingerprint": "60f0127e5e085669ebcf3d297eb3c069"
+      }
+    ]
+  },
+  "finishedAt": "2026-10-15T04:07:56.397Z"
+}

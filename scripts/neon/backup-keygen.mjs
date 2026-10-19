@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const directory=path.resolve(process.argv[2]||'.env.neon-backup-keys.local');
+if(fs.existsSync(directory))throw Error('BACKUP_KEY_DIRECTORY_ALREADY_EXISTS');
+const openpgp=await import('../../build/neon-tools/node_modules/openpgp/dist/node/openpgp.mjs');
+fs.mkdirSync(directory,{recursive:true,mode:0o700});
+const keys=await openpgp.generateKey({type:'rsa',rsaBits:4096,userIDs:[{name:'New Hope migration encrypted backup'}],format:'armored',config:{v6Keys:false}});
+fs.writeFileSync(path.join(directory,'public.asc'),keys.publicKey,{mode:0o600});
+fs.writeFileSync(path.join(directory,'private.asc'),keys.privateKey,{mode:0o600});
+fs.writeFileSync(path.join(directory,'REVOCATION.asc'),keys.revocationCertificate,{mode:0o600});
+console.log('Created private local backup key directory (0600 files, 0700 directory); no key material logged.');

@@ -1,0 +1,12 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-wandering-snow-azcqie4c",
+  "parentId": "br-falling-butterfly-az989m86",
+  "host": "ep-flat-leaf-azdyw6h9.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "region": "aws-ap-southeast-1",
+  "default": false,
+  "purpose": "fresh unfrozen credential-free source candidate; no customer identity activation or production cutover",
+  "capture": "build/neon/source-2026-10-15-fresh.pgp.b64",
+  "ciphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2"
+}

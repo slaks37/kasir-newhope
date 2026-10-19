@@ -1,0 +1,12 @@
+{
+  "status": "VERIFIED",
+  "authorization": "Exact DMARC TXT approved by owner in this chat",
+  "name": "_dmarc.kasir.newhope.space",
+  "type": "TXT",
+  "value": "v=DMARC1; p=none",
+  "ttl": 300,
+  "authoritativeDnsVerified": true,
+  "publicResolverVerified": true,
+  "otherDnsRecordsChanged": false,
+  "productionAppOrDatabaseEnvChanged": false
+}

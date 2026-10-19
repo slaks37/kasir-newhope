@@ -1,0 +1,29 @@
+{
+  "status": "AUDITED",
+  "scope": "Metadata-only source capture vs already-populated synthetic repository-schema pilot; not a blanket migration plan",
+  "sourceCiphertextSha256": "8ea8095f142e34637890b9dea51be1e6fa50659291ebd89fb476d77eb0b053a8",
+  "pilotBranch": "br-icy-dust-azqi5vlc",
+  "missingSourceColumns": [
+    {
+      "schema": "pos",
+      "table": "shared_state_records",
+      "column": "scope_recovery_snapshot",
+      "type": "jsonb"
+    },
+    {
+      "schema": "pos",
+      "table": "sync_receipts",
+      "column": "outcomes",
+      "type": "jsonb"
+    }
+  ],
+  "additionalPilotRelations": [
+    "ai.credit_ledger",
+    "ai.credit_ledger_reconciliation",
+    "contract.merchant_product_entitlement",
+    "internal.auth_identity_bindings",
+    "pos.shared_state_versions",
+    "pos.staff_attendances",
+    "pos.staff_payrolls"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-wandering-snow-azcqie4c",
+  "scope": "Copy existing public JPEGs only; source and production references unchanged; no credential grants",
+  "startedAt": "2026-10-15T10:30:22.706Z",
+  "objectCount": 65,
+  "totalBytes": 5674590,
+  "anonymousWriteDenied": true,
+  "finishedAt": "2026-10-15T10:30:39.117Z",
+  "objectsManifest": "Private ignored artifact; no object keys or signed URLs committed"
+}

@@ -1,0 +1,36 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "sourceBackupSha256": "13ce9a954715512b2ec896666da6ecab5ad8074a3e65cc519f3d898442ce1503",
+  "status": "APPLIED",
+  "scope": "Additive auth/identity schema only on reconciled isolated restored child",
+  "startedAt": "2026-10-14T00:54:11.555Z",
+  "files": [
+    {
+      "file": "0001_identity_bindings.sql",
+      "sha256": "5cc386e8ab2a9d346ae535071c19ab93669ea95f7b05643fb7a24470560251c5"
+    },
+    {
+      "file": "0002_better_auth_core.sql",
+      "sha256": "1ba8353b91c83c469e11060d9a58b03e8989f23c66f06a1f40afdefb62271e1d"
+    },
+    {
+      "file": "0003_better_auth_evidence.sql",
+      "sha256": "0aab54cbe92ee131e415c37d8bc92c861ddae3b622f4808dfd3ea835e1e07469"
+    },
+    {
+      "file": "0004_better_auth_identity_provider.sql",
+      "sha256": "dc0d3c0148344dfffaa7ae9fa8dc164a27e71566b510be2a43c50958b46bade7"
+    },
+    {
+      "file": "0006_identity_import_audit.sql",
+      "sha256": "844aa2ede06c7c40aa19ccc8e4bde56819bdcd3cfc005544eeb8b79da64711a4"
+    },
+    {
+      "file": "0007_identity_canonical_create_evidence.sql",
+      "sha256": "19f50bcad7eff2d398b2915a7c70e1b0b6367c7f241238512ca21dcc1aeae0bc"
+    }
+  ],
+  "authUsers": 0,
+  "finishedAt": "2026-10-14T00:54:12.868Z"
+}

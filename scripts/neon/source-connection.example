@@ -1,0 +1,7 @@
+# Owner supplies a scoped READ ONLY direct or Supavisor SESSION connection.
+# Save as .env.supabase-source.local with chmod 600; never paste secrets into chat.
+# No password reset, production grants or source DDL is needed by this pipeline.
+SUPABASE_SOURCE_PROJECT_ID=fqxrhumsgigcgjtlbfuo
+SUPABASE_SOURCE_DATABASE_URL=postgresql://READ_ONLY_USER:PASSWORD@db.fqxrhumsgigcgjtlbfuo.supabase.co:5432/postgres
+# If this source requires its dedicated root CA, provide the owner-verified PEM.
+# PGSSLROOTCERT=/absolute/private/path/to/supabase-root-ca.crt

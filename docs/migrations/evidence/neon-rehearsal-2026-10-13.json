@@ -1,0 +1,22 @@
+{
+  "scope": "Synthetic accounts only, isolated Neon child branch",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-morning-darkness-azwfti4c",
+  "startedAt": "2026-10-13T04:34:20.710Z",
+  "checks": {
+    "transport": {
+      "encrypted": true,
+      "certificateAuthorized": true,
+      "note": "Client-to-Neon proxy TLS; pg_stat_ssl reports the separate proxy-to-compute connection"
+    },
+    "auth": "PASS: signup, unverified denial, verified-fixture login, JWKS signature, tamper denial, cookie session restore; email delivery NOT tested",
+    "scopeAndPin": "PASS: two tenants, own directory, foreign outlet denied, metadata cannot assign role/tenant, idempotent onboarding, random legacy PIN, weak PIN/wrong owner denied, Neon password proof, short grant, missing grant denied",
+    "browserRoles": {
+      "status": "PASS",
+      "actualDeniedStatements": 292
+    },
+    "logout": "PASS: session cookies invalid after logout; already minted JWTs retain their documented 15-minute lifetime"
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-13T04:36:04.394Z"
+}

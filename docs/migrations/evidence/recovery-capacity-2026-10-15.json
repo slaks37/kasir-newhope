@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "scope": "Read-only actual runtime LOGIN; warm pooled connection, not a cold-start/load test",
+  "measuredAt": "2026-10-15T03:15:43.172Z",
+  "branchId": "br-curly-truth-aze21ktf",
+  "role": "newhope_runtime_login",
+  "tlsVerified": true,
+  "databaseBytes": 21078016,
+  "connectionMs": 169,
+  "warmQuery": {
+    "samples": 10,
+    "medianMs": 20,
+    "maxMs": 37
+  },
+  "untested": [
+    "cold-start latency",
+    "multi-device peak concurrency",
+    "provider latency",
+    "sustained production workload"
+  ]
+}

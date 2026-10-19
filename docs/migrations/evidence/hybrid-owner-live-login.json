@@ -1,0 +1,17 @@
+{
+  "status": "PASS_OWNER_ATTESTED",
+  "scope": "Owner-operated real Supabase account login on deployed hybrid Preview; user report, not automated credential capture or server trace",
+  "deploymentId": "dpl_C4AqQd2c3Pz4jskyc794bV4UDgzg",
+  "commit": "0472e5962583897442e242f135289d9b9855a262",
+  "url": "https://kasir-newhope-neon-hybrid-staging.vercel.app",
+  "results": {
+    "login": true,
+    "merchantOutletCorrect": true,
+    "dashboard": true,
+    "businessDataVisible": true,
+    "errorsReported": false
+  },
+  "credentialsCollected": false,
+  "identityRemapping": false,
+  "cutoverApproved": false
+}

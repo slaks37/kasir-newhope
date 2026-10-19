@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "scope": "Public JPEG copy to isolated Neon branch; source and production untouched",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "startedAt": "2026-10-15T03:15:37.319Z",
+  "finishedAt": "2026-10-15T03:16:08.670Z",
+  "objectCount": 39,
+  "totalBytes": 3428274,
+  "anonymousWriteDenied": true,
+  "allObjectSha256ReadbacksVerified": true,
+  "mode": "verify-only"
+}

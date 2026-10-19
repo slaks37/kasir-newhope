@@ -1,0 +1,45 @@
+{
+  "checkedAt": "2026-10-15T10:18:42.922Z",
+  "sourceCaptureAt": "2026-10-15T10:16:16.489064+00:00",
+  "sourceBackupSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "exceptions": [
+    {
+      "reason": "CANONICAL_UUID_EVIDENCE_MISSING",
+      "sourceUuidMatch": false,
+      "relatedTenants": 0,
+      "relatedMerchants": 0,
+      "relatedOutlets": 0,
+      "stagingBindings": 0,
+      "verifiedHumanOwnership": false,
+      "ownerApproval": "NOT_RECEIVED"
+    },
+    {
+      "reason": "DIFFERENT_UUID_CANONICAL_EMAIL_COLLISION",
+      "sourceUuidMatch": false,
+      "relatedTenants": 1,
+      "relatedMerchants": 4,
+      "relatedOutlets": 6,
+      "stagingBindings": 0,
+      "verifiedHumanOwnership": false,
+      "ownerApproval": "NOT_RECEIVED"
+    },
+    {
+      "reason": "CANONICAL_UUID_EVIDENCE_MISSING",
+      "sourceUuidMatch": false,
+      "relatedTenants": 0,
+      "relatedMerchants": 0,
+      "relatedOutlets": 0,
+      "stagingBindings": 0,
+      "verifiedHumanOwnership": false,
+      "ownerApproval": "NOT_RECEIVED"
+    }
+  ],
+  "scope": "Read-only; private UUID/evidence report retained outside Git; no identities activated or modified",
+  "status": "OWNER_AUTHORIZED_SAFE_SEPARATION_IMPLEMENTED",
+  "sourceUuidEvidenceMappingsApplied": 7,
+  "unverifiedSourceIdentitiesRetainedInactive": 3,
+  "activeBindingsForHeldAccounts": 0,
+  "newBusinessGrantsForHeldAccounts": 0,
+  "ownerSafeSeparationAuthorization": "RECEIVED",
+  "verifiedHumanOwnershipOfExceptions": false
+}

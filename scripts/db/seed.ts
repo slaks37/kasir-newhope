@@ -17,6 +17,9 @@
  */
 import 'dotenv/config';
 import crypto from 'node:crypto';
+import {assertLocalSeedTargets} from '../../services/shared/localSeedTarget';
+
+assertLocalSeedTargets(); // Before any signup, API call, or fixture write.
 
 const API = (process.env.SEED_API_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const AUTH = (process.env.SUPABASE_URL || `http://127.0.0.1:${process.env.DEV_AUTH_PORT || 54321}`).replace(/\/$/, '');

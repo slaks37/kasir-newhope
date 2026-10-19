@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-10-14T06:12:39.337Z",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "status": "PASS",
+  "scope": "Actual native HTTP with dedicated auth LOGIN, IPv6 loopback, synthetic invalid-domain account and injected mail sink; no production, customer credential or email delivery changes",
+  "checks": {
+    "dedicatedAuthRole": true,
+    "canonicalAndAdminOriginsAccepted": true,
+    "foreignOriginDenied": true,
+    "marketingCallbackDeniedBeforeMailer": true,
+    "nativeEncodedVerifyLinkCompatible": true,
+    "nativeEncodedResetLinkCompatible": true,
+    "duplicateCallbackDenied": true,
+    "approvedAdminAuthRedirects": true,
+    "resetSingleUse": true,
+    "oldNativeBearerRevokedByReset": true,
+    "messagesDelivered": 0
+  },
+  "finishedAt": "2026-10-14T06:12:44.464Z"
+}

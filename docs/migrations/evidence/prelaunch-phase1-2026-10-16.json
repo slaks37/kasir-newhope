@@ -1,0 +1,199 @@
+{
+  "format": "newhope-prelaunch-phase1-evidence-v1",
+  "ownerAttested": {
+    "prelaunch": true,
+    "noRealCustomers": true,
+    "noCustomerDokuPayments": true
+  },
+  "architecture": {
+    "database": "neon",
+    "auth": "supabase",
+    "storage": "supabase",
+    "betterAuthActivated": false,
+    "identityRemapsActivated": false
+  },
+  "cleanCandidate": {
+    "branch": "br-plain-snow-azjwwq6u",
+    "productionEligible": false,
+    "restoredRows": 2645,
+    "tables": 125,
+    "constraints": {
+      "source": 466,
+      "exactMatches": 466
+    },
+    "sequences": 5,
+    "exceptions": 0,
+    "syntheticUsers": 0,
+    "transactions": 8,
+    "amount": "747000.00",
+    "credentialResetRows": 0
+  },
+  "snapshot": {
+    "capture": "2026-10-15T23:20:31.54757+00:00",
+    "ciphertextSha256": "9693057f6a384874b0c5b5dc544176aec298c6d8fb249704b37a0dfcefc8df6f",
+    "drivePrivate": true,
+    "driveReadbackBytes": 456850,
+    "driveReadbackExact": true,
+    "independentKeyCustodyAccepted": false
+  },
+  "runtimeUpgrade": {
+    "allOriginalTablesUnchanged": {
+      "tables": 125,
+      "beforeFingerprint": "067fcb549c8ef22bea22b44dd2839dee06bc224266f1f4db542f3beea6a44aa3",
+      "afterFingerprint": "067fcb549c8ef22bea22b44dd2839dee06bc224266f1f4db542f3beea6a44aa3"
+    },
+    "walletsUnchanged": {
+      "rows": 8,
+      "fingerprint": "6af06246e4309122f7b085d704315d344af83c8179855158764794fe42952e3d"
+    },
+    "derived": {
+      "openingentries": 8,
+      "walletdifferences": 0,
+      "sharedversions": 32,
+      "expectedsharedversions": 32,
+      "attendancerows": 0,
+      "payrollrows": 0
+    },
+    "idempotentReapply": true,
+    "noPeriodReset": true,
+    "noHistoricalCreditSpendInvented": true
+  },
+  "sourceDelta": {
+    "format": "newhope-prelaunch-snapshot-delta-v1",
+    "baselineCapture": "2026-10-15T10:43:44.718189+00:00",
+    "candidateCapture": "2026-10-15T23:20:31.54757+00:00",
+    "candidateCiphertextSha256": "9693057f6a384874b0c5b5dc544176aec298c6d8fb249704b37a0dfcefc8df6f",
+    "checkpointAt": "2026-10-15T23:28:16.50477+00:00",
+    "tables": 125,
+    "rows": 2645,
+    "baselineChanges": [
+      {
+        "table": "billing.plans",
+        "before": 6,
+        "after": 6
+      },
+      {
+        "table": "blog_mcp_private.audit",
+        "before": 42,
+        "after": 43
+      },
+      {
+        "table": "blog_mcp_private.credentials",
+        "before": 59,
+        "after": 61
+      },
+      {
+        "table": "public.blog_posts",
+        "before": 68,
+        "after": 75
+      }
+    ],
+    "currentDrift": [],
+    "sourceFrozen": false,
+    "status": "NO_DRIFT_AT_READ_ONLY_CHECKPOINT",
+    "deltaApplied": false,
+    "cutoverAllowed": false
+  },
+  "rehearsal": {
+    "branch": "br-orange-union-azwj2z2e",
+    "status": "PASS_WITH_LIVE_AUTH_AND_EXTERNAL_CUTOVER_GATES",
+    "checks": {
+      "restrictedRoleDenials": 6,
+      "sourceAuthorizationMatrix": {
+        "sourceAccounts": 10,
+        "merchantChecks": 130,
+        "uuidRewrites": 0
+      },
+      "httpDirectorySubscription": {
+        "sectors": 5,
+        "spoofedPrincipalIgnored": true,
+        "nativeAuth404": true,
+        "anonymousDenied": true,
+        "authentication": "CONTRACT_FIXTURE_NOT_MANAGED_POSITIVE_LOGIN"
+      },
+      "realSupabaseInvalidTokenDenied": true,
+      "isolatedCutoverFreezeToNewWriteMs": 4901,
+      "isolatedRollbackAfterNeonWriteMs": 5928,
+      "originalTransactionRowsUnchanged": true,
+      "reverseDelta": {
+        "events": 2,
+        "amount": "3000.00",
+        "financialUuidsPreserved": true,
+        "fullRowEquality": true,
+        "reapplyIdempotent": true,
+        "conflictDenied": true,
+        "customerRowsModified": 0
+      },
+      "sourceStorageRead": {
+        "existingUrlPreserved": true,
+        "representativePublicGet": 200,
+        "sourceWrites": 0
+      },
+      "productionDowntimeEstimate": null,
+      "timingLimit": "Actual isolated database/API rehearsal only; successful Auth responses are contract fixtures. Fleet drain, provider checkpoint, source freeze and production promotion not measured."
+    },
+    "operations": {
+      "crossTenantWriteDenied": true,
+      "concurrentOfflineReplay": {
+        "requests": 3,
+        "transactions": 1,
+        "inventoryDeductions": 1,
+        "stockBefore": 10,
+        "stockAfter": 9
+      },
+      "transactionAbortRestoresInventory": true,
+      "dokuSynthetic": {
+        "signedRawBody": true,
+        "tamperDenied": true,
+        "failedThenSuccess": true,
+        "amountCurrencyChannelReview": true,
+        "duplicateAndConflict": true,
+        "paymentFailureRolledBack": true,
+        "lateRetry12h": true,
+        "plusProMonthlyYearly": true,
+        "outboundProviderRequests": 0,
+        "realProviderAcceptance": false
+      },
+      "originalTransactionRowsUnchanged": true
+    },
+    "managedPositiveLogin": "OWNER_ATTESTED_PREVIOUS_PREVIEW_LOGIN_NOT_REPEATED"
+  },
+  "developmentDevice": {
+    "realBrowserProfilesObserved": 1,
+    "origin": "https://kasir-newhope-neon-hybrid-staging.vercel.app",
+    "pendingOrHeld": 0,
+    "unsavedDraftItems": 0,
+    "errors": 0,
+    "stable": true,
+    "inFlightRequests": "UNKNOWN",
+    "historicalProductionOriginStorageNotObserved": true,
+    "customerFleetRequirement": "NOT_APPLICABLE_PER_OWNER_PRELAUNCH_ATTESTATION",
+    "allDevelopmentDevicesConfirmed": false
+  },
+  "finance": {
+    "classification": "OWNER_ATTESTED_TESTING; no rows deleted or relabelled",
+    "cashRows": 6,
+    "cashAmount": "653000.00",
+    "legacyUnverifiedQrisRows": 2,
+    "legacyUnverifiedQrisAmount": "94000.00",
+    "verifiedGatewayPayments": 0,
+    "invoiceRows": 0,
+    "providerEvents": 0,
+    "subscriptions": 10,
+    "recurringAmount": "0.00",
+    "financialScopeOrAmountMismatches": 0,
+    "externalCashOrBankSettlementProven": false
+  },
+  "payments": {
+    "sandboxProviderE2E": "BLOCKED_SANDBOX_BUSINESS_LOOKUP",
+    "providerQueueGloballyEmptyProven": false,
+    "productionBrandMatchesCurrentProjectClientId": true,
+    "productionChannelAllowlistPresent": false,
+    "proposedCutoverPaymentMode": "DOKU_PAYMENTS_ENABLED=0; not applied to production",
+    "databaseCutoverMustNotDependOnUnusedVirtualAccount": true
+  },
+  "productionDowntimeEstimate": null,
+  "productionMutations": false,
+  "cutoverExecuted": false,
+  "decision": "NO-GO_EXECUTION_UNTIL_BACKUP_CUSTODY_AND_EXACT_CUTOVER_APPROVAL"
+}

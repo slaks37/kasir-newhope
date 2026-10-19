@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "scope": "Actual isolated Neon child to isolated rollback surrogate; new synthetic owner/staff/tenant/membership/subscription/catalog/inventory closure. No managed Auth activation, source writes or payments.",
+  "sourceBranch": "br-bold-mud-azibt3jb",
+  "targetBranch": "br-orange-union-azwj2z2e",
+  "productionRollbackAccepted": false,
+  "tables": 11,
+  "rows": 12,
+  "reverseClosureMs": 1312,
+  "elapsedMs": 3421,
+  "fullRowEquality": true,
+  "originalUUIDsPreserved": true,
+  "reapplyNoOp": true,
+  "conflictDenied": true,
+  "deletes": 0,
+  "limitations": [
+    "Synthetic closure only, not arbitrary production updates/deletes or a native source restore",
+    "No source freeze, deployment propagation or real managed Auth signup timing"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-curly-truth-aze21ktf",
+  "parentId": "br-falling-butterfly-az989m86",
+  "host": "ep-plain-dream-azghoyf7.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "region": "aws-ap-southeast-1",
+  "default": false,
+  "purpose": "isolated full source restore and production-candidate rehearsal"
+}

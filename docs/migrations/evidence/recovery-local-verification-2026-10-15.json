@@ -1,0 +1,43 @@
+{
+  "status": "PASS",
+  "scope": "Local working-tree verification; exact hosted commit is recorded separately on PR #21 after push",
+  "baseCommit": "73ed3be9036e77379ef717e237b158482e7d0494",
+  "checks": {
+    "fullVerify": true,
+    "lintBothTypeconfigs": true,
+    "build": true,
+    "runtimeRegression": true,
+    "completeRegressionSuite": true,
+    "embeddedMigrationFiles": 70,
+    "secretScan": true
+  },
+  "codeSha256": {
+    "api/_admin_bundle.js": "c270f5c6734227ff492c983d0c2571d78e7fd9555c9f5eb7f223aef0a4219bbc",
+    "api/_assistant_bundle.js": "30ff0ea9374cd3a056f56e02c741c607a2dfc69310d4629c2daf863ac27b29dc",
+    "api/_better_auth_bundle.js": "12efe377e3f4eac3114fed36ba06ca189231f4e65a8d6e6bf9280ee0968afacd",
+    "api/_billing_reminders_bundle.js": "aea31d4ca6e173cd9d8e8a11708bd026408b972368d04b01fe0c070cb0f513d7",
+    "api/_blog_mcp_bundle.js": "69972c00770d59c4c39348a9bce2150510af86a8eefaf7efff3e2d880b24c4e3",
+    "api/_cron/health.ts": "484a1f04a04e1d41b7be632f851ae0714702fdfcbd9993206f8126408f1e4cde",
+    "api/_daily_insights_bundle.js": "06e051a83a084e71a6def62a159a822d53d55bcd51fdfb4c6da4c0f85df04dec",
+    "api/_doku_bundle.js": "a0093d70e94110a1f47562d54d49d10436340bdf6beb9e267b402b7888df4feb",
+    "api/_mcp_bundle.js": "00bedb708694852e13e7a86177f6ec16efa71fd06ac2b8c0e40fc1d5ffd4181f",
+    "api/_merchant_health_bundle.js": "db29c8a58ef967529df943994394608a93008668115d8be043a6690185a80f5e",
+    "api/_subscription_bundle.js": "a0093d70e94110a1f47562d54d49d10436340bdf6beb9e267b402b7888df4feb",
+    "api/_sync_bundle.js": "61e91ab43453562e97cc0c37e885c42d7675c6a6e0570a8507658d5e639d18cb",
+    "neon/targets/clean-rehearsal.json": "044e07df8b1024793ae33b43504d2a7a3e0ad8acab604804be6cfc717b764485",
+    "package.json": "6e05a1ba77d8c9eacfb7722efcf59058f0950613031f0d05d55886d977621bc9",
+    "scripts/db/bootstrap.mjs": "aa69e1378a1bd520cfa86c219ea67b30ee7ac45707f55c08107391a3ce734970",
+    "scripts/db/seed.ts": "cd4f6251048d49d65bb8af704ded7a853de00c8a142a8673b5b2adff8368a9e6",
+    "scripts/dev/test-migration-recovery.ts": "807ac689ec38b122c2bb18bfda970af82f8c6556f3301e72e996ce65e06e6910",
+    "scripts/neon/backup-common.mjs": "1e71d089a4e4b64a460342b154fc45843a96fcdc19d1aa6788c8734a685e1545",
+    "scripts/neon/inventory.sql": "c20dd207e4e3d457072224ea8eeb44708c6806660eb54062c774e6694d7b10cb",
+    "scripts/neon/recovery-safeguards.ts": "dc1915066d165bf23c09b55b0c41a2b7dbedd46ea9b7e1927ef92340d4fa9dac",
+    "services/db-server/migrate.ts": "bb60b0836dbec38dcc91d54f0ff50133a2a4ae8464e45377f477a18f66f1762f",
+    "services/db-server/migrationSafety.ts": "73beafb20feb10033b331afb8adea6d17ff35dacc327f3081095f7a78bd08028",
+    "services/shared/databaseTls.ts": "d6bbe9f9e68552abcca0b973475af142433c26af8b1a56f60675aa5ab082a11a",
+    "services/shared/env.ts": "5fc40498bd50d1f9aeb931b4ee21be3347fc67b2310a4345d878083c546b7bb3",
+    "services/shared/localSeedTarget.ts": "bb904ac8cc407e47d49ab7553302b0d8803305f8b4aea6d28856e4ff2a6328dc",
+    "services/shared/poolConfig.ts": "ba69d89a7097a8326997b441ebd5dec7f2bd39fbb7cebda6fb96737fc79806ae",
+    "src/server/db.ts": "473568e4ad6bb6547d69e646bda2988d3b312e5e07f9f54e1d88fe17f188f62b"
+  }
+}

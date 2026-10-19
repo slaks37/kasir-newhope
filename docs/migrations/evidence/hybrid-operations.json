@@ -1,0 +1,32 @@
+{
+  "status": "PASS_WITH_EXTERNAL_CUTOVER_GATES",
+  "startedAt": "2026-10-15T16:10:23.144Z",
+  "targetBranch": "br-weathered-tooth-azbwi2zz",
+  "scope": "Actual isolated Neon synthetic operations with local Auth principal fixtures; no managed Auth calls, emails, provider calls, production changes or customer-row deletes",
+  "checks": {
+    "crossTenantWriteDenied": true,
+    "concurrentOfflineReplay": {
+      "requests": 3,
+      "transactions": 1,
+      "inventoryDeductions": 1,
+      "stockBefore": 10,
+      "stockAfter": 9
+    },
+    "transactionAbortRestoresInventory": true,
+    "dokuSynthetic": {
+      "signedRawBody": true,
+      "tamperDenied": true,
+      "failedThenSuccess": true,
+      "amountCurrencyChannelReview": true,
+      "duplicateAndConflict": true,
+      "paymentFailureRolledBack": true,
+      "lateRetry12h": true,
+      "plusProMonthlyYearly": true,
+      "outboundProviderRequests": 0,
+      "realProviderAcceptance": false
+    },
+    "originalTransactionRowsUnchanged": true
+  },
+  "productionDecision": "NO-GO",
+  "finishedAt": "2026-10-15T16:10:46.780Z"
+}

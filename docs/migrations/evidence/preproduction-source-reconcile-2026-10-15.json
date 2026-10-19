@@ -1,0 +1,1461 @@
+{
+  "status": "PASS",
+  "scope": "Actual encrypted source business snapshot vs isolated Neon restored business data; source credentials deliberately excluded",
+  "ciphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "sourceCapturedAt": "2026-10-15T10:16:16.489064+00:00",
+  "targetProject": "steep-sea-66546931",
+  "targetBranch": "br-wandering-snow-azcqie4c",
+  "startedAt": "2026-10-15T10:18:51.647Z",
+  "tables": [
+    {
+      "schema": "ai",
+      "name": "ai_query_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "ai",
+      "name": "batch_job_runs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "ai",
+      "name": "business_intelligence_cache",
+      "sourceRows": 11,
+      "targetRows": 11,
+      "sourceFingerprint": "66049c81f210d7fbaf17b368ee1734fc268e52e5e3a8fbe455b8483913e01b14",
+      "targetFingerprint": "66049c81f210d7fbaf17b368ee1734fc268e52e5e3a8fbe455b8483913e01b14",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "ai",
+      "name": "daily_merchant_insights",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "ai",
+      "name": "merchant_ai_credits",
+      "sourceRows": 8,
+      "targetRows": 8,
+      "sourceFingerprint": "2fe142c2ced1602d41fb3c047dd20f5263560a29a0074f3b1ba76c00544d76b3",
+      "targetFingerprint": "2fe142c2ced1602d41fb3c047dd20f5263560a29a0074f3b1ba76c00544d76b3",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "ai",
+      "name": "provider_consent_events",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "device_fingerprints",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "invoices",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "payment_events",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "plans",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "3193d0c828adeedb68b5e5ae69f7e642df3615611ca799d848ea8029a91fa502",
+      "targetFingerprint": "3193d0c828adeedb68b5e5ae69f7e642df3615611ca799d848ea8029a91fa502",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "reminder_deliveries",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "subscriptions",
+      "sourceRows": 10,
+      "targetRows": 10,
+      "sourceFingerprint": "4f2e79370ccf61de73d1e75a096386a67186b04d925c0f221a9cc532bd4acf10",
+      "targetFingerprint": "4f2e79370ccf61de73d1e75a096386a67186b04d925c0f221a9cc532bd4acf10",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "billing",
+      "name": "webhook_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "audit",
+      "sourceRows": 42,
+      "targetRows": 42,
+      "sourceFingerprint": "e39f118051657d8b75e225eb5514944fbbf7be73901939e1eab7d44448b90ba9",
+      "targetFingerprint": "e39f118051657d8b75e225eb5514944fbbf7be73901939e1eab7d44448b90ba9",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "connections",
+      "sourceRows": 1,
+      "targetRows": 1,
+      "sourceFingerprint": "4c8bf1a8e2601a4004979d59f476a30d4a5418836763de98018beb6990858bcb",
+      "targetFingerprint": "4c8bf1a8e2601a4004979d59f476a30d4a5418836763de98018beb6990858bcb",
+      "match": true,
+      "excludedColumns": [
+        "revoked_at"
+      ]
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "credentials",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "attendances",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "audit_logs",
+      "sourceRows": 328,
+      "targetRows": 328,
+      "sourceFingerprint": "3c54ad327359432175dfcd002fdef92eaa311ef5989d073a71d3e77261efe5ec",
+      "targetFingerprint": "3c54ad327359432175dfcd002fdef92eaa311ef5989d073a71d3e77261efe5ec",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "business_targets",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "feature_usage_events",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "internal_access_log",
+      "sourceRows": 87,
+      "targetRows": 87,
+      "sourceFingerprint": "f0aaf84e6432445c81d9efde058e7914da18503d0d7ad5b572aaabb4ac1bfd5d",
+      "targetFingerprint": "f0aaf84e6432445c81d9efde058e7914da18503d0d7ad5b572aaabb4ac1bfd5d",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "internal_users",
+      "sourceRows": 8,
+      "targetRows": 8,
+      "sourceFingerprint": "7187d2e295fcc56699d2abd83642105409dcf5e5c966e7a34606dba2c8166111",
+      "targetFingerprint": "7187d2e295fcc56699d2abd83642105409dcf5e5c966e7a34606dba2c8166111",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "legal_notice_acknowledgements",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "memberships",
+      "sourceRows": 3,
+      "targetRows": 3,
+      "sourceFingerprint": "83c7876ce8b0324e5c57fa396b3678a05dabd6505183449e2c362113b4110cde",
+      "targetFingerprint": "83c7876ce8b0324e5c57fa396b3678a05dabd6505183449e2c362113b4110cde",
+      "match": true,
+      "excludedColumns": [
+        "pin"
+      ]
+    },
+    {
+      "schema": "internal",
+      "name": "merchant_health_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "merchant_settings",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "merchants",
+      "sourceRows": 13,
+      "targetRows": 13,
+      "sourceFingerprint": "9afa5a20d75bb402ef45c30a23504dcb3bbdcba0536b99e079cac4b5e95b01f3",
+      "targetFingerprint": "9afa5a20d75bb402ef45c30a23504dcb3bbdcba0536b99e079cac4b5e95b01f3",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "outlets",
+      "sourceRows": 11,
+      "targetRows": 11,
+      "sourceFingerprint": "0c6a464fa620fe91f19d6e3f2de182f696b18f40de6cb73dcb2b8307ce644b08",
+      "targetFingerprint": "0c6a464fa620fe91f19d6e3f2de182f696b18f40de6cb73dcb2b8307ce644b08",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "platform_integrations",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "privacy_request_events",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "privacy_requests",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "security_acl_rollback",
+      "sourceRows": 1630,
+      "targetRows": 1630,
+      "sourceFingerprint": "40e3318346a1f4651ff5f8af413f4ffe34a6dc7774d77961d8a7f86c925ce888",
+      "targetFingerprint": "40e3318346a1f4651ff5f8af413f4ffe34a6dc7774d77961d8a7f86c925ce888",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "support_actions",
+      "sourceRows": 4,
+      "targetRows": 4,
+      "sourceFingerprint": "ab90527b02bc3ed2602c8cfa040bf0c76a9c7d8d584f84d3277b66bdc4d95e2e",
+      "targetFingerprint": "ab90527b02bc3ed2602c8cfa040bf0c76a9c7d8d584f84d3277b66bdc4d95e2e",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "tenant_identity_recovery",
+      "sourceRows": 2,
+      "targetRows": 2,
+      "sourceFingerprint": "e460e71b5076b70e92b4baa4ce3697d713bb4c35a0fc21f6d44e68efa53667ac",
+      "targetFingerprint": "e460e71b5076b70e92b4baa4ce3697d713bb4c35a0fc21f6d44e68efa53667ac",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "tenants",
+      "sourceRows": 11,
+      "targetRows": 11,
+      "sourceFingerprint": "3b7d45c890464939f76ed38f0dce9dd22c772c00736149a68c5a201f7f6abc04",
+      "targetFingerprint": "3b7d45c890464939f76ed38f0dce9dd22c772c00736149a68c5a201f7f6abc04",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "internal",
+      "name": "users",
+      "sourceRows": 25,
+      "targetRows": 25,
+      "sourceFingerprint": "1abe8ffe82833f8ce932d45d4350573adb4da221f60411cdd467fa381aed0db8",
+      "targetFingerprint": "1abe8ffe82833f8ce932d45d4350573adb4da221f60411cdd467fa381aed0db8",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "mcp_private",
+      "name": "audit",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "mcp_private",
+      "name": "connections",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": [
+        "revoked_at"
+      ]
+    },
+    {
+      "schema": "mcp_private",
+      "name": "credentials",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "bays",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "branch_settings",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "cash_ledger",
+      "sourceRows": 11,
+      "targetRows": 11,
+      "sourceFingerprint": "8a256e813d38ba8d6ec47d92b18d5669991825158520f4d69b2196bfdc8b57d7",
+      "targetFingerprint": "8a256e813d38ba8d6ec47d92b18d5669991825158520f4d69b2196bfdc8b57d7",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "cash_registers",
+      "sourceRows": 5,
+      "targetRows": 5,
+      "sourceFingerprint": "d8cda12f81503e4cdd358b0366344026ec71bc5519b08cefe4a2f81909661e68",
+      "targetFingerprint": "d8cda12f81503e4cdd358b0366344026ec71bc5519b08cefe4a2f81909661e68",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "chairs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "customers",
+      "sourceRows": 1,
+      "targetRows": 1,
+      "sourceFingerprint": "950ad037082825546badd7d849190de94a3093f01a2474a05e5e8ff82aec050c",
+      "targetFingerprint": "950ad037082825546badd7d849190de94a3093f01a2474a05e5e8ff82aec050c",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "financial_approval_grants",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": [
+        "token_hash"
+      ]
+    },
+    {
+      "schema": "pos",
+      "name": "financial_authorization_audit",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "financial_pin_attempts",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "financial_pin_credentials",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": [
+        "pin_hash"
+      ]
+    },
+    {
+      "schema": "pos",
+      "name": "ingredients",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_balances",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_items",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_locations",
+      "sourceRows": 5,
+      "targetRows": 5,
+      "sourceFingerprint": "401d7091c3013822789527cc203f594c7f481d1f50e405f5a3145ddd8142a324",
+      "targetFingerprint": "401d7091c3013822789527cc203f594c7f481d1f50e405f5a3145ddd8142a324",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_transactions",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "kds_stations",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "loyalty_accounts",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "loyalty_transactions",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_activity_log",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_audit_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_payment_accounts",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "modifiers",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "operational_jobs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "operational_stages",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_barber",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_carwash",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_fnb",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_laundry",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_retail",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "payment_provider_links",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "payment_reconciliation_events",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "payments",
+      "sourceRows": 8,
+      "targetRows": 8,
+      "sourceFingerprint": "93f4fe1cf6da65489caaf38c6f6c3b16f462a783826bc27142a8c312257c71fb",
+      "targetFingerprint": "93f4fe1cf6da65489caaf38c6f6c3b16f462a783826bc27142a8c312257c71fb",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "pos_settings",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "product_recipes",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "product_variants",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "products",
+      "sourceRows": 38,
+      "targetRows": 38,
+      "sourceFingerprint": "7ba910e40419f9a86a48018720e1c21753ee4190a3f9c5fb77bb786db2d7f8d2",
+      "targetFingerprint": "7ba910e40419f9a86a48018720e1c21753ee4190a3f9c5fb77bb786db2d7f8d2",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "receipt_settings",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "recipe_items",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "recipes",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "shared_state_records",
+      "sourceRows": 125,
+      "targetRows": 125,
+      "sourceFingerprint": "c264d5830c7e6475ad2559b95ed7ab7e99bd3c95ff4767856624c4a1e2af8c61",
+      "targetFingerprint": "c264d5830c7e6475ad2559b95ed7ab7e99bd3c95ff4767856624c4a1e2af8c61",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "shifts",
+      "sourceRows": 5,
+      "targetRows": 5,
+      "sourceFingerprint": "a9c1df26b58bea428d9c67d0204fcc1444dd0295c35db14b28e93e973561ead6",
+      "targetFingerprint": "a9c1df26b58bea428d9c67d0204fcc1444dd0295c35db14b28e93e973561ead6",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "staff_assignments",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "staff_commissions",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "sync_receipts",
+      "sourceRows": 5,
+      "targetRows": 5,
+      "sourceFingerprint": "009eb15ce946e6c57470c450d32d951e238d333fe1e0cb3566559b9fd81bb821",
+      "targetFingerprint": "009eb15ce946e6c57470c450d32d951e238d333fe1e0cb3566559b9fd81bb821",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "tables",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "tax_settings",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "tenants",
+      "sourceRows": 10,
+      "targetRows": 10,
+      "sourceFingerprint": "91fd550cae56914b4984e9da3f5986a5576a9976354b5b6a70facd2d8466f824",
+      "targetFingerprint": "91fd550cae56914b4984e9da3f5986a5576a9976354b5b6a70facd2d8466f824",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_adjustments",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_item_components",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_item_modifiers",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_items",
+      "sourceRows": 9,
+      "targetRows": 9,
+      "sourceFingerprint": "abd02898c3e1138d2cad16617dee5f256a4aa56aa9bce4252704d7783837fad0",
+      "targetFingerprint": "abd02898c3e1138d2cad16617dee5f256a4aa56aa9bce4252704d7783837fad0",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_refund_items",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_refunds",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "transactions",
+      "sourceRows": 8,
+      "targetRows": 8,
+      "sourceFingerprint": "da073a5032410121f55f1ca4380cd760d20aebcfff9ac41336a3e8c16e61f203",
+      "targetFingerprint": "da073a5032410121f55f1ca4380cd760d20aebcfff9ac41336a3e8c16e61f203",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "pos",
+      "name": "users",
+      "sourceRows": 5,
+      "targetRows": 5,
+      "sourceFingerprint": "f318e7cee687fa2eb7241827d6b336a5f44e3e8c21bfa509bc0a4bbaead0ca59",
+      "targetFingerprint": "f318e7cee687fa2eb7241827d6b336a5f44e3e8c21bfa509bc0a4bbaead0ca59",
+      "match": true,
+      "excludedColumns": [
+        "pin"
+      ]
+    },
+    {
+      "schema": "pos",
+      "name": "vehicles",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "admin_users",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "4adf74765bde44eb108141758b2911d32e79103538c04e42d55f29b442186730",
+      "targetFingerprint": "4adf74765bde44eb108141758b2911d32e79103538c04e42d55f29b442186730",
+      "match": true,
+      "excludedColumns": [
+        "password_hash"
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "ai_merchant_insights",
+      "sourceRows": 2,
+      "targetRows": 2,
+      "sourceFingerprint": "ed44215a191930d78fc3722816f375d28dbddae4f67bc8339a805d6e1f1bde96",
+      "targetFingerprint": "ed44215a191930d78fc3722816f375d28dbddae4f67bc8339a805d6e1f1bde96",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "attendance_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "blog_posts",
+      "sourceRows": 68,
+      "targetRows": 68,
+      "sourceFingerprint": "bdc332290be07a4a2bc78fc834d3265ec7fa925e5b24562154cad2ab2487f66e",
+      "targetFingerprint": "bdc332290be07a4a2bc78fc834d3265ec7fa925e5b24562154cad2ab2487f66e",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "bundle_items",
+      "sourceRows": 4,
+      "targetRows": 4,
+      "sourceFingerprint": "4b643388686f8a1ee548318a897090deca089825174c0624373eb91f03c652e4",
+      "targetFingerprint": "4b643388686f8a1ee548318a897090deca089825174c0624373eb91f03c652e4",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "categories",
+      "sourceRows": 3,
+      "targetRows": 3,
+      "sourceFingerprint": "60a4968b8bc0c7dcd9b9abb2d053402949e2f2110edd6803c76530f2e3a2be1b",
+      "targetFingerprint": "60a4968b8bc0c7dcd9b9abb2d053402949e2f2110edd6803c76530f2e3a2be1b",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "customers",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "inventory_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "merchant_health_scores",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "8a0e053ed8e7d94239a41533c5b32e61c36c046a232bf744be92c7cf9a91e3d8",
+      "targetFingerprint": "8a0e053ed8e7d94239a41533c5b32e61c36c046a232bf744be92c7cf9a91e3d8",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "merchant_settings",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "8b9b44254f5a411b990c31ccdb925c5a6e0f159af7b90fcae7ea3e4374c3e21b",
+      "targetFingerprint": "8b9b44254f5a411b990c31ccdb925c5a6e0f159af7b90fcae7ea3e4374c3e21b",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "merchants",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "c41e8f71ebcc86a97ab3d22fa8061842445fb8886018b1806e16d05c488615d7",
+      "targetFingerprint": "c41e8f71ebcc86a97ab3d22fa8061842445fb8886018b1806e16d05c488615d7",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "order_items",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "order_tax_breakdowns",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "orders",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "platform_audit_logs",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "product_bundles",
+      "sourceRows": 2,
+      "targetRows": 2,
+      "sourceFingerprint": "9e23f8ad37f15a588da519eb8a7162c556957f711ee4ab13e3412ff2188e7ad0",
+      "targetFingerprint": "9e23f8ad37f15a588da519eb8a7162c556957f711ee4ab13e3412ff2188e7ad0",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "product_modifiers",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "product_recipes",
+      "sourceRows": 4,
+      "targetRows": 4,
+      "sourceFingerprint": "6c4f0c320809d1c46ee11ff548b027dd63a9a708050c8b67eab4f0a2fb822cbd",
+      "targetFingerprint": "6c4f0c320809d1c46ee11ff548b027dd63a9a708050c8b67eab4f0a2fb822cbd",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "product_variants",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "products",
+      "sourceRows": 4,
+      "targetRows": 4,
+      "sourceFingerprint": "493070660ee56302e145844d8f07438d6d2a0a0c973df7cefd80541cded4d9d2",
+      "targetFingerprint": "493070660ee56302e145844d8f07438d6d2a0a0c973df7cefd80541cded4d9d2",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "promo_codes",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "raw_materials",
+      "sourceRows": 4,
+      "targetRows": 4,
+      "sourceFingerprint": "16fd5d182a634aa8e4686a0de6638b737b7fd5dc0d97b21cbe63af7fa4e6e43b",
+      "targetFingerprint": "16fd5d182a634aa8e4686a0de6638b737b7fd5dc0d97b21cbe63af7fa4e6e43b",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "saas_invoices",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "saas_plans",
+      "sourceRows": 3,
+      "targetRows": 3,
+      "sourceFingerprint": "e9a577c95a8942115a5f65dbdbb566817650209fc43f5f6676863e3c6e50efa8",
+      "targetFingerprint": "e9a577c95a8942115a5f65dbdbb566817650209fc43f5f6676863e3c6e50efa8",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "saas_subscriptions",
+      "sourceRows": 6,
+      "targetRows": 6,
+      "sourceFingerprint": "21fac44e1af2b9c09720ed25397063030389825f2a2b44113d1d987b08b45087",
+      "targetFingerprint": "21fac44e1af2b9c09720ed25397063030389825f2a2b44113d1d987b08b45087",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "schema_migrations",
+      "sourceRows": 12,
+      "targetRows": 12,
+      "sourceFingerprint": "5cef05d36baab35022b3d21c2ae100888b9aaf806464e74d3689ba7d547cffea",
+      "targetFingerprint": "5cef05d36baab35022b3d21c2ae100888b9aaf806464e74d3689ba7d547cffea",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "staff_members",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "store_branches",
+      "sourceRows": 2,
+      "targetRows": 2,
+      "sourceFingerprint": "aa033f1144f78cb9b842fce5923752b451947641676722f1eadffec5af21f709",
+      "targetFingerprint": "aa033f1144f78cb9b842fce5923752b451947641676722f1eadffec5af21f709",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "user_shifts",
+      "sourceRows": 0,
+      "targetRows": 0,
+      "sourceFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetFingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true,
+      "excludedColumns": []
+    },
+    {
+      "schema": "public",
+      "name": "users",
+      "sourceRows": 3,
+      "targetRows": 3,
+      "sourceFingerprint": "f18c58596c337ef8ee499048ef66446581b7da981f5cb4de9966b496ff342f88",
+      "targetFingerprint": "f18c58596c337ef8ee499048ef66446581b7da981f5cb4de9966b496ff342f88",
+      "match": true,
+      "excludedColumns": [
+        "pin"
+      ]
+    }
+  ],
+  "checks": {
+    "sourceRelationsAndRls": {
+      "status": "PASS",
+      "objects": 183
+    },
+    "postgres17To18ConstraintRewrites": [
+      {
+        "schema": "pos",
+        "table": "transactions",
+        "constraint": "ck_txn_module",
+        "acceptedLabels": 8,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "transactions",
+        "constraint": "ck_txn_sector",
+        "acceptedLabels": 5,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "transaction_items",
+        "constraint": "ck_item_sector",
+        "acceptedLabels": 5,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "merchant_activity_log",
+        "constraint": "ck_activity_module",
+        "acceptedLabels": 9,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "merchant_activity_log",
+        "constraint": "ck_activity_sector",
+        "acceptedLabels": 5,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "merchant_activity_log",
+        "constraint": "ck_activity_severity",
+        "acceptedLabels": 4,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "ai",
+        "table": "daily_merchant_insights",
+        "constraint": "ck_insight_category",
+        "acceptedLabels": 9,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "ai",
+        "table": "daily_merchant_insights",
+        "constraint": "ck_insight_status",
+        "acceptedLabels": 3,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "ai",
+        "table": "ai_query_logs",
+        "constraint": "ai_query_logs_source_check",
+        "acceptedLabels": 5,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "pos",
+        "table": "payments",
+        "constraint": "chk_payment_lifecycle_status",
+        "acceptedLabels": 8,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      },
+      {
+        "schema": "billing",
+        "table": "subscriptions",
+        "constraint": "subscriptions_billing_cycle_check",
+        "acceptedLabels": 2,
+        "invalidLabelRejected": true,
+        "nullSemanticsEqual": true,
+        "reason": "PG18 array coercion deparser rewrite; both expressions executed"
+      }
+    ],
+    "constraints": {
+      "source": 466,
+      "exactMatches": 466
+    },
+    "sequences": [
+      {
+        "schema": "mcp_private",
+        "name": "audit_id_seq",
+        "match": true
+      },
+      {
+        "schema": "blog_mcp_private",
+        "name": "audit_id_seq",
+        "match": true
+      },
+      {
+        "schema": "internal",
+        "name": "security_acl_rollback_sequence_seq",
+        "match": true
+      },
+      {
+        "schema": "public",
+        "name": "uuidv7_counter",
+        "match": true
+      },
+      {
+        "schema": "internal",
+        "name": "feature_usage_events_id_seq",
+        "match": true
+      }
+    ],
+    "credentialReset": {
+      "status": "PASS",
+      "pin_credentials": 0,
+      "approvals": 0,
+      "blog_tokens": 0,
+      "pos_tokens": 0,
+      "live_blog_connections": 0,
+      "live_pos_connections": 0,
+      "credential_defaults": 0
+    },
+    "financialTotals": {
+      "refunds": {
+        "rows": 0,
+        "amount": "0"
+      },
+      "aiWallet": {
+        "rows": 8,
+        "used": 0,
+        "balance": 440,
+        "monthlyGrant": 440
+      },
+      "payments": {
+        "rows": 8,
+        "amount": "747000.00"
+      },
+      "cashLedger": {
+        "rows": 11,
+        "amount": "653000.00"
+      },
+      "transactions": {
+        "tax": "0.00",
+        "rows": 8,
+        "total": "747000.00",
+        "service": "0.00",
+        "discount": "0.00",
+        "subtotal": "747000.00"
+      },
+      "subscriptions": {
+        "rows": 10,
+        "active": 2,
+        "recurringAmount": "0.00"
+      }
+    },
+    "totalSourceRows": 2576
+  },
+  "exceptions": [],
+  "finishedAt": "2026-10-15T10:18:59.198Z"
+}

@@ -1,3 +1,4 @@
+import { blogViewTrackingEnabled } from '../../services/shared/blogAnalytics';
 /**
  * Public blog pages and the article automation surface.
  *
@@ -53,8 +54,8 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
       try { await fn(req, res, await getDb()); }
       catch (error) {
         console.error(`[blog] ${req.method} ${req.path}:`, (error as Error).message, (error as { code?: string }).code ?? '');
-        if (isMissingStore(error) && req.path === '/blog') { res.setHeader('Cache-Control', 'no-store'); return res.status(200).type('html').send(renderBlogIndex([]).html); }
         res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '300');
         res.status(503).type('html').send(renderNotFound().replace('Artikel tidak ditemukan', 'Blog sedang tidak tersedia'));
       }
     };
@@ -89,8 +90,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
   app.get(BLOG_INDEXNOW_PATH, (_req, res) => { res.type('text/plain').send(BLOG_INDEXNOW_KEY); });
 
   app.get(['/sitemap.xml', '/blog/sitemap.xml'], page(async (req, res, db) => {
-    let posts: PublicPost[] = [];
-    try { posts = await publishedPosts(db); } catch (error) { if (!isMissingStore(error)) throw error; }
+    const posts = await publishedPosts(db);
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('application/xml').send(renderSitemap(posts, req.path === '/blog/sitemap.xml'));
   }));
@@ -103,7 +103,7 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     const post = rowToPublicPost(rows[0]);
     const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
       ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
-    if (req.method !== 'HEAD') void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
+    if (req.method !== 'HEAD' && blogViewTrackingEnabled()) void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
     res.setHeader('Cache-Control', PAGE_CACHE);
     res.type('html').send(renderBlogPost(post, related));
   }));

@@ -1,0 +1,31 @@
+{
+  "status": "PASS",
+  "scope": "Explicit additive actual-source runtime compatibility upgrade; no source/production writes",
+  "targetBranch": "br-mute-hat-azuw3aag",
+  "migration": "neon/migrations/0008_restored_runtime_compat.sql",
+  "migrationSha256": "69e7880c69598562d615d10f14ac705948a8e94f8139f419436bc5d8ccf37631",
+  "startedAt": "2026-10-15T03:18:47.842Z",
+  "checks": {
+    "allOriginalTablesUnchanged": {
+      "tables": 125,
+      "beforeFingerprint": "25affe5ae8bddeacbf9b40ebca4ce950b0edb4b92ba583debdd0961a337f5800",
+      "afterFingerprint": "25affe5ae8bddeacbf9b40ebca4ce950b0edb4b92ba583debdd0961a337f5800"
+    },
+    "walletsUnchanged": {
+      "rows": 8,
+      "fingerprint": "6af06246e4309122f7b085d704315d344af83c8179855158764794fe42952e3d"
+    },
+    "derived": {
+      "openingentries": 8,
+      "walletdifferences": 0,
+      "sharedversions": 32,
+      "expectedsharedversions": 32,
+      "attendancerows": 0,
+      "payrollrows": 0
+    },
+    "idempotentReapply": true,
+    "noPeriodReset": true,
+    "noHistoricalCreditSpendInvented": true
+  },
+  "finishedAt": "2026-10-15T03:18:55.766Z"
+}

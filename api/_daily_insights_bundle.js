@@ -9,7 +9,79 @@ function isCronJobEnabled(job) {
 }
 
 // services/shared/db.ts
-import fs from "node:fs";
+import fs2 from "node:fs";
+
+// neon/targets/hybrid-staging.json
+var hybrid_staging_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-weathered-tooth-azbwi2zz",
+  host: "ep-ancient-bar-azuss0by.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  default: false,
+  purpose: "hybrid-staging",
+  capture: "build/neon/source-recovery-drive-readback.pgp.b64",
+  ciphertextSha256: "377c2db8f659de17a817c38daebfdac4b86dcc4c4c5a8185677889f266f3f136",
+  authProvider: "supabase",
+  storageProvider: "supabase",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  productionEligible: false
+};
+
+// neon/targets/prelaunch-rehearsal.json
+var prelaunch_rehearsal_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-orange-union-azwj2z2e",
+  parentBranch: "br-plain-snow-azjwwq6u",
+  host: "ep-long-glade-azcugn8m.c-3.ap-southeast-1.aws.neon.tech",
+  database: "neondb",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  default: false,
+  productionEligible: false,
+  purpose: "Synthetic prelaunch rehearsal child; clean candidate must remain unchanged"
+};
+
+// neon/targets/hybrid-candidate.json
+var hybrid_candidate_default = {
+  projectId: "steep-sea-66546931",
+  branchId: "br-plain-snow-azjwwq6u",
+  host: "ep-mute-rice-az97uhq3.c-3.ap-southeast-1.aws.neon.tech",
+  default: false,
+  productionEligible: false,
+  database: "neondb",
+  sourceProject: "fqxrhumsgigcgjtlbfuo",
+  purpose: "Prelaunch hybrid business-only clean candidate; no Better Auth or identity remapping",
+  capture: "build/neon/source-business-release-2026-10-19.pgp.b64",
+  ciphertextSha256: "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
+  sourceFrozen: false
+};
+
+// services/shared/hybridPhase1.ts
+function hybridPhase1Config(env = process.env) {
+  if (env.HYBRID_REHEARSAL_TARGET && env.HYBRID_REHEARSAL_TARGET !== "prelaunch-rehearsal") throw Error("HYBRID_REHEARSAL_TARGET_INVALID");
+  if (env.HYBRID_REHEARSAL_TARGET && env.HYBRID_STAGING !== "1") throw Error("HYBRID_REHEARSAL_STAGING_REQUIRED");
+  if (env.HYBRID_RELEASE_TARGET && env.HYBRID_RELEASE_TARGET !== "hybrid-candidate") throw Error("HYBRID_RELEASE_TARGET_INVALID");
+  if (env.HYBRID_RELEASE_TARGET && env.HYBRID_REHEARSAL_TARGET) throw Error("HYBRID_TARGET_FLAGS_CONFLICT");
+  const target = env.HYBRID_RELEASE_TARGET === "hybrid-candidate" ? hybrid_candidate_default : env.HYBRID_REHEARSAL_TARGET === "prelaunch-rehearsal" ? prelaunch_rehearsal_default : hybrid_staging_default;
+  if (env.HYBRID_RELEASE_TARGET && !target.productionEligible) throw Error("HYBRID_RELEASE_TARGET_NOT_APPROVED");
+  if (env.NEON_DB_PHASE1 !== "1") throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+  if (env.AUTH_PROVIDER !== "supabase" || env.STORAGE_PROVIDER !== "supabase" || env.VITE_AUTH_PROVIDER !== "supabase" || env.BETTER_AUTH_MIGRATION_PILOT === "1" || env.NEON_MIGRATION_PILOT === "1") throw Error("HYBRID_PROVIDER_MISMATCH");
+  const source = "https://" + target.sourceProject + ".supabase.co";
+  if (env.SUPABASE_URL !== source || env.VITE_SUPABASE_URL !== source) throw Error("HYBRID_SOURCE_AUTH_MISMATCH");
+  if (env.NEON_PROJECT_ID !== target.projectId || env.NEON_BRANCH_ID !== target.branchId) throw Error("HYBRID_BRANCH_MISMATCH");
+  if ((env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging") && !target.productionEligible) throw Error("HYBRID_PRODUCTION_TARGET_NOT_APPROVED");
+  return { target, source, staging: env.HYBRID_STAGING === "1" };
+}
+function assertHybridDatabase(connectionString, env = process.env) {
+  const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (env.NEON_DB_PHASE1 !== "1") {
+    if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
+    return;
+  }
+  const { target } = hybridPhase1Config(env);
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hostname.replace("-pooler", "") !== target.host || url.pathname !== "/" + target.database || decodeURIComponent(url.username) !== "newhope_runtime_login" || url.hash || url.port && url.port !== "5432" || [...url.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("HYBRID_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+
+// services/shared/db.ts
 import pg from "pg";
 
 // services/shared/poolConfig.ts
@@ -25,9 +97,10 @@ function serverlessConnectionString(connectionString, vercel = process.env.VERCE
   }
 }
 function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  const budget = Number.isInteger(max) && max > 0 ? Math.min(max, 20) : 4;
   return {
     // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    max: vercel === "1" ? Math.min(budget, 2) : budget,
     idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
     connectionTimeoutMillis: 1e4
   };
@@ -53,6 +126,22 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
   throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
 }
 
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hash || [...url.searchParams.keys()].some((key) => !["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "channel_binding", "application_name"].includes(key)))
+      throw Error("DATABASE_CONNECTION_OVERRIDE_REJECTED");
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
 // services/shared/db.ts
 pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
 pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
@@ -61,7 +150,7 @@ function konfigurasiSsl(connectionString) {
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
   if (process.env.PGSSLROOTCERT) {
-    return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
+    return { ca: fs2.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
@@ -69,9 +158,13 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
+  assertHybridDatabase(connectionString);
+  if (process.env.AUTH_PROVIDER === "better-auth" && (process.env.NEON_RUNTIME_ROLES_REQUIRED === "1" || process.env.VERCEL_ENV === "production")) {
+    const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
+    if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
+  }
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.

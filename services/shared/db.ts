@@ -13,9 +13,11 @@
  */
 
 import fs from 'node:fs';
+import {assertHybridDatabase} from './hybridPhase1';
 import pg from 'pg';
 import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from './poolConfig';
 import { waitForDatabase } from './databaseStartup';
+import {databaseTransport} from './databaseTls';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
 // skor risiko kita memang mau angka, dan nilainya jauh di bawah batas aman
@@ -69,9 +71,22 @@ export async function connectDb(opts: DbOptions): Promise<Db> {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
 
+  assertHybridDatabase(connectionString);
+
+  // Hosted full-Neon deployments never run application SQL as the migration
+  // owner or the auth/password role. Synthetic local rehearsals can continue
+  // using their explicit owner connection until role provisioning completes.
+  if(process.env.AUTH_PROVIDER==='better-auth' &&
+    (process.env.NEON_RUNTIME_ROLES_REQUIRED==='1'||process.env.VERCEL_ENV==='production')) {
+    const configured=new URL(process.env.DATABASE_URL||''),actual=new URL(connectionString);
+    if(decodeURIComponent(actual.username)!=='newhope_runtime_login'||
+      actual.hostname.replace('-pooler','')!==configured.hostname.replace('-pooler','')||actual.pathname!==configured.pathname)throw Error('NEON_APPLICATION_ROLE_REQUIRED');
+  }
+
   const pool = new pg.Pool({
-    connectionString,
-    ssl: konfigurasiSsl(connectionString),
+    ...( /(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname)
+      ? databaseTransport(connectionString)
+      : {connectionString,ssl:konfigurasiSsl(connectionString)} ),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
     // dan membuat service yang menyala terakhir gagal tersambung.

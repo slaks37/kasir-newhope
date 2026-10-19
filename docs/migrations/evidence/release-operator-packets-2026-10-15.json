@@ -1,0 +1,27 @@
+{
+  "status": "LOCAL_PACKETS_PREPARED_EXTERNAL_GATES_OPEN",
+  "identityRecovery": {
+    "cases": 3,
+    "activationOperations": 0,
+    "humanProofReceived": false,
+    "sourcePublicKeyConfigured": true
+  },
+  "escrow": {
+    "encryptedLocalPackagePrepared": true,
+    "wrongPassphraseRejected": true,
+    "independentCustodyVerified": false
+  },
+  "mfa": {
+    "privateOfflineDevicePacketPrepared": true,
+    "existingStagingTestFactorOnly": true,
+    "ownerDeviceVerified": false,
+    "newEmailsSent": 0
+  },
+  "fullRecovery": {
+    "dockerAvailable": false,
+    "nativeSourceCredentialsAvailable": false,
+    "runtimeConfigPrepared": true,
+    "serviceRestorePassed": false
+  },
+  "productionDecision": "NO-GO"
+}

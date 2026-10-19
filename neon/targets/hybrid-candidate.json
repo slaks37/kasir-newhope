@@ -1,0 +1,13 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-plain-snow-azjwwq6u",
+  "host": "ep-mute-rice-az97uhq3.c-3.ap-southeast-1.aws.neon.tech",
+  "default": false,
+  "productionEligible": false,
+  "database": "neondb",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "purpose": "Prelaunch hybrid business-only clean candidate; no Better Auth or identity remapping",
+  "capture": "build/neon/source-business-release-2026-10-19.pgp.b64",
+  "ciphertextSha256": "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
+  "sourceFrozen": false
+}

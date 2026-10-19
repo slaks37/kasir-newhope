@@ -1,0 +1,33 @@
+{
+  "status": "PASS",
+  "scope": "credential-free scoped business migration; auth/MFA/session material excluded; MCP connection metadata retained but revoked during restore",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "sourceCapturedAt": "2026-10-15T10:16:16.489064+00:00",
+  "targetProject": "steep-sea-66546931",
+  "targetBranch": "br-wandering-snow-azcqie4c",
+  "ciphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "startedAt": "2026-10-15T10:17:45.525Z",
+  "objects": {
+    "tables": 125,
+    "enums": 6,
+    "sequences": 5,
+    "functions": 22,
+    "views": 53,
+    "constraints": 466,
+    "indexes": 109,
+    "triggers": 23,
+    "policies": 38
+  },
+  "credentialResetRows": 17,
+  "restoredRows": 2576,
+  "checks": {
+    "verifiedTls": true,
+    "emptyChildGuard": true,
+    "singleTransactionRestore": true,
+    "noSourceMutation": true,
+    "legacyPinDefaultsRemoved": true,
+    "unsafeSourceAclNotReapplied": true
+  },
+  "postgresVersion": "18.6 (653b019)",
+  "finishedAt": "2026-10-15T10:17:52.347Z"
+}

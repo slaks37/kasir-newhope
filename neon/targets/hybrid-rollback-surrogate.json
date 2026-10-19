@@ -1,0 +1,10 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-bold-mud-azibt3jb",
+  "host": "ep-old-salad-azl21z6e.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "purpose": "hybrid-rollback-surrogate",
+  "default": false,
+  "productionEligible": false,
+  "parentBranch": "br-weathered-tooth-azbwi2zz"
+}

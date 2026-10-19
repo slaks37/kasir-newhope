@@ -1,3 +1,4 @@
+import {hybridStagingTransport} from './auth/hybridStagingTransport';
 import { AuthClient } from '@supabase/auth-js';
 
 /**
@@ -10,6 +11,7 @@ import { AuthClient } from '@supabase/auth-js';
 export function createAuthClient(url: string, key: string) {
   const baseUrl = new URL(url.endsWith('/') ? url : `${url}/`);
   return new AuthClient({
+    ...(import.meta.env?.VITE_HYBRID_STAGING==='1'?{fetch:hybridStagingTransport()}:{}),
     url: new URL('auth/v1', baseUrl).href,
     headers: { Authorization: `Bearer ${key}`, apikey: key },
     storageKey: `sb-${baseUrl.hostname.split('.')[0]}-auth-token`,

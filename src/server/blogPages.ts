@@ -292,18 +292,19 @@ export function renderNotFound(): string {
 
 export function renderSitemap(posts: PublicPost[], blogOnly = false): string {
   const base = siteUrl();
-  const latest = posts.reduce((m, p) => (p.updatedAt > m ? p.updatedAt : m), '2026-10-01T00:00:00.000Z');
+  // Collection/homepage modification dates are not tracked. Do not fabricate
+  // their freshness from an unrelated article or a hard-coded timestamp.
   const urls = [
     ...(!blogOnly ? [
-      { loc: `${base}/`, lastmod: latest, priority: '1.0' },
-      { loc: `${base}/blog`, lastmod: latest, priority: '0.9' },
-      ...BLOG_CATEGORIES.filter(c => posts.some(p => p.category === c)).map(c => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: '0.6' })),
+      { loc: `${base}/`, priority: '1.0' },
+      { loc: `${base}/blog`, priority: '0.9' },
+      ...BLOG_CATEGORIES.filter(c => posts.some(p => p.category === c)).map(c => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, priority: '0.6' })),
     ] : []),
     ...posts.map(p => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: '0.8', image: p.coverImage })),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-${urls.map(u => `  <url><loc>${esc(u.loc)}</loc><lastmod>${esc(u.lastmod)}</lastmod><priority>${u.priority}</priority>${'image' in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ''}</url>`).join('\n')}
+${urls.map(u => `  <url><loc>${esc(u.loc)}</loc>${'lastmod' in u && u.lastmod ? `<lastmod>${esc(u.lastmod)}</lastmod>` : ''}<priority>${u.priority}</priority>${'image' in u && u.image ? `<image:image><image:loc>${esc(absolute(String(u.image)))}</image:loc></image:image>` : ''}</url>`).join('\n')}
 </urlset>`;
 }
 

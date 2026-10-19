@@ -1,0 +1,27 @@
+{
+  "scope": "Chrome UI on loopback; synthetic fixture and isolated Neon branch; no real email delivery",
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-icy-dust-azqi5vlc",
+  "testedAt": "2026-10-13T15:02:22.045Z",
+  "checks": {
+    "passwordLoginAndLogout": true,
+    "passwordOnlyWithMfaStaysOnLogin": true,
+    "totpReturnToPos": true,
+    "backupCodeLogin": true,
+    "backupSessionRestoredAfterReload": true,
+    "backupCodeReplayDenied": true,
+    "registrationMinLength": 12,
+    "registrationMaxLength": 128,
+    "missingResetTokenRejected": true
+  },
+  "screenshots": [
+    "neon-totp-return-to-pos-2026-10-13.png",
+    "neon-recovery-panel-2026-10-13.png"
+  ],
+  "status": "PASS",
+  "limits": [
+    "Local mail sink only; no real inbox delivery",
+    "No customer data imported",
+    "Password reset core verified via HTTP; full reset browser submission not exercised"
+  ]
+}

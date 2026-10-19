@@ -1,3 +1,4 @@
+import {prepareHybridSession} from '../lib/auth/hybridSession';
 /**
  * AuthContext — sesi Supabase Auth sebagai React context.
  *
@@ -144,9 +145,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return restoreAuthSession<Session|null>(
-      supabase.auth.getSession().then(({data})=>data.session),
+      supabase.auth.getSession().then(({data,error})=>{if(error)throw error;return prepareHybridSession(data.session);}),
       receive=>{
-        const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>receive(session));
+        const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{queueMicrotask(()=>void prepareHybridSession(session).then(receive).catch(()=>{setRestoreError(true);setLoading(false);}));});
         return()=>subscription.unsubscribe();
       },
       session=>{setSession(session);setUser(session?.user??null);setRestoreError(false);setLoading(false);},
@@ -155,6 +156,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    if (import.meta.env.VITE_HYBRID_STAGING === '1') {
+      return { error: { message: 'Preview hybrid: gunakan login email akun Supabase yang sudah ada. OAuth menunggu verifikasi callback staging.' } as AuthError };
+    }
     if (!isSupabaseConfigured) {
       const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
@@ -188,6 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (!error && data.session) {
+          await prepareHybridSession(data.session);
           setSession(data.session);
           setUser(data.user);
           return { error: null };
@@ -278,18 +283,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     []
   );
   const signOut = useCallback(async () => {
+    if (isSupabaseConfigured) {
+      const {error}=await supabase.auth.signOut();
+      if(error)throw error;
+    }
     localStorage.removeItem(LOCAL_SESSION_KEY);
     localStorage.removeItem('newhope_pos_guest_mode');
     sessionStorage.removeItem('nhpos_internal_identity');
     localStorage.removeItem('nhpos_internal_identity');
-
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.auth.signOut();
-      } catch (e) {
-        console.error('Supabase signOut error', e);
-      }
-    }
 
     setUser(null);
     setSession(null);

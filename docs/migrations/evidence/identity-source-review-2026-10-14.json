@@ -1,0 +1,16 @@
+{
+  "checkedAt": "2026-10-14T00:58:32.366Z",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "sourceBackupSha256": "8ea8095f142e34637890b9dea51be1e6fa50659291ebd89fb476d77eb0b053a8",
+  "status": "PARTIAL_CANDIDATES_REVIEW_REQUIRED",
+  "sourceAuthUsers": 10,
+  "candidates": 7,
+  "existingCanonical": 2,
+  "explicitSourceUuidCreates": 5,
+  "exceptions": [
+    "CANONICAL_UUID_EVIDENCE_MISSING",
+    "DIFFERENT_UUID_CANONICAL_EMAIL_COLLISION",
+    "CANONICAL_UUID_EVIDENCE_MISSING"
+  ],
+  "scope": "Read-only candidate metadata; no target import, authority reassignment, email linking or messages"
+}

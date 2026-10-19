@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
 import { applyAtomicMigration } from './atomicMigration';
+import {databaseTransport} from '../shared/databaseTls';
+import {migrationConnection, assertMigrationBaseline} from './migrationSafety';
 
 const MIGRATIONS = [
   // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
@@ -38,8 +40,7 @@ const MIGRATIONS = [
 
 async function main() {
   console.log(`[migrate] ${ringkasEnv()}`);
-  const connectionString =
-    process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
+  const connectionString = migrationConnection(); // Validate before connecting or DDL.
 
   // Database dan migrator sering dinyalakan bersamaan, jadi percobaan pertama
   // biasanya gagal. KLIEN BARU SETIAP PERCOBAAN: pg.Client tidak bisa dipakai
@@ -48,15 +49,9 @@ async function main() {
   // menyesatkan karena seolah-olah koneksinya berhasil.
   let client!: pg.Client;
   for (let i = 0; ; i++) {
-    // SSL wajib untuk layanan terkelola; dilewati untuk database lokal.
-    const lokal = /@(127\.0\.0\.1|localhost)/.test(connectionString);
     client = new pg.Client({
-      connectionString,
-      ssl: lokal
-        ? undefined
-        : process.env.PGSSLROOTCERT
-          ? { ca: fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8'), rejectUnauthorized: true }
-          : { rejectUnauthorized: false },
+      ...databaseTransport(connectionString),
+      connectionTimeoutMillis: 10_000,
     });
     try {
       await client.connect();
@@ -68,7 +63,19 @@ async function main() {
     }
   }
 
-  console.log(`[migrate] tersambung: ${ringkasTujuanDb()}`);
+  console.log(`[migrate] tersambung: ${ringkasTujuanDb(connectionString)}`);
+
+  // Inspect first: even creating the registry would mutate an unreviewed import.
+  const populated = (await client.query(`SELECT EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname IN ('pos','billing','internal','ai') AND c.relkind IN ('r','p')
+  ) AS populated`)).rows[0].populated;
+  const registry = (await client.query("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present")).rows[0].present;
+  const existing = new Set<string>(registry
+    ? (await client.query('SELECT filename FROM public.schema_migrations')).rows.map(r => r.filename) : []);
+  const incrementalLocal = ['localhost','127.0.0.1','[::1]'].includes(new URL(connectionString).hostname);
+  try { assertMigrationBaseline(MIGRATIONS, existing, populated, incrementalLocal); }
+  catch (error) { await client.end(); throw error; }
 
   await client.query(`
     CREATE TABLE IF NOT EXISTS public.schema_migrations (
@@ -89,8 +96,8 @@ async function main() {
 
     const full = path.join(process.cwd(), file);
     if (!fs.existsSync(full)) {
-      console.log(`  LEWAT  ${file} (tidak ada)`);
-      continue;
+      await client.end();
+      throw Error(`MIGRATION_FILE_MISSING: ${file}`);
     }
 
     const sql = fs.readFileSync(full, 'utf8');

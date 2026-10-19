@@ -1,0 +1,55 @@
+{
+  "format": "newhope-preview-region-benchmark-v1",
+  "at": "2026-10-19T02:11:00Z",
+  "productionChanged": false,
+  "scope": "Eight valid HTTP200 blog-rendered CDN MISS samples per Preview from the same Mac, sequential batches approximately two minutes apart; not a load test or pure DB benchmark",
+  "iad1": {
+    "deployment": "dpl_F7UgvmXAwtg6cbxnavwkkaQn8CuG",
+    "sha": "7e125605f17d87986fa49fef53f2df78b9d92cba",
+    "elapsedMs": [
+      5551,
+      1235,
+      1202,
+      1167,
+      1036,
+      942,
+      940,
+      724
+    ],
+    "medianMs": 1101.5
+  },
+  "sin1": {
+    "deployment": "dpl_EfnMxoLkn4zPDrXpkWgmZmpPaj9u",
+    "sha": "22f546b6d3892b8151936305c478d3dcb8b4be84",
+    "elapsedMs": [
+      642,
+      435,
+      72,
+      73,
+      134,
+      75,
+      70,
+      69
+    ],
+    "medianMs": 74,
+    "runtimeNode": "24.21.0",
+    "readOnlySelect1": {
+      "connectionMs": 24,
+      "queryMs": [
+        1.33,
+        1.43,
+        1.41,
+        1.66,
+        1.35
+      ]
+    }
+  },
+  "limitations": [
+    "Different commits; blog route source unchanged; not controlled load or production SLA",
+    "HTTP totals include Mac network, function initialization, DB and rendering",
+    "No forced compute suspend; cannot label first requests cold starts",
+    "Authentication redirects and non-rendered responses discarded; no bypass links or cookies retained in evidence",
+    "Only sin1 has SELECT 1 instrumentation; no pure DB iad1 comparison"
+  ],
+  "recommendation": "sin1 for release; verify production build region after approved staging/promotion"
+}

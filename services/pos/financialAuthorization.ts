@@ -3,6 +3,8 @@ import type {Express,Request} from 'express';
 import type {Db} from '../shared/db';
 import type {FinancialScope} from './finance';
 import {trustedPrincipal} from '../shared/auth';
+import {reauthenticateNeonOwner} from '../shared/neonAuth';
+import {reauthenticateBetterOwner} from '../shared/betterAuthPrincipal';
 const scrypt=(pin:string,salt:string)=>new Promise<Buffer>((resolve,reject)=>derive(pin,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024},(error,key)=>error?reject(error):resolve(key)));
 const ACTIONS=new Set(['VOID','REFUND','CASH_OUT','CASH_REVERSE']);
 export class FinancialApprovalError extends Error {
@@ -48,9 +50,19 @@ async function failure(c:Db,s:FinancialScope){
 /** Fresh password proof is required even for the first enrollment. Never trust
  * a client-supplied email/subject or persist the password/upstream auth tokens.
  */
-async function reauthenticateOwner(req:Request,subject:string){
+async function reauthenticateOwner(req:Request,subject:string,db:Db){
   const principal=trustedPrincipal(req),password=req.body?.ownerPassword;
   if(!principal?.email||typeof password!=='string'||!password||password.length>1024)return false;
+  if(process.env.AUTH_PROVIDER==='better-auth') {
+    const token=/^Bearer\s+(.+)$/i.exec(String(req.headers.authorization||''))?.[1];
+    if(!token)return false;
+    try{return await reauthenticateBetterOwner(token,password,subject);}
+    catch{throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');}
+  }
+  if(process.env.AUTH_PROVIDER==='neon') {
+    try{return await reauthenticateNeonOwner(db,principal.email,password,subject);}
+    catch{throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');}
+  }
   const url=(process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL||'').replace(/\/$/,'');
   const key=process.env.SUPABASE_ANON_KEY||process.env.VITE_SUPABASE_ANON_KEY;
   if(!url.startsWith('https://')||!key)throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');
@@ -80,7 +92,7 @@ export function registerFinancialApprovalRoutes(app:Express,db:Db,scopeFor:(c:Db
   route('/api/v1/finance/pin',async(c,s,req)=>{
     if(!await rateWindow(c,s))return {status:429,error:'FINANCIAL_PIN_RATE_LIMITED'};
     if(!validFinancialPin(req.body?.newPin))throw new FinancialApprovalError(400,'WEAK_FINANCIAL_PIN');
-    if(!await reauthenticateOwner(req,s.actorRef)){
+    if(!await reauthenticateOwner(req,s.actorRef,c)){
       await failure(c,s);return {status:403,error:'OWNER_REAUTHENTICATION_REQUIRED'};
     }
     const old=await credential(c,s);

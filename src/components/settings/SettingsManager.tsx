@@ -256,6 +256,7 @@ export const SettingsManager: React.FC = () => {
           <p className="text-xs text-slate-500 mt-1">
             Atur profil usaha, perpajakan, langganan, cabang, dan akses tim.
           </p>
+          <a href="/diagnostics/index.html" target="_blank" rel="noopener noreferrer" className="block mt-3 text-sm font-bold text-amber-800 underline">Diagnostik sinkronisasi (read-only)</a>
           <a href="/mcp/connections" className="inline-block mt-3 text-sm font-bold text-amber-800 underline">Hubungkan ChatGPT / Claude (MCP)</a>
         </div>
 

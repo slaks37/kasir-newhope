@@ -1,0 +1,935 @@
+{
+  "format": "newhope-pg-catalog-v1",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "capturedAt": "2026-10-13T16:48:37.886671+00:00",
+  "postgresVersion": "17.6",
+  "ciphertextSha256": "8ea8095f142e34637890b9dea51be1e6fa50659291ebd89fb476d77eb0b053a8",
+  "dataPolicy": "credential-free scoped business migration; auth/MFA/session material excluded; MCP connection metadata retained but revoked during restore; historical identity recovery nested PIN fields redacted explicitly",
+  "redactedColumns": [
+    "password_hash",
+    "pin",
+    "pin_hash",
+    "token_hash"
+  ],
+  "omittedTables": [
+    "mcp_private.credentials",
+    "blog_mcp_private.credentials",
+    "pos.financial_approval_grants",
+    "pos.financial_pin_credentials"
+  ],
+  "redactedNestedPaths": [
+    {
+      "table": "internal.tenant_identity_recovery",
+      "path": "snapshot.memberships[].pin",
+      "fields": 2
+    }
+  ],
+  "schemas": [
+    "public",
+    "pos",
+    "internal",
+    "billing",
+    "ai",
+    "contract",
+    "mcp_private",
+    "blog_mcp_private"
+  ],
+  "tables": [
+    {
+      "schema": "ai",
+      "name": "ai_query_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 14
+    },
+    {
+      "schema": "ai",
+      "name": "batch_job_runs",
+      "rows": 0,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "ai",
+      "name": "business_intelligence_cache",
+      "rows": 11,
+      "rls": true,
+      "columns": 4
+    },
+    {
+      "schema": "ai",
+      "name": "daily_merchant_insights",
+      "rows": 0,
+      "rls": true,
+      "columns": 14
+    },
+    {
+      "schema": "ai",
+      "name": "merchant_ai_credits",
+      "rows": 8,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "ai",
+      "name": "provider_consent_events",
+      "rows": 0,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "billing",
+      "name": "device_fingerprints",
+      "rows": 0,
+      "rls": false,
+      "columns": 5
+    },
+    {
+      "schema": "billing",
+      "name": "invoices",
+      "rows": 0,
+      "rls": true,
+      "columns": 16
+    },
+    {
+      "schema": "billing",
+      "name": "payment_events",
+      "rows": 0,
+      "rls": true,
+      "columns": 10
+    },
+    {
+      "schema": "billing",
+      "name": "plans",
+      "rows": 6,
+      "rls": true,
+      "columns": 12
+    },
+    {
+      "schema": "billing",
+      "name": "reminder_deliveries",
+      "rows": 0,
+      "rls": false,
+      "columns": 10
+    },
+    {
+      "schema": "billing",
+      "name": "subscriptions",
+      "rows": 10,
+      "rls": true,
+      "columns": 19
+    },
+    {
+      "schema": "billing",
+      "name": "webhook_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 5
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "audit",
+      "rows": 29,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "connections",
+      "rows": 1,
+      "rls": true,
+      "columns": 10
+    },
+    {
+      "schema": "blog_mcp_private",
+      "name": "credentials",
+      "rows": 0,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "internal",
+      "name": "attendances",
+      "rows": 0,
+      "rls": false,
+      "columns": 12
+    },
+    {
+      "schema": "internal",
+      "name": "audit_logs",
+      "rows": 328,
+      "rls": false,
+      "columns": 14
+    },
+    {
+      "schema": "internal",
+      "name": "business_targets",
+      "rows": 0,
+      "rls": false,
+      "columns": 10
+    },
+    {
+      "schema": "internal",
+      "name": "feature_usage_events",
+      "rows": 0,
+      "rls": true,
+      "columns": 8
+    },
+    {
+      "schema": "internal",
+      "name": "internal_access_log",
+      "rows": 87,
+      "rls": true,
+      "columns": 12
+    },
+    {
+      "schema": "internal",
+      "name": "internal_users",
+      "rows": 8,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "internal",
+      "name": "legal_notice_acknowledgements",
+      "rows": 0,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "internal",
+      "name": "memberships",
+      "rows": 3,
+      "rls": false,
+      "columns": 11
+    },
+    {
+      "schema": "internal",
+      "name": "merchant_health_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 22
+    },
+    {
+      "schema": "internal",
+      "name": "merchant_settings",
+      "rows": 0,
+      "rls": false,
+      "columns": 7
+    },
+    {
+      "schema": "internal",
+      "name": "merchants",
+      "rows": 13,
+      "rls": false,
+      "columns": 11
+    },
+    {
+      "schema": "internal",
+      "name": "outlets",
+      "rows": 11,
+      "rls": false,
+      "columns": 13
+    },
+    {
+      "schema": "internal",
+      "name": "platform_integrations",
+      "rows": 0,
+      "rls": true,
+      "columns": 4
+    },
+    {
+      "schema": "internal",
+      "name": "privacy_request_events",
+      "rows": 0,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "internal",
+      "name": "privacy_requests",
+      "rows": 0,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "internal",
+      "name": "security_acl_rollback",
+      "rows": 1630,
+      "rls": true,
+      "columns": 3
+    },
+    {
+      "schema": "internal",
+      "name": "support_actions",
+      "rows": 4,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "internal",
+      "name": "tenant_identity_recovery",
+      "rows": 2,
+      "rls": true,
+      "columns": 5
+    },
+    {
+      "schema": "internal",
+      "name": "tenants",
+      "rows": 11,
+      "rls": false,
+      "columns": 12
+    },
+    {
+      "schema": "internal",
+      "name": "users",
+      "rows": 25,
+      "rls": false,
+      "columns": 10
+    },
+    {
+      "schema": "mcp_private",
+      "name": "audit",
+      "rows": 0,
+      "rls": true,
+      "columns": 5
+    },
+    {
+      "schema": "mcp_private",
+      "name": "connections",
+      "rows": 0,
+      "rls": true,
+      "columns": 10
+    },
+    {
+      "schema": "mcp_private",
+      "name": "credentials",
+      "rows": 0,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "bays",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "branch_settings",
+      "rows": 0,
+      "rls": false,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "cash_ledger",
+      "rows": 11,
+      "rls": true,
+      "columns": 18
+    },
+    {
+      "schema": "pos",
+      "name": "cash_registers",
+      "rows": 5,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "chairs",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "customers",
+      "rows": 1,
+      "rls": false,
+      "columns": 16
+    },
+    {
+      "schema": "pos",
+      "name": "financial_approval_grants",
+      "rows": 0,
+      "rls": true,
+      "columns": 13
+    },
+    {
+      "schema": "pos",
+      "name": "financial_authorization_audit",
+      "rows": 0,
+      "rls": true,
+      "columns": 12
+    },
+    {
+      "schema": "pos",
+      "name": "financial_pin_attempts",
+      "rows": 0,
+      "rls": true,
+      "columns": 5
+    },
+    {
+      "schema": "pos",
+      "name": "financial_pin_credentials",
+      "rows": 0,
+      "rls": true,
+      "columns": 4
+    },
+    {
+      "schema": "pos",
+      "name": "ingredients",
+      "rows": 0,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_balances",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_items",
+      "rows": 0,
+      "rls": false,
+      "columns": 11
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_locations",
+      "rows": 5,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "inventory_transactions",
+      "rows": 0,
+      "rls": false,
+      "columns": 12
+    },
+    {
+      "schema": "pos",
+      "name": "kds_stations",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "loyalty_accounts",
+      "rows": 0,
+      "rls": false,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "loyalty_transactions",
+      "rows": 0,
+      "rls": false,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_activity_log",
+      "rows": 0,
+      "rls": true,
+      "columns": 17
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_audit_logs",
+      "rows": 0,
+      "rls": false,
+      "columns": 12
+    },
+    {
+      "schema": "pos",
+      "name": "merchant_payment_accounts",
+      "rows": 0,
+      "rls": true,
+      "columns": 10
+    },
+    {
+      "schema": "pos",
+      "name": "modifiers",
+      "rows": 0,
+      "rls": false,
+      "columns": 10
+    },
+    {
+      "schema": "pos",
+      "name": "operational_jobs",
+      "rows": 0,
+      "rls": false,
+      "columns": 17
+    },
+    {
+      "schema": "pos",
+      "name": "operational_stages",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_barber",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_carwash",
+      "rows": 0,
+      "rls": false,
+      "columns": 10
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_fnb",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_laundry",
+      "rows": 0,
+      "rls": false,
+      "columns": 11
+    },
+    {
+      "schema": "pos",
+      "name": "order_context_retail",
+      "rows": 0,
+      "rls": false,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "payment_provider_links",
+      "rows": 0,
+      "rls": true,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "payment_reconciliation_events",
+      "rows": 0,
+      "rls": true,
+      "columns": 14
+    },
+    {
+      "schema": "pos",
+      "name": "payments",
+      "rows": 8,
+      "rls": false,
+      "columns": 26
+    },
+    {
+      "schema": "pos",
+      "name": "pos_settings",
+      "rows": 0,
+      "rls": false,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "product_recipes",
+      "rows": 0,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "product_variants",
+      "rows": 0,
+      "rls": false,
+      "columns": 11
+    },
+    {
+      "schema": "pos",
+      "name": "products",
+      "rows": 38,
+      "rls": true,
+      "columns": 23
+    },
+    {
+      "schema": "pos",
+      "name": "receipt_settings",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "recipe_items",
+      "rows": 0,
+      "rls": false,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "recipes",
+      "rows": 0,
+      "rls": false,
+      "columns": 12
+    },
+    {
+      "schema": "pos",
+      "name": "shared_state_records",
+      "rows": 125,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "pos",
+      "name": "shifts",
+      "rows": 5,
+      "rls": false,
+      "columns": 21
+    },
+    {
+      "schema": "pos",
+      "name": "staff_assignments",
+      "rows": 0,
+      "rls": false,
+      "columns": 13
+    },
+    {
+      "schema": "pos",
+      "name": "staff_commissions",
+      "rows": 0,
+      "rls": false,
+      "columns": 18
+    },
+    {
+      "schema": "pos",
+      "name": "sync_receipts",
+      "rows": 5,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "tables",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "tax_settings",
+      "rows": 0,
+      "rls": false,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "tenants",
+      "rows": 10,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_adjustments",
+      "rows": 0,
+      "rls": false,
+      "columns": 7
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_item_components",
+      "rows": 0,
+      "rls": false,
+      "columns": 6
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_item_modifiers",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_items",
+      "rows": 9,
+      "rls": true,
+      "columns": 22
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_refund_items",
+      "rows": 0,
+      "rls": true,
+      "columns": 4
+    },
+    {
+      "schema": "pos",
+      "name": "transaction_refunds",
+      "rows": 0,
+      "rls": true,
+      "columns": 17
+    },
+    {
+      "schema": "pos",
+      "name": "transactions",
+      "rows": 8,
+      "rls": true,
+      "columns": 26
+    },
+    {
+      "schema": "pos",
+      "name": "users",
+      "rows": 5,
+      "rls": true,
+      "columns": 8
+    },
+    {
+      "schema": "pos",
+      "name": "vehicles",
+      "rows": 0,
+      "rls": false,
+      "columns": 9
+    },
+    {
+      "schema": "public",
+      "name": "admin_users",
+      "rows": 6,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "public",
+      "name": "ai_merchant_insights",
+      "rows": 2,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "public",
+      "name": "attendance_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "public",
+      "name": "blog_posts",
+      "rows": 42,
+      "rls": true,
+      "columns": 20
+    },
+    {
+      "schema": "public",
+      "name": "bundle_items",
+      "rows": 4,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "public",
+      "name": "categories",
+      "rows": 3,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "public",
+      "name": "customers",
+      "rows": 0,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "public",
+      "name": "inventory_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 13
+    },
+    {
+      "schema": "public",
+      "name": "merchant_health_scores",
+      "rows": 6,
+      "rls": true,
+      "columns": 8
+    },
+    {
+      "schema": "public",
+      "name": "merchant_settings",
+      "rows": 6,
+      "rls": true,
+      "columns": 14
+    },
+    {
+      "schema": "public",
+      "name": "merchants",
+      "rows": 6,
+      "rls": true,
+      "columns": 13
+    },
+    {
+      "schema": "public",
+      "name": "order_items",
+      "rows": 0,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "public",
+      "name": "order_tax_breakdowns",
+      "rows": 0,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "public",
+      "name": "orders",
+      "rows": 0,
+      "rls": true,
+      "columns": 24
+    },
+    {
+      "schema": "public",
+      "name": "platform_audit_logs",
+      "rows": 0,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "public",
+      "name": "product_bundles",
+      "rows": 2,
+      "rls": true,
+      "columns": 12
+    },
+    {
+      "schema": "public",
+      "name": "product_modifiers",
+      "rows": 0,
+      "rls": true,
+      "columns": 6
+    },
+    {
+      "schema": "public",
+      "name": "product_recipes",
+      "rows": 4,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "public",
+      "name": "product_variants",
+      "rows": 0,
+      "rls": true,
+      "columns": 4
+    },
+    {
+      "schema": "public",
+      "name": "products",
+      "rows": 4,
+      "rls": true,
+      "columns": 17
+    },
+    {
+      "schema": "public",
+      "name": "promo_codes",
+      "rows": 0,
+      "rls": true,
+      "columns": 7
+    },
+    {
+      "schema": "public",
+      "name": "raw_materials",
+      "rows": 4,
+      "rls": true,
+      "columns": 14
+    },
+    {
+      "schema": "public",
+      "name": "saas_invoices",
+      "rows": 0,
+      "rls": true,
+      "columns": 12
+    },
+    {
+      "schema": "public",
+      "name": "saas_plans",
+      "rows": 3,
+      "rls": true,
+      "columns": 10
+    },
+    {
+      "schema": "public",
+      "name": "saas_subscriptions",
+      "rows": 6,
+      "rls": true,
+      "columns": 11
+    },
+    {
+      "schema": "public",
+      "name": "schema_migrations",
+      "rows": 12,
+      "rls": true,
+      "columns": 2
+    },
+    {
+      "schema": "public",
+      "name": "staff_members",
+      "rows": 0,
+      "rls": true,
+      "columns": 8
+    },
+    {
+      "schema": "public",
+      "name": "store_branches",
+      "rows": 2,
+      "rls": true,
+      "columns": 9
+    },
+    {
+      "schema": "public",
+      "name": "user_shifts",
+      "rows": 0,
+      "rls": true,
+      "columns": 18
+    },
+    {
+      "schema": "public",
+      "name": "users",
+      "rows": 3,
+      "rls": true,
+      "columns": 13
+    }
+  ],
+  "objectCounts": {
+    "tables": 125,
+    "enums": 6,
+    "sequences": 5,
+    "functions": 22,
+    "views": 53,
+    "constraints": 466,
+    "indexes": 109,
+    "triggers": 23,
+    "policies": 38
+  },
+  "auth": {
+    "users": 10,
+    "verified": 10
+  },
+  "restrictions": [
+    "Catalog-derived logical snapshot, not native pg_dump or independent full-source rollback backup",
+    "No auth password hashes, MFA factors, sessions, tokens or storage bytes",
+    "Credential and MCP-connection reset required before cutover",
+    "No source freeze; snapshot is rehearsal only"
+  ]
+}

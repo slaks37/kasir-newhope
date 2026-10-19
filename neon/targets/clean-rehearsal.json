@@ -1,0 +1,10 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-mute-hat-azuw3aag",
+  "parentId": "br-falling-butterfly-az989m86",
+  "host": "ep-shiny-haze-azx1s0m2.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "region": "aws-ap-southeast-1",
+  "default": false,
+  "purpose": "clean credential-free snapshot restore rehearsal; no identity import, no production activation"
+}

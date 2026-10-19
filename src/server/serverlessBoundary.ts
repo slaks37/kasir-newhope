@@ -9,7 +9,7 @@ import { normalizeVercelUrl } from './vercelUrl';
  * salah satunya.
  */
 export const TRUSTED_IDENTITY_HEADERS = [
-  'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+  'x-auth-source-created-at', 'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
 ] as const;
 
 export function stripIdentityHeaders(req: { headers: Record<string, unknown> }): void {
@@ -19,6 +19,7 @@ export function stripIdentityHeaders(req: { headers: Record<string, unknown> }):
 export function applyPrincipal(req: { headers: Record<string, unknown> }, principal: AuthPrincipal): void {
   stripIdentityHeaders(req);
   req.headers['x-auth-sub'] = principal.subject;
+  if (principal.sourceCreatedAt) req.headers['x-auth-source-created-at'] = principal.sourceCreatedAt;
   if (principal.email) req.headers['x-auth-email'] = principal.email;
   if (principal.isEmailVerified) req.headers['x-auth-email-verified'] = 'true';
 }

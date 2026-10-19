@@ -1,0 +1,108 @@
+{
+  "format": "newhope-operational-reconciliation-v1",
+  "status": "PENDING_EXTERNAL_EVIDENCE",
+  "sourceCapturedAt": "2026-10-15T20:16:50.066742+00:00",
+  "stagingCapturedAt": "2026-10-15T20:17:08.655729+00:00",
+  "baseline": [
+    {
+      "section": "merchants",
+      "source": 13,
+      "matched": 13,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 15
+    },
+    {
+      "section": "outlets",
+      "source": 11,
+      "matched": 11,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 15
+    },
+    {
+      "section": "transactions",
+      "source": 8,
+      "matched": 8,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 3
+    },
+    {
+      "section": "payments",
+      "source": 8,
+      "matched": 8,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 3
+    },
+    {
+      "section": "receipts",
+      "source": 5,
+      "matched": 5,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 3
+    },
+    {
+      "section": "invoices",
+      "source": 0,
+      "matched": 0,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 6
+    },
+    {
+      "section": "events",
+      "source": 0,
+      "matched": 0,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 13
+    },
+    {
+      "section": "webhooks",
+      "source": 0,
+      "matched": 0,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 0
+    },
+    {
+      "section": "posProviderEvents",
+      "source": 0,
+      "matched": 0,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 0
+    },
+    {
+      "section": "refunds",
+      "source": 0,
+      "matched": 0,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 0
+    },
+    {
+      "section": "cash",
+      "source": 11,
+      "matched": 11,
+      "missing": 0,
+      "different": 0,
+      "stagingOnly": 3
+    }
+  ],
+  "deviceExports": 0,
+  "deviceFindings": {},
+  "receiptFindings": {},
+  "deviceCaptureWarnings": [],
+  "providerExportProvided": false,
+  "providerWindow": null,
+  "providerFindings": {},
+  "fleetInventoryComplete": false,
+  "externalProviderQueueVerified": false,
+  "sourceFrozen": false,
+  "cutoverAllowed": false,
+  "note": "Database matches, local empty queues and an empty provider file never prove fleet completeness or external delivery. Retain captured windows, review pagination, active tabs/in-flight ACKs and actual device inventory independently."
+}

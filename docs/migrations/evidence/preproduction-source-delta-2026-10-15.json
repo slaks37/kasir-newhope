@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-10-15T10:16:16.489064+00:00",
+  "ciphertextSha256": "a331d4bd7248758aba167f657e37d56d89f5ef35b980f08b935df2561719dcf2",
+  "rowCount": 2576,
+  "changes": [
+    {
+      "table": "ai.business_intelligence_cache",
+      "old": 11,
+      "fresh": 11,
+      "changed": true
+    },
+    {
+      "table": "billing.plans",
+      "old": 6,
+      "fresh": 6,
+      "changed": true
+    },
+    {
+      "table": "blog_mcp_private.audit",
+      "old": 29,
+      "fresh": 42,
+      "changed": true
+    },
+    {
+      "table": "blog_mcp_private.connections",
+      "old": 1,
+      "fresh": 1,
+      "changed": true
+    },
+    {
+      "table": "public.blog_posts",
+      "old": 42,
+      "fresh": 68,
+      "changed": true
+    }
+  ],
+  "scope": "Read-only fresh source snapshot; source writes not frozen; no device outbox or provider external queue access"
+}

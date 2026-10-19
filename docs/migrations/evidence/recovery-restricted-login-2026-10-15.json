@@ -1,0 +1,23 @@
+{
+  "scope": "Actual restricted LOGIN sessions; synthetic writes rolled back; no production access",
+  "branchId": "br-curly-truth-aze21ktf",
+  "startedAt": "2026-10-15T03:14:26.973Z",
+  "checks": {
+    "app": {
+      "allowed": 5,
+      "denied": 16,
+      "syntheticWriteRollback": true,
+      "tlsVerified": true,
+      "currentUser": "newhope_runtime_login"
+    },
+    "auth": {
+      "allowed": 5,
+      "denied": 9,
+      "syntheticWriteRollback": true,
+      "tlsVerified": true,
+      "currentUser": "newhope_auth_runtime_login"
+    }
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-15T03:14:32.125Z"
+}

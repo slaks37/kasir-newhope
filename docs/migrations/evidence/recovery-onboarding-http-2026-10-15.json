@@ -1,0 +1,87 @@
+{
+  "scope": "Actual native HTTP auth/POS against restored Neon child with dedicated LOGINs; synthetic example.invalid accounts only; no external mail",
+  "branchId": "br-curly-truth-aze21ktf",
+  "startedAt": "2026-10-15T04:08:30.002Z",
+  "checks": {
+    "rateLimitObserved": 1,
+    "fiveSectors": {
+      "status": "PASS",
+      "sectors": [
+        "FNB",
+        "RETAIL",
+        "LAUNDRY",
+        "CARWASH",
+        "BARBERSHOP"
+      ],
+      "outletsEach": 2,
+      "idempotentOnboarding": true,
+      "metadataRoleIgnored": true,
+      "nativeOwnerLookup": true,
+      "sourceNamespaceUiSelectionVerified": true
+    },
+    "financial": {
+      "status": "PASS",
+      "foreignOutletDenied": true,
+      "defaultPinDenied": true,
+      "wrongPasswordDenied": true,
+      "missingApprovalDenied": true,
+      "changedAmountDenied": true,
+      "idempotentCash": true
+    },
+    "mfa": {
+      "status": "PASS",
+      "wrongAndExpiredDenied": true,
+      "challengeReplayDenied": true,
+      "nativeProofRecorded": true,
+      "passwordAloneNoSession": true,
+      "rememberedDeviceDisabled": true
+    },
+    "recovery": {
+      "status": "PASS",
+      "resetLinkCaptured": true,
+      "oneTimeToken": true,
+      "oldSessionRevoked": true,
+      "externalMailSent": false
+    },
+    "sourceExistingRows": {
+      "internal.tenants": {
+        "status": "UNCHANGED",
+        "rows": 29
+      },
+      "internal.merchants": {
+        "status": "UNCHANGED",
+        "rows": 31
+      },
+      "internal.outlets": {
+        "status": "UNCHANGED",
+        "rows": 46
+      },
+      "billing.plans": {
+        "status": "UNCHANGED",
+        "rows": 6
+      },
+      "billing.subscriptions": {
+        "status": "UNCHANGED",
+        "rows": 28
+      },
+      "billing.invoices": {
+        "status": "UNCHANGED",
+        "rows": 0
+      },
+      "ai.merchant_ai_credits": {
+        "status": "UNCHANGED",
+        "rows": 26
+      },
+      "pos.transactions": {
+        "status": "UNCHANGED",
+        "rows": 8
+      },
+      "pos.cash_ledger": {
+        "status": "UNCHANGED",
+        "rows": 14
+      }
+    }
+  },
+  "status": "PASS",
+  "finishedAt": "2026-10-15T04:09:53.821Z"
+}

@@ -1,0 +1,63 @@
+{
+  "format": "newhope-reviewed-business-delta-v1",
+  "status": "APPLIED_ALL_125_EXACT",
+  "at": "2026-10-19T03:24:59.646Z",
+  "sourceCapturedAt": "2026-10-19T03:20:30.728125+00:00",
+  "sourceFrozen": false,
+  "branch": "br-plain-snow-azjwwq6u",
+  "baselineSha256": "9693057f6a384874b0c5b5dc544176aec298c6d8fb249704b37a0dfcefc8df6f",
+  "ciphertextSha256": "91df2933285ecb71d1a15e5f4a92c7f45012f6eeec842fe4329439aa6e7235d6",
+  "tables": 125,
+  "rows": 2695,
+  "sequenceChanges": [
+    {
+      "schema": "blog_mcp_private",
+      "name": "audit_id_seq",
+      "sourceState": {
+        "isCalled": true,
+        "lastValue": "52"
+      }
+    }
+  ],
+  "changes": [
+    {
+      "table": "ai.business_intelligence_cache",
+      "inserts": 0,
+      "updates": 11,
+      "deletes": 0
+    },
+    {
+      "table": "billing.plans",
+      "inserts": 0,
+      "updates": 4,
+      "deletes": 0
+    },
+    {
+      "table": "blog_mcp_private.connections",
+      "inserts": 0,
+      "updates": 1,
+      "deletes": 0
+    },
+    {
+      "table": "blog_mcp_private.credentials",
+      "inserts": 12,
+      "updates": 1,
+      "deletes": 0
+    },
+    {
+      "table": "public.blog_posts",
+      "inserts": 29,
+      "updates": 75,
+      "deletes": 0
+    },
+    {
+      "table": "blog_mcp_private.audit",
+      "inserts": 9,
+      "updates": 0,
+      "deletes": 0
+    }
+  ],
+  "elapsedMs": 35979,
+  "productionEligible": false,
+  "cutoverAllowed": false
+}

@@ -1,0 +1,11 @@
+{
+  "projectId": "steep-sea-66546931",
+  "branchId": "br-orange-union-azwj2z2e",
+  "parentBranch": "br-plain-snow-azjwwq6u",
+  "host": "ep-long-glade-azcugn8m.c-3.ap-southeast-1.aws.neon.tech",
+  "database": "neondb",
+  "sourceProject": "fqxrhumsgigcgjtlbfuo",
+  "default": false,
+  "productionEligible": false,
+  "purpose": "Synthetic prelaunch rehearsal child; clean candidate must remain unchanged"
+}

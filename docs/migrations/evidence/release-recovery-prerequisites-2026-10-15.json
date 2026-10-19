@@ -1,0 +1,20 @@
+{
+  "status": "BLOCKED",
+  "checkedAt": "2026-10-15T12:07:03.697Z",
+  "checks": {
+    "existingDriveReadbackChecksum": true,
+    "dockerRunning": false,
+    "sourceNativeConnectionFile": false,
+    "escrowRecoveredKeyDrill": false,
+    "independentRecoveryAcceptance": false
+  },
+  "blockers": [
+    "dockerRunning",
+    "sourceNativeConnectionFile",
+    "escrowRecoveredKeyDrill",
+    "independentRecoveryAcceptance"
+  ],
+  "backupRecreated": false,
+  "productionWrites": 0,
+  "fullSupabaseGoTrueRestore": false
+}

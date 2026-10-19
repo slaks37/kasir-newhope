@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {authenticatedTransport,betterBearerToken} from '../../src/lib/auth/authenticatedTransport';
+const origin='https://preview.example.invalid',values=new Map([[`nh-better-auth:${origin}:token`,'signed-fixture']]);
+const storage={getItem:(key:string)=>values.get(key)||null};
+assert.equal(betterBearerToken(storage,origin),'signed-fixture');assert.equal(betterBearerToken(storage,'https://other.invalid'),'');
+let lookups=0;const sent:Array<{url:string;auth:string|null;signal?:AbortSignal|null}>=[];
+const native=(async(input:any,init:any)=>{sent.push({url:String(input),auth:new Headers(init?.headers).get('authorization'),signal:init?.signal});return new Response('{}',{status:200,headers:{'content-type':'application/json'}});}) as typeof fetch;
+const request=authenticatedTransport(native,origin,()=>{lookups++;return betterBearerToken(storage,origin);});
+const abort=new AbortController();
+await Promise.all(['/api/v1/sync/business','/api/v1/subscription/status'].map(path=>request(path,{signal:abort.signal})));
+assert.equal(lookups,2);assert(sent.every(r=>r.auth==='Bearer signed-fixture'&&r.signal===abort.signal));
+for(const path of ['https://foreign.invalid/api/v1/sync/business','/api/auth/get-session','/api/auth','/public'])await request(path);
+assert.equal(lookups,2);assert(sent.slice(2).every(r=>r.auth===null),'Never leak native bearer to foreign origins or the auth client');
+await request('/api/v1/sync/business',{headers:{authorization:'Bearer explicit-fixture'}});assert.equal(lookups,2);
+await request(new Request(origin+'/api/v1/sync/business',{headers:{authorization:'Bearer old-fixture'}}),{headers:{authorization:'Bearer override-fixture'}});
+assert.equal(sent.at(-1)?.auth,'Bearer override-fixture');
+values.clear();await request('/api/v1/sync/business');assert.equal(sent.at(-1)?.auth,null,'Logout removes native transport credential');
+console.log('PASS: native API transport avoids remote session lookup, keeps abort budget, preserves explicit headers, isolates origins/auth routes and clears on logout');

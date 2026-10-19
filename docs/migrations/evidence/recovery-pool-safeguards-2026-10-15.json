@@ -1,0 +1,33 @@
+{
+  "status": "PASS",
+  "checkedAt": "2026-10-15T03:30:50.071Z",
+  "branchId": "br-curly-truth-aze21ktf",
+  "scope": "Actual restricted pooled LOGIN; read-only transactions, no identity or business writes",
+  "checks": {
+    "pool": {
+      "concurrentRequests": 6,
+      "maxClients": 2,
+      "limit": 2,
+      "tlsVerified": true,
+      "transactionLocalStateCleared": true,
+      "transactionStatementTimeoutMs": 8000,
+      "sessionStartupTimeoutNotAssumed": true
+    },
+    "runtimeRegistryAccessDenied": true,
+    "financialCounts": {
+      "transactions": 8,
+      "payments": 8
+    },
+    "importedBaseline": {
+      "replayBlocked": true,
+      "migrationMarkers": 12,
+      "probe": "owner read-only session; no history writes"
+    },
+    "actualMigrator": {
+      "exitCode": 1,
+      "expectedError": "MIGRATION_BASELINE_REVIEW_REQUIRED",
+      "noMigrationApplied": true
+    },
+    "productionMigratorBlocked": true
+  }
+}

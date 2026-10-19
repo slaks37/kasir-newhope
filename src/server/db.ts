@@ -1,3 +1,4 @@
+import {assertHybridDatabase} from '../../services/shared/hybridPhase1';
 /**
  * Lapisan akses database — satu antarmuka, dua driver.
  *
@@ -36,6 +37,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
+import {databaseTransport} from '../../services/shared/databaseTls';
 
 export type QueryResult<T = any> = { rows: T[]; rowCount: number };
 
@@ -63,6 +65,7 @@ export interface Db {
 /* -------------------------------------------------------------------------- */
 
 async function createPgDb(connectionString: string): Promise<Db> {
+  assertHybridDatabase(connectionString);
   const { default: pg } = await import('pg');
 
   // NUMERIC pulang sebagai string dari pg supaya presisi tidak hilang. Untuk
@@ -72,7 +75,9 @@ async function createPgDb(connectionString: string): Promise<Db> {
   pg.types.setTypeParser(20, (v: string) => (v === null ? null : Number(v))); // int8
 
   const pool = new pg.Pool({
-    connectionString: serverlessConnectionString(connectionString),
+    ...(/(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname)
+      ? databaseTransport(serverlessConnectionString(connectionString))
+      : {connectionString:serverlessConnectionString(connectionString)}),
     ...databasePoolLimits(Number(process.env.PGPOOL_MAX || 10)),
   });
 
@@ -259,6 +264,7 @@ async function ensureMigrationTable(db: Db): Promise<void> {
 }
 
 export async function runMigrations(db: Db, log: (m: string) => void = () => {}): Promise<void> {
+  if (db.driver !== 'pglite') throw Error('REMOTE_RUNTIME_MIGRATIONS_DISABLED');
   await ensureMigrationTable(db);
 
   const done = new Set(
@@ -312,12 +318,16 @@ export async function getDb(log: (m: string) => void = () => {}): Promise<Db> {
 
   opening = (async () => {
     const url = (process.env.DATABASE_URL || '').trim();
+    if (!url && (process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'))
+      throw Error('DATABASE_URL_NOT_CONFIGURED');
     const db = url
       ? await createPgDb(url)
       : await createPgliteDb(path.resolve(process.cwd(), process.env.PGLITE_DIR || '.pgdata'));
 
     log(`🗄️  Database: ${db.label}`);
-    await runMigrations(db, log);
+    // Remote databases are provisioned separately. Runtime credentials never
+    // replay historical bootstrap files over an imported customer catalog.
+    if (db.driver === 'pglite') await runMigrations(db, log);
     instance = db;
     return db;
   })();
