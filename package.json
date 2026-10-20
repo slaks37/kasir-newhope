@@ -55,8 +55,10 @@
     "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic && npm run -s test:growth",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
-    "test:growth": "node --import tsx scripts/dev/test-growth-engine.ts",
-    "test:growth:browser": "node scripts/growth/browser-e2e.mjs"
+    "test:growth": "node --import tsx scripts/dev/test-growth-engine.ts && npm run -s test:growth:integration",
+    "test:growth:browser": "node scripts/growth/browser-e2e.mjs",
+    "test:growth:integration": "node --import tsx scripts/dev/test-growth-integration.ts",
+    "growth:worker": "node --import tsx scripts/growth/worker.ts"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

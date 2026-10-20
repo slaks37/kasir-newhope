@@ -1,6 +1,8 @@
-# New Hope Growth Engine — internal MVP
+# New Hope Growth Engine — internal MVP + Milestone 2
 
 Growth is a modular domain in the existing admin application, not another publishing, billing or authentication system. This feature branch starts at main `a427fb8`, independently of migration PR #21. Do not merge or promote PR #21 to deploy this feature.
+
+Milestone 2 implementation and release boundaries: [MILESTONE-2.md](./MILESTONE-2.md). Hosted existing Superadmin/MFA access was accepted before this milestone; no repeat login is required for the code work.
 
 ## Delivered boundaries
 
@@ -10,15 +12,15 @@ Growth is a modular domain in the existing admin application, not another publis
 - Content: calls the existing authorized blog API; rule-based pain-point/product mapping. No duplicated publisher or invented traffic/ranking/attribution.
 - Partners: profiles, codes and manual lead attribution; no commissions or liabilities.
 - Security: existing verified Supabase membership/MFA guards plus explicit workspace CRM operator grants, immediate revocation, optimistic edit conflicts, audit trail, RLS and composite workspace foreign keys.
-- Telemetry: optional best-effort server hooks after successful business setup and accepted POS sync. Hook failures never change a sale response. Unlinked UUIDs remain separate from CRM identities. This is telemetry, not the financial audit ledger.
+- Product integration: transactional source outbox, leased/retried worker, verified signup/report adapters, first-party lifecycle/scoring, two-step ownership linking, billing-proof projections and retention review. See the milestone document for durability tradeoffs and exact metric definitions.
 
 ## Explicitly incomplete / not activated
 
-- Live subscription-led MRR/churn, acquisition-cost inputs, paid cohorts, automatic signup/outlet/catalog/report/repeat-use adapters, durable serverless telemetry delivery and complete verified CRM-to-Auth linkage.
-- Identity requests are PENDING review only; no endpoint silently approves a link, merges UUIDs or grants merchant access. Validate ownership in a dedicated recovery workflow before activating links.
+- Production activation, actual first-party revenue observations, mature live billing cohorts, acquisition-cost inputs, unattended worker scheduling/alerting and final PR #21 integration acceptance are not activated by this staging release.
+- Identity review can now complete only after account reauthentication, tenant-owner proof, explicit analytics consent and exact Superadmin approval. No UUID is merged and no merchant grant is created.
 - Provider-backed AI is not enabled on the hosted review Preview; its failure and malformed output paths are tested with synthetic providers. Local rules work without provider access.
 - Website/n8n/Sheets intake, automatic referral-link attribution, authorized support feeds and outbound communications need separately scoped integration credentials and acceptance. Nothing sends email/WhatsApp or activates a workflow.
-- Retention controls currently comprise access restriction, opt-out, audited export and manual review. No automatic deletion, statutory-compliance claim, predictive churn model or production scale benchmark.
+- Contact anonymization is reviewed; minimized analytics/transport TTL is worker-enforced. No statutory-compliance claim, predictive churn model or production scale benchmark.
 - Content attribution, MRR, CAC, trial-to-paid conversion and paid retention cohorts display **Data belum tersedia**. Manual PAID stages are never treated as payment evidence.
 
 ## Database and rollout
@@ -29,7 +31,7 @@ Two separate references are supported: `DATABASE_URL` for existing verified inte
 
 The isolated review environment uses a new database `newhope_growth_preview` on the existing non-production rehearsal branch `br-orange-union-azwj2z2e`. It does not modify `neondb`, the clean migration candidate, source Supabase or production. No extra branch or paid resource was created. Runtime role has NOINHERIT, NOBYPASSRLS, no schema ownership, no POS transaction permission and no private source table privileges. Client-to-pooler TLS certificate verification is enabled in the Growth pool; backend pg_stat_ssl reports false behind the Neon proxy and does not establish pooler-to-compute encryption; pool max 3, connect/statement timeouts 5 seconds.
 
-`GROWTH_ENGINE_ENABLED=1` enables only development/Preview. The server additionally refuses Growth in `VERCEL_ENV=production`, even if the flag is accidentally enabled. Supabase Auth/Storage remain unchanged; no Better Auth code is introduced. `GROWTH_CAPTURE_ENABLED` and `GROWTH_AI_ENABLED` are independent, off on the hosted review Preview. Enabling production requires a reviewed change after migration/privacy/acceptance gates; do not bypass this guard.
+`GROWTH_ENGINE_ENABLED=1` enables only development/Preview. The server additionally refuses Growth in `VERCEL_ENV=production`, even if the flag is accidentally enabled. Supabase Auth/Storage remain unchanged; no Better Auth code is introduced. `GROWTH_CAPTURE_ENABLED` and `GROWTH_AI_ENABLED` are independent. Capture is enabled only on this isolated M2 Preview; external AI remains off. Enabling production requires a reviewed change after migration/privacy/acceptance gates; do not bypass this guard.
 
 Hosted Preview variables are branch-specific to `codex/growth-engine`. It uses a dedicated database with six synthetic leads, and existing staging internal UUID bindings copied without remapping or role promotion. Fixture activities use an explicitly synthetic actor, not a claimed human action. No fake Supabase account is created. DOKU credentials, external gateway and blog automation keys are empty for this Preview. Production environments and PR #21 Preview are untouched.
 
@@ -53,7 +55,7 @@ For the already-provisioned isolated cloud Preview, `scripts/growth/verify-previ
 
 1. Disable the Preview-only feature flag or roll back the feature deployment. POS, billing and Auth continue independently.
 2. Preserve Growth database and audit records; additive migration rollback is feature disable + retained data, not DROP or DELETE.
-3. No changes to business records, UUIDs, source writers, signup triggers, billing, DOKU or Supabase Storage require reversal for this MVP.
-4. Before production: finish PR #21 hybrid acceptance, preserve the separately approved SEO-only production patch absent from main, review contact retention/privacy, accept live admin/MFA Preview access, approve any provider payloads, implement durable event adapters and verified identity/subscription mappings needed for live PLG metrics. Rebase and reverify against the accepted hybrid release; never deploy this main-based branch as a database cutover.
+3. For M2, disable source capture before removing producer grants or rolling back to an older business runtime. Preserve source outbox and receipts. Business records, Auth UUIDs, payments and Storage are not reversed by a Growth rollback.
+4. Before production: finish PR #21 hybrid acceptance, preserve the separately approved SEO-only production patch absent from main, review contact retention/privacy, retain accepted live admin/MFA evidence, review the worker schedule and provider payloads, and approve actual identity links and first-party source integration needed for live metrics. Rebase and reverify against the accepted hybrid release; never deploy this main-based branch as a database cutover.
 
 Recommendation: review the working internal MVP in isolated Preview. **NO-GO for production activation** until the listed gates are accepted. Advanced PLG/RevOps integrations are explicitly not represented as finished.

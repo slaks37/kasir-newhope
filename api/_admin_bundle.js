@@ -62,7 +62,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool2 = new pg.Pool({
+  const pool3 = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -71,14 +71,14 @@ async function connectDb(opts) {
     ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
-  pool2.on("error", (err) => {
+  pool3.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
   await waitForDatabase(async () => {
-    const probe = await pool2.connect();
+    const probe = await pool3.connect();
     probe.release();
   }).catch(async (error) => {
-    await pool2.end().catch(() => {
+    await pool3.end().catch(() => {
     });
     throw error;
   });
@@ -92,7 +92,7 @@ async function connectDb(opts) {
       await runner.query(sql);
     },
     async tx(fn) {
-      const client = await pool2.connect();
+      const client = await pool3.connect();
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
@@ -108,10 +108,10 @@ async function connectDb(opts) {
       }
     },
     async close() {
-      await pool2.end();
+      await pool3.end();
     }
   });
-  return wrap(pool2);
+  return wrap(pool3);
 }
 
 // services/billing/routes.ts
@@ -162,6 +162,8 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0, ...claims.amr.filter((a) => ["password", "otp", "totp", "oauth"].includes(a.method) && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp)) : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -1150,7 +1152,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -3332,6 +3334,9 @@ async function activityBreakdown(db, merchantId = null) {
   return rows;
 }
 
+// src/server/growth/productRoutes.ts
+import { randomBytes } from "node:crypto";
+
 // src/server/growth/db.ts
 import pg2 from "pg";
 var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
@@ -3404,6 +3409,67 @@ async function inWorkspace(db, fn, workspace = GROWTH_WORKSPACE) {
   });
 }
 
+// src/server/growth/sourceDb.ts
+import pg3 from "pg";
+var pool2;
+async function sourceDb() {
+  if (!growthEnabled() || !process.env.GROWTH_SOURCE_DATABASE_URL)
+    throw Error("GROWTH_SOURCE_NOT_CONFIGURED");
+  if (!pool2) {
+    const u = new URL(process.env.GROWTH_SOURCE_DATABASE_URL);
+    if (!["localhost", "127.0.0.1"].includes(u.hostname) && !u.hostname.endsWith(".neon.tech"))
+      throw Error("UNAPPROVED_SOURCE_HOST");
+    for (const k of [
+      "sslmode",
+      "sslcert",
+      "sslkey",
+      "sslrootcert",
+      "uselibpqcompat"
+    ])
+      u.searchParams.delete(k);
+    pool2 = new pg3.Pool({
+      connectionString: u.toString(),
+      ssl: ["localhost", "127.0.0.1"].includes(u.hostname) ? void 0 : { rejectUnauthorized: true },
+      max: 2,
+      connectionTimeoutMillis: 5e3,
+      statement_timeout: 5e3,
+      idleTimeoutMillis: 1e4
+    });
+    pool2.on("error", () => console.error("[growth] source worker unavailable"));
+  }
+  const wrap = (q) => ({
+    query: async (s, p) => {
+      const r = await q.query(s, p);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    },
+    exec: async (s) => {
+      await q.query(s);
+    },
+    tx: async (fn) => {
+      const c = await pool2.connect();
+      try {
+        await c.query("BEGIN");
+        const r = await fn(wrap(c));
+        await c.query("COMMIT");
+        return r;
+      } catch (e) {
+        await c.query("ROLLBACK");
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    close: async () => {
+      await pool2?.end();
+      pool2 = void 0;
+    }
+  });
+  return wrap(pool2);
+}
+
+// src/server/growth/integration.ts
+import { createHash as createHash2, randomUUID as randomUUID7 } from "node:crypto";
+
 // src/server/growth/service.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
 
@@ -3452,12 +3518,12 @@ function scoreLead(events, weights2 = { ...SIGNALS }) {
   return { score, classification, reasons };
 }
 var DAY = 864e5;
-function trialHealth(events, now = /* @__PURE__ */ new Date()) {
+function trialHealth(events, now = /* @__PURE__ */ new Date(), lifecycle) {
   const verified = events.filter(
     (e) => e.verified && new Date(e.occurred_at) <= now
   );
   const starts = verified.filter((e) => e.signal === "signup").map((e) => new Date(e.occurred_at).getTime());
-  const started = starts.length ? Math.min(...starts) : null;
+  const started = lifecycle ? lifecycle.trial_started_at ? new Date(lifecycle.trial_started_at).getTime() : null : starts.length ? Math.min(...starts) : null;
   const milestones = [
     "signup",
     "business_setup",
@@ -3470,11 +3536,14 @@ function trialHealth(events, now = /* @__PURE__ */ new Date()) {
   ];
   const done = new Set(verified.map((e) => e.signal));
   const complete = milestones.filter((s) => done.has(s));
-  const daysRemaining = started === null ? null : Math.max(0, 45 - Math.floor((now.getTime() - started) / DAY));
+  const daysRemaining = started === null ? null : lifecycle ? ["TRIAL", "TRIALING"].includes(lifecycle.status) && lifecycle.trial_ends_at ? Math.max(0, Math.ceil((new Date(lifecycle.trial_ends_at).getTime() - now.getTime()) / DAY)) : 0 : Math.max(0, 45 - Math.floor((now.getTime() - started) / DAY));
   const last = verified.length ? Math.max(...verified.map((e) => new Date(e.occurred_at).getTime())) : null;
   const inactiveDays = last === null ? null : Math.floor((now.getTime() - last) / DAY);
   const health = Math.round(complete.length / milestones.length * 100);
   return {
+    lifecycleSource: lifecycle ? "billing_subscription" : "signup_estimate",
+    subscriptionStatus: lifecycle?.status ?? null,
+    trialEndsAt: lifecycle?.trial_ends_at ?? null,
     startedAt: started === null ? null : new Date(started).toISOString(),
     daysRemaining,
     health,
@@ -3794,7 +3863,7 @@ async function leadDetails(db, id) {
   )).rows;
   return {
     lead: { ...lead, ...scoreLead(events, (await weights(db)).weights) },
-    trial: trialHealth(events),
+    trial: trialHealth(events, /* @__PURE__ */ new Date(), await linkedLifecycle(db, id)),
     events,
     activities: (await db.query(
       "SELECT * FROM growth.activities WHERE workspace_id=$1 AND lead_id=$2 ORDER BY created_at DESC LIMIT 200",
@@ -3861,9 +3930,11 @@ async function overview(db) {
       byLead.set(e.lead_id, bucket);
     }
   }
+  const lifecycleRows = (await db.query(`SELECT i.lead_id,b.* FROM growth.link_invites i JOIN growth.billing_facts b ON b.workspace_id=i.workspace_id AND b.tenant_ref=i.tenant_ref AND b.subject_ref=i.subject_ref WHERE i.workspace_id=$1 AND i.approved_at IS NOT NULL AND i.revoked_at IS NULL`, [GROWTH_WORKSPACE])).rows;
+  const lifecycleByLead = new Map(lifecycleRows.map((r) => [r.lead_id, r]));
   const profiles = leads.map((l) => {
     const e = byLead.get(l.id) ?? [];
-    return { id: l.id, ...scoreLead(e, w), ...trialHealth(e) };
+    return { id: l.id, ...scoreLead(e, w), ...trialHealth(e, /* @__PURE__ */ new Date(), lifecycleByLead.get(l.id)) };
   });
   const trials = profiles.filter((p) => p.startedAt);
   const active = trials.filter((p) => p.activated).length;
@@ -3879,6 +3950,7 @@ async function overview(db) {
   ])).rows[0]?.synthetic === true;
   return {
     synthetic,
+    integration: await productMetrics(db),
     totalLeads: leads.length,
     qualified: leads.filter((l) => l.stage === "QUALIFIED").length,
     pql: profiles.filter((p) => p.classification === "PQL").length,
@@ -3992,6 +4064,443 @@ function safeCsv(rows) {
   ].join("\r\n");
 }
 
+// src/server/growth/integration.ts
+var CONSENT_VERSION = "growth-product-analytics-v1";
+var hash = (s) => createHash2("sha256").update(s).digest("hex");
+async function ownedTenant(db, subject, tenant2) {
+  const r = await db.query(
+    `SELECT id FROM internal.tenants WHERE id=$1 AND owner_user_ref=$2 AND is_active AND merged_into IS NULL`,
+    [tenant2, subject]
+  );
+  if (r.rows.length !== 1) fail("VERIFIED_TENANT_OWNER_REQUIRED", 403);
+}
+async function drainOutbox(source, target, limit = 100) {
+  const cfg = (await source.query("SELECT * FROM growth_source.config WHERE singleton")).rows[0];
+  if (!cfg?.enabled) return { processed: 0, failed: 0, disabled: true };
+  const lease = randomUUID7();
+  const batch = await source.tx(
+    (c) => c.query(
+      `WITH pick AS(SELECT id FROM growth_source.outbox WHERE delivered_at IS NULL AND dead_at IS NULL AND available_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY seq LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE growth_source.outbox o SET lease_id=$2,lease_until=now()+interval '60 seconds',attempts=attempts+1 FROM pick WHERE o.id=pick.id RETURNING o.*`,
+      [Math.min(500, Math.max(1, limit)), lease]
+    )
+  );
+  const started = Date.now();
+  let processed = 0, failed = 0;
+  for (const r of batch.rows.sort((a, b) => Number(a.seq) - Number(b.seq))) {
+    if (Date.now() - started > 2e4) break;
+    try {
+      await inWorkspace(target, async (c) => {
+        const fingerprint = hash(
+          JSON.stringify({
+            source: r.source_id,
+            tenant: r.tenant_ref,
+            subject: r.subject_ref,
+            kind: r.kind,
+            payload: r.payload,
+            data: r.data_class,
+            time: new Date(r.occurred_at).toISOString()
+          })
+        );
+        const inserted = await c.query(
+          "INSERT INTO growth.receipts(workspace_id,source_event_id,payload_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING source_event_id",
+          [GROWTH_WORKSPACE, r.id, fingerprint]
+        );
+        if (!inserted.rowCount) {
+          const old = (await c.query(
+            "SELECT payload_hash FROM growth.receipts WHERE workspace_id=$1 AND source_event_id=$2",
+            [GROWTH_WORKSPACE, r.id]
+          )).rows[0];
+          if (old.payload_hash !== fingerprint)
+            fail("SOURCE_EVENT_CONFLICT", 409);
+          return;
+        }
+        const b = r.payload;
+        if (!["synthetic", "first_party"].includes(r.data_class) || r.source_id !== cfg.source_id)
+          fail("SOURCE_BINDING_MISMATCH");
+        if (r.kind === "signal") {
+          if (![
+            "signup",
+            "business_setup",
+            "outlet_setup",
+            "catalog_setup",
+            "synced_transaction",
+            "report_viewed"
+          ].includes(b.signal))
+            fail("SOURCE_SIGNAL_NOT_ALLOWED");
+          const linked = (await c.query(
+            `SELECT i.lead_id FROM growth.link_invites i JOIN growth.leads l ON l.workspace_id=i.workspace_id AND l.id=i.lead_id WHERE i.workspace_id=$1 AND i.subject_ref=$2 AND (i.tenant_ref=$3 OR ($3::uuid IS NULL AND $4::text='signup')) AND i.approved_at IS NOT NULL AND i.revoked_at IS NULL AND l.opted_out_at IS NULL AND l.anonymized_at IS NULL`,
+            [GROWTH_WORKSPACE, r.subject_ref, r.tenant_ref, b.signal]
+          )).rows[0];
+          await recordEvent(
+            c,
+            {
+              subject: r.subject_ref,
+              leadId: linked?.lead_id,
+              signal: b.signal,
+              key: "source:" + r.id,
+              occurredAt: new Date(r.occurred_at).toISOString()
+            },
+            "server",
+            true
+          );
+          await c.query(
+            "UPDATE growth.events SET tenant_ref=$3,source_event_id=$4,data_class=$5 WHERE workspace_id=$1 AND event_key=$2",
+            [GROWTH_WORKSPACE, "source:" + r.id, r.tenant_ref, r.id, r.data_class]
+          );
+          if (linked && b.signal === "synced_transaction") {
+            const days = await c.query(
+              `SELECT count(DISTINCT (occurred_at AT TIME ZONE 'Asia/Jakarta')::date)::int AS days FROM growth.events WHERE workspace_id=$1 AND lead_id=$2 AND tenant_ref=$3 AND signal='synced_transaction' AND verified AND source_event_id IS NOT NULL`,
+              [GROWTH_WORKSPACE, linked.lead_id, r.tenant_ref]
+            );
+            if (days.rows[0].days >= 2) {
+              await recordEvent(
+                c,
+                {
+                  subject: r.subject_ref,
+                  leadId: linked.lead_id,
+                  signal: "repeat_usage",
+                  key: "repeat:" + r.subject_ref + ":" + r.tenant_ref,
+                  occurredAt: new Date(r.occurred_at).toISOString()
+                },
+                "server",
+                true
+              );
+              await c.query(
+                "UPDATE growth.events SET tenant_ref=$3,data_class=$4 WHERE workspace_id=$1 AND event_key=$2",
+                [
+                  GROWTH_WORKSPACE,
+                  "repeat:" + r.subject_ref + ":" + r.tenant_ref,
+                  r.tenant_ref,
+                  r.data_class
+                ]
+              );
+            }
+          }
+        } else if (r.kind === "ownership") {
+          await c.query(
+            "UPDATE growth.link_invites SET revoked_at=now() WHERE workspace_id=$1 AND tenant_ref=$2 AND revoked_at IS NULL AND subject_ref::text IS DISTINCT FROM $3::text",
+            [GROWTH_WORKSPACE, r.tenant_ref, b.currentSubject ?? null]
+          );
+          await c.query(
+            "UPDATE growth.billing_facts SET paid_verified=false WHERE workspace_id=$1 AND tenant_ref=$2 AND subject_ref::text IS DISTINCT FROM $3::text",
+            [GROWTH_WORKSPACE, r.tenant_ref, b.currentSubject ?? null]
+          );
+          await c.query(
+            "INSERT INTO growth.audit(workspace_id,actor_id,action,target_id) VALUES($1,$2,'SOURCE_OWNERSHIP_LINK_REVOKED',$3)",
+            [GROWTH_WORKSPACE, r.subject_ref, r.tenant_ref]
+          );
+        } else if (r.kind === "subscription") {
+          if (!b.subscriptionId || !Number.isFinite(Number(b.monthlyAmount)) || Number(b.monthlyAmount) < 0)
+            fail("INVALID_SUBSCRIPTION_FACT");
+          await c.query(
+            `INSERT INTO growth.billing_history(workspace_id,source_event_id,tenant_ref,status,paid_verified,trial_started_at,trial_ends_at,period_start,period_end,data_class,observed_at,source_seq) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`,
+            [
+              GROWTH_WORKSPACE,
+              r.id,
+              r.tenant_ref,
+              b.status,
+              b.paidVerified === true,
+              b.trialStart,
+              b.trialEnd,
+              b.periodStart,
+              b.periodEnd,
+              r.data_class,
+              r.occurred_at,
+              r.seq
+            ]
+          );
+          const existing = (await c.query(
+            "SELECT source_id FROM growth.billing_facts WHERE workspace_id=$1 AND tenant_ref=$2",
+            [GROWTH_WORKSPACE, r.tenant_ref]
+          )).rows[0];
+          if (existing && existing.source_id !== r.source_id)
+            fail("SOURCE_REBIND_REQUIRES_REVIEW", 409);
+          await c.query(
+            `INSERT INTO growth.billing_facts(workspace_id,tenant_ref,subject_ref,subscription_id,status,trial_started_at,trial_ends_at,period_start,period_end,monthly_amount,paid_verified,data_class,source_seq,source_id,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(workspace_id,tenant_ref) DO UPDATE SET subject_ref=EXCLUDED.subject_ref,subscription_id=EXCLUDED.subscription_id,status=EXCLUDED.status,trial_started_at=EXCLUDED.trial_started_at,trial_ends_at=EXCLUDED.trial_ends_at,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end,monthly_amount=EXCLUDED.monthly_amount,paid_verified=EXCLUDED.paid_verified,data_class=EXCLUDED.data_class,source_seq=EXCLUDED.source_seq,observed_at=EXCLUDED.observed_at WHERE growth.billing_facts.source_seq<EXCLUDED.source_seq`,
+            [
+              GROWTH_WORKSPACE,
+              r.tenant_ref,
+              r.subject_ref,
+              b.subscriptionId,
+              b.status,
+              b.trialStart,
+              b.trialEnd,
+              b.periodStart,
+              b.periodEnd,
+              b.monthlyAmount,
+              b.paidVerified === true,
+              r.data_class,
+              r.seq,
+              r.source_id,
+              r.occurred_at
+            ]
+          );
+        } else fail("INVALID_SOURCE_KIND");
+      });
+      await source.query(
+        "UPDATE growth_source.outbox SET delivered_at=now(),lease_until=NULL,last_error=NULL WHERE id=$1 AND lease_id=$2",
+        [r.id, lease]
+      );
+      processed++;
+    } catch {
+      failed++;
+      await source.query(
+        `UPDATE growth_source.outbox SET lease_until=NULL,available_at=now()+make_interval(secs=>LEAST(3600,power(2,LEAST(attempts,10))::int)),dead_at=CASE WHEN attempts>=8 THEN now() ELSE NULL END,last_error='DELIVERY_FAILED' WHERE id=$1 AND lease_id=$2`,
+        [r.id, lease]
+      );
+    }
+  }
+  await source.query(
+    "UPDATE growth_source.outbox SET lease_until=NULL WHERE lease_id=$1 AND delivered_at IS NULL AND dead_at IS NULL",
+    [lease]
+  );
+  const state = (await source.query(
+    `SELECT count(*) FILTER(WHERE delivered_at IS NULL AND dead_at IS NULL)::int AS pending,count(*) FILTER(WHERE dead_at IS NOT NULL)::int AS dead,min(occurred_at) FILTER(WHERE delivered_at IS NULL) AS oldest FROM growth_source.outbox`
+  )).rows[0];
+  await inWorkspace(
+    target,
+    (c) => c.query(
+      `INSERT INTO growth.integration_state(workspace_id,source_id,last_run_at,backfill_at,pending,dead,oldest_pending) VALUES($1,$2,now(),$3,$4,$5,$6) ON CONFLICT(workspace_id) DO UPDATE SET source_id=EXCLUDED.source_id,last_run_at=EXCLUDED.last_run_at,backfill_at=EXCLUDED.backfill_at,pending=EXCLUDED.pending,dead=EXCLUDED.dead,oldest_pending=EXCLUDED.oldest_pending`,
+      [
+        GROWTH_WORKSPACE,
+        cfg.source_id,
+        cfg.backfill_at,
+        state.pending,
+        state.dead,
+        state.oldest
+      ]
+    )
+  );
+  return { processed, failed, ...state };
+}
+async function productMetrics(c, now = /* @__PURE__ */ new Date()) {
+  const state = (await c.query(
+    "SELECT * FROM growth.integration_state WHERE workspace_id=$1",
+    [GROWTH_WORKSPACE]
+  )).rows[0] ?? null;
+  const rows = (await c.query("SELECT * FROM growth.billing_facts WHERE workspace_id=$1", [
+    GROWTH_WORKSPACE
+  ])).rows;
+  const fresh = !!state?.backfill_at && state.pending === 0 && state.dead === 0 && now.getTime() - new Date(state.last_run_at).getTime() < 15 * 6e4;
+  const live = rows.filter((r) => r.data_class === "first_party");
+  const verified = live.filter((r) => r.paid_verified);
+  const mrr = verified.filter(
+    (r) => r.status === "ACTIVE" && new Date(r.period_start) <= now && new Date(r.period_end) > now
+  ).reduce((s, r) => s + Number(r.monthly_amount), 0);
+  const history = (await c.query(
+    "SELECT * FROM growth.billing_history WHERE workspace_id=$1 AND data_class='first_party' ORDER BY observed_at,source_seq,source_event_id",
+    [GROWTH_WORKSPACE]
+  )).rows;
+  const cohort = verifiedCohorts(
+    live,
+    history,
+    state?.backfill_at ? new Date(state.backfill_at) : null,
+    now
+  );
+  const eventCounts = (await c.query(
+    "SELECT signal,data_class,count(DISTINCT subject_ref)::int AS accounts FROM growth.events WHERE workspace_id=$1 AND verified AND origin='server' AND (source_event_id IS NOT NULL OR event_key LIKE 'repeat:%') GROUP BY signal,data_class ORDER BY data_class,signal",
+    [GROWTH_WORKSPACE]
+  )).rows;
+  return {
+    eventCounts,
+    state,
+    coverageFresh: fresh,
+    syntheticSubscriptions: rows.length - live.length,
+    verifiedSubscriptions: verified.length,
+    mrr: fresh && live.length ? Math.round(mrr * 100) / 100 : null,
+    conversion: fresh ? cohort.conversion : null,
+    churn: fresh ? cohort.churn : null,
+    cohort,
+    reason: !fresh ? "SOURCE_COVERAGE_INCOMPLETE_OR_STALE" : !live.length ? "NO_FIRST_PARTY_BILLING" : cohort.churn === null ? "HISTORICAL_COHORT_REQUIRED" : "VERIFIED_BILLING",
+    currency: "IDR"
+  };
+}
+async function linkedLifecycle(c, leadId) {
+  return (await c.query(
+    `SELECT b.* FROM growth.link_invites i JOIN growth.billing_facts b ON b.workspace_id=i.workspace_id AND b.tenant_ref=i.tenant_ref AND b.subject_ref=i.subject_ref WHERE i.workspace_id=$1 AND i.lead_id=$2 AND i.approved_at IS NOT NULL AND i.revoked_at IS NULL`,
+    [GROWTH_WORKSPACE, leadId]
+  )).rows[0] ?? null;
+}
+function verifiedCohorts(current, history, backfill, now = /* @__PURE__ */ new Date()) {
+  const start = new Date(now.getTime() - 30 * 864e5);
+  if (!backfill || backfill > start)
+    return {
+      conversion: null,
+      churn: null,
+      trialCohort: 0,
+      converted: 0,
+      openingPaid: 0,
+      churned: 0,
+      windowStart: start.toISOString(),
+      windowEnd: now.toISOString()
+    };
+  const trial = current.filter(
+    (r) => r.trial_started_at && r.trial_ends_at && new Date(r.trial_started_at) >= backfill && new Date(r.trial_ends_at) >= start && new Date(r.trial_ends_at) <= now
+  );
+  const converted = trial.filter(
+    (r) => history.some(
+      (h) => h.tenant_ref === r.tenant_ref && h.paid_verified && h.status === "ACTIVE" && new Date(h.observed_at) >= new Date(r.trial_started_at) && new Date(h.observed_at) <= now
+    )
+  ).length;
+  const baseline = /* @__PURE__ */ new Map();
+  for (const h of history)
+    if (new Date(h.observed_at) <= start) baseline.set(h.tenant_ref, h);
+  const opening = [...baseline.values()].filter(
+    (h) => h.paid_verified && h.status === "ACTIVE" && new Date(h.period_start) <= start && new Date(h.period_end) > start
+  );
+  const churned = opening.filter(
+    (h) => !current.some(
+      (r) => r.tenant_ref === h.tenant_ref && r.paid_verified && r.status === "ACTIVE" && new Date(r.period_start) <= now && new Date(r.period_end) > now
+    )
+  ).length;
+  return {
+    conversion: trial.length ? converted / trial.length : null,
+    churn: opening.length ? churned / opening.length : null,
+    trialCohort: trial.length,
+    converted,
+    openingPaid: opening.length,
+    churned,
+    windowStart: start.toISOString(),
+    windowEnd: now.toISOString()
+  };
+}
+
+// src/server/growth/productRoutes.ts
+function registerProductRoutes(route, getSource = sourceDb) {
+  route("get", "/integration", async (_r, c) => ({
+    integration: await productMetrics(c)
+  }));
+  route(
+    "post",
+    "/leads/:id/link-invites",
+    async (r, c) => {
+      const l = await findLead(c, uuid2(r.params.id));
+      if (l.opted_out_at || l.anonymized_at) fail("CONTACT_RESTRICTED", 409);
+      const token = randomBytes(32).toString("base64url");
+      const invite = (await c.query(
+        "INSERT INTO growth.link_invites(workspace_id,lead_id,token_hash,created_by) VALUES($1,$2,$3,$4) RETURNING id,expires_at",
+        [GROWTH_WORKSPACE, l.id, hash(token), r.internal.id]
+      )).rows[0];
+      return { invite, token, shareManually: true };
+    },
+    true,
+    true
+  );
+  route(
+    "get",
+    "/identity-links",
+    async (_r, c) => ({
+      links: (await c.query(
+        "SELECT id,lead_id,subject_ref,tenant_ref,claimed_at,approved_at,revoked_at,expires_at,consent_version FROM growth.link_invites WHERE workspace_id=$1 ORDER BY expires_at DESC LIMIT 100",
+        [GROWTH_WORKSPACE]
+      )).rows
+    }),
+    false,
+    true
+  );
+  route(
+    "post",
+    "/identity-links/:id/approve",
+    async (r, c) => {
+      const link = (await c.query(
+        "SELECT * FROM growth.link_invites WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        [GROWTH_WORKSPACE, uuid2(r.params.id)]
+      )).rows[0];
+      if (!link?.claimed_at || link.approved_at || link.revoked_at || new Date(link.expires_at) < /* @__PURE__ */ new Date())
+        fail("CLAIM_REVIEW_REQUIRED", 409);
+      if (r.body.confirmSubject !== link.subject_ref || r.body.confirmTenant !== link.tenant_ref)
+        fail("EXACT_OWNERSHIP_CONFIRMATION_REQUIRED");
+      await ownedTenant(await getSource(), link.subject_ref, link.tenant_ref);
+      const lead = await findLead(c, link.lead_id);
+      if (lead.opted_out_at || lead.anonymized_at)
+        fail("CONTACT_RESTRICTED", 409);
+      await c.query(
+        "UPDATE growth.link_invites SET approved_at=now(),approved_by=$3 WHERE workspace_id=$1 AND id=$2",
+        [GROWTH_WORKSPACE, link.id, r.internal.id]
+      );
+      await c.query(
+        "UPDATE growth.events SET lead_id=$2 WHERE workspace_id=$1 AND subject_ref=$3 AND (tenant_ref=$4 OR (tenant_ref IS NULL AND signal='signup')) AND lead_id IS NULL AND verified AND source_event_id IS NOT NULL",
+        [GROWTH_WORKSPACE, link.lead_id, link.subject_ref, link.tenant_ref]
+      );
+      await audit2(c, r.internal.id, "IDENTITY_LINK_APPROVED", link.id);
+      return {
+        linked: true,
+        identityMerged: false,
+        merchantAccessChanged: false
+      };
+    },
+    true,
+    true
+  );
+  route(
+    "post",
+    "/identity-links/:id/revoke",
+    async (r, c) => {
+      await c.query(
+        "UPDATE growth.link_invites SET revoked_at=now() WHERE workspace_id=$1 AND id=$2",
+        [GROWTH_WORKSPACE, uuid2(r.params.id)]
+      );
+      return { revoked: true };
+    },
+    true,
+    true
+  );
+  route("get", "/leads/:id/lifecycle", async (r, c) => ({
+    lifecycle: await linkedLifecycle(c, uuid2(r.params.id))
+  }));
+  route("get", "/retention", async (_r, c) => ({
+    policy: {
+      contactDays: 180,
+      unlinkedEventDays: 30,
+      linkedEventDays: 180,
+      requiresReview: true,
+      financialRecordsDeleted: false
+    },
+    due: (await c.query(
+      "SELECT id,company,retention_until,opted_out_at FROM growth.leads WHERE workspace_id=$1 AND anonymized_at IS NULL AND retention_until<now() ORDER BY retention_until LIMIT 100",
+      [GROWTH_WORKSPACE]
+    )).rows
+  }));
+  route(
+    "post",
+    "/leads/:id/anonymize",
+    async (r, c) => {
+      const id = uuid2(r.params.id);
+      const l = await findLead(c, id);
+      if (r.body.confirm !== true || !l.opted_out_at && new Date(l.retention_until ?? 0) > /* @__PURE__ */ new Date())
+        fail("RETENTION_REVIEW_REQUIRED", 409);
+      await c.query(
+        "UPDATE growth.leads SET company='Kontak dianonimkan',contact_name='',email=NULL,phone=NULL,city='',tools='',challenges='',consent_email=false,consent_whatsapp=false,consent_ai=false,consent_basis='',next_followup=NULL,opted_out_at=coalesce(opted_out_at,now()),anonymized_at=now(),updated_at=now(),version=version+1 WHERE workspace_id=$1 AND id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await c.query(
+        "UPDATE growth.activities SET body='Dihapus sesuai kebijakan retensi' WHERE workspace_id=$1 AND lead_id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await c.query(
+        "UPDATE growth.recommendations SET document='{}'::jsonb WHERE workspace_id=$1 AND lead_id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await c.query(
+        "UPDATE growth.identity_reviews SET evidence='Dihapus sesuai kebijakan retensi' WHERE workspace_id=$1 AND lead_id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await c.query(
+        "UPDATE growth.link_invites SET revoked_at=now(),subject_ref=NULL,tenant_ref=NULL WHERE workspace_id=$1 AND lead_id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await c.query(
+        "UPDATE growth.events SET subject_ref=NULL,tenant_ref=NULL WHERE workspace_id=$1 AND lead_id=$2",
+        [GROWTH_WORKSPACE, id]
+      );
+      await audit2(c, r.internal.id, "CONTACT_ANONYMIZED", id);
+      return { anonymized: true, businessDataChanged: false };
+    },
+    true,
+    true
+  );
+}
+
 // src/server/growth/routes.ts
 function registerGrowthRoutes(app, getBusinessDb, guard, getGrowthDb = growthDb) {
   const enabled = (_req, res, next) => growthEnabled() ? next() : void res.status(404).json({ ok: false, error: "GROWTH_DISABLED" });
@@ -4041,6 +4550,69 @@ function registerGrowthRoutes(app, getBusinessDb, guard, getGrowthDb = growthDb)
     enabled,
     guard("MANAGE_GROWTH"),
     run(fn, write, superOnly)
+  );
+  registerProductRoutes(route);
+  app.get(
+    "/api/admin/growth/integration/dead",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res.status(403).json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        res.json({
+          ok: true,
+          events: (await (await sourceDb()).query(
+            "SELECT id,seq,kind,attempts,last_error,dead_at FROM growth_source.outbox WHERE dead_at IS NOT NULL ORDER BY seq LIMIT 100"
+          )).rows
+        });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    }
+  );
+  app.post(
+    "/api/admin/growth/integration/retry",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res.status(403).json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        const id = uuid2(req.body.id);
+        const r = await (await sourceDb()).query(
+          "UPDATE growth_source.outbox SET dead_at=NULL,available_at=now(),lease_until=NULL,attempts=0 WHERE id=$1 AND dead_at IS NOT NULL RETURNING id",
+          [id]
+        );
+        await inWorkspace(
+          await getGrowthDb(),
+          (c) => audit2(c, req.internal.id, "DEAD_LETTER_RETRY", id)
+        );
+        res.json({ ok: true, requeued: r.rowCount });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    }
+  );
+  app.post(
+    "/api/admin/growth/integration/drain",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res.status(403).json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        const db = await getGrowthDb();
+        const result = await drainOutbox(await sourceDb(), db);
+        await inWorkspace(
+          db,
+          (c) => audit2(c, req.internal.id, "OUTBOX_DRAINED")
+        );
+        res.json({ ok: true, ...result });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    }
   );
   route("get", "/overview", async (_r, c) => ({
     overview: await overview(c)
@@ -4364,7 +4936,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID7();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID8();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -4803,7 +5375,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID7();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID8();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
@@ -4926,27 +5498,84 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   );
 }
 
-// src/server/growth/capture.ts
-function captureGrowthSignal(subject, signal, key, now = /* @__PURE__ */ new Date(), sink = async () => {
-  const db = await growthDb();
-  await inWorkspace(
-    db,
-    (c) => recordEvent(
-      c,
-      { subject, signal, key, occurredAt: now.toISOString() },
-      "server",
-      true
-    )
-  );
-}) {
-  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
-  void Promise.resolve().then(sink).catch(() => {
-    console.warn("[growth] optional telemetry not recorded");
-  });
+// src/server/growth/merchant.ts
+function registerGrowthMerchantRoutes(app, business, authenticate = authenticateBearer, getTarget = growthDb) {
+  for (const action of ["session", "claim", "withdraw"])
+    app.post("/api/v1/sync/growth/" + action, async (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      if (!growthEnabled())
+        return res.status(404).json({ ok: false, error: "GROWTH_DISABLED" });
+      try {
+        const principal = await authenticate(req);
+        if (!principal || !principal.isEmailVerified)
+          throw new GrowthError(401, "VERIFIED_AUTH_REQUIRED");
+        if (action === "session") {
+          if (process.env.GROWTH_CAPTURE_ENABLED !== "1")
+            return res.json({ ok: true, skipped: true });
+          if (!principal.authCreatedAt || !Number.isFinite(Date.parse(principal.authCreatedAt)))
+            fail("AUTH_SIGNUP_DATE_REQUIRED");
+          await business.query(
+            `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class,occurred_at)
+      SELECT md5('signup:'||c.source_id::text||$1)::uuid,c.source_id,NULL,$1::text::uuid,'signal',jsonb_build_object('signal','signup'),c.data_class,$2::timestamptz FROM growth_source.config c WHERE c.enabled ON CONFLICT(id) DO NOTHING`,
+            [principal.subject, principal.authCreatedAt]
+          );
+          return res.json({ ok: true, recorded: true });
+        }
+        if (!principal.reauthenticatedAt || Date.now() / 1e3 - principal.reauthenticatedAt > 600)
+          fail("REAUTH_REQUIRED", 403);
+        const target = await getTarget();
+        if (action === "withdraw") {
+          await inWorkspace(target, async (c) => {
+            await c.query(
+              `UPDATE growth.leads SET consent_email=false,consent_whatsapp=false,consent_ai=false,opted_out_at=now(),updated_at=now(),version=version+1 WHERE workspace_id=$1 AND id IN(SELECT lead_id FROM growth.link_invites WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL)`,
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "UPDATE growth.link_invites SET revoked_at=now() WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "INSERT INTO growth.audit(workspace_id,actor_id,action) VALUES($1,$2,'SUBJECT_WITHDREW_GROWTH_CONSENT')",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+          });
+          return res.json({ ok: true, withdrawn: true });
+        }
+        const tenant2 = uuid2(req.body.tenantId);
+        await ownedTenant(business, principal.subject, tenant2);
+        if (req.body.consentVersion !== CONSENT_VERSION || req.body.consent !== true)
+          fail("EXPLICIT_ANALYTICS_CONSENT_REQUIRED");
+        if (typeof req.body.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(req.body.token))
+          fail("INVALID_INVITE");
+        await inWorkspace(target, async (c) => {
+          const r = await c.query(
+            `UPDATE growth.link_invites i SET claimed_at=now(),subject_ref=$3,tenant_ref=$4,consent_version=$5 WHERE workspace_id=$1 AND token_hash=$2 AND claimed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND EXISTS(SELECT 1 FROM growth.leads l WHERE l.workspace_id=i.workspace_id AND l.id=i.lead_id AND l.opted_out_at IS NULL AND l.anonymized_at IS NULL) RETURNING id`,
+            [
+              GROWTH_WORKSPACE,
+              hash(req.body.token),
+              principal.subject,
+              tenant2,
+              CONSENT_VERSION
+            ]
+          );
+          if (!r.rowCount) fail("INVITE_EXPIRED_OR_USED", 409);
+          await c.query(
+            "INSERT INTO growth.audit(workspace_id,actor_id,action,target_id) VALUES($1,$2,'SUBJECT_CONFIRMED_LINK',$3)",
+            [GROWTH_WORKSPACE, principal.subject, r.rows[0].id]
+          );
+        });
+        res.json({ ok: true, status: "AWAITING_SUPERADMIN_REVIEW" });
+      } catch (e) {
+        res.status(e instanceof GrowthError ? e.status : 503).json({
+          ok: false,
+          error: e instanceof GrowthError ? e.code : "GROWTH_INTEGRATION_UNAVAILABLE"
+        });
+      }
+    });
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes2, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -4956,14 +5585,14 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
 async function hashFinancialPin(pin) {
   if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-  const salt = randomBytes(16).toString("hex");
+  const salt = randomBytes2(16).toString("hex");
   const value = await scrypt(pin, salt);
   return "scrypt-v1$" + salt + "$" + value.toString("hex");
 }
@@ -5035,7 +5664,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
       VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
     await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
-    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest2(randomBytes(32).toString("hex"))]);
+    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest2(randomBytes2(32).toString("hex"))]);
     return { enrolled: true };
   });
   route("/api/v1/finance/approve", async (c, s, req) => {
@@ -5046,7 +5675,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     const row = await credential(c, s);
     if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
     if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
-    const token = randomBytes(32).toString("base64url");
+    const token = randomBytes2(32).toString("base64url");
     await c.query(
       `INSERT INTO pos.financial_approval_grants
       (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
@@ -5120,7 +5749,7 @@ function registerBusinessDirectory(app, db) {
 }
 
 // services/pos/sync.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
@@ -6131,6 +6760,16 @@ function registerSharedStateRoutes(app, db) {
   });
 }
 
+// src/server/growth/sourceCapture.ts
+async function recordReportAdoption(db, subject, tenant2) {
+  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
+  await db.query(
+    `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class)
+ SELECT md5(c.source_id::text||$1||$2||'report:'||(now() AT TIME ZONE 'Asia/Jakarta')::date::text)::uuid,c.source_id,t.id,$1::text::uuid,'signal','{"signal":"report_viewed"}'::jsonb,c.data_class FROM growth_source.config c JOIN internal.tenants t ON t.id=$2::uuid AND t.owner_user_ref=$1::text WHERE c.enabled AND t.is_active AND t.merged_into IS NULL ON CONFLICT(id) DO NOTHING`,
+    [subject, tenant2]
+  );
+}
+
 // services/pos/reports.ts
 var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -6548,7 +7187,11 @@ function registerReportRoutes(app, db) {
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     try {
       const filter = parseReportFilter(req.query);
-      if (route === "summary") return res.json(await serverReportSummary(db, principal.subject, filter));
+      if (route === "summary") {
+        const result = await serverReportSummary(db, principal.subject, filter);
+        await recordReportAdoption(db, principal.subject, result.scope.tenantId);
+        return res.json(result);
+      }
       const rawLimit = stringQuery(req.query.limit, "LIMIT");
       const limit = rawLimit === null ? 100 : Number(rawLimit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ReportRequestError(400, "INVALID_LIMIT");
@@ -6631,6 +7274,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerGrowthMerchantRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -6678,7 +7322,6 @@ function registerSyncRoutes(app, db) {
         if (!created.rows.length) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
         return { tenantId, merchantId: created.rows[0].id };
       });
-      captureGrowthSignal(principal.subject, "business_setup", "business:" + result.merchantId);
       return res.json({ ok: true, ...result });
     } catch (error) {
       return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
@@ -6838,7 +7481,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes3(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -6857,7 +7500,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes3(32).toString("hex")]);
           }
           const verified = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -7203,7 +7846,6 @@ function registerSyncRoutes(app, db) {
         }
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
-      if (out.accepted > 0) captureGrowthSignal(principal.subject, "synced_transaction", "sync:" + principal.subject + ":" + (idemKey ?? (/* @__PURE__ */ new Date()).toISOString()));
       res.json({ ok: true, ...out });
     } catch (err) {
       if (err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });

@@ -20,7 +20,6 @@ import {
   allowedCommunication,
   type GrowthEvent,
 } from "../../src/lib/growth/model";
-import { captureGrowthSignal } from "../../src/server/growth/capture";
 const pg = new PGlite();
 const wrap = (q: any): Db => ({
   query: async (s, p) => {
@@ -49,6 +48,9 @@ try {
   const migration = fs.readFileSync("growth/migrations/001_core.sql", "utf8");
   await pg.exec(migration);
   await pg.exec(migration);
+  await pg.exec(
+    fs.readFileSync("growth/migrations/002_integration.sql", "utf8"),
+  );
   for (const [id, role] of [
     [actor, "ROLE_SUPERADMIN"],
     [growth, "ROLE_INTERNAL_GROWTH"],
@@ -390,6 +392,21 @@ try {
     200,
   );
   assert.equal((await call("/overview", growth)).status, 200);
+  for (const [path, body] of [
+    ["/leads/" + lead.id + "/link-invites", {}],
+    ["/identity-links/" + actor + "/approve", {}],
+    ["/leads/" + lead.id + "/anonymize", { confirm: true }],
+    ["/integration/drain", {}],
+    ["/integration/retry", { id: actor }],
+  ] as const) {
+    assert.equal((await call(path, growth, body)).status, 403, path);
+    assert.equal((await call(path, null, body)).status, 401, path);
+    assert.equal((await call(path, "stale", body)).status, 403, path);
+  }
+  ok(
+    "M2 identity, retention, worker and retry endpoints deny non-Superadmin, anonymous and stale MFA mutations",
+  );
+
   assert.equal(
     (await call("/leads", growth, { company: "Blocked", sector: "FNB" }))
       .status,
@@ -449,23 +466,6 @@ try {
   ok(
     "PostgreSQL RLS hides other workspaces and rejects cross-workspace writes",
   );
-  process.env.GROWTH_CAPTURE_ENABLED = "1";
-  let called = false;
-  assert.doesNotThrow(() =>
-    captureGrowthSignal(
-      actor,
-      "synced_transaction",
-      "synthetic-failure",
-      new Date(),
-      async () => {
-        called = true;
-        throw Error("Synthetic offline");
-      },
-    ),
-  );
-  await new Promise((r) => setTimeout(r, 10));
-  assert.equal(called, true);
-  ok("Telemetry failure cannot fail a merchant sale");
   const audit = await inWorkspace(db, (c) =>
     c.query("SELECT count(*) FROM growth.audit"),
   );

@@ -1,4 +1,4 @@
-import {captureGrowthSignal} from '../../src/server/growth/capture';
+import {registerGrowthMerchantRoutes} from '../../src/server/growth/merchant';
 import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 /**
  * Jembatan dari aplikasi kasir (localStorage) ke database.
@@ -152,6 +152,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerGrowthMerchantRoutes(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -198,7 +199,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         if (!created.rows.length) throw new BillingError(409,'BUSINESS_OWNERSHIP_CONFLICT');
         return {tenantId,merchantId:created.rows[0].id};
       });
-      captureGrowthSignal(principal.subject,'business_setup','business:'+result.merchantId);
       return res.json({ok:true,...result});
     } catch (error) {
       return res.status(error instanceof BillingError||error instanceof BusinessScopeError ? error.status : 500).json({ok:false,error:error instanceof BillingError||error instanceof BusinessScopeError ? error.message : 'BUSINESS_SETUP_FAILED'});
@@ -817,7 +817,6 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
 
-      if(out.accepted>0)captureGrowthSignal(principal.subject,'synced_transaction','sync:'+principal.subject+':'+(idemKey??new Date().toISOString()));
       res.json({ ok: true, ...out });
     } catch (err) {
       if(err instanceof FinanceError) return res.status(err.status).json({ok:false,error:err.message});

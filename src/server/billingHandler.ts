@@ -1,3 +1,4 @@
+import {growthBusinessConnection} from './growth/businessConnection';
 import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerBillingRoutes } from '../../services/billing/routes';
@@ -23,7 +24,7 @@ export const BILLING_ROUTES = {
   [DOKU_NOTIFICATION_PATH]: ['POST'],
 } as const satisfies Record<string, readonly string[]>;
 
-export function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: 'billing', max: 2 })) {
+export function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: 'billing', max: 2,connectionString:growthBusinessConnection() })) {
   return createServerlessBoundary({
     name: 'billing',
     routes: BILLING_ROUTES,

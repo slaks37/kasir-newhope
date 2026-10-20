@@ -1,3 +1,4 @@
+import { linkedLifecycle,productMetrics } from "./integration";
 import { randomUUID } from "node:crypto";
 import type { Db } from "../../../services/shared/db";
 import {
@@ -250,7 +251,7 @@ export async function leadDetails(db: Db, id: string) {
   ).rows;
   return {
     lead: { ...lead, ...scoreLead(events, (await weights(db)).weights) },
-    trial: trialHealth(events),
+    trial: trialHealth(events,new Date(),await linkedLifecycle(db,id)),
     events,
     activities: (
       await db.query(
@@ -351,9 +352,11 @@ export async function overview(db: Db) {
       byLead.set(e.lead_id, bucket);
     }
   }
+  const lifecycleRows=(await db.query(`SELECT i.lead_id,b.* FROM growth.link_invites i JOIN growth.billing_facts b ON b.workspace_id=i.workspace_id AND b.tenant_ref=i.tenant_ref AND b.subject_ref=i.subject_ref WHERE i.workspace_id=$1 AND i.approved_at IS NOT NULL AND i.revoked_at IS NULL`,[GROWTH_WORKSPACE])).rows;
+  const lifecycleByLead=new Map(lifecycleRows.map(r=>[r.lead_id,r]));
   const profiles = leads.map((l) => {
     const e = byLead.get(l.id) ?? [];
-    return { id: l.id, ...scoreLead(e, w), ...trialHealth(e) };
+    return { id: l.id, ...scoreLead(e, w), ...trialHealth(e,new Date(),lifecycleByLead.get(l.id)) };
   });
   const trials = profiles.filter((p) => p.startedAt);
   const active = trials.filter((p) => p.activated).length;
@@ -372,6 +375,7 @@ export async function overview(db: Db) {
     ).rows[0]?.synthetic === true;
   return {
     synthetic,
+    integration: await productMetrics(db),
     totalLeads: leads.length,
     qualified: leads.filter((l) => l.stage === "QUALIFIED").length,
     pql: profiles.filter((p) => p.classification === "PQL").length,

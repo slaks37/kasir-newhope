@@ -21,6 +21,7 @@ await pg.exec(
   "CREATE SCHEMA internal; CREATE TABLE internal.internal_users(id uuid PRIMARY KEY,email text,full_name text,role text,sso_subject text,is_active boolean DEFAULT true,updated_at timestamptz); CREATE TABLE internal.internal_access_log(id uuid,internal_user_id uuid,internal_role text,target_id uuid,action text,resource text,justification text,ip_address text,request_id text,user_agent text);",
 );
 await pg.exec(fs.readFileSync("growth/migrations/001_core.sql", "utf8"));
+await pg.exec(fs.readFileSync("growth/migrations/002_integration.sql","utf8"));
 const actor = "00000000-0000-4000-8000-000000000001";
 await db.query(
   "INSERT INTO internal.internal_users VALUES($1::uuid,'fixture@example.invalid','Operator Sintetis','ROLE_SUPERADMIN',$1::text,true,now())",

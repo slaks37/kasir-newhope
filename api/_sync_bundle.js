@@ -1,3 +1,90 @@
+// src/server/growth/db.ts
+import pg from "pg";
+var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
+function growthEnabled(env = process.env) {
+  const staging = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || !env.VERCEL_ENV && env.NODE_ENV !== "production";
+  return env.GROWTH_ENGINE_ENABLED === "1" && staging && env.APP_ENV !== "production";
+}
+var pool;
+async function growthDb() {
+  if (!growthEnabled() || !process.env.GROWTH_DATABASE_URL)
+    throw Error("GROWTH_NOT_CONFIGURED");
+  if (!pool) {
+    const u = new URL(process.env.GROWTH_DATABASE_URL);
+    const local = ["localhost", "127.0.0.1"].includes(u.hostname);
+    if (!local && !u.hostname.endsWith(".neon.tech"))
+      throw Error("GROWTH_DATABASE_HOST_NOT_APPROVED");
+    for (const k of [
+      "sslmode",
+      "sslcert",
+      "sslkey",
+      "sslrootcert",
+      "uselibpqcompat"
+    ])
+      u.searchParams.delete(k);
+    pool = new pg.Pool({
+      connectionString: u.toString(),
+      ssl: local ? void 0 : { rejectUnauthorized: true },
+      max: 3,
+      connectionTimeoutMillis: 5e3,
+      idleTimeoutMillis: 1e4,
+      statement_timeout: 5e3
+    });
+    pool.on("error", () => console.error("[growth] database pool unavailable"));
+  }
+  const wrap = (q) => ({
+    query: async (s, p) => {
+      const r = await q.query(s, p);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    },
+    exec: async (s) => {
+      await q.query(s);
+    },
+    tx: async (fn) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        const result = await fn(wrap(c));
+        await c.query("COMMIT");
+        return result;
+      } catch (e) {
+        await c.query("ROLLBACK");
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    close: async () => {
+      await pool?.end();
+      pool = void 0;
+    }
+  });
+  return wrap(pool);
+}
+async function inWorkspace(db, fn, workspace = GROWTH_WORKSPACE) {
+  return db.tx(async (c) => {
+    await c.query("SELECT set_config('app.growth_workspace',$1,true)", [
+      workspace
+    ]);
+    return fn(c);
+  });
+}
+
+// src/server/growth/businessConnection.ts
+function growthBusinessConnection(env = process.env) {
+  if (!growthEnabled(env) || !env.GROWTH_BUSINESS_DATABASE_URL)
+    return void 0;
+  const u = new URL(env.GROWTH_BUSINESS_DATABASE_URL);
+  if (!u.hostname.endsWith(".neon.tech") && !["localhost", "127.0.0.1"].includes(u.hostname))
+    throw Error("UNAPPROVED_GROWTH_BUSINESS_HOST");
+  if (u.hostname.endsWith(".neon.tech")) {
+    for (const k of ["sslcert", "sslkey", "sslrootcert", "uselibpqcompat"])
+      u.searchParams.delete(k);
+    u.searchParams.set("sslmode", "verify-full");
+  }
+  return u.toString();
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -43,6 +130,8 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0, ...claims.amr.filter((a) => ["password", "otp", "totp", "oauth"].includes(a.method) && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp)) : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -91,7 +180,7 @@ async function tenantForPrincipal(db, principal) {
 
 // services/shared/db.ts
 import fs from "node:fs";
-import pg from "pg";
+import pg2 from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
@@ -135,8 +224,8 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
 }
 
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
@@ -150,7 +239,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool2 = new pg.Pool({
+  const pool2 = new pg2.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -202,92 +291,8 @@ async function connectDb(opts) {
   return wrap(pool2);
 }
 
-// src/server/growth/db.ts
-import pg2 from "pg";
-var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
-function growthEnabled(env = process.env) {
-  const staging = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || !env.VERCEL_ENV && env.NODE_ENV !== "production";
-  return env.GROWTH_ENGINE_ENABLED === "1" && staging && env.APP_ENV !== "production";
-}
-var pool;
-async function growthDb() {
-  if (!growthEnabled() || !process.env.GROWTH_DATABASE_URL)
-    throw Error("GROWTH_NOT_CONFIGURED");
-  if (!pool) {
-    const u = new URL(process.env.GROWTH_DATABASE_URL);
-    const local = ["localhost", "127.0.0.1"].includes(u.hostname);
-    if (!local && !u.hostname.endsWith(".neon.tech"))
-      throw Error("GROWTH_DATABASE_HOST_NOT_APPROVED");
-    for (const k of [
-      "sslmode",
-      "sslcert",
-      "sslkey",
-      "sslrootcert",
-      "uselibpqcompat"
-    ])
-      u.searchParams.delete(k);
-    pool = new pg2.Pool({
-      connectionString: u.toString(),
-      ssl: local ? void 0 : { rejectUnauthorized: true },
-      max: 3,
-      connectionTimeoutMillis: 5e3,
-      idleTimeoutMillis: 1e4,
-      statement_timeout: 5e3
-    });
-    pool.on("error", () => console.error("[growth] database pool unavailable"));
-  }
-  const wrap = (q) => ({
-    query: async (s, p) => {
-      const r = await q.query(s, p);
-      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
-    },
-    exec: async (s) => {
-      await q.query(s);
-    },
-    tx: async (fn) => {
-      const c = await pool.connect();
-      try {
-        await c.query("BEGIN");
-        const result = await fn(wrap(c));
-        await c.query("COMMIT");
-        return result;
-      } catch (e) {
-        await c.query("ROLLBACK");
-        throw e;
-      } finally {
-        c.release();
-      }
-    },
-    close: async () => {
-      await pool?.end();
-      pool = void 0;
-    }
-  });
-  return wrap(pool);
-}
-async function inWorkspace(db, fn, workspace = GROWTH_WORKSPACE) {
-  return db.tx(async (c) => {
-    await c.query("SELECT set_config('app.growth_workspace',$1,true)", [
-      workspace
-    ]);
-    return fn(c);
-  });
-}
-
-// src/lib/growth/model.ts
-var SIGNALS = {
-  signup: 10,
-  business_setup: 10,
-  outlet_setup: 10,
-  catalog_setup: 10,
-  test_transaction: 5,
-  synced_transaction: 20,
-  report_viewed: 5,
-  repeat_usage: 15,
-  demo_requested: 10,
-  referral: 5,
-  pricing_interest: 5
-};
+// src/server/growth/integration.ts
+import { createHash, randomUUID } from "node:crypto";
 
 // src/server/growth/service.ts
 var GrowthError = class extends Error {
@@ -303,67 +308,96 @@ var fail = (code, status = 400) => {
 var uuid = (v) => typeof v === "string" && /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(
   v
 ) ? v : fail("INVALID_ID");
-async function findLead(db, id) {
-  const row = (await db.query(
-    "SELECT * FROM growth.leads WHERE workspace_id=$1 AND id=$2",
-    [GROWTH_WORKSPACE, uuid(id)]
-  )).rows[0];
-  if (!row) return fail("LEAD_NOT_FOUND", 404);
-  return row;
-}
-async function recordEvent(db, b, origin, verified) {
-  if (!Object.hasOwn(SIGNALS, b.signal) || typeof b.key !== "string" || b.key.length < 1 || b.key.length > 200 || !Number.isFinite(Date.parse(b.occurredAt)) || Date.parse(b.occurredAt) > Date.now() + 3e5)
-    return fail("INVALID_EVENT");
-  if (b.signal === "pricing_interest" && b.leadId) {
-    const l = await findLead(db, b.leadId);
-    if (l.opted_out_at || !l.consent_basis)
-      return fail("TRACKING_CONSENT_REQUIRED");
-  }
-  const row = (await db.query(
-    `INSERT INTO growth.events(workspace_id,lead_id,subject_ref,signal,event_key,verified,origin,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(workspace_id,event_key) DO NOTHING RETURNING id`,
-    [
-      GROWTH_WORKSPACE,
-      b.leadId ? uuid(b.leadId) : null,
-      b.subject ? uuid(b.subject) : null,
-      b.signal,
-      b.key,
-      verified,
-      origin,
-      b.occurredAt
-    ]
-  )).rows[0];
-  if (!row) {
-    const old = (await db.query(
-      "SELECT lead_id,subject_ref,signal FROM growth.events WHERE workspace_id=$1 AND event_key=$2",
-      [GROWTH_WORKSPACE, b.key]
-    )).rows[0];
-    if (old && (old.lead_id !== (b.leadId ?? null) || old.subject_ref !== (b.subject ?? null) || old.signal !== b.signal))
-      return fail("EVENT_KEY_CONFLICT", 409);
-  }
-  return { inserted: !!row };
+
+// src/server/growth/integration.ts
+var CONSENT_VERSION = "growth-product-analytics-v1";
+var hash = (s) => createHash("sha256").update(s).digest("hex");
+async function ownedTenant(db, subject, tenant) {
+  const r = await db.query(
+    `SELECT id FROM internal.tenants WHERE id=$1 AND owner_user_ref=$2 AND is_active AND merged_into IS NULL`,
+    [tenant, subject]
+  );
+  if (r.rows.length !== 1) fail("VERIFIED_TENANT_OWNER_REQUIRED", 403);
 }
 
-// src/server/growth/capture.ts
-function captureGrowthSignal(subject, signal, key, now = /* @__PURE__ */ new Date(), sink = async () => {
-  const db = await growthDb();
-  await inWorkspace(
-    db,
-    (c) => recordEvent(
-      c,
-      { subject, signal, key, occurredAt: now.toISOString() },
-      "server",
-      true
-    )
-  );
-}) {
-  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
-  void Promise.resolve().then(sink).catch(() => {
-    console.warn("[growth] optional telemetry not recorded");
-  });
+// src/server/growth/merchant.ts
+function registerGrowthMerchantRoutes(app, business, authenticate = authenticateBearer, getTarget = growthDb) {
+  for (const action of ["session", "claim", "withdraw"])
+    app.post("/api/v1/sync/growth/" + action, async (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      if (!growthEnabled())
+        return res.status(404).json({ ok: false, error: "GROWTH_DISABLED" });
+      try {
+        const principal = await authenticate(req);
+        if (!principal || !principal.isEmailVerified)
+          throw new GrowthError(401, "VERIFIED_AUTH_REQUIRED");
+        if (action === "session") {
+          if (process.env.GROWTH_CAPTURE_ENABLED !== "1")
+            return res.json({ ok: true, skipped: true });
+          if (!principal.authCreatedAt || !Number.isFinite(Date.parse(principal.authCreatedAt)))
+            fail("AUTH_SIGNUP_DATE_REQUIRED");
+          await business.query(
+            `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class,occurred_at)
+      SELECT md5('signup:'||c.source_id::text||$1)::uuid,c.source_id,NULL,$1::text::uuid,'signal',jsonb_build_object('signal','signup'),c.data_class,$2::timestamptz FROM growth_source.config c WHERE c.enabled ON CONFLICT(id) DO NOTHING`,
+            [principal.subject, principal.authCreatedAt]
+          );
+          return res.json({ ok: true, recorded: true });
+        }
+        if (!principal.reauthenticatedAt || Date.now() / 1e3 - principal.reauthenticatedAt > 600)
+          fail("REAUTH_REQUIRED", 403);
+        const target = await getTarget();
+        if (action === "withdraw") {
+          await inWorkspace(target, async (c) => {
+            await c.query(
+              `UPDATE growth.leads SET consent_email=false,consent_whatsapp=false,consent_ai=false,opted_out_at=now(),updated_at=now(),version=version+1 WHERE workspace_id=$1 AND id IN(SELECT lead_id FROM growth.link_invites WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL)`,
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "UPDATE growth.link_invites SET revoked_at=now() WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "INSERT INTO growth.audit(workspace_id,actor_id,action) VALUES($1,$2,'SUBJECT_WITHDREW_GROWTH_CONSENT')",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+          });
+          return res.json({ ok: true, withdrawn: true });
+        }
+        const tenant = uuid(req.body.tenantId);
+        await ownedTenant(business, principal.subject, tenant);
+        if (req.body.consentVersion !== CONSENT_VERSION || req.body.consent !== true)
+          fail("EXPLICIT_ANALYTICS_CONSENT_REQUIRED");
+        if (typeof req.body.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(req.body.token))
+          fail("INVALID_INVITE");
+        await inWorkspace(target, async (c) => {
+          const r = await c.query(
+            `UPDATE growth.link_invites i SET claimed_at=now(),subject_ref=$3,tenant_ref=$4,consent_version=$5 WHERE workspace_id=$1 AND token_hash=$2 AND claimed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND EXISTS(SELECT 1 FROM growth.leads l WHERE l.workspace_id=i.workspace_id AND l.id=i.lead_id AND l.opted_out_at IS NULL AND l.anonymized_at IS NULL) RETURNING id`,
+            [
+              GROWTH_WORKSPACE,
+              hash(req.body.token),
+              principal.subject,
+              tenant,
+              CONSENT_VERSION
+            ]
+          );
+          if (!r.rowCount) fail("INVITE_EXPIRED_OR_USED", 409);
+          await c.query(
+            "INSERT INTO growth.audit(workspace_id,actor_id,action,target_id) VALUES($1,$2,'SUBJECT_CONFIRMED_LINK',$3)",
+            [GROWTH_WORKSPACE, principal.subject, r.rows[0].id]
+          );
+        });
+        res.json({ ok: true, status: "AWAITING_SUPERADMIN_REVIEW" });
+      } catch (e) {
+        res.status(e instanceof GrowthError ? e.status : 503).json({
+          ok: false,
+          error: e instanceof GrowthError ? e.code : "GROWTH_INTEGRATION_UNAVAILABLE"
+        });
+      }
+    });
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -373,8 +407,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash2("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -1775,6 +1809,16 @@ function registerSharedStateRoutes(app, db) {
   });
 }
 
+// src/server/growth/sourceCapture.ts
+async function recordReportAdoption(db, subject, tenant) {
+  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
+  await db.query(
+    `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class)
+ SELECT md5(c.source_id::text||$1||$2||'report:'||(now() AT TIME ZONE 'Asia/Jakarta')::date::text)::uuid,c.source_id,t.id,$1::text::uuid,'signal','{"signal":"report_viewed"}'::jsonb,c.data_class FROM growth_source.config c JOIN internal.tenants t ON t.id=$2::uuid AND t.owner_user_ref=$1::text WHERE c.enabled AND t.is_active AND t.merged_into IS NULL ON CONFLICT(id) DO NOTHING`,
+    [subject, tenant]
+  );
+}
+
 // services/pos/reports.ts
 var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -2192,7 +2236,11 @@ function registerReportRoutes(app, db) {
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     try {
       const filter = parseReportFilter(req.query);
-      if (route === "summary") return res.json(await serverReportSummary(db, principal.subject, filter));
+      if (route === "summary") {
+        const result = await serverReportSummary(db, principal.subject, filter);
+        await recordReportAdoption(db, principal.subject, result.scope.tenantId);
+        return res.json(result);
+      }
       const rawLimit = stringQuery(req.query.limit, "LIMIT");
       const limit = rawLimit === null ? 100 : Number(rawLimit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ReportRequestError(400, "INVALID_LIMIT");
@@ -2275,6 +2323,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerGrowthMerchantRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -2322,7 +2371,6 @@ function registerSyncRoutes(app, db) {
         if (!created.rows.length) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
         return { tenantId, merchantId: created.rows[0].id };
       });
-      captureGrowthSignal(principal.subject, "business_setup", "business:" + result.merchantId);
       return res.json({ ok: true, ...result });
     } catch (error) {
       return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
@@ -2847,7 +2895,6 @@ function registerSyncRoutes(app, db) {
         }
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
-      if (out.accepted > 0) captureGrowthSignal(principal.subject, "synced_transaction", "sync:" + principal.subject + ":" + (idemKey ?? (/* @__PURE__ */ new Date()).toISOString()));
       res.json({ ok: true, ...out });
     } catch (err) {
       if (err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });
@@ -3126,6 +3173,9 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/sync/growth/session": ["POST"],
+  "/api/v1/sync/growth/claim": ["POST"],
+  "/api/v1/sync/growth/withdraw": ["POST"],
   "/api/v1/privacy/requests": ["GET", "POST"],
   "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],
@@ -3150,7 +3200,7 @@ var allowedMethods = {
   "/api/v1/finance/shift/open": ["POST"],
   "/api/v1/finance/shift/close": ["POST"]
 };
-function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
+function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2, connectionString: growthBusinessConnection() })) {
   return createServerlessBoundary({
     name: "sync",
     routes: allowedMethods,

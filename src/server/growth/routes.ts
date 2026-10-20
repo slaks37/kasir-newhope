@@ -1,3 +1,5 @@
+import { registerProductRoutes, drainOutbox } from "./productRoutes";
+import { sourceDb } from "./sourceDb";
 import type express from "express";
 import type { Db } from "../../../services/shared/db";
 import type { InternalCapability } from "../../lib/rbac/environments";
@@ -88,6 +90,80 @@ export function registerGrowthRoutes(
       guard("MANAGE_GROWTH"),
       run(fn, write, superOnly),
     );
+  registerProductRoutes(route);
+  app.get(
+    "/api/admin/growth/integration/dead",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req: any, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res
+          .status(403)
+          .json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        res.json({
+          ok: true,
+          events: (
+            await (
+              await sourceDb()
+            ).query(
+              "SELECT id,seq,kind,attempts,last_error,dead_at FROM growth_source.outbox WHERE dead_at IS NOT NULL ORDER BY seq LIMIT 100",
+            )
+          ).rows,
+        });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    },
+  );
+  app.post(
+    "/api/admin/growth/integration/retry",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req: any, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res
+          .status(403)
+          .json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        const id = svc.uuid(req.body.id);
+        const r = await (
+          await sourceDb()
+        ).query(
+          "UPDATE growth_source.outbox SET dead_at=NULL,available_at=now(),lease_until=NULL,attempts=0 WHERE id=$1 AND dead_at IS NOT NULL RETURNING id",
+          [id],
+        );
+        await inWorkspace(await getGrowthDb(), (c) =>
+          svc.audit(c, req.internal.id, "DEAD_LETTER_RETRY", id),
+        );
+        res.json({ ok: true, requeued: r.rowCount });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    },
+  );
+  // No CRM transaction is held while leasing/draining source outbox rows.
+  app.post(
+    "/api/admin/growth/integration/drain",
+    enabled,
+    guard("MANAGE_GROWTH"),
+    async (req: any, res) => {
+      if (req.internal.role !== "ROLE_SUPERADMIN")
+        return res
+          .status(403)
+          .json({ ok: false, error: "SUPERADMIN_REQUIRED" });
+      try {
+        const db = await getGrowthDb();
+        const result = await drainOutbox(await sourceDb(), db);
+        await inWorkspace(db, (c) =>
+          svc.audit(c, req.internal.id, "OUTBOX_DRAINED"),
+        );
+        res.json({ ok: true, ...result });
+      } catch {
+        res.status(503).json({ ok: false, error: "INTEGRATION_UNAVAILABLE" });
+      }
+    },
+  );
   route("get", "/overview", async (_r, c) => ({
     overview: await svc.overview(c),
   }));

@@ -1,3 +1,4 @@
+import GrowthIntegration from "./GrowthIntegration";
 import {
   useCallback,
   useEffect,
@@ -54,6 +55,7 @@ const TABS = [
   "Retention",
   "Reports",
   "Settings",
+  "Product Integration",
 ] as const;
 type Tab = (typeof TABS)[number];
 const labels: Record<Tab, string> = {
@@ -67,6 +69,7 @@ const labels: Record<Tab, string> = {
   Retention: "Retensi",
   Reports: "Laporan",
   Settings: "Pengaturan",
+  "Product Integration": "Integrasi produk",
 };
 const EMPTY = {
   company: "",
@@ -841,7 +844,7 @@ export default function GrowthEngine({
                 }
               >
                 <p className="ge-footnote">
-                  Tanggal signup menjadi awal analitik trial; tidak mengubah
+                  Tanggal trial memakai lifecycle billing bila akun tertaut; estimasi signup diberi label. Analitik tidak mengubah
                   langganan atau entitlement. Event yang belum tertaut ke lead
                   tidak dihitung. Health ini belum memprediksi churn.
                 </p>
@@ -850,7 +853,7 @@ export default function GrowthEngine({
                     <thead>
                       <tr>
                         <th>Lead</th>
-                        <th>Hari tersisa</th>
+                        <th>Hari tersisa</th><th>Sumber lifecycle</th>
                         <th>Setup</th>
                         <th>Health</th>
                         <th>Langkah berikut</th>
@@ -871,7 +874,7 @@ export default function GrowthEngine({
                                   "Lihat detail akun"}
                               </button>
                             </td>
-                            <td>{p.daysRemaining}</td>
+                            <td>{p.daysRemaining}</td><td>{p.lifecycleSource==='billing_subscription'?`Billing · ${p.subscriptionStatus}`:'Estimasi signup'}</td>
                             <td>{p.completed.length}/8</td>
                             <td>{p.health}%</td>
                             <td>{p.next}</td>
@@ -1050,6 +1053,7 @@ export default function GrowthEngine({
               </Panel>
             </div>
           )}
+          {tab === "Product Integration" && <><label>Lead untuk undangan<select aria-label="Lead untuk undangan" value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Pilih lead</option>{leads.map(l=><option key={l.id} value={l.id}>{l.company}</option>)}</select></label><GrowthIntegration leadId={selected||undefined}/></> }
           {tab === "Settings" && settings && (
             <div className="ge-grid">
               <Panel title="Bobot scoring · rules v1">

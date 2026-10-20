@@ -189,6 +189,15 @@ try {
     .getByRole("button", { name: "Aktivasi trial", exact: true })
     .click();
   await page.getByRole("heading", { name: "Aktivasi trial 45 hari" }).waitFor();
+  await page.getByRole('navigation',{name:'Modul Growth Engine'}).getByRole('button',{name:'Integrasi produk',exact:true}).click();
+  await page.getByRole('heading',{name:'Integrasi produk & data terverifikasi',exact:true}).waitFor();
+  await page.getByText('MRR IDR terverifikasi',{exact:true}).waitFor();
+  await page.getByLabel('Lead untuk undangan').selectOption({label:'Browser E2E Sintetis'});
+  await page.getByRole('button',{name:'Buat undangan konfirmasi akun',exact:true}).click();
+  const invite=page.getByLabel('Undangan konfirmasi akun');await invite.waitFor();
+  assert.match(await invite.inputValue(),/\/overview#growth-link=[A-Za-z0-9_-]{43}$/);
+  await page.getByText('Retensi kontak',{exact:true}).waitFor();
+  await page.screenshot({path:output+'/integration-desktop.png',fullPage:true});
   await page.setViewportSize({ width: 390, height: 844 });
   await page
     .getByRole("navigation", { name: "Modul Growth Engine" })
@@ -216,6 +225,9 @@ try {
       "Activity persisted across reload",
       "Safe Copilot fallback rendered",
       "Trial activation UI",
+      "Product integration coverage and unavailable billing metrics",
+      "One-time private identity invitation through UI",
+      "Contact retention review UI",
       "Desktop and mobile layouts",
       "No uncaught browser errors",
     ],

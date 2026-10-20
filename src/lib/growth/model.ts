@@ -72,6 +72,8 @@ export interface Lead {
   created_at: string;
   updated_at: string;
   partner_id: string | null;
+  retention_until?: string;
+  anonymized_at?: string|null;
   score?: number;
   classification?: string;
   reasons?: { signal: string; points: number }[];
@@ -108,14 +110,14 @@ export function scoreLead(
   return { score, classification, reasons };
 }
 const DAY = 86400000;
-export function trialHealth(events: GrowthEvent[], now = new Date()) {
+export function trialHealth(events: GrowthEvent[], now = new Date(), lifecycle?: {status:string;trial_started_at:string|null;trial_ends_at:string|null}|null) {
   const verified = events.filter(
     (e) => e.verified && new Date(e.occurred_at) <= now,
   );
   const starts = verified
     .filter((e) => e.signal === "signup")
     .map((e) => new Date(e.occurred_at).getTime());
-  const started = starts.length ? Math.min(...starts) : null;
+  const started = lifecycle ? (lifecycle.trial_started_at ? new Date(lifecycle.trial_started_at).getTime() : null) : starts.length ? Math.min(...starts) : null;
   const milestones = [
     "signup",
     "business_setup",
@@ -131,7 +133,7 @@ export function trialHealth(events: GrowthEvent[], now = new Date()) {
   const daysRemaining =
     started === null
       ? null
-      : Math.max(0, 45 - Math.floor((now.getTime() - started) / DAY));
+      : lifecycle ? (['TRIAL','TRIALING'].includes(lifecycle.status)&&lifecycle.trial_ends_at ? Math.max(0,Math.ceil((new Date(lifecycle.trial_ends_at).getTime()-now.getTime())/DAY)) : 0) : Math.max(0, 45 - Math.floor((now.getTime() - started) / DAY));
   const last = verified.length
     ? Math.max(...verified.map((e) => new Date(e.occurred_at).getTime()))
     : null;
@@ -139,6 +141,9 @@ export function trialHealth(events: GrowthEvent[], now = new Date()) {
     last === null ? null : Math.floor((now.getTime() - last) / DAY);
   const health = Math.round((complete.length / milestones.length) * 100);
   return {
+    lifecycleSource: lifecycle ? 'billing_subscription' : 'signup_estimate',
+    subscriptionStatus: lifecycle?.status??null,
+    trialEndsAt: lifecycle?.trial_ends_at??null,
     startedAt: started === null ? null : new Date(started).toISOString(),
     daysRemaining,
     health,
