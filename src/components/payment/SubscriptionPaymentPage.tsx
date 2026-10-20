@@ -887,7 +887,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Metode yang tersedia ditampilkan di halaman DOKU. QRIS memerlukan aktivasi merchant DOKU. Pembayaran ini hanya untuk langganan New Hope.
+                Jika QRIS tersedia, DOKU menampilkan kode QR dinamis dengan nominal sesuai tagihan. Pembayaran ini hanya untuk langganan New Hope.
               </p>
             </div>
           )}

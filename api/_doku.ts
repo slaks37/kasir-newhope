@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {dokuChannelEvidence,dokuPaymentReference} from '../services/billing/dokuChannelEvidence';
 
 export interface DokuLineItem {
   name: string;
@@ -155,6 +156,9 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
     throw new Error('DOKU_CREDENTIALS_NOT_CONFIGURED');
   }
 
+  if(!/^[A-Za-z0-9._:-]{1,64}$/.test(payload.order.invoice_number) || !Number.isSafeInteger(payload.order.amount) || payload.order.amount<=0 || payload.order.amount>999999999999) {
+    throw new Error('DOKU_CHECKOUT_ORDER_INVALID');
+  }
   const requestId = payload.order.invoice_number;
   const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
   const requestTarget = '/checkout/v1/payment';
@@ -190,7 +194,7 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
   }
 
   const echoed = data.response.order;
-  if (echoed && (echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount)) {
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount) {
     throw new Error('DOKU_CHECKOUT_ORDER_MISMATCH');
   }
   return {
@@ -207,6 +211,8 @@ export interface DokuOrderStatusResponse {
   currency?: string;
   transactionId?: string;
   channelId?: string;
+  providerChannelId?: string;
+  validationIssue?: string;
   rawResponse?: any;
 }
 
@@ -265,8 +271,10 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
     invoiceNumber: typeof data?.order?.invoice_number === 'string' ? data.order.invoice_number : undefined,
     amount,
     currency: data?.order?.currency === undefined ? 'IDR' : String(data.order.currency),
-    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
-    channelId: data?.channel?.id,
+    transactionId: dokuPaymentReference(data),
+    channelId: dokuChannelEvidence(data).channel,
+    providerChannelId: dokuChannelEvidence(data).providerChannel,
+    validationIssue: dokuChannelEvidence(data).issue,
     rawResponse: data,
   };
 }

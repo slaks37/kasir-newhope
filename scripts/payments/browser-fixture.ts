@@ -11,13 +11,13 @@ await pastikanPaket(db,SAAS_PLANS);await db.query("INSERT INTO internal.tenants(
 await db.query("UPDATE billing.subscriptions SET plan_id='plan-plus-monthly',status='ACTIVE',has_used_trial=true WHERE tenant_id=$1",[tenant]);
 let calls=0,quoteUnavailable=false;const app=express();app.use(express.json({verify:(r:any,_s,b)=>{r.rawBody=b;}}));
 app.use((req,res,next)=>{req.headers['x-auth-sub']=owner;if(quoteUnavailable&&req.path.endsWith('/prorated-upgrade'))return res.status(503).json({ok:false,error:'QUOTE_UNAVAILABLE'});next();});
-process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='MCH-browser-synthetic';process.env.DOKU_SECRET_KEY='synthetic-fixture';process.env.DOKU_ALLOWED_CHANNELS='QRIS';process.env.PUBLIC_APP_URL='https://fixture.test.invalid';
+process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='MCH-browser-synthetic';process.env.DOKU_SECRET_KEY='synthetic-fixture';process.env.DOKU_ALLOWED_CHANNELS='QRIS';process.env.PUBLIC_APP_URL='https://fixture.test.invalid';
 registerBillingRoutes(app,db,true,async payload=>{calls++;if(payload.payment.payment_method_types?.join(',')!=='QRIS')throw Error('CHANNEL_SCOPE_MISSING');return{paymentUrl:'https://sandbox.doku.com/checkout-link-v2/synthetic',rawResponse:{}};},async()=>({ok:false,status:'UNKNOWN'}));
 app.get('/__fixture/metrics',async(_r,res)=>res.json({calls,invoices:(await db.query('SELECT id FROM billing.invoices')).rowCount}));
 app.post('/__fixture/quote-off',(_r,res)=>{quoteUnavailable=true;res.json({ok:true});});
 let base='';app.post('/__fixture/deliver',async(_req,res)=>{
  const inv=(await db.query('SELECT * FROM billing.invoices ORDER BY created_at DESC LIMIT 1')).rows[0];
- const raw=JSON.stringify({order:{invoice_number:inv.invoice_number,amount:Number(inv.amount),currency:'IDR'},transaction:{status:'SUCCESS',original_request_id:'synthetic-browser-reference'},channel:{id:'QRIS'}}),event=randomUUID(),time=new Date().toISOString();
+ const raw=JSON.stringify({order:{invoice_number:inv.invoice_number,amount:Number(inv.amount),currency:'IDR'},transaction:{status:'SUCCESS'},service:{id:'QRIS'},acquirer:{id:'DOKU'},channel:{id:'QRIS_DOKU'},emoney_payment:{approval_code:'synthetic-browser-approval'}}),event=randomUUID(),time=new Date().toISOString();
  const r=await fetch(base+DOKU_NOTIFICATION_PATH,{method:'POST',headers:{'content-type':'application/json','client-id':'MCH-browser-synthetic','request-id':event,'request-timestamp':time,signature:generateSignature('MCH-browser-synthetic',event,time,DOKU_NOTIFICATION_PATH,generateDigest(raw),'synthetic-fixture')},body:raw});res.status(r.status).json(await r.json());
 });
 app.use('/api',(_r,res)=>res.status(404).json({ok:false,error:'FIXTURE_NOT_IMPLEMENTED'}));

@@ -115,7 +115,7 @@ export async function createQuote(db: Db, tenantId: string, input: any) {
 }
 
 export interface PaymentNotice { eventKey:string; invoiceNumber:string; reference:string; amount:number; currency:string; success:boolean;
-  channel?:string;validationIssue?:string;contentDigest?:string;payload?:any }
+  channel?:string;providerChannel?:string;validationIssue?:string;contentDigest?:string;payload?:any }
 export async function reconcilePayment(db: Db, notice: PaymentNotice) {
   if (!notice.eventKey || !notice.invoiceNumber || !notice.reference || !Number.isFinite(notice.amount)) throw new BillingError(400,'INVALID_PAYMENT_NOTICE');
   return db.tx(async c => {
@@ -143,7 +143,7 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
     // Allowlist audit metadata only. Never store full notification, card/VA
     // numbers, customer details, authorization headers or signatures.
     const payload={contentDigest:notice.contentDigest || null,status:notice.success?'SUCCESS':['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED','REFUNDED'].includes(notice.payload?.status)?notice.payload.status:'OTHER',
-      channel:(notice.channel || '').slice(0,100),requestTimestamp:typeof notice.payload?.requestTimestamp==='string'?notice.payload.requestTimestamp.slice(0,30):null};
+      channel:(notice.channel || '').slice(0,100),providerChannel:(notice.providerChannel || notice.channel || '').slice(0,100),requestTimestamp:typeof notice.payload?.requestTimestamp==='string'?notice.payload.requestTimestamp.slice(0,30):null};
     const event=await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,gateway_reference,amount,currency,outcome,reason,payload)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(event_key) DO NOTHING RETURNING id`,
       [notice.eventKey,notice.invoiceNumber,notice.reference,notice.amount,notice.currency,outcome,reason,JSON.stringify(payload)]);

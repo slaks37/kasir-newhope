@@ -2,6 +2,8 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { AuthUnavailableError, authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import {dokuChannelEvidence,dokuPaymentReference} from './dokuChannelEvidence';
+import {dokuSubscriptionPolicy} from './dokuSubscriptionPolicy';
 import {reconcileInvoiceByInquiry} from './recovery';
 import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
@@ -109,14 +111,15 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   }));
   app.post('/api/v1/subscription/checkout',run(async(req,res)=>{
     if(process.env.DOKU_PAYMENTS_ENABLED?.trim()!=='1') throw new BillingError(503,'PAYMENTS_PAUSED');
+    let policy;
+    try{policy=dokuSubscriptionPolicy();}catch(e){throw new BillingError(503,(e as Error).message);}
     const tenantId=await tenant(req);
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');
     let configured=false;try{configured=isDokuConfigured();}catch{/* configuration error, no provider call */}
     if (!configured) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
-    let allowedChannels:string[];
-    try{allowedChannels=getDokuAllowedChannels();}catch{throw new BillingError(503,'DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');}
-    const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels};
+    const allowedChannels=policy.methods;
+    const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels,paymentIntegration:policy.integration,paymentMode:policy.mode};
     if (quote.amount<=0) throw new BillingError(409,'ZERO_CHARGE_REQUIRES_SUPPORT');
     const origin=process.env.PUBLIC_APP_URL;
     if (!origin || !/^https:\/\/[^/?#@]+\/?$/.test(origin)) throw new BillingError(503,'PUBLIC_APP_URL_NOT_CONFIGURED');
@@ -200,13 +203,14 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     let body:any;try{body=JSON.parse(raw.toString('utf8'));}catch{throw new BillingError(400,'INVALID_NOTIFICATION_JSON');}
     if(!body || typeof body!=='object' || Array.isArray(body))throw new BillingError(400,'INVALID_NOTIFICATION_BODY');
     const status=String(body?.transaction?.status || '');
-    const channel=typeof body?.channel?.id==='string'?body.channel.id:'';
+    const evidence=dokuChannelEvidence(body),channel=evidence.channel;
+    const stableReference=dokuPaymentReference(body);
     const invoice=body?.order?.invoice_number,amount=body?.order?.amount;
     if(typeof invoice!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(invoice) ||
       !['string','number'].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount)))throw new BillingError(400,'INVALID_NOTIFICATION_ORDER');
-    const issue=!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':['REFUNDED','PARTIAL_REFUNDED'].includes(status)?'REFUND_REQUIRES_REVIEW':['VOIDED','REVERSED'].includes(status)?'REVERSAL_REQUIRES_REVIEW':!['SUCCESS','FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined;
+    const issue=evidence.issue || (!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':channel==='QRIS' && !stableReference?'QRIS_PAYMENT_REFERENCE_MISSING':['REFUNDED','PARTIAL_REFUNDED'].includes(status)?'REFUND_REQUIRES_REVIEW':['VOIDED','REVERSED'].includes(status)?'REVERSAL_REQUIRES_REVIEW':!['SUCCESS','FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined);
     const result=await reconcilePayment(db,{eventKey:String(req.headers['request-id'] || ''),
-      invoiceNumber:invoice,reference:String(body?.transaction?.original_request_id || req.headers['request-id'] || '').slice(0,128),
+      invoiceNumber:invoice,reference:stableReference || (channel==='QRIS'?'missing-qris-reference':String(req.headers['request-id'] || '')),providerChannel:evidence.providerChannel,
       amount:Number(amount),currency:body?.order?.currency===undefined?'IDR':String(body.order.currency),success:status==='SUCCESS',
       channel,validationIssue:issue,contentDigest:generateDigest(raw),payload:{status,channel,requestTimestamp:req.headers['request-timestamp']}});
     res.json(result);

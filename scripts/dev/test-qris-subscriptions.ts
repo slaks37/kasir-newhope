@@ -13,7 +13,8 @@ import {checkoutRequestKey,isVerifiedInvoicePayment,isDokuHostedUrl} from '../..
 
 export async function testQrisSubscriptions(db:Db) {
  const saved={...process.env},nativeFetch=globalThis.fetch;
- const keys=['DOKU_PAYMENTS_ENABLED','DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','PUBLIC_APP_URL'];
+ const keys=['DOKU_SUBSCRIPTION_PAYMENT_MODE','DOKU_PAYMENTS_ENABLED','DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','PUBLIC_APP_URL'];
+ process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';
  process.env.DOKU_API_URL='https://api-sandbox.doku.com';process.env.DOKU_CLIENT_ID='MCH-synthetic';
  process.env.DOKU_SECRET_KEY='synthetic-not-a-credential';process.env.DOKU_ALLOWED_CHANNELS='QRIS';process.env.PUBLIC_APP_URL='https://app.test.invalid';
  let inquiry:any={},providerCalls=0,providerTimeout=false,failActivation=false,failDb=false;
@@ -30,7 +31,7 @@ export async function testQrisSubscriptions(db:Db) {
   return {tenant,owner};
  };
  const post=(owner:string,body:any)=>fetch(base+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':owner,'content-type':'application/json'},body:JSON.stringify(body)});
- const input=()=>({planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:0,requestKey:randomUUID(),amount:1,tenantId:randomUUID()});
+ const input=()=>({planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:0,requestKey:randomUUID(),amount:1,tenantId:randomUUID(),paymentMode:'direct_dynamic_qris',payment_method_types:['VIRTUAL_ACCOUNT_BCA']});
  const verify=(owner:string,id:string)=>fetch(base+'/api/v1/subscription/verify?invoiceId='+id,{headers:{'x-auth-sub':owner}});
  const notify=(invoice:any,status='SUCCESS',event=randomUUID(),amount=invoice.amount)=>{
   const raw=JSON.stringify({order:{invoice_number:invoice.invoiceNumber,amount,currency:'IDR'},transaction:{status,original_request_id:'reference-'+invoice.id},channel:{id:'QRIS'}});
@@ -64,7 +65,7 @@ export async function testQrisSubscriptions(db:Db) {
   console.log('PASS QRIS 1: explicit activation and Brand ID guards; no provisioning/provider side effects when paused');
   const body=input(),responses=await Promise.all([post(a.owner,body),post(a.owner,body)]);
   assert.ok(responses.some(r=>r.status===200));const first=await responses.find(r=>r.status===200)!.json();
-  assert.equal(providerCalls,1);assert.equal(first.invoice.amount,99000);assert.equal(first.invoice.tenantId,a.tenant);
+  assert.equal(providerCalls,1);assert.equal(first.invoice.amount,99000);assert.equal(first.invoice.tenantId,a.tenant);assert.equal(first.quote.paymentMode,'dynamic_qris_checkout');assert.equal(first.quote.paymentIntegration,'DOKU_CHECKOUT');
   assert.equal((await (await post(a.owner,body)).json()).invoice.id,first.invoice.id);
   assert.equal((await post(a.owner,{...body,planId:'plan-pro-monthly'})).status,409);
   console.log('PASS QRIS 2: server pricing, outbound QRIS-only scope, intent persistence, concurrent retry key deduplication');
@@ -134,12 +135,69 @@ export async function testQrisSubscriptions(db:Db) {
   try{const k=checkoutRequestKey('owner','plan','MONTHLY',0);assert.equal(checkoutRequestKey('owner','plan','MONTHLY',0),k);assert.notEqual(checkoutRequestKey('other','plan','MONTHLY',0),k);}
   finally{Object.defineProperty(globalThis,'sessionStorage',{value:priorStorage,configurable:true});}
   const unattended=await make(),unattendedInvoice=(await (await post(unattended.owner,input())).json()).invoice;
+  await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[unattendedInvoice.id]);
   const workerProvider=async(number:string)=>number===unattendedInvoice.invoiceNumber?{ok:true,status:'SUCCESS' as const,invoiceNumber:number,amount:99000,currency:'IDR',transactionId:'worker-'+unattendedInvoice.id,channelId:'QRIS',rawResponse:{source:'synthetic-worker',number}}:{ok:false,status:'UNKNOWN' as const};
-  const batch=await recoverPendingPayments(db,{limit:100,provider:workerProvider});assert.equal(batch.applied,1);
+  const batch=await recoverPendingPayments(db,{limit:1,provider:workerProvider});assert.equal(batch.applied,1);
   assert.equal((await ensureSubscription(db,unattended.tenant)).status,'ACTIVE');
   assert.equal((await recoverPendingPayments(db,{limit:100,provider:workerProvider})).applied,0);
   console.log('PASS QRIS 13: bounded background/operator inquiry fulfills without browser and safely repeats');
   console.log('PASS QRIS 12: refresh retry intent is owner-scoped; UI success requires applied invoice; redirect hosts fail closed');
+
+  // Official non-SNAP QRIS envelope: QRIS_DOKU + approval_code, no
+  // original_request_id. Schema-shaped fixture only; no provider payment.
+  const signedBody=(body:any,event=randomUUID(),hoursOld=0)=>{
+    const raw=JSON.stringify(body),time=new Date(Date.now()-hoursOld*3600000).toISOString();
+    return fetch(base+DOKU_NOTIFICATION_PATH,{method:'POST',headers:{'content-type':'application/json','client-id':'MCH-synthetic','request-id':event,'request-timestamp':time,
+      signature:generateSignature('MCH-synthetic',event,time,DOKU_NOTIFICATION_PATH,generateDigest(raw),'synthetic-not-a-credential')},body:raw});
+  };
+  const official=(invoice:any)=>({service:{id:'QRIS'},acquirer:{id:'DOKU'},channel:{id:'QRIS_DOKU'},
+    order:{invoice_number:invoice.invoiceNumber,amount:invoice.amount},transaction:{status:'SUCCESS',date:new Date().toISOString()},
+    emoney_payment:{approval_code:'approval-'+invoice.id},customer:{name:'SYNTHETIC_CUSTOMER_DO_NOT_STORE',email:'private-do-not-store@example.invalid'},
+    additional_info:{origin:{product:'QRIS',system:'snap-adapter',apiFormat:'SNAP',source:'DIRECT'}}});
+  const q=await make(),qInvoice=(await (await post(q.owner,input())).json()).invoice,qBody=official(qInvoice);
+  const qEvent=randomUUID();process.env.DOKU_PAYMENTS_ENABLED='0';
+  assert.equal((await (await signedBody(qBody,qEvent,12)).json()).outcome,'APPLIED');
+  assert.equal((await (await signedBody(qBody)).json()).outcome,'DUPLICATE');
+  process.env.DOKU_PAYMENTS_ENABLED='1';
+  const receipt=(await db.query('SELECT gateway_reference,payload FROM billing.payment_events WHERE event_key=$1',[qEvent])).rows[0];
+  assert.equal(receipt.gateway_reference,qBody.emoney_payment.approval_code);assert.equal(receipt.payload.channel,'QRIS');assert.equal(receipt.payload.providerChannel,'QRIS_DOKU');
+  assert.ok(!JSON.stringify(receipt).includes('SYNTHETIC_CUSTOMER'));assert.ok(!JSON.stringify(receipt).includes('private-do-not-store'));
+  assert.equal(Number((await ensureSubscription(db,q.tenant)).revision),1);
+  console.log('PASS QRIS 14: documented QRIS_DOKU envelope, stable approval reference, raw-channel audit, 12h delivery and duplicate while new Checkout paused');
+  const r=await make(),rInvoice=(await (await post(r.owner,input())).json()).invoice,rBody=official(rInvoice);
+  for(const malformed of [{...rBody,service:{id:'CREDIT_CARD'}},{...rBody,acquirer:{id:'OTHER'}},{...rBody,service:undefined}]) {
+    const result=await (await signedBody(malformed)).json();assert.equal(result.outcome,'REVIEW');assert.equal(result.reason,'QRIS_CHANNEL_IDENTITY_MISMATCH');
+  }
+  for(const emoney of [undefined,{approval_code:{}},{approval_code:'x'.repeat(129)}]) {
+    const result=await (await signedBody({...rBody,emoney_payment:emoney})).json();assert.equal(result.outcome,'REVIEW');assert.equal(result.reason,'QRIS_PAYMENT_REFERENCE_MISSING');
+  }
+  assert.equal((await ensureSubscription(db,r.tenant)).status,'TRIAL');
+  assert.equal((await signedBody(rBody,randomUUID(),14)).status,401);
+  const snap=await fetch(base+DOKU_NOTIFICATION_PATH,{method:'POST',headers:{'content-type':'application/json','X-PARTNER-ID':'synthetic','X-SIGNATURE':'not-a-non-SNAP-envelope'},body:JSON.stringify(rBody)});assert.equal(snap.status,401);
+  console.log('PASS QRIS 15: service/acquirer confusion, absent or malformed stable reference, stale signature and native SNAP headers fail closed');
+  inquiry=rBody;assert.equal((await (await verify(r.owner,rInvoice.id)).json()).paid,true);
+  assert.equal((await db.query('SELECT payment_gateway_ref FROM billing.invoices WHERE id=$1',[rInvoice.id])).rows[0].payment_gateway_ref,rBody.emoney_payment.approval_code);
+  console.log('PASS QRIS 16: authenticated inquiry normalizes documented provider channel and approval reference without local amount substitution');
+  const existingTenants=(await db.query('SELECT count(*)::int n FROM internal.tenants')).rows[0].n,initialCalls=providerCalls;
+  for(const [mode,methods,error] of [
+    ['direct_dynamic_qris','QRIS','DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE'],['dynamic_qris_checkout','QRIS,VIRTUAL_ACCOUNT_BCA','DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED'],
+    ['checkout','QRIS_DOKU','DOKU_CHECKOUT_METHOD_INVALID'],['typo','QRIS','DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE']
+  ]) {
+    process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE=mode;process.env.DOKU_ALLOWED_CHANNELS=methods;
+    const denied=await post('must-not-be-provisioned',input());assert.equal(denied.status,503);assert.equal((await denied.json()).error,error);
+  }
+  assert.equal(providerCalls,initialCalls);assert.equal((await db.query('SELECT count(*)::int n FROM internal.tenants')).rows[0].n,existingTenants);
+  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
+  console.log('PASS QRIS 17: primary Dynamic QRIS scope, explicit Checkout fallback policy, unsupported Direct product never calls guessed endpoints or provisions tenants');
+  const rotation=[] as string[];
+  for(let i=0;i<2;i++) {const owner=await make(),inv=(await (await post(owner.owner,input())).json()).invoice;rotation.push(inv.invoiceNumber);await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[inv.id]);}
+  const scanned:string[]=[];
+  for(let i=0;i<2;i++)await recoverPendingPayments(db,{limit:1,provider:async number=>{scanned.push(number);return{ok:false,status:'UNKNOWN'};}});
+  assert.equal(new Set(scanned).size,2);assert.deepEqual([...scanned].sort(),rotation.sort());
+  const probes=(await db.query("SELECT amount,gateway_reference,outcome FROM billing.payment_events WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'",[scanned[0]])).rows;
+  assert.ok(probes.length>0);assert.equal(probes[0].amount,null);assert.equal(probes[0].gateway_reference,null);assert.equal(probes[0].outcome,'UNVERIFIED');
+  console.log('PASS QRIS 18: durable bounded inquiry rotation prevents unavailable old invoices starving newer ones; scan markers never claim payment');
+
  } finally {
   globalThis.fetch=nativeFetch;for(const key of keys){if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key];}
   await new Promise<void>(resolve=>server.close(()=>resolve()));

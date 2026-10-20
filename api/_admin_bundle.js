@@ -208,6 +208,27 @@ async function tenantForPrincipal(db, principal) {
   return null;
 }
 
+// services/billing/dokuChannelEvidence.ts
+function dokuChannelEvidence(body) {
+  const raw = body?.channel?.id;
+  const providerChannel = typeof raw === "string" && /^[A-Z0-9_]{1,100}$/.test(raw) ? raw : "";
+  if (providerChannel === "QRIS_DOKU") {
+    if (body?.service?.id !== "QRIS" || body?.acquirer?.id !== "DOKU") return { channel: "", providerChannel, issue: "QRIS_CHANNEL_IDENTITY_MISMATCH" };
+    return { channel: "QRIS", providerChannel };
+  }
+  if (providerChannel === "QRIS" && (body?.service?.id !== void 0 && body.service.id !== "QRIS" || body?.acquirer?.id !== void 0 && body.acquirer.id !== "DOKU")) {
+    return { channel: "", providerChannel, issue: "QRIS_CHANNEL_IDENTITY_MISMATCH" };
+  }
+  return { channel: providerChannel, providerChannel };
+}
+function dokuPaymentReference(body) {
+  const evidence = dokuChannelEvidence(body);
+  if (evidence.issue) return void 0;
+  const approval = evidence.channel === "QRIS" ? body?.emoney_payment?.approval_code : void 0;
+  const ref = approval ?? body?.transaction?.original_request_id ?? body?.transaction?.reference_id;
+  return typeof ref === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(ref) ? ref : void 0;
+}
+
 // api/_doku.ts
 import crypto from "node:crypto";
 function isDokuConfigured() {
@@ -287,6 +308,9 @@ async function createDokuCheckout(payload) {
   if (!clientId || !secretKey) {
     throw new Error("DOKU_CREDENTIALS_NOT_CONFIGURED");
   }
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(payload.order.invoice_number) || !Number.isSafeInteger(payload.order.amount) || payload.order.amount <= 0 || payload.order.amount > 999999999999) {
+    throw new Error("DOKU_CHECKOUT_ORDER_INVALID");
+  }
   const requestId = payload.order.invoice_number;
   const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
   const requestTarget = "/checkout/v1/payment";
@@ -317,7 +341,7 @@ async function createDokuCheckout(payload) {
     throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
   }
   const echoed = data.response.order;
-  if (echoed && (echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount)) {
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount) {
     throw new Error("DOKU_CHECKOUT_ORDER_MISMATCH");
   }
   return {
@@ -371,8 +395,10 @@ async function checkDokuOrderStatus(invoiceNumber) {
     invoiceNumber: typeof data?.order?.invoice_number === "string" ? data.order.invoice_number : void 0,
     amount,
     currency: data?.order?.currency === void 0 ? "IDR" : String(data.order.currency),
-    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
-    channelId: data?.channel?.id,
+    transactionId: dokuPaymentReference(data),
+    channelId: dokuChannelEvidence(data).channel,
+    providerChannelId: dokuChannelEvidence(data).providerChannel,
+    validationIssue: dokuChannelEvidence(data).issue,
     rawResponse: data
   };
 }
@@ -415,6 +441,16 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
   } catch {
     return false;
   }
+}
+
+// services/billing/dokuSubscriptionPolicy.ts
+function dokuSubscriptionPolicy() {
+  const mode = (process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE || "dynamic_qris_checkout").trim();
+  if (mode !== "dynamic_qris_checkout" && mode !== "checkout") throw new Error("DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE");
+  const methods = getDokuAllowedChannels();
+  if (methods.includes("QRIS_DOKU")) throw new Error("DOKU_CHECKOUT_METHOD_INVALID");
+  if (mode === "dynamic_qris_checkout" && (methods.length !== 1 || methods[0] !== "QRIS")) throw new Error("DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED");
+  return { mode, methods, integration: "DOKU_CHECKOUT" };
 }
 
 // services/billing/engine.ts
@@ -841,6 +877,7 @@ async function reconcilePayment(db, notice) {
       contentDigest: notice.contentDigest || null,
       status: notice.success ? "SUCCESS" : ["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED", "REFUNDED"].includes(notice.payload?.status) ? notice.payload.status : "OTHER",
       channel: (notice.channel || "").slice(0, 100),
+      providerChannel: (notice.providerChannel || notice.channel || "").slice(0, 100),
       requestTimestamp: typeof notice.payload?.requestTimestamp === "string" ? notice.payload.requestTimestamp.slice(0, 30) : null
     };
     const event = await c.query(
@@ -902,6 +939,7 @@ async function assertOutletCapacity(db, tenantId, excludeId) {
 
 // services/billing/recovery.ts
 async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatus) {
+  if (inv.quote?.paymentIntegration && inv.quote.paymentIntegration !== "DOKU_CHECKOUT") return { ok: true, outcome: "UNAVAILABLE" };
   const inquiry = await provider(inv.invoice_number);
   if (!inquiry.ok || inquiry.status === "UNKNOWN") return { ok: true, outcome: "UNAVAILABLE" };
   let allowed = [];
@@ -910,7 +948,7 @@ async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatu
   } catch {
   }
   const channel = String(inquiry.channelId || "");
-  const issue = inquiry.invoiceNumber !== inv.invoice_number ? "INQUIRY_INVOICE_MISMATCH" : inquiry.amount === void 0 ? "INQUIRY_AMOUNT_MISSING" : !inquiry.transactionId ? "INQUIRY_REFERENCE_MISSING" : !channel || !allowed.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : inquiry.status === "REFUNDED" ? "REFUND_REQUIRES_REVIEW" : void 0;
+  const issue = inquiry.validationIssue || (inquiry.invoiceNumber !== inv.invoice_number ? "INQUIRY_INVOICE_MISMATCH" : inquiry.amount === void 0 ? "INQUIRY_AMOUNT_MISSING" : !inquiry.transactionId ? "INQUIRY_REFERENCE_MISSING" : !channel || !allowed.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : inquiry.status === "REFUNDED" ? "REFUND_REQUIRES_REVIEW" : void 0);
   return reconcilePayment(db, {
     eventKey: `inquiry-${generateDigest(JSON.stringify([inv.invoice_number, inquiry.rawResponse])).replace(/[/+=]/g, "")}`,
     invoiceNumber: inv.invoice_number,
@@ -919,6 +957,7 @@ async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatu
     currency: inquiry.currency || "",
     success: inquiry.status === "SUCCESS",
     channel,
+    providerChannel: inquiry.providerChannelId,
     validationIssue: issue,
     contentDigest: generateDigest(JSON.stringify(inquiry.rawResponse || {})),
     payload: { status: inquiry.status, channel, source: "INQUIRY" }
@@ -1070,6 +1109,12 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   }));
   app.post("/api/v1/subscription/checkout", run(async (req, res) => {
     if (process.env.DOKU_PAYMENTS_ENABLED?.trim() !== "1") throw new BillingError(503, "PAYMENTS_PAUSED");
+    let policy;
+    try {
+      policy = dokuSubscriptionPolicy();
+    } catch (e) {
+      throw new BillingError(503, e.message);
+    }
     const tenantId = await tenant2(req);
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
@@ -1079,13 +1124,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     } catch {
     }
     if (!configured) throw new BillingError(503, "PAYMENT_GATEWAY_NOT_CONFIGURED");
-    let allowedChannels;
-    try {
-      allowedChannels = getDokuAllowedChannels();
-    } catch {
-      throw new BillingError(503, "DOKU_CHANNEL_SCOPE_NOT_CONFIGURED");
-    }
-    const quote = { ...await createQuote(db, tenantId, req.body || {}), allowedChannels };
+    const allowedChannels = policy.methods;
+    const quote = { ...await createQuote(db, tenantId, req.body || {}), allowedChannels, paymentIntegration: policy.integration, paymentMode: policy.mode };
     if (quote.amount <= 0) throw new BillingError(409, "ZERO_CHARGE_REQUIRES_SUPPORT");
     const origin = process.env.PUBLIC_APP_URL;
     if (!origin || !/^https:\/\/[^/?#@]+\/?$/.test(origin)) throw new BillingError(503, "PUBLIC_APP_URL_NOT_CONFIGURED");
@@ -1192,14 +1232,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     }
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new BillingError(400, "INVALID_NOTIFICATION_BODY");
     const status = String(body?.transaction?.status || "");
-    const channel = typeof body?.channel?.id === "string" ? body.channel.id : "";
+    const evidence = dokuChannelEvidence(body), channel = evidence.channel;
+    const stableReference = dokuPaymentReference(body);
     const invoice = body?.order?.invoice_number, amount = body?.order?.amount;
     if (typeof invoice !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(invoice) || !["string", "number"].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount))) throw new BillingError(400, "INVALID_NOTIFICATION_ORDER");
-    const issue = !channel || !channels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : ["REFUNDED", "PARTIAL_REFUNDED"].includes(status) ? "REFUND_REQUIRES_REVIEW" : ["VOIDED", "REVERSED"].includes(status) ? "REVERSAL_REQUIRES_REVIEW" : !["SUCCESS", "FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(status) ? "UNKNOWN_PAYMENT_STATUS" : void 0;
+    const issue = evidence.issue || (!channel || !channels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : channel === "QRIS" && !stableReference ? "QRIS_PAYMENT_REFERENCE_MISSING" : ["REFUNDED", "PARTIAL_REFUNDED"].includes(status) ? "REFUND_REQUIRES_REVIEW" : ["VOIDED", "REVERSED"].includes(status) ? "REVERSAL_REQUIRES_REVIEW" : !["SUCCESS", "FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(status) ? "UNKNOWN_PAYMENT_STATUS" : void 0);
     const result = await reconcilePayment(db, {
       eventKey: String(req.headers["request-id"] || ""),
       invoiceNumber: invoice,
-      reference: String(body?.transaction?.original_request_id || req.headers["request-id"] || "").slice(0, 128),
+      reference: stableReference || (channel === "QRIS" ? "missing-qris-reference" : String(req.headers["request-id"] || "")),
+      providerChannel: evidence.providerChannel,
       amount: Number(amount),
       currency: body?.order?.currency === void 0 ? "IDR" : String(body.order.currency),
       success: status === "SUCCESS",
