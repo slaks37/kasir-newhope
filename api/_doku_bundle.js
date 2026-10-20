@@ -1070,7 +1070,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
         invoice_number: invoiceNumber,
         amount: quote.amount,
         currency: "IDR",
-        callback_url: `${origin.replace(/\/$/, "")}/#payment?invoice=${id}`,
+        callback_url: `${origin.replace(/\/$/, "")}/subscription?invoice=${id}`,
         auto_redirect: true,
         line_items: [{ name: `${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`, price: quote.amount, quantity: 1 }]
       }, payment: { payment_due_date: 1440, payment_method_types: allowedChannels } });

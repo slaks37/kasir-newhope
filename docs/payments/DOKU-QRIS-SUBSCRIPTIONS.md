@@ -14,6 +14,7 @@ Initial findings against the base:
 | Outbound Checkout omitted channel restriction even though incoming notifications were checked | `services/billing/routes.ts`: send configured `payment.payment_method_types`; QRIS release configuration uses `QRIS` |
 | UI treated an already ACTIVE subscription as proof a renewal was paid | `src/lib/subscriptionPayment.ts` and `SubscriptionPaymentPage.tsx`: exact invoice PAID + APPLIED required |
 | Checkout request key regenerated on each attempt/reload | Owner-scoped browser retry intent plus database tenant lock; different keys reuse one open payable invoice per subscription revision |
+| Legacy fragment callback with invoice query was not recognized by workspace router | Use `/subscription?invoice=UUID`; test router resolution and auth return-path preservation |
 | No mandatory payment activation guard; dashboard Business ID could reach gateway | `DOKU_PAYMENTS_ENABLED=1` required before provisioning/invoicing; reject `BSN-*` |
 | Quote failure generated local fallback prices and trial could activate locally | Fail closed on quote/trial server failure; retain existing server trial policy |
 | Gateway URL accepted without trusted host/environment check | `api/_doku.ts` and client helper enforce HTTPS official Checkout hosts |

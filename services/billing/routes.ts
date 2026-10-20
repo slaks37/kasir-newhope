@@ -150,7 +150,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     }
     try {
       const checkout=await checkoutProvider({order:{invoice_number:invoiceNumber,amount:quote.amount,currency:'IDR',
-        callback_url:`${origin.replace(/\/$/,'')}/#payment?invoice=${id}`,auto_redirect:true,
+        callback_url:`${origin.replace(/\/$/,'')}/subscription?invoice=${id}`,auto_redirect:true,
         line_items:[{name:`${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`,price:quote.amount,quantity:1}]},payment:{payment_due_date:1440,payment_method_types:allowedChannels}});
       await db.query('UPDATE billing.invoices SET payment_link_url=$2 WHERE id=$1',[id,checkout.paymentUrl]);
       res.json({ok:true,paymentUrl:checkout.paymentUrl,invoice:serializeInvoice({...result.rows[0],payment_link_url:checkout.paymentUrl}),quote});

@@ -8,6 +8,7 @@ import {recoverPendingPayments} from '../../services/billing/recovery';
 import {registerBillingRoutes} from '../../services/billing/routes';
 import {createDokuCheckout,checkDokuOrderStatus,generateDigest,generateSignature,DOKU_NOTIFICATION_PATH} from '../../api/_doku';
 import {ensureSubscription,invoicePaymentState} from '../../services/billing/engine';
+import {safeReturnPath,moduleForPath} from '../../src/lib/navigation/routes';
 import {checkoutRequestKey,isVerifiedInvoicePayment,isDokuHostedUrl} from '../../src/lib/subscriptionPayment';
 
 export async function testQrisSubscriptions(db:Db) {
@@ -41,10 +42,12 @@ export async function testQrisSubscriptions(db:Db) {
    if(init.method==='GET')return new Response(JSON.stringify(inquiry),{status:200});
    providerCalls++;if(providerTimeout)throw new Error('SYNTHETIC_PROVIDER_TIMEOUT');
    const payload=JSON.parse(init.body);assert.deepEqual(payload.payment.payment_method_types,['QRIS']);
+   const callback=new URL(payload.order.callback_url);assert.equal(callback.pathname,'/subscription');assert.equal(moduleForPath(callback.pathname),'payment');assert.equal(safeReturnPath(callback.pathname+callback.search),callback.pathname+callback.search);assert.ok(callback.searchParams.get('invoice'));
    assert.equal(payload.order.amount,99000);assert.equal(payload.order.currency,'IDR');
    assert.equal(init.redirect,'error');
    assert.equal(init.headers.Signature,generateSignature('MCH-synthetic',init.headers['Request-Id'],init.headers['Request-Timestamp'],'/checkout/v1/payment',generateDigest(init.body),'synthetic-not-a-credential'));
-   assert.ok((await db.query('SELECT id FROM billing.invoices WHERE invoice_number=$1',[payload.order.invoice_number])).rowCount,'Intent must precede provider call');
+   const stored=(await db.query('SELECT id FROM billing.invoices WHERE invoice_number=$1',[payload.order.invoice_number])).rows[0];
+   assert.ok(stored,'Intent must precede provider call');assert.equal(callback.searchParams.get('invoice'),stored.id);
    return new Response(JSON.stringify({response:{order:{invoice_number:payload.order.invoice_number,amount:payload.order.amount},payment:{url:'https://sandbox.doku.com/checkout-link-v2/synthetic'}}}),{status:200});
   }
   if(String(url).startsWith(base))return nativeFetch(url,init);
