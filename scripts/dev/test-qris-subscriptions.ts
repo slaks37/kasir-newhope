@@ -17,13 +17,14 @@ export async function testQrisSubscriptions(db:Db) {
  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';
  process.env.DOKU_API_URL='https://api-sandbox.doku.com';process.env.DOKU_CLIENT_ID='MCH-synthetic';
  process.env.DOKU_SECRET_KEY='synthetic-not-a-credential';process.env.DOKU_ALLOWED_CHANNELS='QRIS';process.env.PUBLIC_APP_URL='https://app.test.invalid';
- let inquiry:any={},providerCalls=0,providerTimeout=false,failActivation=false,failDb=false;
+ let inquiry:any={},providerCalls=0,inquiryCalls=0,inquiryTimeout=false,providerTimeout=false,failActivation=false,failDb=false;
+ let inquiryNow=Date.now();
  const wrapped=(current:Db):Db=>({...current,query:async(sql,params)=>{
   if(failDb || failActivation && sql.includes('UPDATE billing.subscriptions SET plan_id'))throw new Error('SYNTHETIC_DATABASE_UNAVAILABLE');
   return current.query(sql,params);
  },tx:fn=>current.tx(c=>fn(wrapped(c)))});
  const app=express();app.use(express.json({verify:(req:any,_res,buf)=>{req.rawBody=buf;}}));
- registerBillingRoutes(app,wrapped(db),true,createDokuCheckout,checkDokuOrderStatus);
+ registerBillingRoutes(app,wrapped(db),true,createDokuCheckout,checkDokuOrderStatus,()=>inquiryNow);
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
  const base='http://127.0.0.1:'+(server.address() as any).port;
  const make=async()=>{
@@ -32,7 +33,9 @@ export async function testQrisSubscriptions(db:Db) {
  };
  const post=(owner:string,body:any)=>fetch(base+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':owner,'content-type':'application/json'},body:JSON.stringify(body)});
  const input=()=>({planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:0,requestKey:randomUUID(),amount:1,tenantId:randomUUID(),paymentMode:'direct_dynamic_qris',payment_method_types:['VIRTUAL_ACCOUNT_BCA']});
- const verify=(owner:string,id:string)=>fetch(base+'/api/v1/subscription/verify?invoiceId='+id,{headers:{'x-auth-sub':owner}});
+ const localVerify=(owner:string,id:string,inquire=false)=>fetch(base+'/api/v1/subscription/verify?invoiceId='+id+(inquire?'&inquire=1':''),{headers:{'x-auth-sub':owner}});
+ const verify=async(owner:string,id:string)=>{await localVerify(owner,id);inquiryNow+=61000;return localVerify(owner,id,true);};
+ const prime=async(number:string)=>{await db.query(`INSERT INTO billing.payment_events(event_key,invoice_number,outcome,reason,payload,created_at) VALUES($1,$2,'UNVERIFIED','STATUS_INQUIRY_ATTEMPT','{"source":"INQUIRY_PROBE"}'::jsonb,$3)`,['probe-'+randomUUID(),number,new Date(Date.now()-29*86400000).toISOString()]);};
  const notify=(invoice:any,status='SUCCESS',event=randomUUID(),amount=invoice.amount)=>{
   const raw=JSON.stringify({order:{invoice_number:invoice.invoiceNumber,amount,currency:'IDR'},transaction:{status,original_request_id:'reference-'+invoice.id},channel:{id:'QRIS'}});
   const time=new Date().toISOString();return fetch(base+DOKU_NOTIFICATION_PATH,{method:'POST',headers:{'content-type':'application/json','client-id':'MCH-synthetic','request-id':event,'request-timestamp':time,
@@ -40,7 +43,7 @@ export async function testQrisSubscriptions(db:Db) {
  };
  globalThis.fetch=(async(url:any,init:any)=>{
   if(String(url).startsWith('https://api-sandbox.doku.com/')){
-   if(init.method==='GET')return new Response(JSON.stringify(inquiry),{status:200});
+   if(init.method==='GET'){inquiryCalls++;if(inquiryTimeout)throw Error('SYNTHETIC_INQUIRY_TIMEOUT');return new Response(JSON.stringify(inquiry),{status:200});}
    providerCalls++;if(providerTimeout)throw new Error('SYNTHETIC_PROVIDER_TIMEOUT');
    const payload=JSON.parse(init.body);assert.deepEqual(payload.payment.payment_method_types,['QRIS']);
    const callback=new URL(payload.order.callback_url);assert.equal(callback.pathname,'/subscription');assert.equal(moduleForPath(callback.pathname),'payment');assert.equal(safeReturnPath(callback.pathname+callback.search),callback.pathname+callback.search);assert.ok(callback.searchParams.get('invoice'));
@@ -86,8 +89,9 @@ export async function testQrisSubscriptions(db:Db) {
   console.log('PASS QRIS 5: delayed/missing webhook recovers from verified inquiry and page refresh never extends twice');
   const b=await make(),bInvoice=(await (await post(b.owner,input())).json()).invoice;inquiry={};
   for(const [providerStatus,display] of [['PENDING','PENDING'],['FAILED','FAILED'],['ORDER_EXPIRED','EXPIRED'],['CANCELLED','CANCELLED']]) {
-   assert.equal((await notify(bInvoice,providerStatus)).status,200);
-   const result=await (await verify(b.owner,bInvoice.id)).json();assert.equal(result.paid,false);assert.equal(result.invoice.paymentStatus,display);
+   const attempt=await make(),attemptInvoice=(await(await post(attempt.owner,input())).json()).invoice;
+   assert.equal((await notify(attemptInvoice,providerStatus)).status,200);
+   const result=await (await verify(attempt.owner,attemptInvoice.id)).json();assert.equal(result.paid,false);assert.equal(result.invoice.paymentStatus,display);if(['EXPIRED','CANCELLED'].includes(display))assert.equal(result.invoice.paymentLinkUrl,null);
   }
   console.log('PASS QRIS 6: pending/failed/expired/cancelled attempts remain unpaid with accurate user-facing observations');
   const event=randomUUID();failActivation=true;
@@ -137,9 +141,10 @@ export async function testQrisSubscriptions(db:Db) {
   const unattended=await make(),unattendedInvoice=(await (await post(unattended.owner,input())).json()).invoice;
   await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[unattendedInvoice.id]);
   const workerProvider=async(number:string)=>number===unattendedInvoice.invoiceNumber?{ok:true,status:'SUCCESS' as const,invoiceNumber:number,amount:99000,currency:'IDR',transactionId:'worker-'+unattendedInvoice.id,channelId:'QRIS',rawResponse:{source:'synthetic-worker',number}}:{ok:false,status:'UNKNOWN' as const};
-  const batch=await recoverPendingPayments(db,{limit:1,provider:workerProvider});assert.equal(batch.applied,1);
+  await prime(unattendedInvoice.invoiceNumber);
+  const batch=await recoverPendingPayments(db,{limit:1,provider:workerProvider,now:()=>inquiryNow});assert.equal(batch.applied,1);
   assert.equal((await ensureSubscription(db,unattended.tenant)).status,'ACTIVE');
-  assert.equal((await recoverPendingPayments(db,{limit:100,provider:workerProvider})).applied,0);
+  assert.equal((await recoverPendingPayments(db,{limit:100,provider:workerProvider,now:()=>inquiryNow})).applied,0);
   console.log('PASS QRIS 13: bounded background/operator inquiry fulfills without browser and safely repeats');
   console.log('PASS QRIS 12: refresh retry intent is owner-scoped; UI success requires applied invoice; redirect hosts fail closed');
 
@@ -190,9 +195,9 @@ export async function testQrisSubscriptions(db:Db) {
   process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   console.log('PASS QRIS 17: QRIS-only scope in both Checkout modes, unsupported Direct product never calls guessed endpoints or provisions tenants');
   const rotation=[] as string[];
-  for(let i=0;i<2;i++) {const owner=await make(),inv=(await (await post(owner.owner,input())).json()).invoice;rotation.push(inv.invoiceNumber);await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[inv.id]);}
+  for(let i=0;i<2;i++) {const owner=await make(),inv=(await (await post(owner.owner,input())).json()).invoice;rotation.push(inv.invoiceNumber);await prime(inv.invoiceNumber);await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[inv.id]);}
   const scanned:string[]=[];
-  for(let i=0;i<2;i++)await recoverPendingPayments(db,{limit:1,provider:async number=>{scanned.push(number);return{ok:false,status:'UNKNOWN'};}});
+  for(let i=0;i<2;i++)await recoverPendingPayments(db,{limit:1,now:()=>inquiryNow,provider:async number=>{scanned.push(number);return{ok:false,status:'UNKNOWN'};}});
   assert.equal(new Set(scanned).size,2);assert.deepEqual([...scanned].sort(),rotation.sort());
   const probes=(await db.query("SELECT amount,gateway_reference,outcome FROM billing.payment_events WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'",[scanned[0]])).rows;
   assert.ok(probes.length>0);assert.equal(probes[0].amount,null);assert.equal(probes[0].gateway_reference,null);assert.equal(probes[0].outcome,'UNVERIFIED');
@@ -219,6 +224,71 @@ export async function testQrisSubscriptions(db:Db) {
   const late=await (await notify(oldInvoice)).json();assert.equal(late.outcome,'REVIEW');assert.equal(late.reason,'STALE_SUBSCRIPTION_REVISION');
   assert.equal(Number((await ensureSubscription(db,expired.tenant)).revision),1);
   console.log('PASS QRIS 20: expired intent can be replaced with a new reference; late old payment retained for review and never grants twice');
+
+
+  const history=await (await fetch(base+'/api/v1/subscription/status',{headers:{'x-auth-sub':legacy.owner}})).json();
+  assert.equal(history.invoices.find((i:any)=>i.id===legacyInvoice.id).paymentLinkUrl,null);
+  const legacyDirect=await(await localVerify(legacy.owner,legacyInvoice.id)).json();assert.equal(legacyDirect.invoice.paymentLinkUrl,null);
+  const originalBytes=(await db.query('SELECT quote,payment_link_url FROM billing.invoices WHERE id=$1',[legacyInvoice.id])).rows[0];assert.ok(originalBytes.payment_link_url);
+  assert.deepEqual(originalBytes.quote.allowedChannels,['QRIS','VIRTUAL_ACCOUNT_BCA']);
+  assert.equal((await(await notify(legacyInvoice)).json()).reason,'LEGACY_INVOICE_NEEDS_REVIEW');
+  assert.equal((await ensureSubscription(db,legacy.tenant)).status,'TRIAL');
+  const hidden=await make(),hiddenInput=input(),hiddenInvoice=(await(await post(hidden.owner,hiddenInput)).json()).invoice;
+  await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='AMOUNT_OR_CURRENCY_MISMATCH' WHERE id=$1",[hiddenInvoice.id]);
+  assert.equal((await(await localVerify(hidden.owner,hiddenInvoice.id)).json()).invoice.paymentLinkUrl,null);
+  assert.equal((await post(hidden.owner,hiddenInput)).status,409);
+  for(const invoice of [first.invoice,oldInvoice])assert.equal((await(await localVerify(invoice===first.invoice?a.owner:expired.owner,invoice.id)).json()).invoice.paymentLinkUrl,null);
+  await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days 12 hours' WHERE id=$1",[legacyInvoice.id]);
+  const eligible=await make(),eligibleInvoice=(await(await post(eligible.owner,input())).json()).invoice;
+  await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[eligibleInvoice.id]);await prime(eligibleInvoice.invoiceNumber);
+  let eligibleCalls=0;await recoverPendingPayments(db,{limit:1,now:()=>inquiryNow,provider:async number=>{assert.equal(number,eligibleInvoice.invoiceNumber);eligibleCalls++;return{ok:false,status:'UNKNOWN'};}});assert.equal(eligibleCalls,1,'legacy holds cannot starve supported QRIS recovery');
+  console.log('PASS QRIS 21: F1 history/direct API/replay remove legacy, mixed, REVIEW, paid and expired actions; original financial rows remain; legacy callback cannot grant');
+
+  const throttle=await make(),throttleInvoice=(await(await post(throttle.owner,input())).json()).invoice;
+  const startInquiries=inquiryCalls;
+  await Promise.all(Array.from({length:8},()=>localVerify(throttle.owner,throttleInvoice.id)));
+  await Promise.all(Array.from({length:8},()=>localVerify(throttle.owner,throttleInvoice.id,true)));
+  assert.equal(inquiryCalls,startInquiries,'initial observation waits at least 60 seconds');
+  inquiryNow+=61000;inquiryTimeout=true;
+  await Promise.all(Array.from({length:8},()=>localVerify(throttle.owner,throttleInvoice.id,true)));
+  assert.equal(inquiryCalls,startInquiries+1,'concurrent leases across DB connections issue only one inquiry');
+  await localVerify(throttle.owner,throttleInvoice.id,true);assert.equal(inquiryCalls,startInquiries+1,'timeout retains cooldown');
+  inquiryTimeout=false;inquiry={};inquiryNow+=61000;
+  await localVerify(throttle.owner,throttleInvoice.id,true);assert.equal(inquiryCalls,startInquiries+2);
+  const beforeWorker=inquiryCalls;let workerTargetCalls=0;await recoverPendingPayments(db,{limit:100,now:()=>inquiryNow,provider:async number=>{if(number===throttleInvoice.invoiceNumber)workerTargetCalls++;return{ok:false,status:'UNKNOWN'};}});
+  assert.equal(inquiryCalls,beforeWorker);assert.equal(workerTargetCalls,0);
+  assert.equal((await(await notify(throttleInvoice)).json()).outcome,'APPLIED','webhook primary, never delayed by inquiry cooldown');
+  assert.equal((await(await localVerify(throttle.owner,throttleInvoice.id)).json()).paid,true);
+  assert.equal(inquiryCalls,beforeWorker);
+  console.log('PASS QRIS 22: F2 ledger-only polling, 60s initial wait, concurrent durable dedupe, timeout cooldown, worker sharing and immediate delayed webhook activation');
+
+  const terminal=await make(),terminalInput=input(),terminalInvoice=(await(await post(terminal.owner,terminalInput)).json()).invoice;
+  await notify(terminalInvoice,'ORDER_EXPIRED');await notify(terminalInvoice,'PENDING');
+  const terminalView=await(await localVerify(terminal.owner,terminalInvoice.id)).json();assert.equal(terminalView.invoice.paymentStatus,'EXPIRED');assert.equal(terminalView.invoice.paymentLinkUrl,null);
+  assert.equal((await post(terminal.owner,terminalInput)).status,409);
+  const priorCalls=providerCalls;
+  const replacements=await Promise.all([post(terminal.owner,input()),post(terminal.owner,input())]);
+  const success=replacements.find(r=>r.status===200);assert.ok(success);const newInvoice=(await success!.json()).invoice;
+  assert.notEqual(newInvoice.id,terminalInvoice.id);assert.equal(providerCalls,priorCalls+1);
+  assert.equal((await db.query('SELECT count(*)::int n FROM billing.invoices WHERE tenant_id=$1',[terminal.tenant])).rows[0].n,2);
+  const lateTerminal=await(await notify(terminalInvoice)).json();assert.equal(lateTerminal.outcome,'REVIEW');assert.equal(lateTerminal.reason,'TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW');
+  assert.equal((await(await localVerify(terminal.owner,newInvoice.id)).json()).invoice.paymentLinkUrl,null);
+  await notify(newInvoice,'PENDING');await notify(newInvoice,'FAILED');
+  assert.equal((await(await localVerify(terminal.owner,newInvoice.id)).json()).invoice.paymentLinkUrl,null);
+  assert.equal((await(await notify(newInvoice)).json()).reason,'RELATED_LATE_PAYMENT_REQUIRES_REVIEW');
+  assert.equal((await(await notify(terminalInvoice)).json()).outcome,'REVIEW');
+  await db.query("UPDATE billing.invoices SET due_date=now()-interval '1 day' WHERE tenant_id=$1",[terminal.tenant]);
+  const heldRetry=await post(terminal.owner,input());assert.equal(heldRetry.status,409);assert.equal((await heldRetry.json()).error,'PAYMENT_REVIEW_REQUIRED');
+  assert.equal(Number((await ensureSubscription(db,terminal.tenant)).revision),0);
+  const clean=await make(),cleanOld=(await(await post(clean.owner,input())).json()).invoice;await notify(cleanOld,'ORDER_EXPIRED');
+  const cleanNew=(await(await post(clean.owner,input())).json()).invoice;
+  assert.equal((await(await notify(cleanNew)).json()).outcome,'APPLIED');assert.equal((await(await notify(cleanNew)).json()).outcome,'DUPLICATE');
+  assert.equal((await(await notify(cleanOld)).json()).outcome,'REVIEW');assert.equal(Number((await ensureSubscription(db,clean.tenant)).revision),1);
+  const inquiryExpired=await make(),inquiryOld=(await(await post(inquiryExpired.owner,input())).json()).invoice;
+  inquiry={order:{invoice_number:inquiryOld.invoiceNumber,amount:99000,currency:'IDR'},channel:{id:'QRIS'},transaction:{status:'ORDER_EXPIRED',original_request_id:'inquiry-expiry'}};
+  assert.equal((await(await verify(inquiryExpired.owner,inquiryOld.id)).json()).invoice.paymentStatus,'EXPIRED');
+  assert.notEqual((await(await post(inquiryExpired.owner,input())).json()).invoice.id,inquiryOld.id);
+  console.log('PASS QRIS 23: F3 provider expiry before local deadline, sticky terminal state, concurrent one replacement, preserved original, late-payment holds and exactly-once replacement fulfillment');
 
  } finally {
   globalThis.fetch=nativeFetch;for(const key of keys){if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key];}

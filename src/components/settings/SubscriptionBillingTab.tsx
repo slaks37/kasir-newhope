@@ -1,4 +1,4 @@
-import {checkoutRequestKey,forgetCheckoutRequestKey,isDokuHostedUrl} from '../../lib/subscriptionPayment';
+import {checkoutRequestKey,forgetCheckoutRequestKey,isDokuHostedUrl,isVerifiedInvoicePayment} from '../../lib/subscriptionPayment';
 import React,{useEffect,useState} from 'react';
 import {PAID_SAAS_PLANS,annualTotal} from '../../config/saasPlans';
 import {formatRupiah,formatDateTime} from '../../utils/formatters';
@@ -22,10 +22,10 @@ export const SubscriptionBillingTab:React.FC=()=>{
  const preview=async(planId:string)=>{setBusy(true);setError('');try{setQuote({...await billingRequest('prorated-upgrade',{planId,billingCycle:yearly?'YEARLY':'MONTHLY',extraOutlets:extras},token),requestKey:checkoutRequestKey(user?.id,planId,yearly?'YEARLY':'MONTHLY',extras)});}catch(e:any){setError(e.message);}finally{setBusy(false);}};
  const pay=async()=>{setBusy(true);setError('');try{
    const result=await billingRequest('checkout',{planId:quote.planId,billingCycle:quote.billingCycle,extraOutlets:quote.extraOutlets,requestKey:quote.requestKey},token);
-   if(result.paid){forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);await load();setBusy(false);return;}
+   if(isVerifiedInvoicePayment(result)){forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);await load();setBusy(false);return;}
    if(!isDokuHostedUrl(result.paymentUrl))throw new Error('URL pembayaran tidak valid');
    window.location.assign(result.paymentUrl);
-  }catch(e:any){setError(e.message);setBusy(false);}
+  }catch(e:any){if(e.message==='CHECKOUT_EXPIRED'){forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);setQuote(null);}setError(e.message);setBusy(false);}
  };
  return <div className="space-y-6">
   <section className="rounded-3xl bg-white border border-slate-200 text-slate-900 p-6 shadow-xs">
@@ -104,7 +104,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
   </section>}
   <section className="rounded-2xl border bg-white p-5 overflow-x-auto"><h3 className="font-bold mb-4">Riwayat tagihan</h3>
    <table className="w-full text-sm text-left"><thead><tr><th>Invoice</th><th>Paket / periode</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody>{data?.invoices.map((i:any)=><tr key={i.id} className="border-t"><td className="py-3">{i.invoiceNumber || i.id}</td><td>{i.planName} · {i.billingCycle || 'legacy'}</td><td>{formatRupiah(i.amount)}</td><td>{i.paymentStatus} / {i.reconciliationStatus}<span className="block text-xs">Batas pembayaran: {formatDateTime(i.dueDate)}</span>{isDokuHostedUrl(i.paymentLinkUrl)&&!['PAID','EXPIRED','CANCELLED','REFUNDED'].includes(i.paymentStatus)&&<a href={i.paymentLinkUrl} className="block underline" target="_blank" rel="noreferrer">Buka tagihan</a>}</td></tr>)}</tbody>
+    <tbody>{data?.invoices.map((i:any)=><tr key={i.id} className="border-t"><td className="py-3">{i.invoiceNumber || i.id}</td><td>{i.planName} · {i.billingCycle || 'legacy'}</td><td>{formatRupiah(i.amount)}</td><td>{i.paymentStatus} / {i.reconciliationStatus}<span className="block text-xs">Batas pembayaran: {formatDateTime(i.dueDate)}</span>{i.reconciliationStatus==='PENDING'&&isDokuHostedUrl(i.paymentLinkUrl)&&!['PAID','EXPIRED','CANCELLED','REFUNDED'].includes(i.paymentStatus)&&<a href={i.paymentLinkUrl} className="block underline" target="_blank" rel="noreferrer">Buka tagihan</a>}</td></tr>)}</tbody>
    </table>{data&&!data.invoices.length&&<p className="text-sm text-slate-500 py-4">Belum ada tagihan.</p>}
   </section>
  </div>;

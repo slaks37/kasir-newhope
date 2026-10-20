@@ -215,7 +215,7 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
 
 export interface DokuOrderStatusResponse {
   ok: boolean;
-  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'EXPIRED' | 'CANCELLED' | 'REFUNDED' | 'UNKNOWN';
+  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'EXPIRED' | 'ORDER_EXPIRED' | 'CANCELLED' | 'REFUNDED' | 'UNKNOWN';
   invoiceNumber?: string;
   amount?: number;
   currency?: string;
@@ -269,8 +269,7 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
   const data = (await response.json()) as any;
   const txStatus = String(data?.transaction?.status || data?.order?.status || '').toUpperCase();
   const status: DokuOrderStatusResponse['status'] =
-    ['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED'].includes(txStatus) ? txStatus as DokuOrderStatusResponse['status'] :
-    txStatus === 'ORDER_EXPIRED' ? 'EXPIRED' :
+    ['SUCCESS', 'FAILED', 'EXPIRED', 'ORDER_EXPIRED', 'CANCELLED', 'REFUNDED'].includes(txStatus) ? txStatus as DokuOrderStatusResponse['status'] :
     ['PENDING', 'WAITING', 'ORDER_GENERATED'].includes(txStatus) ? 'PENDING' : 'UNKNOWN';
   const rawAmount = data?.order?.amount;
   const amount = ['string','number'].includes(typeof rawAmount) && /^\d+(?:\.0{1,2})?$/.test(String(rawAmount)) && Number.isSafeInteger(Number(rawAmount)) ? Number(rawAmount) : undefined;

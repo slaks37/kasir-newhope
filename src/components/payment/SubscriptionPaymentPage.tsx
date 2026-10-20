@@ -177,15 +177,15 @@ export const SubscriptionPaymentPage: React.FC = () => {
   };
 
   // Check payment verification with server & DOKU
-  const checkPaymentVerification = async (invId?: string, silent = false) => {
+  const checkPaymentVerification = async (invId?: string, silent = false, inquire = false) => {
     if (!silent) {
       setVerifying(true);
       setVerifyNotice(null);
     }
     try {
       const url = invId
-        ? `/api/v1/subscription/verify?invoiceId=${encodeURIComponent(invId)}`
-        : '/api/v1/subscription/verify';
+        ? `/api/v1/subscription/verify?invoiceId=${encodeURIComponent(invId)}${inquire?"&inquire=1":""}`
+        : '/api/v1/subscription/verify'+(inquire?'?inquire=1':'');
       const res = await fetch(url, {
         headers: {
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
@@ -235,23 +235,23 @@ export const SubscriptionPaymentPage: React.FC = () => {
     const match = hash.match(/invoice=([a-zA-Z0-9_-]+)/) || search.match(/invoice=([a-zA-Z0-9_-]+)/);
     const invoiceId = match ? match[1] : undefined;
 
-    if (invoiceId) {
+    if (invoiceId && session?.access_token) {
       void checkPaymentVerification(invoiceId);
       let attempts = 0;
       const interval = window.setInterval(async () => {
         attempts++;
-        if (attempts > 5) {
+        if (attempts > 3) {
           window.clearInterval(interval);
           return;
         }
-        const done = await checkPaymentVerification(invoiceId, true);
+        const done = await checkPaymentVerification(invoiceId, true, true);
         if (done) {
           window.clearInterval(interval);
         }
-      }, 3000);
+      }, 60000);
       return () => window.clearInterval(interval);
     }
-  }, []);
+  }, [session?.access_token]);
 
   // Handle DOKU Checkout or Free Trial
   const handleProceedToPayment = async () => {
@@ -389,7 +389,9 @@ export const SubscriptionPaymentPage: React.FC = () => {
       if (errMsg === 'PAYMENT_GATEWAY_NOT_CONFIGURED') {
         throw new Error('Pembayaran belum tersedia. Hubungi dukungan New Hope.');
       }
+      if (errMsg === 'CHECKOUT_EXPIRED') {forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);throw new Error('Tagihan sebelumnya berakhir. Klik kembali untuk membuat tagihan baru; jangan membayar kode lama.');}
       if (errMsg === 'PAYMENTS_PAUSED') throw new Error('Pembayaran langganan sedang dijeda. Tidak ada tagihan baru yang diproses.');
+      if (['CHECKOUT_SCOPE_REVIEW_REQUIRED','PAYMENT_REVIEW_REQUIRED'].includes(errMsg)) throw new Error('Tagihan perlu ditinjau dukungan. Jangan membayar tautan lama atau membuat pembayaran kedua.');
       if (errMsg === 'CHECKOUT_PENDING_EXISTS') throw new Error('Masih ada tagihan paket lain yang belum selesai. Periksa riwayat tagihan sebelum mengganti paket.');
       if (errMsg === 'CHECKOUT_QUOTE_CHANGED') throw new Error('Langganan berubah. Muat ulang halaman untuk menghitung tagihan terbaru.');
       if (errMsg === 'CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW') throw new Error('Permintaan sebelumnya masih diperiksa. Buka riwayat tagihan dan periksa status; jangan membuat pembayaran kedua.');
@@ -956,7 +958,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => void checkPaymentVerification()}
+                onClick={() => void checkPaymentVerification(undefined, false, true)}
                 disabled={verifying}
                 className="text-xs font-bold text-amber-700 hover:text-amber-800 cursor-pointer py-1.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-2xs ml-auto"
                 title="Cek verifikasi status pembayaran real-time ke server"

@@ -111,7 +111,7 @@ async function main(){
   return null;
  });
  let checkoutCalls=0;
- registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.test.invalid/'+payload.order.invoice_number,rawResponse:{}};},async()=>({ok:false,status:'UNKNOWN'}));
+ registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.doku.com/'+payload.order.invoice_number,rawResponse:{}};},async()=>({ok:false,status:'UNKNOWN'}));
  registerSyncRoutes(app,db);
  app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({error:err.message}));
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
@@ -430,9 +430,8 @@ async function main(){
   await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');await assertOutletCapacity(c,tenant);}),/OUTLET_LIMIT_REACHED/);
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
   console.log('PASS: billing and internal service roles can read their authorized data');
-  // Historical VA notification compatibility fixtures configure their own
-  // inbound scope; they never create a new non-QRIS subscription Checkout.
-  process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
+  // Signed notification fixtures use the release's QRIS-only invoice contract.
+  process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   await testDokuNotifications(db,url,value=>{failPayment=value;});
   await testFreeSync(db,url);
   await testQrisSubscriptions(db);
