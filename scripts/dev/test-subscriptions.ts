@@ -405,14 +405,14 @@ async function main(){
   assert.equal((await act('GRANT_PLAN',{planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:2})).status,200);
   assert.equal((await ensureSubscription(db,other)).extra_outlets,2);
   // Dummy gateway settings are scoped to this test process. No network call to DOKU.
-  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
+  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   const checkoutBody={planId:'plan-plus-monthly',billingCycle:'YEARLY',extraOutlets:2,requestKey:randomUUID()};
   const checkout=()=>fetch(url+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':'owner-two','content-type':'application/json'},body:JSON.stringify(checkoutBody)});
   const first=await checkout();assert.equal(first.status,200,await first.clone().text());const invoiceData=await first.json();
   const verifyPending=await fetch(url+'/api/v1/subscription/verify?invoiceId='+invoiceData.invoice.id,{headers:{'x-auth-sub':'owner-two'}});
   assert.equal(verifyPending.status,200);assert.equal((await verifyPending.json()).paid,false);
   const replay=await checkout();assert.equal(replay.status,200);assert.equal((await replay.json()).invoice.id,invoiceData.invoice.id);assert.equal(checkoutCalls,1);
-  const raw=JSON.stringify({order:{invoice_number:invoiceData.invoice.invoiceNumber,amount:invoiceData.invoice.amount,currency:'IDR'},transaction:{status:'SUCCESS'},channel:{id:'VIRTUAL_ACCOUNT_BCA'}});
+  const raw=JSON.stringify({order:{invoice_number:invoiceData.invoice.invoiceNumber,amount:invoiceData.invoice.amount,currency:'IDR'},transaction:{status:'SUCCESS',original_request_id:'synthetic-qris-approval'},channel:{id:'QRIS'}});
   const timestamp=new Date().toISOString();
   const headers={'content-type':'application/json','client-id':'test-client','request-id':'signed-event','request-timestamp':timestamp,
    signature:generateSignature('test-client','signed-event',timestamp,'/api/v1/webhooks/doku',generateDigest(raw),'test-secret')};
@@ -430,6 +430,9 @@ async function main(){
   await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');await assertOutletCapacity(c,tenant);}),/OUTLET_LIMIT_REACHED/);
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
   console.log('PASS: billing and internal service roles can read their authorized data');
+  // Historical VA notification compatibility fixtures configure their own
+  // inbound scope; they never create a new non-QRIS subscription Checkout.
+  process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
   await testDokuNotifications(db,url,value=>{failPayment=value;});
   await testFreeSync(db,url);
   await testQrisSubscriptions(db);

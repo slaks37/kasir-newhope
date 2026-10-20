@@ -32,11 +32,13 @@ export interface DokuCheckoutResponse {
   response?: {
     order?: {
       invoice_number?: string;
-      amount?: number;
+      amount?: number | string;
+      currency?: string;
     };
     payment?: {
       url?: string;
       expired_date?: string;
+      payment_method_types?: string[];
     };
   };
   error?: {
@@ -194,9 +196,17 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
   }
 
   const echoed = data.response.order;
-  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount) {
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount ||
+    (echoed.currency !== undefined && echoed.currency !== (payload.order.currency || 'IDR'))) {
     throw new Error('DOKU_CHECKOUT_ORDER_MISMATCH');
   }
+  const returnedMethods=data.response.payment.payment_method_types,requestedMethods=payload.payment.payment_method_types;
+  // Optional in the official response. If present it must not widen the
+  // requested scope, omit the requested method, or contain malformed values.
+  if(returnedMethods!==undefined && requestedMethods &&
+    (!Array.isArray(returnedMethods) || !returnedMethods.length ||
+      returnedMethods.some(method=>!requestedMethods.includes(method)) || requestedMethods.some(method=>!returnedMethods.includes(method))))
+    throw new Error('DOKU_CHECKOUT_METHOD_MISMATCH');
   return {
     paymentUrl: validateDokuPaymentUrl(data.response.payment.url),
     rawResponse: data,

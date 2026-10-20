@@ -15,6 +15,9 @@ Initial findings against the base:
 | UI treated an already ACTIVE subscription as proof a renewal was paid | `src/lib/subscriptionPayment.ts` and `SubscriptionPaymentPage.tsx`: exact invoice PAID + APPLIED required |
 | Checkout request key regenerated on each attempt/reload | Owner-scoped browser retry intent plus database tenant lock; different keys reuse one open payable invoice per subscription revision |
 | Legacy fragment callback with invoice query was not recognized by workspace router | Use `/subscription?invoice=UUID`; test router resolution and auth return-path preservation |
+| Alternate Checkout mode could enable non-QRIS methods | Both supported subscription modes require exactly QRIS; configuration errors fail before provisioning |
+| Historical wider-scope Checkout URL could bypass a new QRIS-only configuration | Replay checks saved invoice scope and holds old/unknown links without creating another order |
+| Optional response currency/method scope could disagree with the signed request | Reject contradictory currency and widened/missing requested methods when returned by DOKU |
 | No mandatory payment activation guard; dashboard Business ID could reach gateway | `DOKU_PAYMENTS_ENABLED=1` required before provisioning/invoicing; reject `BSN-*` |
 | Quote failure generated local fallback prices and trial could activate locally | Fail closed on quote/trial server failure; retain existing server trial policy |
 | Gateway URL accepted without trusted host/environment check | `api/_doku.ts` and client helper enforce HTTPS official Checkout hosts |
@@ -33,11 +36,13 @@ Owner update received 20 October 2026: DOKU recommends MCC **SOFTWARE STORES**, 
 
 The primary implemented flow is **Dynamic QRIS through DOKU Checkout**. DOKU's QRIS guide explicitly lists hosted Checkout as an integration that generates a transaction-specific QR. The existing Checkout API preserves application invoice numbers and server-calculated amounts and is appropriate while account-specific Direct/SNAP access remains unknown. DOKU generates/displays the QR; New Hope does not fabricate a local QR string or treat display as payment proof.
 
-`DOKU_SUBSCRIPTION_PAYMENT_MODE=dynamic_qris_checkout` is the default and requires exactly `DOKU_ALLOWED_CHANNELS=QRIS`. `checkout` retains the existing hosted Checkout integration with explicitly configured approved methods. There is no automatic fallback to other channels. `direct_dynamic_qris` and unknown product names are rejected before provisioning an invoice/tenant or calling a provider. **Native SNAP QR generation, token exchange, inquiry and notification authentication are not implemented or activated**; they require a separately reviewed adapter and the merchant's actual API product/credentials. No endpoint has been invented.
+`DOKU_SUBSCRIPTION_PAYMENT_MODE=dynamic_qris_checkout` is the default and requires exactly `DOKU_ALLOWED_CHANNELS=QRIS`. `checkout` is a compatibility name for the same hosted integration and also requires exactly `QRIS` for Phase 1. A Virtual Account, card or mixed-method configuration is rejected before invoice creation. Existing open invoices with wider or unknown method scope are held with `CHECKOUT_SCOPE_REVIEW_REQUIRED`; their links are not returned and no duplicate order is created. There is no automatic fallback to other channels. `direct_dynamic_qris` and unknown product names are rejected before provisioning an invoice/tenant or calling a provider. **Native SNAP QR generation, token exchange, inquiry and notification authentication are not implemented or activated**; they require a separately reviewed adapter and the merchant's actual API product/credentials. No endpoint has been invented.
 
 The documented non-SNAP QRIS notification uses provider channel `QRIS_DOKU`, service `QRIS`, acquirer `DOKU`, and `emoney_payment.approval_code` without `transaction.original_request_id`. After HMAC authentication, the adapter maps this exact combination to Checkout method `QRIS` and preserves the raw provider channel in the allowlisted audit payload. Missing/wrong service/acquirer or payment reference stays REVIEW. The delivery Request-Id is never substituted for a QRIS payment reference. Existing invoices whose quoted scope is `QRIS` retain their scope without rewriting UUIDs, amounts or history.
 
 `additional_info.origin.apiFormat=SNAP` in this documented **HMAC envelope** describes DOKU's processing origin; it is not permission to accept unauthenticated native SNAP headers. Native SNAP and archived WORDS-only callbacks remain rejected. The inquiry adapter handles the same documented identifiers only when actual provider evidence is returned; missing fields never fall back to local payment proof.
+
+Official Checkout request review (20 October 2026): integer IDR `order.amount` and unique `order.invoice_number` are mandatory; this implementation also sends `auto_redirect`, a matching line item and an HTTPS callback. `payment_method_types=["QRIS"]` limits the hosted choices. Customer/shipping/billing fields are conditional for other methods and are not required for the documented QRIS basic flow, so no unnecessary customer data are sent. The existing 24-hour invoice deadline is sent as `payment_due_date=1440` minutes (within the documented six-digit limit); 60 in the provider example is not a New Hope pricing or expiry requirement. Provider `expired_date` is UTC+7 and is not parsed as UTC or used as proof of nonpayment.
 
 References reviewed:
 
@@ -54,7 +59,7 @@ DOKU's merchant guide says QRIS is unavailable in Sandbox. An API-reference Sand
 
 1. Authenticate through the unchanged Supabase boundary; never trust browser tenant IDs or identity headers.
 2. Calculate quote server-side, lock tenant, save invoice intent before provider call. Keys are scoped by tenant. Reject a different selection while its payable intent is open; an ambiguous timeout is held for inquiry, not recharged automatically.
-3. Send signed request to one of two exact DOKU API origins, with bounded timeout and no HTTP redirect. Stable Request-Id equals invoice number. Validate the echoed invoice and amount before exposing the payment URL; reject missing/mismatched echoes. Restrict returned payment URL to official environment-specific hosts.
+3. Send signed request to one of two exact DOKU API origins, with bounded timeout and no HTTP redirect. Stable Request-Id equals invoice number. Validate the echoed invoice and amount, currency when supplied, and exact requested method scope when supplied before exposing the payment URL; reject missing/mismatched echoes. Restrict returned payment URL to official environment-specific hosts.
 4. Hosted Checkout collects payment. Callback only requests invoice verification; it does not grant access.
 5. Webhook authenticates original bytes, Client ID, request target, timestamp and constant-time HMAC. Receipt, invoice update, subscription and revision change share one database transaction. Failed transaction returns non-2xx so delivery can be retried.
 6. Validate IDR amount, invoice channel scope and subscription revision. Different historic invoices at one revision cannot both grant entitlements; a real second receipt remains REVIEW and needs financial handling, never silently discarded/refunded.
@@ -73,7 +78,7 @@ Load private database/provider configuration securely beforehand; never paste it
 ## Tests and isolated environments
 
 - `npm run verify`: lint + both TypeScript projects, migration bootstrap, SPA/API build, runtime, security, financial, subscription, tenant, offline and other existing regressions.
-- `npm run test:subscriptions`: original billing regression and 18 QRIS failure/recovery groups, embedded PostgreSQL, all provider HTTP intercepted.
+- `npm run test:subscriptions`: original billing regression and 20 QRIS failure/recovery groups, embedded PostgreSQL, all provider HTTP intercepted.
 - `npm run test:qris:browser`: actual React billing components -> loopback authenticated fixture -> isolated PostgreSQL -> signed mock notification; synthetic Auth context. Install Playwright Chromium or set `QRIS_BROWSER_EXECUTABLE` to an installed Chrome binary. No personal browser profile/session is read.
 - `node --import tsx scripts/payments/verify-qris-preview.ts`: dedicated existing rehearsal branch/database `newhope_qris_preview`, role `newhope_qris_preview_runtime`, `sslmode=verify-full`; requires the private local env prepared by the explicit bootstrap. No real Auth accounts/payments/customer records.
 - `node --import tsx scripts/payments/prepare-qris-preview.mjs`: bootstrap new **empty** synthetic target only; refuses populated targets and existing-role password rotation. Not an application startup path. Uses existing private rehearsal-owner credentials, writes new runtime env mode600. Does not recreate a completed database.
@@ -100,7 +105,7 @@ Proposed environment diff for later review only:
 | DOKU_API_URL | `https://api.doku.com` only for approved live use; Sandbox uses `https://api-sandbox.doku.com` |
 | DOKU_CLIENT_ID / DOKU_SECRET_KEY | Correct private production Checkout Brand credentials; never frontend variables |
 | DOKU_ALLOWED_CHANNELS | `QRIS` after this account's activation and contract verification; `QRIS_DOKU` is a received provider channel, not an outbound Checkout method |
-| DOKU_SUBSCRIPTION_PAYMENT_MODE | Default `dynamic_qris_checkout`; `checkout` only for an explicitly reviewed alternate hosted Checkout scope; native Direct is unsupported |
+| DOKU_SUBSCRIPTION_PAYMENT_MODE | Default `dynamic_qris_checkout`; `checkout` compatibility mode is also QRIS-only; native Direct is unsupported |
 | PUBLIC_APP_URL | Exact HTTPS app origin `https://kasir.newhope.space` |
 | Supabase Auth/Storage variables | Preserve existing authorized values |
 

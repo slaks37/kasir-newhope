@@ -147,6 +147,11 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       const existing=result.rows[0];
       if(existing?.quote?.planId!==quote.planId || existing?.quote?.billingCycle!==quote.billingCycle || existing?.quote?.extraOutlets!==quote.extraOutlets) throw new BillingError(409,'CHECKOUT_KEY_CONFLICT');
       if(existing.payment_status==='PAID') return res.json({ok:true,paid:true,invoice:serializeInvoice(existing),replayed:true});
+      // Never reuse a historical multi-method/unknown Checkout URL under the
+      // QRIS-only release policy, or create a second order to bypass that hold.
+      if(existing.quote?.paymentIntegration!=='DOKU_CHECKOUT' ||
+        !Array.isArray(existing.quote?.allowedChannels) || existing.quote.allowedChannels.length!==1 || existing.quote.allowedChannels[0]!=='QRIS')
+        throw new BillingError(409,'CHECKOUT_SCOPE_REVIEW_REQUIRED');
       if(new Date(existing.due_date).getTime()<=Date.now()) throw new BillingError(409,'CHECKOUT_EXPIRED');
       if(!existing.payment_link_url) throw new BillingError(409,'CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW');
       return res.json({ok:true,paymentUrl:existing.payment_link_url,invoice:serializeInvoice(existing),quote:existing.quote,replayed:true});
@@ -210,7 +215,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       !['string','number'].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount)))throw new BillingError(400,'INVALID_NOTIFICATION_ORDER');
     const issue=evidence.issue || (!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':channel==='QRIS' && !stableReference?'QRIS_PAYMENT_REFERENCE_MISSING':['REFUNDED','PARTIAL_REFUNDED'].includes(status)?'REFUND_REQUIRES_REVIEW':['VOIDED','REVERSED'].includes(status)?'REVERSAL_REQUIRES_REVIEW':!['SUCCESS','FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined);
     const result=await reconcilePayment(db,{eventKey:String(req.headers['request-id'] || ''),
-      invoiceNumber:invoice,reference:stableReference || (channel==='QRIS'?'missing-qris-reference':String(req.headers['request-id'] || '')),providerChannel:evidence.providerChannel,
+      invoiceNumber:invoice,reference:stableReference || (['QRIS','QRIS_DOKU'].includes(evidence.providerChannel)?'missing-qris-reference':String(req.headers['request-id'] || '')),providerChannel:evidence.providerChannel,
       amount:Number(amount),currency:body?.order?.currency===undefined?'IDR':String(body.order.currency),success:status==='SUCCESS',
       channel,validationIssue:issue,contentDigest:generateDigest(raw),payload:{status,channel,requestTimestamp:req.headers['request-timestamp']}});
     res.json(result);

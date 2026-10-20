@@ -7,6 +7,8 @@ export function dokuSubscriptionPolicy(): {mode:DokuSubscriptionMode;methods:str
   if(mode!=='dynamic_qris_checkout' && mode!=='checkout')throw new Error('DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE');
   const methods=getDokuAllowedChannels();
   if(methods.includes('QRIS_DOKU'))throw new Error('DOKU_CHECKOUT_METHOD_INVALID');
-  if(mode==='dynamic_qris_checkout' && (methods.length!==1 || methods[0]!=='QRIS'))throw new Error('DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED');
+  // Phase 1 is QRIS-only for both names of the hosted Checkout flow.
+  // Selecting the compatibility mode must not enable other payment methods.
+  if(methods.length!==1 || methods[0]!=='QRIS')throw new Error('DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED');
   return {mode,methods,integration:'DOKU_CHECKOUT'};
 }

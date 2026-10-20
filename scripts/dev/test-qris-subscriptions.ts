@@ -181,14 +181,14 @@ export async function testQrisSubscriptions(db:Db) {
   const existingTenants=(await db.query('SELECT count(*)::int n FROM internal.tenants')).rows[0].n,initialCalls=providerCalls;
   for(const [mode,methods,error] of [
     ['direct_dynamic_qris','QRIS','DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE'],['dynamic_qris_checkout','QRIS,VIRTUAL_ACCOUNT_BCA','DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED'],
-    ['checkout','QRIS_DOKU','DOKU_CHECKOUT_METHOD_INVALID'],['typo','QRIS','DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE']
+    ['checkout','QRIS_DOKU','DOKU_CHECKOUT_METHOD_INVALID'],['checkout','VIRTUAL_ACCOUNT_BCA','DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED'],['checkout','QRIS,VIRTUAL_ACCOUNT_BCA','DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED'],['typo','QRIS','DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE']
   ]) {
     process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE=mode;process.env.DOKU_ALLOWED_CHANNELS=methods;
     const denied=await post('must-not-be-provisioned',input());assert.equal(denied.status,503);assert.equal((await denied.json()).error,error);
   }
   assert.equal(providerCalls,initialCalls);assert.equal((await db.query('SELECT count(*)::int n FROM internal.tenants')).rows[0].n,existingTenants);
   process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
-  console.log('PASS QRIS 17: primary Dynamic QRIS scope, explicit Checkout fallback policy, unsupported Direct product never calls guessed endpoints or provisions tenants');
+  console.log('PASS QRIS 17: QRIS-only scope in both Checkout modes, unsupported Direct product never calls guessed endpoints or provisions tenants');
   const rotation=[] as string[];
   for(let i=0;i<2;i++) {const owner=await make(),inv=(await (await post(owner.owner,input())).json()).invoice;rotation.push(inv.invoiceNumber);await db.query("UPDATE billing.invoices SET created_at=now()-interval '29 days' WHERE id=$1",[inv.id]);}
   const scanned:string[]=[];
@@ -197,6 +197,28 @@ export async function testQrisSubscriptions(db:Db) {
   const probes=(await db.query("SELECT amount,gateway_reference,outcome FROM billing.payment_events WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'",[scanned[0]])).rows;
   assert.ok(probes.length>0);assert.equal(probes[0].amount,null);assert.equal(probes[0].gateway_reference,null);assert.equal(probes[0].outcome,'UNVERIFIED');
   console.log('PASS QRIS 18: durable bounded inquiry rotation prevents unavailable old invoices starving newer ones; scan markers never claim payment');
+
+
+  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';
+  const legacy=await make(),legacyBody=input(),legacyInvoice=(await (await post(legacy.owner,legacyBody)).json()).invoice;
+  // Simulate a historical payable invoice created before QRIS-only policy.
+  await db.query(`UPDATE billing.invoices SET quote=jsonb_set(quote,'{allowedChannels}','["QRIS","VIRTUAL_ACCOUNT_BCA"]'::jsonb) WHERE id=$1`,[legacyInvoice.id]);
+  const beforeLegacyCalls=providerCalls;
+  for(const request of [legacyBody,input()]) {
+    const denied=await post(legacy.owner,request);assert.equal(denied.status,409);assert.equal((await denied.json()).error,'CHECKOUT_SCOPE_REVIEW_REQUIRED');
+  }
+  assert.equal(providerCalls,beforeLegacyCalls);
+  assert.equal((await db.query('SELECT count(*)::int n FROM billing.invoices WHERE tenant_id=$1',[legacy.tenant])).rows[0].n,1);
+  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';
+  console.log('PASS QRIS 19: Checkout compatibility mode stays QRIS-only; historical wider-scope links held for review without a duplicate order');
+  const expired=await make(),expiredBody=input(),oldInvoice=(await (await post(expired.owner,expiredBody)).json()).invoice;
+  await db.query("UPDATE billing.invoices SET due_date=now()-interval '1 minute' WHERE id=$1",[oldInvoice.id]);
+  const oldRetry=await post(expired.owner,expiredBody);assert.equal(oldRetry.status,409);assert.equal((await oldRetry.json()).error,'CHECKOUT_EXPIRED');
+  const replacement=(await (await post(expired.owner,input())).json()).invoice;assert.notEqual(replacement.id,oldInvoice.id);
+  assert.equal((await (await notify(replacement)).json()).outcome,'APPLIED');
+  const late=await (await notify(oldInvoice)).json();assert.equal(late.outcome,'REVIEW');assert.equal(late.reason,'STALE_SUBSCRIPTION_REVISION');
+  assert.equal(Number((await ensureSubscription(db,expired.tenant)).revision),1);
+  console.log('PASS QRIS 20: expired intent can be replaced with a new reference; late old payment retained for review and never grants twice');
 
  } finally {
   globalThis.fetch=nativeFetch;for(const key of keys){if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key];}

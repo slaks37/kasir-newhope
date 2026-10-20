@@ -327,9 +327,12 @@ async function createDokuCheckout(payload) {
     throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
   }
   const echoed = data.response.order;
-  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount) {
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount || echoed.currency !== void 0 && echoed.currency !== (payload.order.currency || "IDR")) {
     throw new Error("DOKU_CHECKOUT_ORDER_MISMATCH");
   }
+  const returnedMethods = data.response.payment.payment_method_types, requestedMethods = payload.payment.payment_method_types;
+  if (returnedMethods !== void 0 && requestedMethods && (!Array.isArray(returnedMethods) || !returnedMethods.length || returnedMethods.some((method) => !requestedMethods.includes(method)) || requestedMethods.some((method) => !returnedMethods.includes(method))))
+    throw new Error("DOKU_CHECKOUT_METHOD_MISMATCH");
   return {
     paymentUrl: validateDokuPaymentUrl(data.response.payment.url),
     rawResponse: data
@@ -435,7 +438,7 @@ function dokuSubscriptionPolicy() {
   if (mode !== "dynamic_qris_checkout" && mode !== "checkout") throw new Error("DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE");
   const methods = getDokuAllowedChannels();
   if (methods.includes("QRIS_DOKU")) throw new Error("DOKU_CHECKOUT_METHOD_INVALID");
-  if (mode === "dynamic_qris_checkout" && (methods.length !== 1 || methods[0] !== "QRIS")) throw new Error("DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED");
+  if (methods.length !== 1 || methods[0] !== "QRIS") throw new Error("DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED");
   return { mode, methods, integration: "DOKU_CHECKOUT" };
 }
 
@@ -1101,6 +1104,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       const existing = result.rows[0];
       if (existing?.quote?.planId !== quote.planId || existing?.quote?.billingCycle !== quote.billingCycle || existing?.quote?.extraOutlets !== quote.extraOutlets) throw new BillingError(409, "CHECKOUT_KEY_CONFLICT");
       if (existing.payment_status === "PAID") return res.json({ ok: true, paid: true, invoice: serializeInvoice(existing), replayed: true });
+      if (existing.quote?.paymentIntegration !== "DOKU_CHECKOUT" || !Array.isArray(existing.quote?.allowedChannels) || existing.quote.allowedChannels.length !== 1 || existing.quote.allowedChannels[0] !== "QRIS")
+        throw new BillingError(409, "CHECKOUT_SCOPE_REVIEW_REQUIRED");
       if (new Date(existing.due_date).getTime() <= Date.now()) throw new BillingError(409, "CHECKOUT_EXPIRED");
       if (!existing.payment_link_url) throw new BillingError(409, "CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW");
       return res.json({ ok: true, paymentUrl: existing.payment_link_url, invoice: serializeInvoice(existing), quote: existing.quote, replayed: true });
@@ -1191,7 +1196,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const result = await reconcilePayment(db, {
       eventKey: String(req.headers["request-id"] || ""),
       invoiceNumber: invoice,
-      reference: stableReference || (channel === "QRIS" ? "missing-qris-reference" : String(req.headers["request-id"] || "")),
+      reference: stableReference || (["QRIS", "QRIS_DOKU"].includes(evidence.providerChannel) ? "missing-qris-reference" : String(req.headers["request-id"] || "")),
       providerChannel: evidence.providerChannel,
       amount: Number(amount),
       currency: body?.order?.currency === void 0 ? "IDR" : String(body.order.currency),

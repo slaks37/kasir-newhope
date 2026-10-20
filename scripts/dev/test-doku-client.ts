@@ -36,10 +36,16 @@ try {
     return new Response(JSON.stringify(responseFor({invoice_number:payload.order.invoice_number,amount:99000})),{status:200});
   }) as typeof fetch;
   assert.equal((await createDokuCheckout(payload)).paymentUrl,'https://sandbox.doku.com/checkout-link-v2/synthetic');
-  for(const order of [undefined,{invoice_number:'WRONG',amount:99000},{invoice_number:payload.order.invoice_number,amount:1}]){
+  for(const order of [undefined,{invoice_number:'WRONG',amount:99000},{invoice_number:payload.order.invoice_number,amount:1},{...payload.order,currency:'USD'}]){
     globalThis.fetch=(async()=>new Response(JSON.stringify(responseFor(order)),{status:200})) as typeof fetch;
     await assert.rejects(()=>createDokuCheckout(payload),/DOKU_CHECKOUT_ORDER_MISMATCH/);
   }
+  for(const methods of [['QRIS','VIRTUAL_ACCOUNT_BCA'],['VIRTUAL_ACCOUNT_BCA'],[],null,'QRIS']) {
+    globalThis.fetch=(async()=>new Response(JSON.stringify({response:{order:payload.order,payment:{url:'https://sandbox.doku.com/checkout-link-v2/synthetic',payment_method_types:methods}}}),{status:200})) as typeof fetch;
+    await assert.rejects(()=>createDokuCheckout(payload),/DOKU_CHECKOUT_METHOD_MISMATCH/);
+  }
+  globalThis.fetch=(async()=>new Response(JSON.stringify({response:{order:{...payload.order,amount:'99000'},payment:{url:'https://sandbox.doku.com/checkout-link-v2/synthetic',payment_method_types:['QRIS']}}}),{status:200})) as typeof fetch;
+  assert.ok((await createDokuCheckout(payload)).paymentUrl);
   let outbound=0;globalThis.fetch=(async()=>{outbound++;throw Error('MUST_NOT_CALL_PROVIDER');}) as typeof fetch;
   for(const order of [{...payload.order,amount:0},{...payload.order,amount:1.5},{...payload.order,invoice_number:'invalid/path'}])await assert.rejects(()=>createDokuCheckout({...payload,order}),/DOKU_CHECKOUT_ORDER_INVALID/);
   assert.equal(outbound,0);
