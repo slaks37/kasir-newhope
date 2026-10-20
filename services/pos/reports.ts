@@ -1,3 +1,4 @@
+import {recordReportAdoption} from '../../src/server/growth/sourceCapture';
 import type { Express, Request } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal } from '../shared/auth';
@@ -337,7 +338,7 @@ export function registerReportRoutes(app: Express, db: Db) {
     if (!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
     try {
       const filter=parseReportFilter(req.query);
-      if(route==='summary') return res.json(await serverReportSummary(db,principal.subject,filter));
+      if(route==='summary') {const result=await serverReportSummary(db,principal.subject,filter);await recordReportAdoption(db,principal.subject,result.scope.tenantId);return res.json(result);}
       const rawLimit=stringQuery(req.query.limit,'LIMIT');
       const limit=rawLimit===null?100:Number(rawLimit);
       if(!Number.isInteger(limit)||limit<1||limit>500)throw new ReportRequestError(400,'INVALID_LIMIT');

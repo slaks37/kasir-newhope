@@ -23,6 +23,7 @@ export interface Session {
   capabilities: string[];
   environment: string;
   mfaRequired?: boolean;
+  growthEnabled?: boolean;
 }
 
 export const ROLE_LABEL: Record<InternalRole, string> = {
@@ -262,6 +263,7 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
     ?coalescedRead('admin:'+data.session.access_token+':'+target,run):run();
 }
 export const api={
+  growth:(path:string,params?:Record<string,unknown>,body?:unknown,method?:string)=>request("growth/"+path,params,body,method),
   integrations:(offset=0)=>request('integrations',{offset}),
   updateMcpSettings:(body:{enabled:boolean;expectedUpdatedAt:string|null;reason:string})=>request('integrations/mcp',undefined,body,'PUT'),
   revokeMcpConnection:(id:string,reason:string)=>request('integrations/mcp/connections/'+encodeURIComponent(id)+'/revoke',undefined,{reason},'POST'),

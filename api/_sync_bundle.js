@@ -1,3 +1,90 @@
+// src/server/growth/db.ts
+import pg from "pg";
+var GROWTH_WORKSPACE = "b1b56887-e47e-45ec-9e10-d58d378709ce";
+function growthEnabled(env = process.env) {
+  const staging = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || !env.VERCEL_ENV && env.NODE_ENV !== "production";
+  return env.GROWTH_ENGINE_ENABLED === "1" && staging && env.APP_ENV !== "production";
+}
+var pool;
+async function growthDb() {
+  if (!growthEnabled() || !process.env.GROWTH_DATABASE_URL)
+    throw Error("GROWTH_NOT_CONFIGURED");
+  if (!pool) {
+    const u = new URL(process.env.GROWTH_DATABASE_URL);
+    const local = ["localhost", "127.0.0.1"].includes(u.hostname);
+    if (!local && !u.hostname.endsWith(".neon.tech"))
+      throw Error("GROWTH_DATABASE_HOST_NOT_APPROVED");
+    for (const k of [
+      "sslmode",
+      "sslcert",
+      "sslkey",
+      "sslrootcert",
+      "uselibpqcompat"
+    ])
+      u.searchParams.delete(k);
+    pool = new pg.Pool({
+      connectionString: u.toString(),
+      ssl: local ? void 0 : { rejectUnauthorized: true },
+      max: 3,
+      connectionTimeoutMillis: 5e3,
+      idleTimeoutMillis: 1e4,
+      statement_timeout: 5e3
+    });
+    pool.on("error", () => console.error("[growth] database pool unavailable"));
+  }
+  const wrap = (q) => ({
+    query: async (s, p) => {
+      const r = await q.query(s, p);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    },
+    exec: async (s) => {
+      await q.query(s);
+    },
+    tx: async (fn) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        const result = await fn(wrap(c));
+        await c.query("COMMIT");
+        return result;
+      } catch (e) {
+        await c.query("ROLLBACK");
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    close: async () => {
+      await pool?.end();
+      pool = void 0;
+    }
+  });
+  return wrap(pool);
+}
+async function inWorkspace(db, fn, workspace = GROWTH_WORKSPACE) {
+  return db.tx(async (c) => {
+    await c.query("SELECT set_config('app.growth_workspace',$1,true)", [
+      workspace
+    ]);
+    return fn(c);
+  });
+}
+
+// src/server/growth/businessConnection.ts
+function growthBusinessConnection(env = process.env) {
+  if (!growthEnabled(env) || !env.GROWTH_BUSINESS_DATABASE_URL)
+    return void 0;
+  const u = new URL(env.GROWTH_BUSINESS_DATABASE_URL);
+  if (!u.hostname.endsWith(".neon.tech") && !["localhost", "127.0.0.1"].includes(u.hostname))
+    throw Error("UNAPPROVED_GROWTH_BUSINESS_HOST");
+  if (u.hostname.endsWith(".neon.tech")) {
+    for (const k of ["sslcert", "sslkey", "sslrootcert", "uselibpqcompat"])
+      u.searchParams.delete(k);
+    u.searchParams.set("sslmode", "verify-full");
+  }
+  return u.toString();
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -43,6 +130,8 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0, ...claims.amr.filter((a) => ["password", "otp", "totp", "oauth"].includes(a.method) && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp)) : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -91,7 +180,7 @@ async function tenantForPrincipal(db, principal) {
 
 // services/shared/db.ts
 import fs from "node:fs";
-import pg from "pg";
+import pg2 from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
@@ -135,8 +224,8 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
 }
 
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
@@ -150,7 +239,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool = new pg.Pool({
+  const pool2 = new pg2.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -159,14 +248,14 @@ async function connectDb(opts) {
     ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
-  pool.on("error", (err) => {
+  pool2.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
   await waitForDatabase(async () => {
-    const probe = await pool.connect();
+    const probe = await pool2.connect();
     probe.release();
   }).catch(async (error) => {
-    await pool.end().catch(() => {
+    await pool2.end().catch(() => {
     });
     throw error;
   });
@@ -180,7 +269,7 @@ async function connectDb(opts) {
       await runner.query(sql);
     },
     async tx(fn) {
-      const client = await pool.connect();
+      const client = await pool2.connect();
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
@@ -196,14 +285,119 @@ async function connectDb(opts) {
       }
     },
     async close() {
-      await pool.end();
+      await pool2.end();
     }
   });
-  return wrap(pool);
+  return wrap(pool2);
+}
+
+// src/server/growth/integration.ts
+import { createHash, randomUUID } from "node:crypto";
+
+// src/server/growth/service.ts
+var GrowthError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+};
+var fail = (code, status = 400) => {
+  throw new GrowthError(status, code);
+};
+var uuid = (v) => typeof v === "string" && /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(
+  v
+) ? v : fail("INVALID_ID");
+
+// src/server/growth/integration.ts
+var CONSENT_VERSION = "growth-product-analytics-v1";
+var hash = (s) => createHash("sha256").update(s).digest("hex");
+async function ownedTenant(db, subject, tenant) {
+  const r = await db.query(
+    `SELECT id FROM internal.tenants WHERE id=$1 AND owner_user_ref=$2 AND is_active AND merged_into IS NULL`,
+    [tenant, subject]
+  );
+  if (r.rows.length !== 1) fail("VERIFIED_TENANT_OWNER_REQUIRED", 403);
+}
+
+// src/server/growth/merchant.ts
+function registerGrowthMerchantRoutes(app, business, authenticate = authenticateBearer, getTarget = growthDb) {
+  for (const action of ["session", "claim", "withdraw"])
+    app.post("/api/v1/sync/growth/" + action, async (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      if (!growthEnabled())
+        return res.status(404).json({ ok: false, error: "GROWTH_DISABLED" });
+      try {
+        const principal = await authenticate(req);
+        if (!principal || !principal.isEmailVerified)
+          throw new GrowthError(401, "VERIFIED_AUTH_REQUIRED");
+        if (action === "session") {
+          if (process.env.GROWTH_CAPTURE_ENABLED !== "1")
+            return res.json({ ok: true, skipped: true });
+          if (!principal.authCreatedAt || !Number.isFinite(Date.parse(principal.authCreatedAt)))
+            fail("AUTH_SIGNUP_DATE_REQUIRED");
+          await business.query(
+            `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class,occurred_at)
+      SELECT md5('signup:'||c.source_id::text||$1)::uuid,c.source_id,NULL,$1::text::uuid,'signal',jsonb_build_object('signal','signup'),c.data_class,$2::timestamptz FROM growth_source.config c WHERE c.enabled ON CONFLICT(id) DO NOTHING`,
+            [principal.subject, principal.authCreatedAt]
+          );
+          return res.json({ ok: true, recorded: true });
+        }
+        if (!principal.reauthenticatedAt || Date.now() / 1e3 - principal.reauthenticatedAt > 600)
+          fail("REAUTH_REQUIRED", 403);
+        const target = await getTarget();
+        if (action === "withdraw") {
+          await inWorkspace(target, async (c) => {
+            await c.query(
+              `UPDATE growth.leads SET consent_email=false,consent_whatsapp=false,consent_ai=false,opted_out_at=now(),updated_at=now(),version=version+1 WHERE workspace_id=$1 AND id IN(SELECT lead_id FROM growth.link_invites WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL)`,
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "UPDATE growth.link_invites SET revoked_at=now() WHERE workspace_id=$1 AND subject_ref=$2 AND revoked_at IS NULL",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+            await c.query(
+              "INSERT INTO growth.audit(workspace_id,actor_id,action) VALUES($1,$2,'SUBJECT_WITHDREW_GROWTH_CONSENT')",
+              [GROWTH_WORKSPACE, principal.subject]
+            );
+          });
+          return res.json({ ok: true, withdrawn: true });
+        }
+        const tenant = uuid(req.body.tenantId);
+        await ownedTenant(business, principal.subject, tenant);
+        if (req.body.consentVersion !== CONSENT_VERSION || req.body.consent !== true)
+          fail("EXPLICIT_ANALYTICS_CONSENT_REQUIRED");
+        if (typeof req.body.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(req.body.token))
+          fail("INVALID_INVITE");
+        await inWorkspace(target, async (c) => {
+          const r = await c.query(
+            `UPDATE growth.link_invites i SET claimed_at=now(),subject_ref=$3,tenant_ref=$4,consent_version=$5 WHERE workspace_id=$1 AND token_hash=$2 AND claimed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND EXISTS(SELECT 1 FROM growth.leads l WHERE l.workspace_id=i.workspace_id AND l.id=i.lead_id AND l.opted_out_at IS NULL AND l.anonymized_at IS NULL) RETURNING id`,
+            [
+              GROWTH_WORKSPACE,
+              hash(req.body.token),
+              principal.subject,
+              tenant,
+              CONSENT_VERSION
+            ]
+          );
+          if (!r.rowCount) fail("INVITE_EXPIRED_OR_USED", 409);
+          await c.query(
+            "INSERT INTO growth.audit(workspace_id,actor_id,action,target_id) VALUES($1,$2,'SUBJECT_CONFIRMED_LINK',$3)",
+            [GROWTH_WORKSPACE, principal.subject, r.rows[0].id]
+          );
+        });
+        res.json({ ok: true, status: "AWAITING_SUPERADMIN_REVIEW" });
+      } catch (e) {
+        res.status(e instanceof GrowthError ? e.status : 503).json({
+          ok: false,
+          error: e instanceof GrowthError ? e.code : "GROWTH_INTEGRATION_UNAVAILABLE"
+        });
+      }
+    });
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -213,8 +407,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash2("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -625,7 +819,7 @@ async function hasSchemaFeature(db, feature, now = Date.now()) {
 }
 
 // services/pos/activity.ts
-var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
+var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES = [
   "POS",
   "TABLES",
@@ -643,7 +837,7 @@ function pick(allowed, v) {
   return typeof v === "string" && allowed.includes(v) ? v : null;
 }
 async function writeActivity(db, a) {
-  const sector = pick(SECTORS, a.businessSector);
+  const sector = pick(SECTORS2, a.businessSector);
   const mod = pick(APP_MODULES, a.appModule);
   if (!sector || !mod || !UUID_RE.test(a.merchantId)) return null;
   const { rows } = await db.query(
@@ -691,7 +885,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS2.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -1213,7 +1407,7 @@ async function projectLabor(c, scope, sector, op) {
 }
 
 // services/pos/sharedState.ts
-var SECTOR_SET = new Set(SECTORS);
+var SECTOR_SET = new Set(SECTORS2);
 var GLOBAL_KINDS = /* @__PURE__ */ new Set(["users", "staff_members"]);
 var SECTOR_KINDS = /* @__PURE__ */ new Set([
   "categories",
@@ -1615,6 +1809,16 @@ function registerSharedStateRoutes(app, db) {
   });
 }
 
+// src/server/growth/sourceCapture.ts
+async function recordReportAdoption(db, subject, tenant) {
+  if (!growthEnabled() || process.env.GROWTH_CAPTURE_ENABLED !== "1") return;
+  await db.query(
+    `INSERT INTO growth_source.outbox(id,source_id,tenant_ref,subject_ref,kind,payload,data_class)
+ SELECT md5(c.source_id::text||$1||$2||'report:'||(now() AT TIME ZONE 'Asia/Jakarta')::date::text)::uuid,c.source_id,t.id,$1::text::uuid,'signal','{"signal":"report_viewed"}'::jsonb,c.data_class FROM growth_source.config c JOIN internal.tenants t ON t.id=$2::uuid AND t.owner_user_ref=$1::text WHERE c.enabled AND t.is_active AND t.merged_into IS NULL ON CONFLICT(id) DO NOTHING`,
+    [subject, tenant]
+  );
+}
+
 // services/pos/reports.ts
 var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1648,7 +1852,7 @@ function parseReportFilter(query) {
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
   if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
-  if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
+  if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
   const to = dateQuery(query.to, "TO_DATE");
   if (from && to && from > to) throw new ReportRequestError(400, "INVALID_DATE_RANGE");
@@ -2032,7 +2236,11 @@ function registerReportRoutes(app, db) {
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     try {
       const filter = parseReportFilter(req.query);
-      if (route === "summary") return res.json(await serverReportSummary(db, principal.subject, filter));
+      if (route === "summary") {
+        const result = await serverReportSummary(db, principal.subject, filter);
+        await recordReportAdoption(db, principal.subject, result.scope.tenantId);
+        return res.json(result);
+      }
       const rawLimit = stringQuery(req.query.limit, "LIMIT");
       const limit = rawLimit === null ? 100 : Number(rawLimit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ReportRequestError(400, "INVALID_LIMIT");
@@ -2051,7 +2259,7 @@ function registerReportRoutes(app, db) {
 }
 
 // services/pos/sync.ts
-var SECTOR_SET2 = new Set(SECTORS);
+var SECTOR_SET2 = new Set(SECTORS2);
 var MAX_BATCH = 500;
 var SyncAccessError = class extends Error {
 };
@@ -2115,6 +2323,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerGrowthMerchantRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -2216,7 +2425,7 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({
         ok: false,
         error: "BAD_REQUEST",
-        detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS.join(", ")
+        detail: "businessId dan sector wajib; sector harus salah satu dari " + SECTORS2.join(", ")
       });
     }
     if (body.outletId && !requestedOutletId) return res.status(400).json({ ok: false, error: "INVALID_OUTLET_ID" });
@@ -2964,6 +3173,9 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/sync/growth/session": ["POST"],
+  "/api/v1/sync/growth/claim": ["POST"],
+  "/api/v1/sync/growth/withdraw": ["POST"],
   "/api/v1/privacy/requests": ["GET", "POST"],
   "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],
@@ -2988,7 +3200,7 @@ var allowedMethods = {
   "/api/v1/finance/shift/open": ["POST"],
   "/api/v1/finance/shift/close": ["POST"]
 };
-function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2 })) {
+function createSyncHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "pos", max: 2, connectionString: growthBusinessConnection() })) {
   return createServerlessBoundary({
     name: "sync",
     routes: allowedMethods,
