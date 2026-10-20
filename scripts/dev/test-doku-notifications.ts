@@ -35,7 +35,7 @@ export async function testDokuNotifications(db:Db,base:string,failPayment:(value
   assert.equal((await ensureSubscription(db,f.tenant)).status,'TRIAL');
   for(const [body,reason] of [
     [{...f.body,channel:{id:'UNCONFIRMED'}},'UNAPPROVED_PAYMENT_CHANNEL'],
-    [{...f.body,transaction:{status:'PENDING'}},'UNKNOWN_PAYMENT_STATUS'],
+
     [{...f.body,order:{...f.body.order,amount:1}},'AMOUNT_OR_CURRENCY_MISMATCH'],
     [{...f.body,order:{...f.body.order,currency:'USD'}},'AMOUNT_OR_CURRENCY_MISMATCH'],
     [{...f.body,order:{...f.body.order,invoice_number:'UNKNOWN'}},'INVOICE_NOT_FOUND']

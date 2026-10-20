@@ -13,6 +13,7 @@ import { registerBillingRoutes } from '../../services/billing/routes';
 import { registerSyncRoutes } from '../../services/pos/sync';
 import type { Db } from '../../services/shared/db';
 import { generateDigest, generateSignature } from '../../api/_doku';
+import {testQrisSubscriptions} from './test-qris-subscriptions';
 import { testDokuNotifications } from './test-doku-notifications';
 import { mergeServerOutlets } from '../../src/lib/sync/outlets';
 import { INITIAL_BRANCHES } from '../../src/data/initialData';
@@ -110,7 +111,7 @@ async function main(){
   return null;
  });
  let checkoutCalls=0;
- registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.test.invalid/'+payload.order.invoice_number,rawResponse:{}};});
+ registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.test.invalid/'+payload.order.invoice_number,rawResponse:{}};},async()=>({ok:false,status:'UNKNOWN'}));
  registerSyncRoutes(app,db);
  app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({error:err.message}));
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
@@ -404,7 +405,7 @@ async function main(){
   assert.equal((await act('GRANT_PLAN',{planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:2})).status,200);
   assert.equal((await ensureSubscription(db,other)).extra_outlets,2);
   // Dummy gateway settings are scoped to this test process. No network call to DOKU.
-  process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
+  process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
   const checkoutBody={planId:'plan-plus-monthly',billingCycle:'YEARLY',extraOutlets:2,requestKey:randomUUID()};
   const checkout=()=>fetch(url+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':'owner-two','content-type':'application/json'},body:JSON.stringify(checkoutBody)});
   const first=await checkout();assert.equal(first.status,200,await first.clone().text());const invoiceData=await first.json();
@@ -431,6 +432,7 @@ async function main(){
   console.log('PASS: billing and internal service roles can read their authorized data');
   await testDokuNotifications(db,url,value=>{failPayment=value;});
   await testFreeSync(db,url);
+  await testQrisSubscriptions(db);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

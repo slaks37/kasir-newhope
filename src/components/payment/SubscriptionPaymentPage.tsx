@@ -1,3 +1,4 @@
+import {checkoutRequestKey,forgetCheckoutRequestKey,isDokuHostedUrl,isVerifiedInvoicePayment,paymentStatusNotice} from '../../lib/subscriptionPayment';
 import {LEGAL_NOTICE_VERSION} from '../../config/legalNotices';
 import React, { useEffect, useState } from 'react';
 import confetti from 'canvas-confetti';
@@ -28,7 +29,7 @@ import { PAID_SAAS_PLANS, annualTotal, findSaaSPlan, TRIAL_PLAN_ID, TRIAL_DAYS }
 import { isFreePlan } from '../../config/freePlanPolicy';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
 import { BusinessSector } from '../../types';
-import { newId, newDocumentNumber } from '../../lib/ids';
+import { newDocumentNumber } from '../../lib/ids';
 import {checkoutDefaults,readCheckoutIntent,clearCheckoutIntent} from '../../lib/workspace/checkoutIntent';
 
 interface QuoteResponse {
@@ -108,6 +109,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
   // Request real-time quote whenever plan, cycle, or extra outlets change
   useEffect(() => {
     let isCurrent = true;
+    setQuote(null);
     const fetchQuote = async () => {
       if (selectedPlanId === TRIAL_PLAN_ID) {
         const now = new Date();
@@ -148,64 +150,12 @@ export const SubscriptionPaymentPage: React.FC = () => {
           }),
         });
 
-        if (!res.ok) {
-          // Fallback quote calculation locally if API unavailable
-          const basePrice = yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr;
-          const outletPrice = yearly
-            ? (selectedPlan.extraOutletYearlyIdr || 760320) * extraOutlets
-            : (selectedPlan.extraOutletPriceIdr || 79200) * extraOutlets;
-          const totalAmount = basePrice + outletPrice;
-          const now = new Date();
-          const end = new Date(now);
-          if (yearly) end.setFullYear(end.getFullYear() + 1);
-          else end.setMonth(end.getMonth() + 1);
-
-          if (isCurrent) {
-            setQuote({
-              ok: true,
-              planId: selectedPlan.id,
-              planName: selectedPlan.name,
-              billingCycle: cycle,
-              amount: totalAmount,
-              recurringAmount: totalAmount,
-              unusedCredit: 0,
-              extraOutlets,
-              periodStart: now.toISOString(),
-              periodEnd: end.toISOString(),
-            });
-          }
-          return;
-        }
-
+        if (!res.ok) throw new Error('Tagihan belum dapat dihitung oleh server. Coba lagi saat online.');
         const data = await res.json();
-        if (isCurrent && data.ok) {
-          setQuote(data);
-        }
+        if (!data.ok) throw new Error('Tagihan belum dapat diverifikasi.');
+        if (isCurrent) setQuote(data);
       } catch {
-        // Fallback for offline/dev
-        const basePrice = yearly ? annualTotal(selectedPlan) : selectedPlan.priceIdr;
-        const outletPrice = yearly
-          ? (selectedPlan.extraOutletYearlyIdr || 760320) * extraOutlets
-          : (selectedPlan.extraOutletPriceIdr || 79200) * extraOutlets;
-        const now = new Date();
-        const end = new Date(now);
-        if (yearly) end.setFullYear(end.getFullYear() + 1);
-        else end.setMonth(end.getMonth() + 1);
-
-        if (isCurrent) {
-          setQuote({
-            ok: true,
-            planId: selectedPlan.id,
-            planName: selectedPlan.name,
-            billingCycle: yearly ? 'YEARLY' : 'MONTHLY',
-            amount: basePrice + outletPrice,
-            recurringAmount: basePrice + outletPrice,
-            unusedCredit: 0,
-            extraOutlets,
-            periodStart: now.toISOString(),
-            periodEnd: end.toISOString(),
-          });
-        }
+        if (isCurrent) { setQuote(null); setError('Tagihan belum dapat dihitung oleh server. Coba lagi saat online.'); }
       } finally {
         if (isCurrent) setQuoteLoading(false);
       }
@@ -215,7 +165,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
     return () => {
       isCurrent = false;
     };
-  }, [selectedPlanId, yearly, extraOutlets, selectedPlan]);
+  }, [selectedPlanId, yearly, extraOutlets, selectedPlan, session?.access_token]);
 
   // Trigger celebration confetti
   const fireConfetti = () => {
@@ -249,7 +199,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
         return false;
       }
       const data = await res.json();
-      if (data.ok && (data.paid || data.status === 'ACTIVE')) {
+      if (isVerifiedInvoicePayment(data)) {
+        forgetCheckoutRequestKey(user?.id,data.invoice.planId,data.invoice.billingCycle,data.invoice.extraOutlets);
         clearCheckoutIntent(user?.id);
         window.dispatchEvent(new CustomEvent('subscription-updated'));
         fireConfetti();
@@ -263,7 +214,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
         return true;
       } else {
         if (!silent) {
-          setVerifyNotice('Pembayaran belum terkonfirmasi oleh server. Jika Anda baru saja menyelesaikan transaksi di DOKU, mohon tunggu beberapa saat lalu coba periksa status kembali.');
+          setVerifyNotice(paymentStatusNotice(data.invoice?.paymentStatus));
         }
         return false;
       }
@@ -338,22 +289,21 @@ export const SubscriptionPaymentPage: React.FC = () => {
             }
           }
         } catch (serverErr: any) {
-          console.warn('Server trial sync warning (activating locally):', serverErr?.message);
+          throw new Error('Trial belum dapat diverifikasi oleh server. Coba lagi saat online.');
         }
 
-        const now = new Date();
-        const end = new Date(now.getTime() + TRIAL_DAYS * 86_400_000);
+        if(!serverSub) throw new Error('Trial belum dapat diverifikasi oleh server.');
         const trialSub = {
           ...settings.subscription,
-          id: serverSub?.id || settings.subscription?.id || newId('sub-trial'),
-          tenantId: serverSub?.tenantId || settings.subscription?.tenantId || user?.id || 'tenant-default',
+          id: serverSub.id,
+          tenantId: serverSub.tenantId,
           planId: TRIAL_PLAN_ID,
           status: 'TRIAL' as const,
           cancelAtPeriodEnd: false,
           billingCycle: 'MONTHLY' as const,
           extraOutlets: 0,
-          currentPeriodStart: serverSub?.currentPeriodStart || now.toISOString(),
-          currentPeriodEnd: serverSub?.currentPeriodEnd || end.toISOString(),
+          currentPeriodStart: serverSub.currentPeriodStart,
+          currentPeriodEnd: serverSub.currentPeriodEnd,
           accessMode: 'FULL' as const,
           hasUsedTrial: true,
           plan: findSaaSPlan(TRIAL_PLAN_ID) || undefined,
@@ -386,9 +336,8 @@ export const SubscriptionPaymentPage: React.FC = () => {
 
     if (!quote) return;
     setCheckoutLoading(true);
-    const requestKey = crypto.randomUUID();
-
     try {
+      const requestKey = checkoutRequestKey(user?.id, quote.planId, quote.billingCycle, quote.extraOutlets);
       const res = await fetch('/api/v1/subscription/checkout', {
         method: 'POST',
         headers: {
@@ -426,19 +375,11 @@ export const SubscriptionPaymentPage: React.FC = () => {
         }
       }
 
-      if (res.ok && result.ok && result.paymentUrl) {
-        if (result.paymentUrl.startsWith('https://') && !result.paymentUrl.includes('example.test')) {
-          // Redirect to DOKU Checkout Gateway
-          window.location.assign(result.paymentUrl);
-          return;
-        } else if (result.mockPayment || result.paymentUrl.includes('#payment') || result.paymentUrl.startsWith('/')) {
-          // Local/Demo simulated checkout
-          const invId = result.invoice?.invoiceNumber || result.invoice?.id;
-          if (invId) {
-            void checkPaymentVerification(invId);
-          }
-          return;
-        }
+      if (res.ok && result.ok && result.paid && result.invoice?.id) {
+        await checkPaymentVerification(result.invoice.id); return;
+      }
+      if (res.ok && result.ok && isDokuHostedUrl(result.paymentUrl)) {
+        window.location.assign(result.paymentUrl); return;
       }
 
       const errMsg = result.message || result.error || result.detail;
@@ -446,8 +387,12 @@ export const SubscriptionPaymentPage: React.FC = () => {
         throw new Error('Sesi otentikasi diperlukan. Silakan login terlebih dahulu.');
       }
       if (errMsg === 'PAYMENT_GATEWAY_NOT_CONFIGURED') {
-        throw new Error('Kredensial DOKU belum aktif di Vercel Production. Pastikan DOKU_CLIENT_ID dan DOKU_SECRET_KEY sudah diisi dan disimpan di Environment Variables Vercel (centang Production).');
+        throw new Error('Pembayaran belum tersedia. Hubungi dukungan New Hope.');
       }
+      if (errMsg === 'PAYMENTS_PAUSED') throw new Error('Pembayaran langganan sedang dijeda. Tidak ada tagihan baru yang diproses.');
+      if (errMsg === 'CHECKOUT_PENDING_EXISTS') throw new Error('Masih ada tagihan paket lain yang belum selesai. Periksa riwayat tagihan sebelum mengganti paket.');
+      if (errMsg === 'CHECKOUT_QUOTE_CHANGED') throw new Error('Langganan berubah. Muat ulang halaman untuk menghitung tagihan terbaru.');
+      if (errMsg === 'CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW') throw new Error('Permintaan sebelumnya masih diperiksa. Buka riwayat tagihan dan periksa status; jangan membuat pembayaran kedua.');
       if (errMsg === 'PUBLIC_APP_URL_NOT_CONFIGURED') {
         throw new Error('PUBLIC_APP_URL belum dikonfigurasi di environment Vercel (contoh: https://kasir.newhope.space).');
       }
@@ -942,7 +887,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Mendukung <b>QRIS</b> (Gopay, OVO, Dana, ShopeePay, BCA Mobile), <b>Virtual Account</b> (BCA, Mandiri, BRI, BNI), dan <b>Kartu Kredit/Debit</b>.
+                Metode yang tersedia ditampilkan di halaman DOKU. QRIS memerlukan aktivasi merchant DOKU. Pembayaran ini hanya untuk langganan New Hope.
               </p>
             </div>
           )}
@@ -984,7 +929,7 @@ export const SubscriptionPaymentPage: React.FC = () => {
             ) : (
               <button
                 type="button"
-                disabled={checkoutLoading || quoteLoading || verifying}
+                disabled={checkoutLoading || quoteLoading || verifying || !quote}
                 onClick={handleProceedToPayment}
                 className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
