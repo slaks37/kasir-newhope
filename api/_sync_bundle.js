@@ -1,3 +1,20 @@
+// services/shared/releaseGates.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidAllowlist(value) {
+  const ids = (value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (ids.some((id) => !UUID.test(id))) throw Error("RELEASE_ALLOWLIST_INVALID");
+  return [...new Set(ids)];
+}
+function betaAccessError(subject, env = process.env) {
+  if (!env.BETA_ACCESS_MODE || env.BETA_ACCESS_MODE === "open") return;
+  if (env.BETA_ACCESS_MODE !== "invite_only") return "BETA_CONFIGURATION_INVALID";
+  try {
+    return uuidAllowlist(env.BETA_ALLOWED_SUBJECTS).includes(subject.toLowerCase()) ? void 0 : "BETA_INVITE_REQUIRED";
+  } catch {
+    return "BETA_CONFIGURATION_INVALID";
+  }
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -674,7 +691,7 @@ async function writeActivity(db, a) {
 }
 
 // services/pos/finance.ts
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 var FinanceError = class extends Error {
@@ -691,7 +708,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -970,7 +987,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -999,7 +1016,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -1616,7 +1633,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -1643,10 +1660,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -1944,7 +1961,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID4.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -2929,6 +2946,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
       if (!principal || principal.subject === "local-development") {
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
+      const betaError = betaAccessError(principal.subject);
+      if (betaError) return res.status(betaError === "BETA_INVITE_REQUIRED" ? 403 : 503).json({ ok: false, error: betaError });
       applyPrincipal(req, principal);
     }
     if (rawBodyRoutes.has(path) && req.method === "POST") {

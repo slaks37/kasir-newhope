@@ -1,7 +1,12 @@
+import {checkoutPilotAllowed} from '../shared/releaseGates';
+import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { AuthUnavailableError, authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
+import {dokuChannelEvidence,dokuPaymentReference} from './dokuChannelEvidence';
+import {dokuSubscriptionPolicy} from './dokuSubscriptionPolicy';
+import {reconcileInvoiceByInquiry} from './recovery';
 import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { isFreePlan } from '../../src/config/freePlanPolicy';
@@ -16,7 +21,7 @@ function coordinate(value: unknown, limit: number): number | null {
   return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
 }
 
-export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout) {
+export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout,inquiryProvider=checkDokuOrderStatus,inquiryClock?:()=>number) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
       if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
@@ -107,35 +112,70 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     res.json({ok:true,...quote,netProratedAmount:quote.amount,proratedAmountIdr:quote.amount,breakdown:{newPlanPrice:quote.recurringAmount,unusedCredit:quote.unusedCredit,total:quote.amount}});
   }));
   app.post('/api/v1/subscription/checkout',run(async(req,res)=>{
+    if(process.env.DOKU_PAYMENTS_ENABLED?.trim()!=='1') throw new BillingError(503,'PAYMENTS_PAUSED');
+    let policy;
+    try{policy=dokuSubscriptionPolicy();}catch(e){throw new BillingError(503,(e as Error).message);}
     const tenantId=await tenant(req);
+    if(!checkoutPilotAllowed(tenantId))throw new BillingError(403,'CHECKOUT_PILOT_ONLY');
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');
-    if (!isDokuConfigured()) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
-    let allowedChannels:string[];
-    try{allowedChannels=getDokuAllowedChannels();}catch{throw new BillingError(503,'DOKU_CHANNEL_SCOPE_NOT_CONFIGURED');}
-    const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels};
+    let configured=false;try{configured=isDokuConfigured();}catch{/* configuration error, no provider call */}
+    if (!configured) throw new BillingError(503,'PAYMENT_GATEWAY_NOT_CONFIGURED');
+    const allowedChannels=policy.methods;
+    const quote={...await createQuote(db,tenantId,req.body || {}),allowedChannels,paymentIntegration:policy.integration,paymentMode:policy.mode};
     if (quote.amount<=0) throw new BillingError(409,'ZERO_CHARGE_REQUIRES_SUPPORT');
     const origin=process.env.PUBLIC_APP_URL;
-    if (!origin || !/^https:\/\//.test(origin)) throw new BillingError(503,'PUBLIC_APP_URL_NOT_CONFIGURED');
+    if (!origin || !/^https:\/\/[^/?#@]+\/?$/.test(origin)) throw new BillingError(503,'PUBLIC_APP_URL_NOT_CONFIGURED');
     const id=randomUUID(),invoiceNumber=`NH-${id}`;
     // Persist intent BEFORE external checkout. A fast webhook cannot outrun it.
-    const result=await db.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,amount,currency,due_date,invoice_number,quote,checkout_key)
-      SELECT $1,id,tenant_id,$3,'IDR',now()+interval '24 hours',$4,$5::jsonb,$6 FROM billing.subscriptions
-      WHERE tenant_id=$2 ON CONFLICT(tenant_id,checkout_key) DO NOTHING RETURNING *`,[id,tenantId,quote.amount,invoiceNumber,JSON.stringify(quote),key]);
+    const result=await db.tx(async c=>{
+      await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
+      const current=(await c.query('SELECT revision FROM billing.subscriptions WHERE tenant_id=$1 FOR UPDATE',[tenantId])).rows[0];
+      if(Number(current?.revision)!==quote.revision)throw new BillingError(409,'CHECKOUT_QUOTE_CHANGED');
+      const held=(await c.query(`SELECT id FROM billing.invoices WHERE tenant_id=$1 AND reconciliation_status='REVIEW'
+        AND reconciliation_note=ANY($3::text[])
+        AND quote->>'revision'=$2::text LIMIT 1`,[tenantId,quote.revision,FINANCIAL_HOLD_REASONS])).rows[0];
+      if(held)throw new BillingError(409,'PAYMENT_REVIEW_REQUIRED');
+      const sameKey=(await c.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2',[tenantId,key])).rows[0];
+      if(sameKey?.payment_status==='PAID')return {rowCount:0,rows:[sameKey]};
+      if(sameKey && (providerOrderTerminal(sameKey) || new Date(sameKey.due_date).getTime()<=Date.now()))throw new BillingError(409,'CHECKOUT_EXPIRED');
+      if(sameKey && !providerOrderTerminal(sameKey) && new Date(sameKey.due_date).getTime()>Date.now())return {rowCount:0,rows:[sameKey]};
+      // Different tabs/devices must not create two payable orders for one
+      // subscription revision. Old timed-out intents require inquiry/review.
+      const open=(await c.query(`SELECT * FROM billing.invoices WHERE tenant_id=$1 AND payment_status='PENDING'
+        AND reconciliation_note IS DISTINCT FROM 'PROVIDER_ORDER_EXPIRED' AND reconciliation_note IS DISTINCT FROM 'PROVIDER_CANCELLED'
+        AND due_date>now() AND quote->>'revision'=$2::text ORDER BY created_at LIMIT 1`,[tenantId,quote.revision])).rows[0];
+      if(open){
+        if(open.quote?.planId!==quote.planId || open.quote?.billingCycle!==quote.billingCycle || open.quote?.extraOutlets!==quote.extraOutlets)throw new BillingError(409,'CHECKOUT_PENDING_EXISTS');
+        return {rowCount:0,rows:[open]};
+      }
+      return c.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,amount,currency,due_date,invoice_number,quote,checkout_key)
+        SELECT $1,id,tenant_id,$3,'IDR',now()+interval '24 hours',$4,$5::jsonb,$6 FROM billing.subscriptions
+        WHERE tenant_id=$2 RETURNING *`,[id,tenantId,quote.amount,invoiceNumber,JSON.stringify(quote),key]);
+    });
     if(!result.rowCount){
-      const existing=(await db.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2',[tenantId,key])).rows[0];
+      const existing=result.rows[0];
       if(existing?.quote?.planId!==quote.planId || existing?.quote?.billingCycle!==quote.billingCycle || existing?.quote?.extraOutlets!==quote.extraOutlets) throw new BillingError(409,'CHECKOUT_KEY_CONFLICT');
-      if(!existing.payment_link_url) throw new BillingError(409,'CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW');
-      return res.json({ok:true,paymentUrl:existing.payment_link_url,invoice:serializeInvoice(existing),quote:existing.quote,replayed:true});
+      if(existing.payment_status==='PAID') return res.json({ok:true,paid:existing.reconciliation_status==='APPLIED',invoice:serializeInvoice(existing),replayed:true});
+      // Never reuse a historical multi-method/unknown Checkout URL under the
+      // QRIS-only release policy, or create a second order to bypass that hold.
+      if(!isQrisCheckoutInvoice(existing))
+        throw new BillingError(409,'CHECKOUT_SCOPE_REVIEW_REQUIRED');
+      if(new Date(existing.due_date).getTime()<=Date.now()) throw new BillingError(409,'CHECKOUT_EXPIRED');
+      const paymentUrl=invoicePaymentUrl(existing,quote.revision);
+      if(!paymentUrl) throw new BillingError(409,'CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW');
+      return res.json({ok:true,paymentUrl,invoice:serializeInvoice(existing,quote.revision),quote:existing.quote,replayed:true});
     }
     try {
       const checkout=await checkoutProvider({order:{invoice_number:invoiceNumber,amount:quote.amount,currency:'IDR',
-        callback_url:`${origin.replace(/\/$/,'')}/#payment?invoice=${id}`,auto_redirect:true,
-        line_items:[{name:`${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`,price:quote.amount,quantity:1}]},payment:{payment_due_date:1440}});
+        callback_url:`${origin.replace(/\/$/,'')}/subscription?invoice=${id}`,auto_redirect:true,
+        line_items:[{name:`${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`,price:quote.amount,quantity:1}]},payment:{payment_due_date:1440,payment_method_types:allowedChannels}});
       await db.query('UPDATE billing.invoices SET payment_link_url=$2 WHERE id=$1',[id,checkout.paymentUrl]);
-      res.json({ok:true,paymentUrl:checkout.paymentUrl,invoice:serializeInvoice({...result.rows[0],payment_link_url:checkout.paymentUrl}),quote});
+      const fresh=(await db.query('SELECT * FROM billing.invoices WHERE id=$1',[id])).rows[0];
+      const current=(await db.query('SELECT revision FROM billing.subscriptions WHERE tenant_id=$1',[tenantId])).rows[0];
+      res.json({ok:true,paid:fresh.payment_status==='PAID' && fresh.reconciliation_status==='APPLIED',paymentUrl:invoicePaymentUrl(fresh,Number(current.revision)),invoice:serializeInvoice(fresh,Number(current.revision)),quote});
     } catch(err) {
-      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='CHECKOUT_RESPONSE_FAILED' WHERE id=$1 AND payment_status<>'PAID'",[id]);
+      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=coalesce(reconciliation_note,'CHECKOUT_RESPONSE_FAILED') WHERE id=$1 AND payment_status<>'PAID'",[id]);
       throw err;
     }
   }));
@@ -150,47 +190,23 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     else {query+=' ORDER BY created_at DESC LIMIT 1';}
     const {rows}=await db.query(query,params);
     const inv=rows[0];
-    if(!inv){
-      const statusData=await subscriptionStatus(db,tenantId);
-      return res.json({ok:true,status:statusData.subscription.status,paid:statusData.subscription.status==='ACTIVE'});
-    }
-    if(inv.payment_status==='PAID'){
-      const statusData=await subscriptionStatus(db,tenantId);
-      return res.json({ok:true,paid:true,status:statusData.subscription.status,invoice:serializeInvoice(inv),subscription:statusData.subscription});
-    }
-    if(isDokuConfigured()){
-      try{
-        const inquiry=await checkDokuOrderStatus(inv.invoice_number);
-        if(inquiry.ok && inquiry.status==='SUCCESS'){
-          // Same fail-closed channel policy as the signed webhook: an unknown
-          // or unapproved channel is recorded for review, never relabelled.
-          let allowedChannels:string[]=[];
-          try{allowedChannels=getDokuAllowedChannels();}catch{/* empty → validation issue below */}
-          const channel=String(inquiry.channelId || '');
-          const issue=!channel || !allowedChannels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':undefined;
-          const result=await reconcilePayment(db,{
-            eventKey:`inquiry-${inv.invoice_number}-${String(inquiry.transactionId || 'unknown')}`,
-            validationIssue:issue,
-            invoiceNumber:inv.invoice_number,
-            reference:String(inquiry.transactionId || `inquiry-${Date.now()}`),
-            amount:Number(inv.amount),
-            currency:inv.currency || 'IDR',
-            success:true,
-            channel,
-            contentDigest:generateDigest(JSON.stringify(inquiry.rawResponse || {})),
-            payload:{status:'SUCCESS',channel,source:'INQUIRY'}
-          });
-          const statusData=await subscriptionStatus(db,tenantId);
-          // Paid only when the ledger actually applied it; REVIEW stays pending for support.
-          const applied=result.outcome==='APPLIED' || result.outcome==='DUPLICATE';
-          return res.json({ok:true,paid:applied,reconciled:applied,outcome:result.outcome,reason:(result as {reason?:string}).reason,
-            status:applied?statusData.subscription.status:'PENDING_PAYMENT',subscription:statusData.subscription});
+    if(!inv) throw new BillingError(404,'INVOICE_NOT_FOUND');
+    if(inv.payment_status!=='PAID' || inv.reconciliation_status!=='APPLIED') {
+      let configured=false;try{configured=isDokuConfigured();}catch{/* fail closed */}
+      if(configured) {
+        try {
+          await reconcileInvoiceByInquiry(db,inv,inquiryProvider,{now:inquiryClock,observeOnly:req.query.inquire!=='1'});
+        } catch {
+          // Never log raw provider/driver errors (may contain payment tokens).
+          console.warn('[doku-verify] INQUIRY_UNAVAILABLE');
         }
-      }catch(err:any){
-        console.warn('[doku-verify] Inquiry check failed:',err.message);
       }
     }
-    res.json({ok:true,paid:false,status:'PENDING_PAYMENT',invoice:serializeInvoice(inv)});
+    const fresh=(await db.query('SELECT * FROM billing.invoices WHERE id=$1 AND tenant_id=$2',[inv.id,tenantId])).rows[0];
+    const statusData=await subscriptionStatus(db,tenantId);
+    const paid=fresh.payment_status==='PAID' && fresh.reconciliation_status==='APPLIED';
+    res.json({ok:true,paid,status:paid?statusData.subscription.status:'PENDING_PAYMENT',
+      invoice:statusData.invoices.find((i:any)=>i.id===fresh.id) || serializeInvoice(fresh,-1),subscription:statusData.subscription});
   }));
   // Never expose an endpoint that turns a client request into money received.
   app.post('/api/v1/subscription/simulate-payment',(_req,res)=>res.status(403).json({ok:false,error:'PAYMENT_SIMULATION_DISABLED'}));
@@ -204,13 +220,14 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     let body:any;try{body=JSON.parse(raw.toString('utf8'));}catch{throw new BillingError(400,'INVALID_NOTIFICATION_JSON');}
     if(!body || typeof body!=='object' || Array.isArray(body))throw new BillingError(400,'INVALID_NOTIFICATION_BODY');
     const status=String(body?.transaction?.status || '');
-    const channel=typeof body?.channel?.id==='string'?body.channel.id:'';
+    const evidence=dokuChannelEvidence(body),channel=evidence.channel;
+    const stableReference=dokuPaymentReference(body);
     const invoice=body?.order?.invoice_number,amount=body?.order?.amount;
     if(typeof invoice!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(invoice) ||
       !['string','number'].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount)))throw new BillingError(400,'INVALID_NOTIFICATION_ORDER');
-    const issue=!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':!['SUCCESS','FAILED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined;
+    const issue=evidence.issue || (!channel || !channels.includes(channel)?'UNAPPROVED_PAYMENT_CHANNEL':channel==='QRIS' && !stableReference?'QRIS_PAYMENT_REFERENCE_MISSING':['REFUNDED','PARTIAL_REFUNDED'].includes(status)?'REFUND_REQUIRES_REVIEW':['VOIDED','REVERSED'].includes(status)?'REVERSAL_REQUIRES_REVIEW':!['SUCCESS','FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(status)?'UNKNOWN_PAYMENT_STATUS':undefined);
     const result=await reconcilePayment(db,{eventKey:String(req.headers['request-id'] || ''),
-      invoiceNumber:invoice,reference:String(body?.transaction?.original_request_id || req.headers['request-id'] || '').slice(0,128),
+      integration:'DOKU_CHECKOUT',invoiceNumber:invoice,reference:stableReference || (['QRIS','QRIS_DOKU'].includes(evidence.providerChannel)?'missing-qris-reference':String(req.headers['request-id'] || '')),providerChannel:evidence.providerChannel,
       amount:Number(amount),currency:body?.order?.currency===undefined?'IDR':String(body.order.currency),success:status==='SUCCESS',
       channel,validationIssue:issue,contentDigest:generateDigest(raw),payload:{status,channel,requestTimestamp:req.headers['request-timestamp']}});
     res.json(result);

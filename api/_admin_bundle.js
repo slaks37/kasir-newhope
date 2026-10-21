@@ -1,3 +1,27 @@
+// services/shared/releaseGates.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidAllowlist(value) {
+  const ids = (value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (ids.some((id) => !UUID.test(id))) throw Error("RELEASE_ALLOWLIST_INVALID");
+  return [...new Set(ids)];
+}
+function betaAccessError(subject, env = process.env) {
+  if (!env.BETA_ACCESS_MODE || env.BETA_ACCESS_MODE === "open") return;
+  if (env.BETA_ACCESS_MODE !== "invite_only") return "BETA_CONFIGURATION_INVALID";
+  try {
+    return uuidAllowlist(env.BETA_ALLOWED_SUBJECTS).includes(subject.toLowerCase()) ? void 0 : "BETA_INVITE_REQUIRED";
+  } catch {
+    return "BETA_CONFIGURATION_INVALID";
+  }
+}
+function checkoutPilotAllowed(tenantId, env = process.env) {
+  try {
+    return uuidAllowlist(env.DOKU_CHECKOUT_PILOT_TENANTS).includes(tenantId.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 // api/_runtime.ts
 import express2 from "express";
 
@@ -114,8 +138,268 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
+// api/_doku.ts
+import crypto from "node:crypto";
+
+// services/billing/dokuChannelEvidence.ts
+function dokuChannelEvidence(body) {
+  const raw = body?.channel?.id;
+  const providerChannel = typeof raw === "string" && /^[A-Z0-9_]{1,100}$/.test(raw) ? raw : "";
+  if (providerChannel === "QRIS_DOKU") {
+    if (body?.service?.id !== "QRIS" || body?.acquirer?.id !== "DOKU") return { channel: "", providerChannel, issue: "QRIS_CHANNEL_IDENTITY_MISMATCH" };
+    return { channel: "QRIS", providerChannel };
+  }
+  if (providerChannel === "QRIS" && (body?.service?.id !== void 0 && body.service.id !== "QRIS" || body?.acquirer?.id !== void 0 && body.acquirer.id !== "DOKU")) {
+    return { channel: "", providerChannel, issue: "QRIS_CHANNEL_IDENTITY_MISMATCH" };
+  }
+  return { channel: providerChannel, providerChannel };
+}
+function dokuPaymentReference(body) {
+  const evidence = dokuChannelEvidence(body);
+  if (evidence.issue) return void 0;
+  const approval = evidence.channel === "QRIS" ? body?.emoney_payment?.approval_code : void 0;
+  const ref = approval ?? body?.transaction?.original_request_id ?? body?.transaction?.reference_id;
+  return typeof ref === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(ref) ? ref : void 0;
+}
+
+// api/_doku.ts
+function isDokuConfigured() {
+  const clientId = getDokuClientId();
+  const secretKey = getDokuSecretKey();
+  return Boolean(clientId && secretKey && !clientId.includes("sandbox_dummy"));
+}
+function getDokuClientId() {
+  return validateDokuBrandClientId(process.env.DOKU_CLIENT_ID || "");
+}
+function validateDokuBrandClientId(value) {
+  const id = value.replace(/["']/g, "").trim();
+  if (/^BSN-/i.test(id)) throw new Error("DOKU_BRAND_CLIENT_ID_REQUIRED");
+  return id;
+}
+function validateDokuPaymentUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("DOKU_PAYMENT_URL_INVALID");
+  }
+  const sandbox = getDokuApiUrl() === "https://api-sandbox.doku.com";
+  const hosts = sandbox ? ["sandbox.doku.com"] : ["checkout.doku.com", "jokul.doku.com"];
+  if (url.protocol !== "https:" || url.username || url.password || url.port || !hosts.includes(url.hostname)) {
+    throw new Error("DOKU_PAYMENT_URL_INVALID");
+  }
+  return url.href;
+}
+function getDokuSecretKey() {
+  return (process.env.DOKU_SECRET_KEY || "").replace(/["']/g, "").trim();
+}
+var DOKU_API_URLS = /* @__PURE__ */ new Set(["https://api.doku.com", "https://api-sandbox.doku.com"]);
+function getDokuApiUrl() {
+  const raw = (process.env.DOKU_API_URL || "https://api.doku.com").replace(/["']/g, "").trim().replace(/\/+$/, "");
+  if (!DOKU_API_URLS.has(raw)) throw new Error("DOKU_API_URL_NOT_ALLOWED");
+  return raw;
+}
+var DOKU_NOTIFICATION_PATH = "/api/v1/webhooks/doku";
+function getDokuAllowedChannels() {
+  const raw = (process.env.DOKU_ALLOWED_CHANNELS || "").replace(/["']/g, "").trim();
+  const channels = raw.split(",").map((x) => x.trim()).filter(Boolean);
+  if (!channels.length || channels.some((x) => !/^[A-Z0-9_]{1,100}$/.test(x))) {
+    throw new Error("DOKU_CHANNEL_SCOPE_NOT_CONFIGURED");
+  }
+  return [...new Set(channels)];
+}
+function generateDigest(body) {
+  const content = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  return crypto.createHash("sha256").update(content).digest("base64");
+}
+function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest3, secretKey) {
+  const componentSignature = `Client-Id:${clientId}
+Request-Id:${requestId}
+Request-Timestamp:${requestTimestamp}
+Request-Target:${requestTarget}
+Digest:${digest3}`;
+  const hmac = crypto.createHmac("sha256", secretKey);
+  hmac.update(componentSignature, "utf8");
+  const hmacBase64 = hmac.digest("base64");
+  return `HMACSHA256=${hmacBase64}`;
+}
+function generateGetSignature(clientId, requestId, requestTimestamp, requestTarget, secretKey) {
+  const componentSignature = `Client-Id:${clientId}
+Request-Id:${requestId}
+Request-Timestamp:${requestTimestamp}
+Request-Target:${requestTarget}`;
+  const hmac = crypto.createHmac("sha256", secretKey);
+  hmac.update(componentSignature, "utf8");
+  const hmacBase64 = hmac.digest("base64");
+  return `HMACSHA256=${hmacBase64}`;
+}
+async function createDokuCheckout(payload) {
+  const clientId = getDokuClientId();
+  const secretKey = getDokuSecretKey();
+  const apiUrl = getDokuApiUrl();
+  if (!clientId || !secretKey) {
+    throw new Error("DOKU_CREDENTIALS_NOT_CONFIGURED");
+  }
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(payload.order.invoice_number) || !Number.isSafeInteger(payload.order.amount) || payload.order.amount <= 0 || payload.order.amount > 999999999999) {
+    throw new Error("DOKU_CHECKOUT_ORDER_INVALID");
+  }
+  const requestId = payload.order.invoice_number;
+  const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
+  const requestTarget = "/checkout/v1/payment";
+  const digest3 = generateDigest(payload);
+  const signature = generateSignature(
+    clientId,
+    requestId,
+    requestTimestamp,
+    requestTarget,
+    digest3,
+    secretKey
+  );
+  const response = await fetch(`${apiUrl}${requestTarget}`, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      "Content-Type": "application/json",
+      "Client-Id": clientId,
+      "Request-Id": requestId,
+      "Request-Timestamp": requestTimestamp,
+      "Signature": signature
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15e3)
+  });
+  const data = await response.json();
+  if (!response.ok || !data.response?.payment?.url) {
+    throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
+  }
+  const echoed = data.response.order;
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount || echoed.currency !== void 0 && echoed.currency !== (payload.order.currency || "IDR")) {
+    throw new Error("DOKU_CHECKOUT_ORDER_MISMATCH");
+  }
+  const returnedMethods = data.response.payment.payment_method_types, requestedMethods = payload.payment.payment_method_types;
+  if (returnedMethods !== void 0 && requestedMethods && (!Array.isArray(returnedMethods) || !returnedMethods.length || returnedMethods.some((method) => !requestedMethods.includes(method)) || requestedMethods.some((method) => !returnedMethods.includes(method))))
+    throw new Error("DOKU_CHECKOUT_METHOD_MISMATCH");
+  return {
+    paymentUrl: validateDokuPaymentUrl(data.response.payment.url),
+    rawResponse: data
+  };
+}
+async function checkDokuOrderStatus(invoiceNumber) {
+  const clientId = getDokuClientId();
+  const secretKey = getDokuSecretKey();
+  const apiUrl = getDokuApiUrl();
+  if (!clientId || !secretKey) {
+    throw new Error("DOKU_CREDENTIALS_NOT_CONFIGURED");
+  }
+  const requestId = crypto.randomUUID();
+  const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(invoiceNumber)) throw new Error("DOKU_INVOICE_INVALID");
+  const requestTarget = `/orders/v1/status/${encodeURIComponent(invoiceNumber)}`;
+  const signature = generateGetSignature(
+    clientId,
+    requestId,
+    requestTimestamp,
+    requestTarget,
+    secretKey
+  );
+  const response = await fetch(`${apiUrl}${requestTarget}`, {
+    method: "GET",
+    redirect: "error",
+    headers: {
+      "Client-Id": clientId,
+      "Request-Id": requestId,
+      "Request-Timestamp": requestTimestamp,
+      "Signature": signature
+    },
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { ok: false, status: "UNKNOWN" };
+    }
+    throw new Error(`DOKU_STATUS_INQUIRY_HTTP_${response.status}`);
+  }
+  const data = await response.json();
+  const txStatus = String(data?.transaction?.status || data?.order?.status || "").toUpperCase();
+  const status = ["SUCCESS", "FAILED", "EXPIRED", "ORDER_EXPIRED", "CANCELLED", "REFUNDED"].includes(txStatus) ? txStatus : ["PENDING", "WAITING", "ORDER_GENERATED"].includes(txStatus) ? "PENDING" : "UNKNOWN";
+  const rawAmount = data?.order?.amount;
+  const amount = ["string", "number"].includes(typeof rawAmount) && /^\d+(?:\.0{1,2})?$/.test(String(rawAmount)) && Number.isSafeInteger(Number(rawAmount)) ? Number(rawAmount) : void 0;
+  return {
+    ok: true,
+    status,
+    invoiceNumber: typeof data?.order?.invoice_number === "string" ? data.order.invoice_number : void 0,
+    amount,
+    currency: data?.order?.currency === void 0 ? "IDR" : String(data.order.currency),
+    transactionId: dokuPaymentReference(data),
+    channelId: dokuChannelEvidence(data).channel,
+    providerChannelId: dokuChannelEvidence(data).providerChannel,
+    validationIssue: dokuChannelEvidence(data).issue,
+    rawResponse: data
+  };
+}
+function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.now()) {
+  const secretKey = getDokuSecretKey();
+  if (!secretKey) return false;
+  const getHeader = (key) => {
+    const matches = Object.entries(headers).filter(([name]) => name.toLowerCase() === key.toLowerCase());
+    if (matches.length !== 1) return "";
+    const val = matches[0][1];
+    if (Array.isArray(val)) return "";
+    return typeof val === "string" ? val : "";
+  };
+  const clientId = getHeader("Client-Id");
+  const requestId = getHeader("Request-Id");
+  const requestTimestamp = getHeader("Request-Timestamp");
+  const incomingSignature = getHeader("Signature");
+  if (!clientId || clientId !== getDokuClientId() || !requestId || !requestTimestamp || !incomingSignature) {
+    return false;
+  }
+  if (!/^[\x21-\x7e]{1,128}$/.test(requestId) || requestId.includes(",")) return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(requestTimestamp)) return false;
+  const time = Date.parse(requestTimestamp);
+  if (!Number.isFinite(time) || new Date(time).toISOString().replace(".000Z", "Z") !== requestTimestamp.replace(".000Z", "Z")) return false;
+  if (time > now + 5 * 6e4 || now - time > 13 * 60 * 6e4) return false;
+  const digest3 = generateDigest(rawBody);
+  const expectedSignature = generateSignature(
+    clientId,
+    requestId,
+    requestTimestamp,
+    requestTarget,
+    digest3,
+    secretKey
+  );
+  try {
+    const bufA = Buffer.from(incomingSignature, "utf8");
+    const bufB = Buffer.from(expectedSignature, "utf8");
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
+// services/billing/invoicePaymentPolicy.ts
+var FINANCIAL_HOLD_REASONS = ["EXTERNAL_CONFLICT_REQUIRES_REVIEW", "PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
+function financialReviewHold(i) {
+  return FINANCIAL_HOLD_REASONS.some((reason) => reason === i?.reconciliation_note) ? i.reconciliation_note : void 0;
+}
+function isQrisCheckoutInvoice(i) {
+  return i?.quote?.paymentIntegration === "DOKU_CHECKOUT" && Array.isArray(i.quote.allowedChannels) && i.quote.allowedChannels.length === 1 && i.quote.allowedChannels[0] === "QRIS";
+}
+function providerOrderTerminal(i) {
+  return ["PROVIDER_ORDER_EXPIRED", "PROVIDER_CANCELLED", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW"].includes(i?.reconciliation_note);
+}
+function invoicePaymentUrl(i, currentRevision) {
+  if (process.env.DOKU_PAYMENTS_ENABLED?.trim() !== "1" || !checkoutPilotAllowed(i?.tenant_id || "") || !isQrisCheckoutInvoice(i) || i.payment_status !== "PENDING" || i.reconciliation_status !== "PENDING" || providerOrderTerminal(i) || ["PROVIDER_EXPIRED", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"].includes(i.reconciliation_note) || !Number.isFinite(new Date(i.due_date).getTime()) || new Date(i.due_date).getTime() <= Date.now() || currentRevision !== void 0 && i.quote.revision !== currentRevision) return null;
+  try {
+    return validateDokuPaymentUrl(i.payment_link_url);
+  } catch {
+    return null;
+  }
+}
+
 // services/billing/routes.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
@@ -208,43 +492,21 @@ async function tenantForPrincipal(db, principal) {
   return null;
 }
 
-// services/pos/businessScope.ts
-var BusinessScopeError = class extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-};
-async function resolveBusinessScope(db, subject, sector, businessId) {
-  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
-    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) {
-    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-    return null;
-  }
-  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
-      AND m.business_sector=$3 AND m.is_active
-      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
-  const rows = result.rows;
-  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
-  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
-  if (!selected) {
-    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
-    return null;
-  }
-  return {
-    tenantId,
-    merchantId: selected.merchant_id,
-    businessName: selected.business_name,
-    transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
-  };
+// services/billing/dokuSubscriptionPolicy.ts
+function dokuSubscriptionPolicy() {
+  const mode = (process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE || "dynamic_qris_checkout").trim();
+  if (mode !== "dynamic_qris_checkout" && mode !== "checkout") throw new Error("DOKU_SUBSCRIPTION_PRODUCT_UNAVAILABLE");
+  const methods = getDokuAllowedChannels();
+  if (methods.includes("QRIS_DOKU")) throw new Error("DOKU_CHECKOUT_METHOD_INVALID");
+  if (methods.length !== 1 || methods[0] !== "QRIS") throw new Error("DOKU_DYNAMIC_QRIS_SCOPE_REQUIRED");
+  return { mode, methods, integration: "DOKU_CHECKOUT" };
 }
+
+// services/billing/recovery.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+
+// services/billing/engine.ts
+import { randomUUID } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -377,61 +639,6 @@ function addBillingPeriod(start, cycle) {
   return end;
 }
 
-// services/billing/freePlan.ts
-var FreePlanAccessError = class extends Error {
-};
-async function validateFreeBranchSelection(db, ownerId, value) {
-  const selection = validateFreeSelection(value);
-  const { rows } = await db.query(`SELECT o.tenant_id FROM internal.outlets o
-    JOIN internal.tenants t ON t.id=o.tenant_id
-    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active AND o.is_active
-      AND m.business_sector=$3`, [selection.branchId, ownerId, selection.sector]);
-  if (!rows.length) throw new FreePlanAccessError("BRANCH_NOT_OWNED");
-  const existing = await db.query(
-    `SELECT p.external_ref FROM pos.products p
-    JOIN internal.tenants t ON t.id=p.tenant_id WHERE t.owner_user_ref=$1
-      AND p.external_ref=ANY($2::text[]) AND p.business_sector=$3
-      AND (p.tenant_id<>$4::uuid OR p.outlet_id IS DISTINCT FROM $5::uuid)`,
-    [ownerId, selection.productIds, selection.sector, rows[0].tenant_id, selection.branchId]
-  );
-  if (existing.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
-  return selection;
-}
-async function freePlanState(db, tenantId) {
-  const { rows } = await db.query("SELECT * FROM contract.free_plan_entitlements WHERE tenant_id=$1", [tenantId]);
-  const s = rows[0];
-  if (!s || !s.is_active) return { free: false };
-  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() });
-  return { free, ownerId: s.owner_user_ref, selection: free && s.free_selection ? validateFreeSelection(s.free_selection) : void 0 };
-}
-function assertFreeScope(state, sector, productRefs) {
-  if (!state.free) return;
-  if (!state.selection || state.selection.sector !== sector) throw new FreePlanAccessError("FREE_SELECTION_REQUIRED");
-  if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
-}
-async function resolveFreeSyncScope(db, ownerId, sector) {
-  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
-    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
-    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
-  const entitlement = rows[0];
-  if (!entitlement) return void 0;
-  if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
-  if (!isFreePlan({ status: entitlement.status, planId: entitlement.plan_id, currentPeriodEnd: new Date(entitlement.current_period_end).toISOString() })) return void 0;
-  const selection = entitlement.free_selection ? validateFreeSelection(entitlement.free_selection) : void 0;
-  assertFreeScope({ free: true, selection }, sector, []);
-  const result = await db.query(`SELECT o.tenant_id, o.merchant_id, o.id AS outlet_id
-    FROM internal.outlets o JOIN internal.tenants t ON t.id=o.tenant_id
-    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active
-      AND o.is_active AND m.business_sector=$3`, [selection.branchId, ownerId, sector]);
-  if (!result.rows.length) throw new FreePlanAccessError("FREE_BRANCH_UNAVAILABLE");
-  return result.rows[0];
-}
-
-// services/billing/engine.ts
-import { randomUUID } from "node:crypto";
-
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
   if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
@@ -499,6 +706,58 @@ function manualTierChange(sub, input, outletCount, now = /* @__PURE__ */ new Dat
   };
 }
 
+// services/billing/freePlan.ts
+var FreePlanAccessError = class extends Error {
+};
+async function validateFreeBranchSelection(db, ownerId, value) {
+  const selection = validateFreeSelection(value);
+  const { rows } = await db.query(`SELECT o.tenant_id FROM internal.outlets o
+    JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active AND o.is_active
+      AND m.business_sector=$3`, [selection.branchId, ownerId, selection.sector]);
+  if (!rows.length) throw new FreePlanAccessError("BRANCH_NOT_OWNED");
+  const existing = await db.query(
+    `SELECT p.external_ref FROM pos.products p
+    JOIN internal.tenants t ON t.id=p.tenant_id WHERE t.owner_user_ref=$1
+      AND p.external_ref=ANY($2::text[]) AND p.business_sector=$3
+      AND (p.tenant_id<>$4::uuid OR p.outlet_id IS DISTINCT FROM $5::uuid)`,
+    [ownerId, selection.productIds, selection.sector, rows[0].tenant_id, selection.branchId]
+  );
+  if (existing.rows.length) throw new FreePlanAccessError("FREE_PRODUCT_BRANCH_MISMATCH");
+  return selection;
+}
+async function freePlanState(db, tenantId) {
+  const { rows } = await db.query("SELECT * FROM contract.free_plan_entitlements WHERE tenant_id=$1", [tenantId]);
+  const s = rows[0];
+  if (!s || !s.is_active) return { free: false };
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() });
+  return { free, ownerId: s.owner_user_ref, selection: free && s.free_selection ? validateFreeSelection(s.free_selection) : void 0 };
+}
+function assertFreeScope(state, sector, productRefs) {
+  if (!state.free) return;
+  if (!state.selection || state.selection.sector !== sector) throw new FreePlanAccessError("FREE_SELECTION_REQUIRED");
+  if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
+}
+async function resolveFreeSyncScope(db, ownerId, sector) {
+  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
+    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
+    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
+  const entitlement = rows[0];
+  if (!entitlement) return void 0;
+  if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
+  if (!isFreePlan({ status: entitlement.status, planId: entitlement.plan_id, currentPeriodEnd: new Date(entitlement.current_period_end).toISOString() })) return void 0;
+  const selection = entitlement.free_selection ? validateFreeSelection(entitlement.free_selection) : void 0;
+  assertFreeScope({ free: true, selection }, sector, []);
+  const result = await db.query(`SELECT o.tenant_id, o.merchant_id, o.id AS outlet_id
+    FROM internal.outlets o JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active
+      AND o.is_active AND m.business_sector=$3`, [selection.branchId, ownerId, sector]);
+  if (!result.rows.length) throw new FreePlanAccessError("FREE_BRANCH_UNAVAILABLE");
+  return result.rows[0];
+}
+
 // services/billing/engine.ts
 var BillingError = class extends Error {
   constructor(status, message) {
@@ -563,7 +822,15 @@ function serializeSubscription(s) {
     hasUsedTrial: Boolean(s.has_used_trial)
   };
 }
-function serializeInvoice(i) {
+function invoicePaymentState(i, now = Date.now()) {
+  if (i.payment_status === "PAID" || i.payment_status === "REFUNDED") return i.payment_status;
+  const observed = String(i.reconciliation_note || "").replace("PROVIDER_", "");
+  if (observed === "ORDER_EXPIRED") return "EXPIRED";
+  if (["FAILED", "EXPIRED", "CANCELLED"].includes(observed)) return observed;
+  if (new Date(i.due_date).getTime() <= now) return "EXPIRED";
+  return i.payment_status;
+}
+function serializeInvoice(i, currentRevision) {
   return {
     id: i.id,
     invoiceNumber: i.invoice_number,
@@ -571,12 +838,13 @@ function serializeInvoice(i) {
     tenantId: i.tenant_id,
     amount: Number(i.amount),
     currency: i.currency,
-    paymentStatus: i.payment_status,
+    paymentStatus: invoicePaymentState(i),
     paymentGatewayRef: i.payment_gateway_ref,
-    paymentLinkUrl: i.payment_link_url,
+    paymentLinkUrl: invoicePaymentUrl(i, currentRevision),
     paidAt: i.paid_at,
     dueDate: i.due_date,
     createdAt: i.created_at,
+    planId: i.quote?.planId,
     planName: i.quote?.planName || "Tagihan legacy",
     billingCycle: i.quote?.billingCycle,
     extraOutlets: i.quote?.extraOutlets,
@@ -618,7 +886,7 @@ async function subscriptionStatus(db, tenantId) {
     trialDays: TRIAL_DAYS,
     hasUsedTrial: Boolean(s.has_used_trial),
     outlets: { used: free ? sub.freeSelection ? 1 : 0 : retainedOutlets, retained: retainedOutlets, included: sub.plan?.maxOutlets ?? 2, extra: free ? 0 : Number(s.extra_outlets), limit: free ? 1 : (sub.plan?.maxOutlets ?? 2) + Number(s.extra_outlets) },
-    invoices: invoices.rows.map(serializeInvoice)
+    invoices: invoices.rows.map((i) => serializeInvoice(i, Number(s.revision)))
   };
 }
 async function createQuote(db, tenantId, input) {
@@ -640,16 +908,23 @@ async function reconcilePayment(db, notice) {
     let sub;
     if (inv) {
       sub = (await c.query("SELECT * FROM billing.subscriptions WHERE id=$1 FOR UPDATE", [inv.subscription_id])).rows[0];
-      if (inv.payment_status === "PAID" && inv.reconciliation_status === "APPLIED") {
-        outcome = "DUPLICATE";
-        reason = "ALREADY_APPLIED";
-      } else if (Number(inv.amount) !== notice.amount || inv.currency !== notice.currency) reason = "AMOUNT_OR_CURRENCY_MISMATCH";
+      if (notice.validationIssue === "REFUND_REQUIRES_REVIEW" || notice.validationIssue === "REVERSAL_REQUIRES_REVIEW") reason = notice.validationIssue;
+      else if (Number(inv.amount) !== notice.amount || inv.currency !== notice.currency) reason = "AMOUNT_OR_CURRENCY_MISMATCH";
       else if (notice.validationIssue) reason = notice.validationIssue;
+      else if (notice.integration === "DOKU_CHECKOUT" && !isQrisCheckoutInvoice(inv)) reason = "LEGACY_INVOICE_NEEDS_REVIEW";
       else if (inv.quote?.allowedChannels && !inv.quote.allowedChannels.includes(notice.channel)) reason = "INVOICE_CHANNEL_MISMATCH";
-      else if (!notice.success) {
-        outcome = "FAILED";
-        reason = "CHECKOUT_ATTEMPT_FAILED";
+      else if (financialReviewHold(inv)) reason = financialReviewHold(inv);
+      else if (inv.payment_status === "PAID" && inv.reconciliation_status === "APPLIED") {
+        if (inv.payment_gateway_ref !== notice.reference) reason = "PROVIDER_REFERENCE_CONFLICT";
+        else {
+          outcome = "DUPLICATE";
+          reason = "ALREADY_APPLIED";
+        }
+      } else if (!notice.success) {
+        outcome = notice.payload?.status === "PENDING" ? "PENDING" : "FAILED";
+        reason = "PROVIDER_" + (["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(notice.payload?.status) ? notice.payload.status : "FAILED");
       } else if (!inv.quote) reason = "LEGACY_INVOICE_NEEDS_REVIEW";
+      else if (providerOrderTerminal(inv)) reason = "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW";
       else if (inv.quote.revision !== Number(sub.revision)) reason = "STALE_SUBSCRIPTION_REVISION";
       else if (await outletUsage(c, inv.tenant_id) > inv.quote.maxOutlets) reason = "OUTLET_LIMIT_BELOW_USAGE";
       else {
@@ -659,8 +934,9 @@ async function reconcilePayment(db, notice) {
     }
     const payload = {
       contentDigest: notice.contentDigest || null,
-      status: notice.success ? "SUCCESS" : notice.payload?.status === "FAILED" ? "FAILED" : "OTHER",
+      status: notice.success ? "SUCCESS" : ["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED", "REFUNDED", "PARTIAL_REFUNDED", "REVERSED", "VOIDED"].includes(notice.payload?.status) ? notice.payload.status : "OTHER",
       channel: (notice.channel || "").slice(0, 100),
+      providerChannel: (notice.providerChannel || notice.channel || "").slice(0, 100),
       requestTimestamp: typeof notice.payload?.requestTimestamp === "string" ? notice.payload.requestTimestamp.slice(0, 30) : null
     };
     const event = await c.query(
@@ -669,9 +945,9 @@ async function reconcilePayment(db, notice) {
       [notice.eventKey, notice.invoiceNumber, notice.reference, notice.amount, notice.currency, outcome, reason, JSON.stringify(payload)]
     );
     if (!event.rowCount) {
-      const previous = (await c.query("SELECT invoice_number,amount,currency,payload FROM billing.payment_events WHERE event_key=$1", [notice.eventKey])).rows[0];
+      const previous = (await c.query("SELECT invoice_number,amount,currency,payload,outcome,reason FROM billing.payment_events WHERE event_key=$1", [notice.eventKey])).rows[0];
       if (previous.invoice_number !== notice.invoiceNumber || Number(previous.amount) !== notice.amount || previous.currency !== notice.currency || previous.payload?.contentDigest && previous.payload.contentDigest !== notice.contentDigest) throw new BillingError(409, "PAYMENT_EVENT_KEY_CONFLICT");
-      return { ok: true, outcome: "DUPLICATE" };
+      return { ok: true, outcome: ["APPLIED", "DUPLICATE"].includes(previous.outcome) ? "DUPLICATE" : previous.outcome, reason: previous.reason, replayed: true };
     }
     if (outcome === "APPLIED") {
       const q = inv.quote;
@@ -683,8 +959,15 @@ async function reconcilePayment(db, notice) {
       );
       await c.query(`UPDATE billing.invoices SET payment_status='PAID',paid_at=now(),payment_gateway_ref=$2,
         reconciliation_status='APPLIED',reconciliation_note=$3 WHERE id=$1`, [inv.id, notice.reference, reason]);
-    } else if (inv && outcome !== "DUPLICATE" && outcome !== "FAILED") {
-      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`, [inv.id, outcome, reason]);
+    } else if (inv && outcome !== "DUPLICATE" && outcome !== "FAILED" && outcome !== "PENDING") {
+      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`, [inv.id, outcome, financialReviewHold(inv) || (providerOrderTerminal(inv) ? notice.success ? "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW" : inv.reconciliation_note : reason)]);
+    }
+    if (inv && ["FAILED", "PENDING"].includes(outcome) && inv.payment_status !== "PAID" && !providerOrderTerminal(inv)) {
+      await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [inv.id, reason]);
+    }
+    if (inv && notice.success && providerOrderTerminal(inv) && outcome === "REVIEW") {
+      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=CASE WHEN reconciliation_note=ANY($4::text[]) THEN reconciliation_note ELSE 'RELATED_LATE_PAYMENT_REQUIRES_REVIEW' END
+        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`, [inv.tenant_id, inv.id, inv.quote.revision, FINANCIAL_HOLD_REASONS]);
     }
     return { ok: true, outcome, reason };
   });
@@ -717,184 +1000,84 @@ async function assertOutletCapacity(db, tenantId, excludeId) {
   if (Number(used.rows[0].count) >= limit) throw new BillingError(409, "OUTLET_LIMIT_REACHED");
 }
 
-// api/_doku.ts
-import crypto from "node:crypto";
-function isDokuConfigured() {
-  const clientId = getDokuClientId();
-  const secretKey = getDokuSecretKey();
-  return Boolean(clientId && secretKey && !clientId.includes("sandbox_dummy"));
-}
-function getDokuClientId() {
-  return (process.env.DOKU_CLIENT_ID || "").replace(/["']/g, "").trim();
-}
-function getDokuSecretKey() {
-  return (process.env.DOKU_SECRET_KEY || "").replace(/["']/g, "").trim();
-}
-var DOKU_API_URLS = /* @__PURE__ */ new Set(["https://api.doku.com", "https://api-sandbox.doku.com"]);
-function getDokuApiUrl() {
-  const raw = (process.env.DOKU_API_URL || "https://api.doku.com").replace(/["']/g, "").trim().replace(/\/+$/, "");
-  if (!DOKU_API_URLS.has(raw)) throw new Error("DOKU_API_URL_NOT_ALLOWED");
-  return raw;
-}
-var DOKU_NOTIFICATION_PATH = "/api/v1/webhooks/doku";
-function getDokuAllowedChannels() {
-  const raw = (process.env.DOKU_ALLOWED_CHANNELS || "").replace(/["']/g, "").trim();
-  const channels = raw.split(",").map((x) => x.trim()).filter(Boolean);
-  if (!channels.length || channels.some((x) => !/^[A-Z0-9_]{1,100}$/.test(x))) {
-    throw new Error("DOKU_CHANNEL_SCOPE_NOT_CONFIGURED");
-  }
-  return [...new Set(channels)];
-}
-function generateDigest(body) {
-  const content = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-  return crypto.createHash("sha256").update(content).digest("base64");
-}
-function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest3, secretKey) {
-  const componentSignature = `Client-Id:${clientId}
-Request-Id:${requestId}
-Request-Timestamp:${requestTimestamp}
-Request-Target:${requestTarget}
-Digest:${digest3}`;
-  const hmac = crypto.createHmac("sha256", secretKey);
-  hmac.update(componentSignature, "utf8");
-  const hmacBase64 = hmac.digest("base64");
-  return `HMACSHA256=${hmacBase64}`;
-}
-function generateGetSignature(clientId, requestId, requestTimestamp, requestTarget, secretKey) {
-  const componentSignature = `Client-Id:${clientId}
-Request-Id:${requestId}
-Request-Timestamp:${requestTimestamp}
-Request-Target:${requestTarget}`;
-  const hmac = crypto.createHmac("sha256", secretKey);
-  hmac.update(componentSignature, "utf8");
-  const hmacBase64 = hmac.digest("base64");
-  return `HMACSHA256=${hmacBase64}`;
-}
-async function createDokuCheckout(payload) {
-  const clientId = getDokuClientId();
-  const secretKey = getDokuSecretKey();
-  const apiUrl = getDokuApiUrl();
-  if (!clientId || !secretKey) {
-    throw new Error("DOKU_CREDENTIALS_NOT_CONFIGURED");
-  }
-  const requestId = crypto.randomUUID();
-  const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
-  const requestTarget = "/checkout/v1/payment";
-  const digest3 = generateDigest(payload);
-  const signature = generateSignature(
-    clientId,
-    requestId,
-    requestTimestamp,
-    requestTarget,
-    digest3,
-    secretKey
-  );
-  const response = await fetch(`${apiUrl}${requestTarget}`, {
-    method: "POST",
-    redirect: "error",
-    headers: {
-      "Content-Type": "application/json",
-      "Client-Id": clientId,
-      "Request-Id": requestId,
-      "Request-Timestamp": requestTimestamp,
-      "Signature": signature
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(15e3)
+// services/billing/recovery.ts
+var INQUIRY_COOLDOWN_MS = 6e4;
+async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatus, options = {}) {
+  if (!isQrisCheckoutInvoice(inv)) return { ok: true, outcome: "UNAVAILABLE" };
+  const claimed = await db.tx(async (c) => {
+    const fresh = (await c.query("SELECT * FROM billing.invoices WHERE id=$1 FOR UPDATE", [inv.id])).rows[0];
+    if (!fresh || !isQrisCheckoutInvoice(fresh) || fresh.payment_status === "PAID" && fresh.reconciliation_status === "APPLIED") return false;
+    const last = (await c.query(`SELECT max(created_at) checked_at FROM billing.payment_events
+   WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'`, [fresh.invoice_number])).rows[0]?.checked_at;
+    const now = options.now ? options.now() : new Date((await c.query("SELECT clock_timestamp() AS observed_at")).rows[0].observed_at).getTime();
+    const anchor = Math.max(new Date(fresh.created_at).getTime(), last ? new Date(last).getTime() : 0);
+    if (last && (options.observeOnly || !Number.isFinite(anchor) || now - anchor < INQUIRY_COOLDOWN_MS)) return false;
+    await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,outcome,reason,payload,created_at)
+   VALUES($1,$2,'UNVERIFIED','STATUS_INQUIRY_ATTEMPT','{"source":"INQUIRY_PROBE"}'::jsonb,$3)`, ["probe-" + randomUUID2(), fresh.invoice_number, new Date(now).toISOString()]);
+    return Boolean(last);
   });
-  const data = await response.json();
-  if (!response.ok || !data.response?.payment?.url) {
-    throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
-  }
-  return {
-    paymentUrl: data.response.payment.url,
-    rawResponse: data
-  };
-}
-async function checkDokuOrderStatus(invoiceNumber) {
-  const clientId = getDokuClientId();
-  const secretKey = getDokuSecretKey();
-  const apiUrl = getDokuApiUrl();
-  if (!clientId || !secretKey) {
-    throw new Error("DOKU_CREDENTIALS_NOT_CONFIGURED");
-  }
-  const requestId = crypto.randomUUID();
-  const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
-  const requestTarget = `/orders/v1/status/${invoiceNumber}`;
-  const signature = generateGetSignature(
-    clientId,
-    requestId,
-    requestTimestamp,
-    requestTarget,
-    secretKey
-  );
-  const response = await fetch(`${apiUrl}${requestTarget}`, {
-    method: "GET",
-    redirect: "error",
-    headers: {
-      "Client-Id": clientId,
-      "Request-Id": requestId,
-      "Request-Timestamp": requestTimestamp,
-      "Signature": signature
-    },
-    signal: AbortSignal.timeout(15e3)
-  });
-  if (!response.ok) {
-    if (response.status === 404) {
-      return { ok: false, status: "UNKNOWN" };
-    }
-    throw new Error(`DOKU_STATUS_INQUIRY_HTTP_${response.status}`);
-  }
-  const data = await response.json();
-  const txStatus = String(data?.transaction?.status || data?.order?.status || "").toUpperCase();
-  const status = txStatus === "SUCCESS" ? "SUCCESS" : ["FAILED", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(txStatus) ? "FAILED" : ["PENDING", "WAITING", "ORDER_GENERATED"].includes(txStatus) ? "PENDING" : "UNKNOWN";
-  return {
-    ok: true,
-    status,
-    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
-    channelId: data?.channel?.id,
-    rawResponse: data
-  };
-}
-function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.now()) {
-  const secretKey = getDokuSecretKey();
-  if (!secretKey) return false;
-  const getHeader = (key) => {
-    const matches = Object.entries(headers).filter(([name]) => name.toLowerCase() === key.toLowerCase());
-    if (matches.length !== 1) return "";
-    const val = matches[0][1];
-    if (Array.isArray(val)) return "";
-    return typeof val === "string" ? val : "";
-  };
-  const clientId = getHeader("Client-Id");
-  const requestId = getHeader("Request-Id");
-  const requestTimestamp = getHeader("Request-Timestamp");
-  const incomingSignature = getHeader("Signature");
-  if (!clientId || clientId !== getDokuClientId() || !requestId || !requestTimestamp || !incomingSignature) {
-    return false;
-  }
-  if (!/^[\x21-\x7e]{1,128}$/.test(requestId) || requestId.includes(",")) return false;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(requestTimestamp)) return false;
-  const time = Date.parse(requestTimestamp);
-  if (!Number.isFinite(time) || new Date(time).toISOString().replace(".000Z", "Z") !== requestTimestamp.replace(".000Z", "Z")) return false;
-  if (time > now + 5 * 6e4 || now - time > 13 * 60 * 6e4) return false;
-  const digest3 = generateDigest(rawBody);
-  const expectedSignature = generateSignature(
-    clientId,
-    requestId,
-    requestTimestamp,
-    requestTarget,
-    digest3,
-    secretKey
-  );
+  if (!claimed) return { ok: true, outcome: "DEFERRED" };
+  const inquiry = await provider(inv.invoice_number);
+  if (!inquiry.ok || inquiry.status === "UNKNOWN") return { ok: true, outcome: "UNAVAILABLE" };
+  let allowed = [];
   try {
-    const bufA = Buffer.from(incomingSignature, "utf8");
-    const bufB = Buffer.from(expectedSignature, "utf8");
-    if (bufA.length !== bufB.length) return false;
-    return crypto.timingSafeEqual(bufA, bufB);
+    allowed = getDokuAllowedChannels();
   } catch {
-    return false;
   }
+  const channel = String(inquiry.channelId || "");
+  const issue = inquiry.validationIssue || (inquiry.invoiceNumber !== inv.invoice_number ? "INQUIRY_INVOICE_MISMATCH" : inquiry.amount === void 0 ? "INQUIRY_AMOUNT_MISSING" : !inquiry.transactionId ? "INQUIRY_REFERENCE_MISSING" : !channel || !allowed.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : inquiry.status === "REFUNDED" ? "REFUND_REQUIRES_REVIEW" : void 0);
+  return reconcilePayment(db, {
+    eventKey: `inquiry-${generateDigest(JSON.stringify([inv.invoice_number, inquiry.rawResponse])).replace(/[/+=]/g, "")}`,
+    integration: "DOKU_CHECKOUT",
+    invoiceNumber: inv.invoice_number,
+    reference: inquiry.transactionId || "missing",
+    amount: inquiry.amount ?? 0,
+    currency: inquiry.currency || "",
+    success: inquiry.status === "SUCCESS",
+    channel,
+    providerChannel: inquiry.providerChannelId,
+    validationIssue: issue,
+    contentDigest: generateDigest(JSON.stringify(inquiry.rawResponse || {})),
+    payload: { status: inquiry.status, channel, source: "INQUIRY" }
+  });
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
 }
 
 // services/billing/routes.ts
@@ -903,7 +1086,7 @@ function coordinate(value, limit) {
   const n = Number(value);
   return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
 }
-function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout) {
+function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout, inquiryProvider = checkDokuOrderStatus, inquiryClock) {
   const run = (fn) => async (req, res) => {
     try {
       await fn(req, res);
@@ -984,7 +1167,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       }
       if (!scope || scope.tenantId !== tenantId) throw new BillingError(409, "BUSINESS_SETUP_REQUIRED");
       const merchant = { id: scope.merchantId };
-      const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID2();
+      const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID3();
       const existing = (await c.query("SELECT * FROM internal.outlets WHERE id=$1", [id])).rows[0];
       if (existing && (existing.tenant_id !== tenantId || existing.merchant_id !== merchant.id)) throw new BillingError(403, "OUTLET_NOT_OWNED");
       if (b.isActive !== false) await assertOutletCapacity(c, tenantId, id);
@@ -1003,43 +1186,78 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     res.json({ ok: true, ...quote, netProratedAmount: quote.amount, proratedAmountIdr: quote.amount, breakdown: { newPlanPrice: quote.recurringAmount, unusedCredit: quote.unusedCredit, total: quote.amount } });
   }));
   app.post("/api/v1/subscription/checkout", run(async (req, res) => {
+    if (process.env.DOKU_PAYMENTS_ENABLED?.trim() !== "1") throw new BillingError(503, "PAYMENTS_PAUSED");
+    let policy;
+    try {
+      policy = dokuSubscriptionPolicy();
+    } catch (e) {
+      throw new BillingError(503, e.message);
+    }
     const tenantId = await tenant2(req);
+    if (!checkoutPilotAllowed(tenantId)) throw new BillingError(403, "CHECKOUT_PILOT_ONLY");
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
-    if (!isDokuConfigured()) throw new BillingError(503, "PAYMENT_GATEWAY_NOT_CONFIGURED");
-    let allowedChannels;
+    let configured = false;
     try {
-      allowedChannels = getDokuAllowedChannels();
+      configured = isDokuConfigured();
     } catch {
-      throw new BillingError(503, "DOKU_CHANNEL_SCOPE_NOT_CONFIGURED");
     }
-    const quote = { ...await createQuote(db, tenantId, req.body || {}), allowedChannels };
+    if (!configured) throw new BillingError(503, "PAYMENT_GATEWAY_NOT_CONFIGURED");
+    const allowedChannels = policy.methods;
+    const quote = { ...await createQuote(db, tenantId, req.body || {}), allowedChannels, paymentIntegration: policy.integration, paymentMode: policy.mode };
     if (quote.amount <= 0) throw new BillingError(409, "ZERO_CHARGE_REQUIRES_SUPPORT");
     const origin = process.env.PUBLIC_APP_URL;
-    if (!origin || !/^https:\/\//.test(origin)) throw new BillingError(503, "PUBLIC_APP_URL_NOT_CONFIGURED");
-    const id = randomUUID2(), invoiceNumber = `NH-${id}`;
-    const result = await db.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,amount,currency,due_date,invoice_number,quote,checkout_key)
-      SELECT $1,id,tenant_id,$3,'IDR',now()+interval '24 hours',$4,$5::jsonb,$6 FROM billing.subscriptions
-      WHERE tenant_id=$2 ON CONFLICT(tenant_id,checkout_key) DO NOTHING RETURNING *`, [id, tenantId, quote.amount, invoiceNumber, JSON.stringify(quote), key]);
+    if (!origin || !/^https:\/\/[^/?#@]+\/?$/.test(origin)) throw new BillingError(503, "PUBLIC_APP_URL_NOT_CONFIGURED");
+    const id = randomUUID3(), invoiceNumber = `NH-${id}`;
+    const result = await db.tx(async (c) => {
+      await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+      const current = (await c.query("SELECT revision FROM billing.subscriptions WHERE tenant_id=$1 FOR UPDATE", [tenantId])).rows[0];
+      if (Number(current?.revision) !== quote.revision) throw new BillingError(409, "CHECKOUT_QUOTE_CHANGED");
+      const held = (await c.query(`SELECT id FROM billing.invoices WHERE tenant_id=$1 AND reconciliation_status='REVIEW'
+        AND reconciliation_note=ANY($3::text[])
+        AND quote->>'revision'=$2::text LIMIT 1`, [tenantId, quote.revision, FINANCIAL_HOLD_REASONS])).rows[0];
+      if (held) throw new BillingError(409, "PAYMENT_REVIEW_REQUIRED");
+      const sameKey = (await c.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2", [tenantId, key])).rows[0];
+      if (sameKey?.payment_status === "PAID") return { rowCount: 0, rows: [sameKey] };
+      if (sameKey && (providerOrderTerminal(sameKey) || new Date(sameKey.due_date).getTime() <= Date.now())) throw new BillingError(409, "CHECKOUT_EXPIRED");
+      if (sameKey && !providerOrderTerminal(sameKey) && new Date(sameKey.due_date).getTime() > Date.now()) return { rowCount: 0, rows: [sameKey] };
+      const open = (await c.query(`SELECT * FROM billing.invoices WHERE tenant_id=$1 AND payment_status='PENDING'
+        AND reconciliation_note IS DISTINCT FROM 'PROVIDER_ORDER_EXPIRED' AND reconciliation_note IS DISTINCT FROM 'PROVIDER_CANCELLED'
+        AND due_date>now() AND quote->>'revision'=$2::text ORDER BY created_at LIMIT 1`, [tenantId, quote.revision])).rows[0];
+      if (open) {
+        if (open.quote?.planId !== quote.planId || open.quote?.billingCycle !== quote.billingCycle || open.quote?.extraOutlets !== quote.extraOutlets) throw new BillingError(409, "CHECKOUT_PENDING_EXISTS");
+        return { rowCount: 0, rows: [open] };
+      }
+      return c.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,amount,currency,due_date,invoice_number,quote,checkout_key)
+        SELECT $1,id,tenant_id,$3,'IDR',now()+interval '24 hours',$4,$5::jsonb,$6 FROM billing.subscriptions
+        WHERE tenant_id=$2 RETURNING *`, [id, tenantId, quote.amount, invoiceNumber, JSON.stringify(quote), key]);
+    });
     if (!result.rowCount) {
-      const existing = (await db.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2", [tenantId, key])).rows[0];
+      const existing = result.rows[0];
       if (existing?.quote?.planId !== quote.planId || existing?.quote?.billingCycle !== quote.billingCycle || existing?.quote?.extraOutlets !== quote.extraOutlets) throw new BillingError(409, "CHECKOUT_KEY_CONFLICT");
-      if (!existing.payment_link_url) throw new BillingError(409, "CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW");
-      return res.json({ ok: true, paymentUrl: existing.payment_link_url, invoice: serializeInvoice(existing), quote: existing.quote, replayed: true });
+      if (existing.payment_status === "PAID") return res.json({ ok: true, paid: existing.reconciliation_status === "APPLIED", invoice: serializeInvoice(existing), replayed: true });
+      if (!isQrisCheckoutInvoice(existing))
+        throw new BillingError(409, "CHECKOUT_SCOPE_REVIEW_REQUIRED");
+      if (new Date(existing.due_date).getTime() <= Date.now()) throw new BillingError(409, "CHECKOUT_EXPIRED");
+      const paymentUrl = invoicePaymentUrl(existing, quote.revision);
+      if (!paymentUrl) throw new BillingError(409, "CHECKOUT_IN_PROGRESS_OR_NEEDS_REVIEW");
+      return res.json({ ok: true, paymentUrl, invoice: serializeInvoice(existing, quote.revision), quote: existing.quote, replayed: true });
     }
     try {
       const checkout = await checkoutProvider({ order: {
         invoice_number: invoiceNumber,
         amount: quote.amount,
         currency: "IDR",
-        callback_url: `${origin.replace(/\/$/, "")}/#payment?invoice=${id}`,
+        callback_url: `${origin.replace(/\/$/, "")}/subscription?invoice=${id}`,
         auto_redirect: true,
         line_items: [{ name: `${quote.planName} ${quote.billingCycle} + ${quote.extraOutlets} outlet`, price: quote.amount, quantity: 1 }]
-      }, payment: { payment_due_date: 1440 } });
+      }, payment: { payment_due_date: 1440, payment_method_types: allowedChannels } });
       await db.query("UPDATE billing.invoices SET payment_link_url=$2 WHERE id=$1", [id, checkout.paymentUrl]);
-      res.json({ ok: true, paymentUrl: checkout.paymentUrl, invoice: serializeInvoice({ ...result.rows[0], payment_link_url: checkout.paymentUrl }), quote });
+      const fresh = (await db.query("SELECT * FROM billing.invoices WHERE id=$1", [id])).rows[0];
+      const current = (await db.query("SELECT revision FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
+      res.json({ ok: true, paid: fresh.payment_status === "PAID" && fresh.reconciliation_status === "APPLIED", paymentUrl: invoicePaymentUrl(fresh, Number(current.revision)), invoice: serializeInvoice(fresh, Number(current.revision)), quote });
     } catch (err) {
-      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='CHECKOUT_RESPONSE_FAILED' WHERE id=$1 AND payment_status<>'PAID'", [id]);
+      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=coalesce(reconciliation_note,'CHECKOUT_RESPONSE_FAILED') WHERE id=$1 AND payment_status<>'PAID'", [id]);
       throw err;
     }
   }));
@@ -1060,54 +1278,31 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     }
     const { rows } = await db.query(query, params);
     const inv = rows[0];
-    if (!inv) {
-      const statusData = await subscriptionStatus(db, tenantId);
-      return res.json({ ok: true, status: statusData.subscription.status, paid: statusData.subscription.status === "ACTIVE" });
-    }
-    if (inv.payment_status === "PAID") {
-      const statusData = await subscriptionStatus(db, tenantId);
-      return res.json({ ok: true, paid: true, status: statusData.subscription.status, invoice: serializeInvoice(inv), subscription: statusData.subscription });
-    }
-    if (isDokuConfigured()) {
+    if (!inv) throw new BillingError(404, "INVOICE_NOT_FOUND");
+    if (inv.payment_status !== "PAID" || inv.reconciliation_status !== "APPLIED") {
+      let configured = false;
       try {
-        const inquiry = await checkDokuOrderStatus(inv.invoice_number);
-        if (inquiry.ok && inquiry.status === "SUCCESS") {
-          let allowedChannels = [];
-          try {
-            allowedChannels = getDokuAllowedChannels();
-          } catch {
-          }
-          const channel = String(inquiry.channelId || "");
-          const issue = !channel || !allowedChannels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : void 0;
-          const result = await reconcilePayment(db, {
-            eventKey: `inquiry-${inv.invoice_number}-${String(inquiry.transactionId || "unknown")}`,
-            validationIssue: issue,
-            invoiceNumber: inv.invoice_number,
-            reference: String(inquiry.transactionId || `inquiry-${Date.now()}`),
-            amount: Number(inv.amount),
-            currency: inv.currency || "IDR",
-            success: true,
-            channel,
-            contentDigest: generateDigest(JSON.stringify(inquiry.rawResponse || {})),
-            payload: { status: "SUCCESS", channel, source: "INQUIRY" }
-          });
-          const statusData = await subscriptionStatus(db, tenantId);
-          const applied = result.outcome === "APPLIED" || result.outcome === "DUPLICATE";
-          return res.json({
-            ok: true,
-            paid: applied,
-            reconciled: applied,
-            outcome: result.outcome,
-            reason: result.reason,
-            status: applied ? statusData.subscription.status : "PENDING_PAYMENT",
-            subscription: statusData.subscription
-          });
+        configured = isDokuConfigured();
+      } catch {
+      }
+      if (configured) {
+        try {
+          await reconcileInvoiceByInquiry(db, inv, inquiryProvider, { now: inquiryClock, observeOnly: req.query.inquire !== "1" });
+        } catch {
+          console.warn("[doku-verify] INQUIRY_UNAVAILABLE");
         }
-      } catch (err) {
-        console.warn("[doku-verify] Inquiry check failed:", err.message);
       }
     }
-    res.json({ ok: true, paid: false, status: "PENDING_PAYMENT", invoice: serializeInvoice(inv) });
+    const fresh = (await db.query("SELECT * FROM billing.invoices WHERE id=$1 AND tenant_id=$2", [inv.id, tenantId])).rows[0];
+    const statusData = await subscriptionStatus(db, tenantId);
+    const paid = fresh.payment_status === "PAID" && fresh.reconciliation_status === "APPLIED";
+    res.json({
+      ok: true,
+      paid,
+      status: paid ? statusData.subscription.status : "PENDING_PAYMENT",
+      invoice: statusData.invoices.find((i) => i.id === fresh.id) || serializeInvoice(fresh, -1),
+      subscription: statusData.subscription
+    });
   }));
   app.post("/api/v1/subscription/simulate-payment", (_req, res) => res.status(403).json({ ok: false, error: "PAYMENT_SIMULATION_DISABLED" }));
   app.post("/api/v1/webhooks/payment-gateway", (_req, res) => res.status(410).json({ ok: false, error: "USE_SIGNED_DOKU_WEBHOOK" }));
@@ -1128,14 +1323,17 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     }
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new BillingError(400, "INVALID_NOTIFICATION_BODY");
     const status = String(body?.transaction?.status || "");
-    const channel = typeof body?.channel?.id === "string" ? body.channel.id : "";
+    const evidence = dokuChannelEvidence(body), channel = evidence.channel;
+    const stableReference = dokuPaymentReference(body);
     const invoice = body?.order?.invoice_number, amount = body?.order?.amount;
     if (typeof invoice !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(invoice) || !["string", "number"].includes(typeof amount) || !/^\d+(?:\.\d{1,2})?$/.test(String(amount)) || !Number.isFinite(Number(amount))) throw new BillingError(400, "INVALID_NOTIFICATION_ORDER");
-    const issue = !channel || !channels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : !["SUCCESS", "FAILED"].includes(status) ? "UNKNOWN_PAYMENT_STATUS" : void 0;
+    const issue = evidence.issue || (!channel || !channels.includes(channel) ? "UNAPPROVED_PAYMENT_CHANNEL" : channel === "QRIS" && !stableReference ? "QRIS_PAYMENT_REFERENCE_MISSING" : ["REFUNDED", "PARTIAL_REFUNDED"].includes(status) ? "REFUND_REQUIRES_REVIEW" : ["VOIDED", "REVERSED"].includes(status) ? "REVERSAL_REQUIRES_REVIEW" : !["SUCCESS", "FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(status) ? "UNKNOWN_PAYMENT_STATUS" : void 0);
     const result = await reconcilePayment(db, {
       eventKey: String(req.headers["request-id"] || ""),
+      integration: "DOKU_CHECKOUT",
       invoiceNumber: invoice,
-      reference: String(body?.transaction?.original_request_id || req.headers["request-id"] || "").slice(0, 128),
+      reference: stableReference || (["QRIS", "QRIS_DOKU"].includes(evidence.providerChannel) ? "missing-qris-reference" : String(req.headers["request-id"] || "")),
+      providerChannel: evidence.providerChannel,
       amount: Number(amount),
       currency: body?.order?.currency === void 0 ? "IDR" : String(body.order.currency),
       success: status === "SUCCESS",
@@ -1150,7 +1348,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -1256,7 +1454,7 @@ async function notifyBlogDiscovery(slugs, send = fetch) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash, randomUUID as randomUUID5, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID as randomUUID6, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -1487,11 +1685,11 @@ var GENERATED_COVER_CAPTION = "Ilustrasi dibuat dengan AI; bukan foto kejadian d
 
 // src/server/blogCover.ts
 import sharp from "sharp";
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/server/blogMedia.ts
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/lib/blog/photo.ts
 var BLOG_PHOTO_MAX_CHARS = 65e4;
@@ -1541,7 +1739,7 @@ function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider(
       return;
     }
     try {
-      const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID3()}.jpg`);
+      const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID4()}.jpg`);
       res.status(201).json({ ok: true, url });
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
@@ -1595,7 +1793,7 @@ function createCoverImporter(provider = createBlogMediaProvider(), fetchImage = 
       throw new CoverError(422, "INVALID_COVER_IMAGE");
     }
     if (bytes.length > 5e5) throw new CoverError(422, "COVER_TOO_LARGE");
-    const coverImage = await provider.upload(bytes, `automation/generated/${randomUUID4()}.jpg`);
+    const coverImage = await provider.upload(bytes, `automation/generated/${randomUUID5()}.jpg`);
     const coverAlt = typeof input.alt === "string" ? input.alt.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 160) : "";
     return { coverImage, coverAlt, coverGenerated: true, coverModel: "agnes-image-2.1-flash" };
   };
@@ -2146,7 +2344,7 @@ function createBlogAutomation(getDb) {
             author_avatar=$9,reading_time_minutes=$10,tags=$11,seo=$12::jsonb,is_published=$13,is_featured=$14,updated_at=CURRENT_TIMESTAMP
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
-            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID5()]);
+            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID6()]);
       if (existing?.is_published) changedSlugs.push(existing.slug);
       if (record.isPublished) changedSlugs.push(record.slug);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
@@ -2572,6 +2770,59 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
   }));
 }
 
+// services/billing/externalPayment.ts
+import { randomUUID as randomUUID7, createHash as createHash2 } from "node:crypto";
+async function externalPayment(c, tenantId, actor, action, b) {
+  if (process.env.DOKU_PAYMENTS_ENABLED?.trim() === "1") throw new BillingError(409, "PAYMENT_MODES_CONFLICT");
+  if (process.env.MANUAL_EXTERNAL_PAYMENTS_ENABLED !== "1") throw new BillingError(503, "EXTERNAL_PAYMENTS_PAUSED");
+  let allowed = false;
+  try {
+    allowed = uuidAllowlist(process.env.MANUAL_PAYMENT_PILOT_TENANTS).includes(tenantId.toLowerCase());
+  } catch {
+  }
+  if (!allowed) throw new BillingError(403, "EXTERNAL_PAYMENT_PILOT_ONLY");
+  await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+  if (action === "ISSUE_EXTERNAL_QUOTE") {
+    const quote = await createQuote(c, tenantId, b);
+    const open = (await c.query(`SELECT a.after_state->'external' AS issued FROM internal.support_actions a
+   WHERE a.tenant_id=$1 AND a.action='ISSUE_EXTERNAL_QUOTE' AND a.after_state->'external'->'quote'->>'revision'=$2::text
+   AND (a.after_state->'external'->>'expiresAt')::timestamptz>now()
+   AND NOT EXISTS(SELECT 1 FROM billing.invoices i WHERE i.id::text=a.after_state->'external'->>'quoteId') ORDER BY a.created_at LIMIT 1`, [tenantId, quote.revision])).rows[0]?.issued;
+    if (open) {
+      if (open.quote.planId !== quote.planId || open.quote.billingCycle !== quote.billingCycle || open.quote.extraOutlets !== quote.extraOutlets) throw new BillingError(409, "OUTSTANDING_EXTERNAL_QUOTE");
+      return open;
+    }
+    if ((await c.query("SELECT id FROM billing.invoices WHERE tenant_id=$1 AND quote->>'revision'=$2::text AND (payment_status='PENDING' OR reconciliation_status='REVIEW') LIMIT 1", [tenantId, quote.revision])).rowCount) throw new BillingError(409, "OUTSTANDING_PAYMENT_RECONCILE_FIRST");
+    if (quote.amount <= 0) throw new BillingError(409, "ZERO_CHARGE_REQUIRES_SUPPORT");
+    return { quoteId: randomUUID7(), quote, expiresAt: new Date(Date.now() + 864e5).toISOString(), provider: "DOKU_PAYMENT_LINK", actor };
+  }
+  const raw = b.proof || {}, proof = { brandId: raw.brandId, status: raw.status, currency: raw.currency, confirmation: raw.confirmation, reference: raw.reference, evidenceSha256: raw.evidenceSha256, evidenceId: raw.evidenceId, amount: raw.amount, paidAt: raw.paidAt, invoiceNumber: raw.invoiceNumber }, brand = process.env.MANUAL_DOKU_BRAND_ID || "";
+  if (!brand || /^BSN-/i.test(brand) || proof.brandId !== brand || proof.status !== "PAID" || proof.currency !== "IDR" || proof.confirmation !== "PROVIDER_DASHBOARD_PAID_VERIFIED" || !/^[A-Za-z0-9._:-]{1,128}$/.test(proof.reference || "") || !/^[a-f0-9]{64}$/.test(proof.evidenceSha256 || "") || !/^[A-Za-z0-9._:-]{1,128}$/.test(proof.evidenceId || "") || !Number.isSafeInteger(proof.amount) || proof.amount <= 0 || !Number.isFinite(Date.parse(proof.paidAt)) || Date.parse(proof.paidAt) > Date.now() + 3e5)
+    throw new BillingError(400, "EXTERNAL_PAYMENT_PROOF_INVALID");
+  const row = (await c.query("SELECT after_state,created_at FROM internal.support_actions WHERE tenant_id=$1 AND action='ISSUE_EXTERNAL_QUOTE' AND after_state->'external'->>'quoteId'=$2", [tenantId, String(b.quoteId || "")])).rows[0];
+  const issued = row?.after_state?.external;
+  if (!issued) throw new BillingError(404, "EXTERNAL_QUOTE_NOT_FOUND");
+  if (proof.invoiceNumber !== "NHM-" + issued.quoteId || proof.amount !== issued.quote.amount || Date.parse(proof.paidAt) < new Date(row.created_at).getTime() - 3e5) throw new BillingError(409, "EXTERNAL_PAYMENT_QUOTE_MISMATCH");
+  const key = "external-doku-" + createHash2("sha256").update(JSON.stringify([brand, proof.reference])).digest("hex");
+  await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+  const prior = (await c.query("SELECT * FROM billing.payment_events WHERE event_key=$1", [key])).rows[0];
+  const number = "NHM-" + issued.quoteId;
+  const digest3 = createHash2("sha256").update(JSON.stringify([tenantId, issued.quoteId, proof])).digest("hex");
+  if (prior) {
+    if (prior.invoice_number !== number || prior.payload?.contentDigest !== digest3) throw new BillingError(409, "EXTERNAL_RECEIPT_CONFLICT");
+    return { quoteId: issued.quoteId, invoiceNumber: number, outcome: prior.outcome, replayed: true, proof };
+  }
+  if (Date.parse(issued.expiresAt) < Date.now()) throw new BillingError(409, "EXTERNAL_QUOTE_EXPIRED_RECONCILE_FIRST");
+  if ((await c.query("SELECT id FROM billing.invoices WHERE id=$1", [issued.quoteId])).rowCount) throw new BillingError(409, "EXTERNAL_QUOTE_ALREADY_RECORDED");
+  const sub = await ensureSubscription(c, tenantId);
+  await c.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,invoice_number,amount,currency,due_date,quote)
+ VALUES($1,$2,$3,$4,$5,'IDR',$6,$7::jsonb)`, [issued.quoteId, sub.id, tenantId, number, issued.quote.amount, issued.expiresAt, JSON.stringify({ ...issued.quote, paymentIntegration: "EXTERNAL_VERIFIED", provider: "DOKU_PAYMENT_LINK" })]);
+  const transactional = { ...c, tx: (fn) => fn(c) };
+  const conflicting = (await c.query("SELECT id FROM billing.invoices WHERE tenant_id=$1 AND id<>$2 AND quote->>'revision'=$3::text AND (payment_status='PENDING' OR reconciliation_status='REVIEW') LIMIT 1", [tenantId, issued.quoteId, issued.quote.revision])).rowCount > 0;
+  const result = await reconcilePayment(transactional, { validationIssue: conflicting ? "EXTERNAL_CONFLICT_REQUIRES_REVIEW" : void 0, eventKey: key, invoiceNumber: number, reference: proof.reference, amount: proof.amount, currency: "IDR", success: true, channel: "EXTERNAL_DOKU_PAYMENT_LINK", contentDigest: digest3, payload: { status: "SUCCESS" } });
+  return { quoteId: issued.quoteId, invoiceNumber: number, outcome: result.outcome, reason: result.reason, proof };
+}
+
 // src/server/subscriptionDetail.ts
 async function subscriptionDetail(db, tenantId) {
   return db.tx(async (c) => {
@@ -2708,13 +2959,14 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       const reason = String(req.body?.reason || "").trim();
       const action = String(req.body?.action || "");
       if (reason.length < 10 || reason.length > 2e3) throw new BillingError(400, "REASON_MINIMUM_10_CHARACTERS");
-      if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
+      if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE", "ISSUE_EXTERNAL_QUOTE", "VERIFY_EXTERNAL_PAYMENT"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
       if (action !== "NOTE" && req.internal.role !== "ROLE_SUPERADMIN") throw new BillingError(403, "CAPABILITY_DENIED");
       const result = await db.tx(async (c) => {
         const tenant2 = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
         if (!tenant2.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
         const before = await ensureSubscription(c, req.params.tenantId);
         let invoiceBefore = null, invoiceAfter = null;
+        const external = ["ISSUE_EXTERNAL_QUOTE", "VERIFY_EXTERNAL_PAYMENT"].includes(action) ? await externalPayment(c, req.params.tenantId, req.internal.id, action, req.body) : null;
         if (action === "EXTEND_TRIAL") {
           const days = Number(req.body.days);
           if (!Number.isInteger(days) || days < 1 || days > 14 || before.plan_id !== TRIAL_PLAN_ID) throw new BillingError(400, "INVALID_TRIAL_EXTENSION");
@@ -2738,8 +2990,9 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
           const invoice = await c.query("SELECT id,reconciliation_note,reconciliation_status,payment_status FROM billing.invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [req.body.invoiceId, req.params.tenantId]);
           if (!invoice.rowCount) throw new BillingError(404, "INVOICE_NOT_FOUND");
           invoiceBefore = invoice.rows[0];
-          await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [req.body.invoiceId, reason]);
-          invoiceAfter = { ...invoiceBefore, reconciliation_note: reason };
+          const protectedState = financialReviewHold(invoiceBefore) || providerOrderTerminal(invoiceBefore) || invoiceBefore.reconciliation_note === "PROVIDER_EXPIRED";
+          if (!protectedState) await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [req.body.invoiceId, reason]);
+          invoiceAfter = { ...invoiceBefore, reconciliation_note: protectedState ? invoiceBefore.reconciliation_note : reason };
         }
         const after = (await c.query("SELECT * FROM billing.subscriptions WHERE id=$1", [before.id])).rows[0];
         await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)
@@ -2749,14 +3002,14 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
           action,
           reason,
           JSON.stringify({ ...before, invoice: invoiceBefore }),
-          JSON.stringify({ ...after, invoice: invoiceAfter }),
+          JSON.stringify({ ...after, invoice: invoiceAfter, external }),
           req.auditRequestId,
           req.ip || null,
           String(req.headers["user-agent"] || "").slice(0, 512)
         ]);
-        return serializeSubscription(after);
+        return { subscription: serializeSubscription(after), external };
       });
-      res.json({ ok: true, subscription: result });
+      res.json({ ok: true, ...result });
     } catch (err) {
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "SUPPORT_ACTION_FAILED" });
     }
@@ -3343,7 +3596,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID6();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID8();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -3781,7 +4034,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID6();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID8();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
@@ -3905,7 +4158,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash3, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -3915,8 +4168,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -4149,7 +4402,7 @@ async function writeActivity(db, a) {
 }
 
 // services/pos/finance.ts
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 var FinanceError = class extends Error {
@@ -4166,7 +4419,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS2.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS2.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -4445,7 +4698,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -4474,7 +4727,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -5091,7 +5344,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -5118,10 +5371,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -5419,7 +5672,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID4.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -6414,6 +6667,8 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
       if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      const betaError = path.startsWith("/api/admin/") ? void 0 : betaAccessError(principal.subject);
+      if (betaError) return res.status(betaError === "BETA_INVITE_REQUIRED" ? 403 : 503).json({ ok: false, error: betaError });
       applyPrincipal(req, principal);
     }
     try {

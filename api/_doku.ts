@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {dokuChannelEvidence,dokuPaymentReference} from '../services/billing/dokuChannelEvidence';
 
 export interface DokuLineItem {
   name: string;
@@ -16,6 +17,7 @@ export interface DokuCheckoutPayload {
     line_items?: DokuLineItem[];
   };
   payment: {
+    payment_method_types?: string[];
     payment_due_date: number; // Durasi dalam menit sebelum expired
   };
   customer?: {
@@ -30,11 +32,13 @@ export interface DokuCheckoutResponse {
   response?: {
     order?: {
       invoice_number?: string;
-      amount?: number;
+      amount?: number | string;
+      currency?: string;
     };
     payment?: {
       url?: string;
       expired_date?: string;
+      payment_method_types?: string[];
     };
   };
   error?: {
@@ -52,7 +56,26 @@ export function isDokuConfigured(): boolean {
 // DOKU_SANDBOX_* hanya untuk alat bukti sandbox (scripts/batch/doku-sandbox-evidence.ts),
 // tidak pernah menjadi cadangan kredensial checkout.
 export function getDokuClientId(): string {
-  return (process.env.DOKU_CLIENT_ID || '').replace(/["']/g, '').trim();
+  return validateDokuBrandClientId(process.env.DOKU_CLIENT_ID || '');
+}
+
+/** A Business ID belongs to the dashboard, never the Checkout gateway. */
+export function validateDokuBrandClientId(value: string): string {
+  const id = value.replace(/["']/g, '').trim();
+  if (/^BSN-/i.test(id)) throw new Error('DOKU_BRAND_CLIENT_ID_REQUIRED');
+  return id;
+}
+
+/** URL is returned by the server, never accepted from the payer. */
+export function validateDokuPaymentUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('DOKU_PAYMENT_URL_INVALID'); }
+  const sandbox = getDokuApiUrl() === 'https://api-sandbox.doku.com';
+  const hosts = sandbox ? ['sandbox.doku.com'] : ['checkout.doku.com', 'jokul.doku.com'];
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) {
+    throw new Error('DOKU_PAYMENT_URL_INVALID');
+  }
+  return url.href;
 }
 
 export function getDokuSecretKey(): string {
@@ -135,7 +158,10 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
     throw new Error('DOKU_CREDENTIALS_NOT_CONFIGURED');
   }
 
-  const requestId = crypto.randomUUID();
+  if(!/^[A-Za-z0-9._:-]{1,64}$/.test(payload.order.invoice_number) || !Number.isSafeInteger(payload.order.amount) || payload.order.amount<=0 || payload.order.amount>999999999999) {
+    throw new Error('DOKU_CHECKOUT_ORDER_INVALID');
+  }
+  const requestId = payload.order.invoice_number;
   const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
   const requestTarget = '/checkout/v1/payment';
   const digest = generateDigest(payload);
@@ -169,17 +195,34 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
     throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
   }
 
+  const echoed = data.response.order;
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount ||
+    (echoed.currency !== undefined && echoed.currency !== (payload.order.currency || 'IDR'))) {
+    throw new Error('DOKU_CHECKOUT_ORDER_MISMATCH');
+  }
+  const returnedMethods=data.response.payment.payment_method_types,requestedMethods=payload.payment.payment_method_types;
+  // Optional in the official response. If present it must not widen the
+  // requested scope, omit the requested method, or contain malformed values.
+  if(returnedMethods!==undefined && requestedMethods &&
+    (!Array.isArray(returnedMethods) || !returnedMethods.length ||
+      returnedMethods.some(method=>!requestedMethods.includes(method)) || requestedMethods.some(method=>!returnedMethods.includes(method))))
+    throw new Error('DOKU_CHECKOUT_METHOD_MISMATCH');
   return {
-    paymentUrl: data.response.payment.url,
+    paymentUrl: validateDokuPaymentUrl(data.response.payment.url),
     rawResponse: data,
   };
 }
 
 export interface DokuOrderStatusResponse {
   ok: boolean;
-  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN';
+  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'EXPIRED' | 'ORDER_EXPIRED' | 'CANCELLED' | 'REFUNDED' | 'UNKNOWN';
+  invoiceNumber?: string;
+  amount?: number;
+  currency?: string;
   transactionId?: string;
   channelId?: string;
+  providerChannelId?: string;
+  validationIssue?: string;
   rawResponse?: any;
 }
 
@@ -194,7 +237,8 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
 
   const requestId = crypto.randomUUID();
   const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
-  const requestTarget = `/orders/v1/status/${invoiceNumber}`;
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(invoiceNumber)) throw new Error('DOKU_INVOICE_INVALID');
+  const requestTarget = `/orders/v1/status/${encodeURIComponent(invoiceNumber)}`;
   const signature = generateGetSignature(
     clientId,
     requestId,
@@ -224,16 +268,22 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
 
   const data = (await response.json()) as any;
   const txStatus = String(data?.transaction?.status || data?.order?.status || '').toUpperCase();
-  const status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN' =
-    txStatus === 'SUCCESS' ? 'SUCCESS' :
-    ['FAILED', 'EXPIRED', 'CANCELLED', 'ORDER_EXPIRED'].includes(txStatus) ? 'FAILED' :
+  const status: DokuOrderStatusResponse['status'] =
+    ['SUCCESS', 'FAILED', 'EXPIRED', 'ORDER_EXPIRED', 'CANCELLED', 'REFUNDED'].includes(txStatus) ? txStatus as DokuOrderStatusResponse['status'] :
     ['PENDING', 'WAITING', 'ORDER_GENERATED'].includes(txStatus) ? 'PENDING' : 'UNKNOWN';
+  const rawAmount = data?.order?.amount;
+  const amount = ['string','number'].includes(typeof rawAmount) && /^\d+(?:\.0{1,2})?$/.test(String(rawAmount)) && Number.isSafeInteger(Number(rawAmount)) ? Number(rawAmount) : undefined;
 
   return {
     ok: true,
     status,
-    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
-    channelId: data?.channel?.id,
+    invoiceNumber: typeof data?.order?.invoice_number === 'string' ? data.order.invoice_number : undefined,
+    amount,
+    currency: data?.order?.currency === undefined ? 'IDR' : String(data.order.currency),
+    transactionId: dokuPaymentReference(data),
+    channelId: dokuChannelEvidence(data).channel,
+    providerChannelId: dokuChannelEvidence(data).providerChannel,
+    validationIssue: dokuChannelEvidence(data).issue,
     rawResponse: data,
   };
 }

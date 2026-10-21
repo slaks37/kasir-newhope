@@ -1,3 +1,5 @@
+import {testBetaPayments} from './test-beta-payments';
+import {testDokuAdversarial} from './test-doku-adversarial';
 // Isolated real PostgreSQL engine. No .env, cloud DB, emails, or paid requests.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,6 +15,7 @@ import { registerBillingRoutes } from '../../services/billing/routes';
 import { registerSyncRoutes } from '../../services/pos/sync';
 import type { Db } from '../../services/shared/db';
 import { generateDigest, generateSignature } from '../../api/_doku';
+import {testQrisSubscriptions} from './test-qris-subscriptions';
 import { testDokuNotifications } from './test-doku-notifications';
 import { mergeServerOutlets } from '../../src/lib/sync/outlets';
 import { INITIAL_BRANCHES } from '../../src/data/initialData';
@@ -110,7 +113,7 @@ async function main(){
   return null;
  });
  let checkoutCalls=0;
- registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.test.invalid/'+payload.order.invoice_number,rawResponse:{}};});
+ registerBillingRoutes(app,db,true,async payload=>{checkoutCalls++;return{paymentUrl:'https://checkout.doku.com/'+payload.order.invoice_number,rawResponse:{}};},async()=>({ok:false,status:'UNKNOWN'}));
  registerSyncRoutes(app,db);
  app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({error:err.message}));
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
@@ -343,6 +346,13 @@ async function main(){
   const invoiceAudit=(await db.query("SELECT * FROM internal.support_actions WHERE action='PAYMENT_NOTE'")).rows[0];
   assert.equal(invoiceAudit.before_state.invoice.id,invoice);assert.equal(invoiceAudit.after_state.invoice.reconciliation_note,'Verified original invoice note');assert.equal(invoiceAudit.user_agent,'Audit regression client');
   assert.equal(invoiceAudit.request_id,invoiceNote.headers.get('x-request-id'));
+  const protectedInvoice=randomUUID(),supportComment='Contacted provider; awaiting financial evidence';
+  await db.query(`INSERT INTO billing.invoices(id,tenant_id,subscription_id,invoice_number,amount,currency,due_date,quote,reconciliation_status,reconciliation_note)
+    SELECT $1,tenant_id,subscription_id,$2,amount,currency,due_date,quote,'REVIEW','REFUND_REQUIRES_REVIEW' FROM billing.invoices WHERE id=$3`,[protectedInvoice,'ADMIN-HOLD-'+protectedInvoice,invoice]);
+  const heldNote=await fetch(url+'/api/admin/tenants/'+tenant+'/support',{method:'POST',headers:{authorization:'Bearer test-admin','content-type':'application/json'},body:JSON.stringify({action:'PAYMENT_NOTE',invoiceId:protectedInvoice,reason:supportComment})});assert.equal(heldNote.status,200);
+  assert.equal((await db.query('SELECT reconciliation_note FROM billing.invoices WHERE id=$1',[protectedInvoice])).rows[0].reconciliation_note,'REFUND_REQUIRES_REVIEW');
+  const heldAudit=(await db.query('SELECT * FROM internal.support_actions WHERE reason=$1',[supportComment])).rows[0];assert.equal(heldAudit.after_state.invoice.reconciliation_note,'REFUND_REQUIRES_REVIEW');assert.equal(heldAudit.reason,supportComment);
+  console.log('PASS independent support-note guard: Superadmin commentary preserved in immutable audit without clearing financial hold');
   for(const table of ['internal.internal_access_log','internal.support_actions']) {
    for(const operation of ['UPDATE '+table+' SET request_id=request_id','DELETE FROM '+table,'TRUNCATE '+table]) {
     await assert.rejects(()=>db.exec(operation),/ADMIN_AUDIT_APPEND_ONLY/);
@@ -404,14 +414,14 @@ async function main(){
   assert.equal((await act('GRANT_PLAN',{planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:2})).status,200);
   assert.equal((await ensureSubscription(db,other)).extra_outlets,2);
   // Dummy gateway settings are scoped to this test process. No network call to DOKU.
-  process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
+  process.env.DOKU_CHECKOUT_PILOT_TENANTS=other;process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   const checkoutBody={planId:'plan-plus-monthly',billingCycle:'YEARLY',extraOutlets:2,requestKey:randomUUID()};
   const checkout=()=>fetch(url+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':'owner-two','content-type':'application/json'},body:JSON.stringify(checkoutBody)});
   const first=await checkout();assert.equal(first.status,200,await first.clone().text());const invoiceData=await first.json();
   const verifyPending=await fetch(url+'/api/v1/subscription/verify?invoiceId='+invoiceData.invoice.id,{headers:{'x-auth-sub':'owner-two'}});
   assert.equal(verifyPending.status,200);assert.equal((await verifyPending.json()).paid,false);
   const replay=await checkout();assert.equal(replay.status,200);assert.equal((await replay.json()).invoice.id,invoiceData.invoice.id);assert.equal(checkoutCalls,1);
-  const raw=JSON.stringify({order:{invoice_number:invoiceData.invoice.invoiceNumber,amount:invoiceData.invoice.amount,currency:'IDR'},transaction:{status:'SUCCESS'},channel:{id:'VIRTUAL_ACCOUNT_BCA'}});
+  const raw=JSON.stringify({order:{invoice_number:invoiceData.invoice.invoiceNumber,amount:invoiceData.invoice.amount,currency:'IDR'},transaction:{status:'SUCCESS',original_request_id:'synthetic-qris-approval'},channel:{id:'QRIS'}});
   const timestamp=new Date().toISOString();
   const headers={'content-type':'application/json','client-id':'test-client','request-id':'signed-event','request-timestamp':timestamp,
    signature:generateSignature('test-client','signed-event',timestamp,'/api/v1/webhooks/doku',generateDigest(raw),'test-secret')};
@@ -429,8 +439,13 @@ async function main(){
   await assert.rejects(()=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_billing');await assertOutletCapacity(c,tenant);}),/OUTLET_LIMIT_REACHED/);
   await db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_internal');assert.ok((await c.query('SELECT * FROM contract.admin_activity_log')).rowCount>0);assert.ok((await c.query('SELECT * FROM billing.payment_events')).rowCount>0);assert.ok((await c.query('SELECT * FROM internal.support_actions')).rowCount>0);});
   console.log('PASS: billing and internal service roles can read their authorized data');
+  // Signed notification fixtures use the release's QRIS-only invoice contract.
+  process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   await testDokuNotifications(db,url,value=>{failPayment=value;});
   await testFreeSync(db,url);
+  await testQrisSubscriptions(db);
+  await testDokuAdversarial(db);
+  await testBetaPayments(db,url,value=>{failAudit=value;});
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

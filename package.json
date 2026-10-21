@@ -16,7 +16,7 @@
     "env:import": "node scripts/dev/import-env.mjs",
     "env:set": "node scripts/dev/import-env.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
-    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
+    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts && npm run -s test:beta",
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
     "verify": "npm run lint && npm run build && npm run test:runtime && npm test",
@@ -54,7 +54,10 @@
     "test:agentic": "node --import tsx scripts/dev/test-agentic-discoverability.ts",
     "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
-    "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts"
+    "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
+    "test:qris:browser": "node scripts/payments/browser-e2e.mjs",
+    "payments:recover": "node --import tsx scripts/payments/reconcile-pending.ts",
+    "test:beta": "node --import tsx scripts/dev/test-release-gates.ts"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",
@@ -85,8 +88,12 @@
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "playwright": "1.62.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }
