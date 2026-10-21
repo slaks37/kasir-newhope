@@ -1,5 +1,11 @@
 import {validateDokuPaymentUrl} from '../../api/_doku';
 
+export const FINANCIAL_HOLD_REASONS=['PROVIDER_REFERENCE_CONFLICT','REFUND_REQUIRES_REVIEW','REVERSAL_REQUIRES_REVIEW','TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW','RELATED_LATE_PAYMENT_REQUIRES_REVIEW'] as const;
+/** Receipt evidence may add another reason, but cannot clear financial holds. */
+export function financialReviewHold(i:any):string|undefined {
+ return FINANCIAL_HOLD_REASONS.some(reason=>reason===i?.reconciliation_note)?i.reconciliation_note:undefined;
+}
+
 /** One policy for creation replay, history and direct invoice responses. */
 export function isQrisCheckoutInvoice(i:any):boolean {
  return i?.quote?.paymentIntegration==='DOKU_CHECKOUT' && Array.isArray(i.quote.allowedChannels) &&

@@ -355,6 +355,10 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/invoicePaymentPolicy.ts
+var FINANCIAL_HOLD_REASONS = ["PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
+function financialReviewHold(i) {
+  return FINANCIAL_HOLD_REASONS.some((reason) => reason === i?.reconciliation_note) ? i.reconciliation_note : void 0;
+}
 function isQrisCheckoutInvoice(i) {
   return i?.quote?.paymentIntegration === "DOKU_CHECKOUT" && Array.isArray(i.quote.allowedChannels) && i.quote.allowedChannels.length === 1 && i.quote.allowedChannels[0] === "QRIS";
 }
@@ -881,15 +885,18 @@ async function reconcilePayment(db, notice) {
     if (inv) {
       sub = (await c.query("SELECT * FROM billing.subscriptions WHERE id=$1 FOR UPDATE", [inv.subscription_id])).rows[0];
       if (notice.validationIssue === "REFUND_REQUIRES_REVIEW" || notice.validationIssue === "REVERSAL_REQUIRES_REVIEW") reason = notice.validationIssue;
-      else if (inv.payment_status === "PAID" && inv.reconciliation_status === "APPLIED") {
-        outcome = "DUPLICATE";
-        reason = "ALREADY_APPLIED";
-      } else if (Number(inv.amount) !== notice.amount || inv.currency !== notice.currency) reason = "AMOUNT_OR_CURRENCY_MISMATCH";
+      else if (Number(inv.amount) !== notice.amount || inv.currency !== notice.currency) reason = "AMOUNT_OR_CURRENCY_MISMATCH";
       else if (notice.validationIssue) reason = notice.validationIssue;
       else if (notice.integration === "DOKU_CHECKOUT" && !isQrisCheckoutInvoice(inv)) reason = "LEGACY_INVOICE_NEEDS_REVIEW";
       else if (inv.quote?.allowedChannels && !inv.quote.allowedChannels.includes(notice.channel)) reason = "INVOICE_CHANNEL_MISMATCH";
-      else if (inv.reconciliation_note === "RELATED_LATE_PAYMENT_REQUIRES_REVIEW") reason = "RELATED_LATE_PAYMENT_REQUIRES_REVIEW";
-      else if (!notice.success) {
+      else if (financialReviewHold(inv)) reason = financialReviewHold(inv);
+      else if (inv.payment_status === "PAID" && inv.reconciliation_status === "APPLIED") {
+        if (inv.payment_gateway_ref !== notice.reference) reason = "PROVIDER_REFERENCE_CONFLICT";
+        else {
+          outcome = "DUPLICATE";
+          reason = "ALREADY_APPLIED";
+        }
+      } else if (!notice.success) {
         outcome = notice.payload?.status === "PENDING" ? "PENDING" : "FAILED";
         reason = "PROVIDER_" + (["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED"].includes(notice.payload?.status) ? notice.payload.status : "FAILED");
       } else if (!inv.quote) reason = "LEGACY_INVOICE_NEEDS_REVIEW";
@@ -903,7 +910,7 @@ async function reconcilePayment(db, notice) {
     }
     const payload = {
       contentDigest: notice.contentDigest || null,
-      status: notice.success ? "SUCCESS" : ["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED", "REFUNDED"].includes(notice.payload?.status) ? notice.payload.status : "OTHER",
+      status: notice.success ? "SUCCESS" : ["FAILED", "PENDING", "EXPIRED", "CANCELLED", "ORDER_EXPIRED", "REFUNDED", "PARTIAL_REFUNDED", "REVERSED", "VOIDED"].includes(notice.payload?.status) ? notice.payload.status : "OTHER",
       channel: (notice.channel || "").slice(0, 100),
       providerChannel: (notice.providerChannel || notice.channel || "").slice(0, 100),
       requestTimestamp: typeof notice.payload?.requestTimestamp === "string" ? notice.payload.requestTimestamp.slice(0, 30) : null
@@ -929,14 +936,14 @@ async function reconcilePayment(db, notice) {
       await c.query(`UPDATE billing.invoices SET payment_status='PAID',paid_at=now(),payment_gateway_ref=$2,
         reconciliation_status='APPLIED',reconciliation_note=$3 WHERE id=$1`, [inv.id, notice.reference, reason]);
     } else if (inv && outcome !== "DUPLICATE" && outcome !== "FAILED" && outcome !== "PENDING") {
-      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`, [inv.id, outcome, providerOrderTerminal(inv) ? notice.success ? "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW" : inv.reconciliation_note : reason]);
+      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`, [inv.id, outcome, financialReviewHold(inv) || (providerOrderTerminal(inv) ? notice.success ? "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW" : inv.reconciliation_note : reason)]);
     }
     if (inv && ["FAILED", "PENDING"].includes(outcome) && inv.payment_status !== "PAID" && !providerOrderTerminal(inv)) {
       await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [inv.id, reason]);
     }
     if (inv && notice.success && providerOrderTerminal(inv) && outcome === "REVIEW") {
-      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='RELATED_LATE_PAYMENT_REQUIRES_REVIEW'
-        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`, [inv.tenant_id, inv.id, inv.quote.revision]);
+      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=CASE WHEN reconciliation_note=ANY($4::text[]) THEN reconciliation_note ELSE 'RELATED_LATE_PAYMENT_REQUIRES_REVIEW' END
+        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`, [inv.tenant_id, inv.id, inv.quote.revision, FINANCIAL_HOLD_REASONS]);
     }
     return { ok: true, outcome, reason };
   });
@@ -973,12 +980,12 @@ async function assertOutletCapacity(db, tenantId, excludeId) {
 var INQUIRY_COOLDOWN_MS = 6e4;
 async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatus, options = {}) {
   if (!isQrisCheckoutInvoice(inv)) return { ok: true, outcome: "UNAVAILABLE" };
-  const now = (options.now || Date.now)();
   const claimed = await db.tx(async (c) => {
     const fresh = (await c.query("SELECT * FROM billing.invoices WHERE id=$1 FOR UPDATE", [inv.id])).rows[0];
     if (!fresh || !isQrisCheckoutInvoice(fresh) || fresh.payment_status === "PAID" && fresh.reconciliation_status === "APPLIED") return false;
     const last = (await c.query(`SELECT max(created_at) checked_at FROM billing.payment_events
    WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'`, [fresh.invoice_number])).rows[0]?.checked_at;
+    const now = options.now ? options.now() : new Date((await c.query("SELECT clock_timestamp() AS observed_at")).rows[0].observed_at).getTime();
     const anchor = Math.max(new Date(fresh.created_at).getTime(), last ? new Date(last).getTime() : 0);
     if (last && (options.observeOnly || !Number.isFinite(anchor) || now - anchor < INQUIRY_COOLDOWN_MS)) return false;
     await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,outcome,reason,payload,created_at)
@@ -1055,7 +1062,7 @@ function coordinate(value, limit) {
   const n = Number(value);
   return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
 }
-function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout, inquiryProvider = checkDokuOrderStatus, inquiryClock = Date.now) {
+function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = createDokuCheckout, inquiryProvider = checkDokuOrderStatus, inquiryClock) {
   const run = (fn) => async (req, res) => {
     try {
       await fn(req, res);
@@ -1182,8 +1189,8 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       const current = (await c.query("SELECT revision FROM billing.subscriptions WHERE tenant_id=$1 FOR UPDATE", [tenantId])).rows[0];
       if (Number(current?.revision) !== quote.revision) throw new BillingError(409, "CHECKOUT_QUOTE_CHANGED");
       const held = (await c.query(`SELECT id FROM billing.invoices WHERE tenant_id=$1 AND reconciliation_status='REVIEW'
-        AND reconciliation_note IN('TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW','RELATED_LATE_PAYMENT_REQUIRES_REVIEW')
-        AND quote->>'revision'=$2::text LIMIT 1`, [tenantId, quote.revision])).rows[0];
+        AND reconciliation_note=ANY($3::text[])
+        AND quote->>'revision'=$2::text LIMIT 1`, [tenantId, quote.revision, FINANCIAL_HOLD_REASONS])).rows[0];
       if (held) throw new BillingError(409, "PAYMENT_REVIEW_REQUIRED");
       const sameKey = (await c.query("SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2", [tenantId, key])).rows[0];
       if (sameKey?.payment_status === "PAID") return { rowCount: 0, rows: [sameKey] };
@@ -1225,7 +1232,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       const current = (await db.query("SELECT revision FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
       res.json({ ok: true, paid: fresh.payment_status === "PAID" && fresh.reconciliation_status === "APPLIED", paymentUrl: invoicePaymentUrl(fresh, Number(current.revision)), invoice: serializeInvoice(fresh, Number(current.revision)), quote });
     } catch (err) {
-      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='CHECKOUT_RESPONSE_FAILED' WHERE id=$1 AND payment_status<>'PAID'", [id]);
+      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=coalesce(reconciliation_note,'CHECKOUT_RESPONSE_FAILED') WHERE id=$1 AND payment_status<>'PAID'", [id]);
       throw err;
     }
   }));
@@ -2904,8 +2911,9 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
           const invoice = await c.query("SELECT id,reconciliation_note,reconciliation_status,payment_status FROM billing.invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [req.body.invoiceId, req.params.tenantId]);
           if (!invoice.rowCount) throw new BillingError(404, "INVOICE_NOT_FOUND");
           invoiceBefore = invoice.rows[0];
-          await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [req.body.invoiceId, reason]);
-          invoiceAfter = { ...invoiceBefore, reconciliation_note: reason };
+          const protectedState = financialReviewHold(invoiceBefore) || providerOrderTerminal(invoiceBefore) || invoiceBefore.reconciliation_note === "PROVIDER_EXPIRED";
+          if (!protectedState) await c.query("UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1", [req.body.invoiceId, reason]);
+          invoiceAfter = { ...invoiceBefore, reconciliation_note: protectedState ? invoiceBefore.reconciliation_note : reason };
         }
         const after = (await c.query("SELECT * FROM billing.subscriptions WHERE id=$1", [before.id])).rows[0];
         await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)

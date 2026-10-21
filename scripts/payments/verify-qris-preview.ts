@@ -1,3 +1,4 @@
+import {testDokuAdversarial} from '../dev/test-doku-adversarial';
 // Isolated native Neon test; provider HTTP stays mocked in testQrisSubscriptions.
 import fs from 'node:fs';
 import pg from 'pg';
@@ -16,6 +17,6 @@ try{
  for(const rel of ['pos.transactions','internal.internal_users','public.blog_posts'])await assert.rejects(()=>pool.query('SELECT * FROM '+rel+' LIMIT 1'),/permission denied|does not exist/);
  // The native adapter returns row-count fields in the same shape as PGlite.
  pg.types.setTypeParser(20,Number);pg.types.setTypeParser(1700,Number);
- const start=Date.now();await testQrisSubscriptions(wrap(pool));
+ const start=Date.now();await testQrisSubscriptions(wrap(pool));await testDokuAdversarial(wrap(pool));
  console.log(JSON.stringify({result:'PASS',target:facts.db,role:facts.actor,provider:'MOCK_ONLY',durationMs:Date.now()-start,tlsClientToPooler:'verify-full',productionChanged:false}));
 }finally{await pool.end();}

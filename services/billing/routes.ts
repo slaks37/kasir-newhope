@@ -1,4 +1,4 @@
-import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal} from './invoicePaymentPolicy';
+import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
@@ -20,7 +20,7 @@ function coordinate(value: unknown, limit: number): number | null {
   return Number.isFinite(n) && Math.abs(n) <= limit && n !== 0 ? n : null;
 }
 
-export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout,inquiryProvider=checkDokuOrderStatus,inquiryClock:()=>number=Date.now) {
+export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false,checkoutProvider=createDokuCheckout,inquiryProvider=checkDokuOrderStatus,inquiryClock?:()=>number) {
   const run=(fn:(req:express.Request,res:express.Response)=>Promise<unknown>)=>async(req:express.Request,res:express.Response)=>{
     try { await fn(req,res); } catch(err) {
       if(req.path===DOKU_NOTIFICATION_PATH && err instanceof BillingError)console.warn('[doku] NOTIFICATION_REJECTED',err.message);
@@ -131,8 +131,8 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       const current=(await c.query('SELECT revision FROM billing.subscriptions WHERE tenant_id=$1 FOR UPDATE',[tenantId])).rows[0];
       if(Number(current?.revision)!==quote.revision)throw new BillingError(409,'CHECKOUT_QUOTE_CHANGED');
       const held=(await c.query(`SELECT id FROM billing.invoices WHERE tenant_id=$1 AND reconciliation_status='REVIEW'
-        AND reconciliation_note IN('TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW','RELATED_LATE_PAYMENT_REQUIRES_REVIEW')
-        AND quote->>'revision'=$2::text LIMIT 1`,[tenantId,quote.revision])).rows[0];
+        AND reconciliation_note=ANY($3::text[])
+        AND quote->>'revision'=$2::text LIMIT 1`,[tenantId,quote.revision,FINANCIAL_HOLD_REASONS])).rows[0];
       if(held)throw new BillingError(409,'PAYMENT_REVIEW_REQUIRED');
       const sameKey=(await c.query('SELECT * FROM billing.invoices WHERE tenant_id=$1 AND checkout_key=$2',[tenantId,key])).rows[0];
       if(sameKey?.payment_status==='PAID')return {rowCount:0,rows:[sameKey]};
@@ -173,7 +173,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       const current=(await db.query('SELECT revision FROM billing.subscriptions WHERE tenant_id=$1',[tenantId])).rows[0];
       res.json({ok:true,paid:fresh.payment_status==='PAID' && fresh.reconciliation_status==='APPLIED',paymentUrl:invoicePaymentUrl(fresh,Number(current.revision)),invoice:serializeInvoice(fresh,Number(current.revision)),quote});
     } catch(err) {
-      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='CHECKOUT_RESPONSE_FAILED' WHERE id=$1 AND payment_status<>'PAID'",[id]);
+      await db.query("UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=coalesce(reconciliation_note,'CHECKOUT_RESPONSE_FAILED') WHERE id=$1 AND payment_status<>'PAID'",[id]);
       throw err;
     }
   }));

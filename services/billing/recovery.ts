@@ -10,7 +10,6 @@ export type InquiryOptions={now?:()=>number;observeOnly?:boolean};
 /** Backend inquiry is evidence only when every order field is provider-derived. */
 export async function reconcileInvoiceByInquiry(db:Db,inv:any,provider=checkDokuOrderStatus,options:InquiryOptions={}) {
  if(!isQrisCheckoutInvoice(inv))return {ok:true,outcome:'UNAVAILABLE'};
- const now=(options.now || Date.now)();
  // Commit a durable lease before network I/O. All Vercel instances and the
  // worker serialize on this invoice; timeout never releases the cooldown.
  const claimed=await db.tx(async c=>{
@@ -18,6 +17,9 @@ export async function reconcileInvoiceByInquiry(db:Db,inv:any,provider=checkDoku
   if(!fresh || !isQrisCheckoutInvoice(fresh) || fresh.payment_status==='PAID' && fresh.reconciliation_status==='APPLIED')return false;
   const last=(await c.query(`SELECT max(created_at) checked_at FROM billing.payment_events
    WHERE invoice_number=$1 AND payload->>'source'='INQUIRY_PROBE'`,[fresh.invoice_number])).rows[0]?.checked_at;
+  // Database time is authoritative across instances. A host clock jump must
+  // not expire another instance's lease. Explicit clocks are test-only DI.
+  const now=options.now?options.now():new Date((await c.query('SELECT clock_timestamp() AS observed_at')).rows[0].observed_at).getTime();
   const anchor=Math.max(new Date(fresh.created_at).getTime(),last?new Date(last).getTime():0);
   if(last && (options.observeOnly || !Number.isFinite(anchor) || now-anchor<INQUIRY_COOLDOWN_MS))return false;
   await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,outcome,reason,payload,created_at)

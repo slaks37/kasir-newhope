@@ -1,3 +1,4 @@
+import {testDokuAdversarial} from './test-doku-adversarial';
 // Isolated real PostgreSQL engine. No .env, cloud DB, emails, or paid requests.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -344,6 +345,13 @@ async function main(){
   const invoiceAudit=(await db.query("SELECT * FROM internal.support_actions WHERE action='PAYMENT_NOTE'")).rows[0];
   assert.equal(invoiceAudit.before_state.invoice.id,invoice);assert.equal(invoiceAudit.after_state.invoice.reconciliation_note,'Verified original invoice note');assert.equal(invoiceAudit.user_agent,'Audit regression client');
   assert.equal(invoiceAudit.request_id,invoiceNote.headers.get('x-request-id'));
+  const protectedInvoice=randomUUID(),supportComment='Contacted provider; awaiting financial evidence';
+  await db.query(`INSERT INTO billing.invoices(id,tenant_id,subscription_id,invoice_number,amount,currency,due_date,quote,reconciliation_status,reconciliation_note)
+    SELECT $1,tenant_id,subscription_id,$2,amount,currency,due_date,quote,'REVIEW','REFUND_REQUIRES_REVIEW' FROM billing.invoices WHERE id=$3`,[protectedInvoice,'ADMIN-HOLD-'+protectedInvoice,invoice]);
+  const heldNote=await fetch(url+'/api/admin/tenants/'+tenant+'/support',{method:'POST',headers:{authorization:'Bearer test-admin','content-type':'application/json'},body:JSON.stringify({action:'PAYMENT_NOTE',invoiceId:protectedInvoice,reason:supportComment})});assert.equal(heldNote.status,200);
+  assert.equal((await db.query('SELECT reconciliation_note FROM billing.invoices WHERE id=$1',[protectedInvoice])).rows[0].reconciliation_note,'REFUND_REQUIRES_REVIEW');
+  const heldAudit=(await db.query('SELECT * FROM internal.support_actions WHERE reason=$1',[supportComment])).rows[0];assert.equal(heldAudit.after_state.invoice.reconciliation_note,'REFUND_REQUIRES_REVIEW');assert.equal(heldAudit.reason,supportComment);
+  console.log('PASS independent support-note guard: Superadmin commentary preserved in immutable audit without clearing financial hold');
   for(const table of ['internal.internal_access_log','internal.support_actions']) {
    for(const operation of ['UPDATE '+table+' SET request_id=request_id','DELETE FROM '+table,'TRUNCATE '+table]) {
     await assert.rejects(()=>db.exec(operation),/ADMIN_AUDIT_APPEND_ONLY/);
@@ -435,6 +443,7 @@ async function main(){
   await testDokuNotifications(db,url,value=>{failPayment=value;});
   await testFreeSync(db,url);
   await testQrisSubscriptions(db);
+  await testDokuAdversarial(db);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

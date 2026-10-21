@@ -1,4 +1,4 @@
-import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal} from './invoicePaymentPolicy';
+import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,financialReviewHold,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { billingQuote, lifecycleStage, subscriptionAccess } from '../../src/config/subscriptionPolicy';
@@ -132,12 +132,15 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
     if (inv) {
       sub=(await c.query('SELECT * FROM billing.subscriptions WHERE id=$1 FOR UPDATE',[inv.subscription_id])).rows[0];
       if(notice.validationIssue==='REFUND_REQUIRES_REVIEW' || notice.validationIssue==='REVERSAL_REQUIRES_REVIEW') reason=notice.validationIssue;
-      else if (inv.payment_status==='PAID' && inv.reconciliation_status==='APPLIED') { outcome='DUPLICATE';reason='ALREADY_APPLIED'; }
       else if (Number(inv.amount)!==notice.amount || inv.currency!==notice.currency) reason='AMOUNT_OR_CURRENCY_MISMATCH';
       else if (notice.validationIssue) reason=notice.validationIssue;
       else if (notice.integration==='DOKU_CHECKOUT' && !isQrisCheckoutInvoice(inv)) reason='LEGACY_INVOICE_NEEDS_REVIEW';
       else if (inv.quote?.allowedChannels && !inv.quote.allowedChannels.includes(notice.channel)) reason='INVOICE_CHANNEL_MISMATCH';
-      else if (inv.reconciliation_note==='RELATED_LATE_PAYMENT_REQUIRES_REVIEW')reason='RELATED_LATE_PAYMENT_REQUIRES_REVIEW';
+      else if (financialReviewHold(inv))reason=financialReviewHold(inv)!;
+      else if (inv.payment_status==='PAID' && inv.reconciliation_status==='APPLIED') {
+        if(inv.payment_gateway_ref!==notice.reference)reason='PROVIDER_REFERENCE_CONFLICT';
+        else {outcome='DUPLICATE';reason='ALREADY_APPLIED';}
+      }
       else if (!notice.success) { outcome=notice.payload?.status==='PENDING'?'PENDING':'FAILED';reason='PROVIDER_'+(['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(notice.payload?.status)?notice.payload.status:'FAILED'); }
       else if (!inv.quote) reason='LEGACY_INVOICE_NEEDS_REVIEW';
       else if (providerOrderTerminal(inv))reason='TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW';
@@ -147,7 +150,7 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
     }
     // Allowlist audit metadata only. Never store full notification, card/VA
     // numbers, customer details, authorization headers or signatures.
-    const payload={contentDigest:notice.contentDigest || null,status:notice.success?'SUCCESS':['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED','REFUNDED'].includes(notice.payload?.status)?notice.payload.status:'OTHER',
+    const payload={contentDigest:notice.contentDigest || null,status:notice.success?'SUCCESS':['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED','REFUNDED','PARTIAL_REFUNDED','REVERSED','VOIDED'].includes(notice.payload?.status)?notice.payload.status:'OTHER',
       channel:(notice.channel || '').slice(0,100),providerChannel:(notice.providerChannel || notice.channel || '').slice(0,100),requestTimestamp:typeof notice.payload?.requestTimestamp==='string'?notice.payload.requestTimestamp.slice(0,30):null};
     const event=await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,gateway_reference,amount,currency,outcome,reason,payload)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(event_key) DO NOTHING RETURNING id`,
@@ -169,15 +172,15 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
     } else if (inv && outcome!=='DUPLICATE' && outcome!=='FAILED' && outcome!=='PENDING') {
       // A mismatch never grants access or invents a refund. Keep it visible in
       // reconciliation for an operator to investigate against gateway evidence.
-      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`,[inv.id,outcome,providerOrderTerminal(inv)?(notice.success?'TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW':inv.reconciliation_note):reason]);
+      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`,[inv.id,outcome,financialReviewHold(inv) || (providerOrderTerminal(inv)?(notice.success?'TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW':inv.reconciliation_note):reason)]);
     }
     if(inv && ['FAILED','PENDING'].includes(outcome) && inv.payment_status!=='PAID' && !providerOrderTerminal(inv)) {
       // A failed attempt can be followed by success; retain immutable attempts.
       await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[inv.id,reason]);
     }
     if(inv && notice.success && providerOrderTerminal(inv) && outcome==='REVIEW') {
-      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note='RELATED_LATE_PAYMENT_REQUIRES_REVIEW'
-        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`,[inv.tenant_id,inv.id,inv.quote.revision]);
+      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=CASE WHEN reconciliation_note=ANY($4::text[]) THEN reconciliation_note ELSE 'RELATED_LATE_PAYMENT_REQUIRES_REVIEW' END
+        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`,[inv.tenant_id,inv.id,inv.quote.revision,FINANCIAL_HOLD_REASONS]);
     }
     return {ok:true,outcome,reason};
   });
