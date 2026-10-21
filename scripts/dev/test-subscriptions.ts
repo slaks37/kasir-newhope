@@ -1,3 +1,4 @@
+import {testBetaPayments} from './test-beta-payments';
 import {testDokuAdversarial} from './test-doku-adversarial';
 // Isolated real PostgreSQL engine. No .env, cloud DB, emails, or paid requests.
 import assert from 'node:assert/strict';
@@ -413,7 +414,7 @@ async function main(){
   assert.equal((await act('GRANT_PLAN',{planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:2})).status,200);
   assert.equal((await ensureSubscription(db,other)).extra_outlets,2);
   // Dummy gateway settings are scoped to this test process. No network call to DOKU.
-  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
+  process.env.DOKU_CHECKOUT_PILOT_TENANTS=other;process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='checkout';process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='test-client';process.env.DOKU_SECRET_KEY='test-secret';process.env.PUBLIC_APP_URL='https://test.invalid';process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   const checkoutBody={planId:'plan-plus-monthly',billingCycle:'YEARLY',extraOutlets:2,requestKey:randomUUID()};
   const checkout=()=>fetch(url+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':'owner-two','content-type':'application/json'},body:JSON.stringify(checkoutBody)});
   const first=await checkout();assert.equal(first.status,200,await first.clone().text());const invoiceData=await first.json();
@@ -444,6 +445,7 @@ async function main(){
   await testFreeSync(db,url);
   await testQrisSubscriptions(db);
   await testDokuAdversarial(db);
+  await testBetaPayments(db,url,value=>{failAudit=value;});
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await pg.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

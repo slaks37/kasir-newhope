@@ -13,7 +13,7 @@ import {checkoutRequestKey,isVerifiedInvoicePayment,isDokuHostedUrl} from '../..
 
 export async function testQrisSubscriptions(db:Db) {
  const saved={...process.env},nativeFetch=globalThis.fetch;
- const keys=['DOKU_SUBSCRIPTION_PAYMENT_MODE','DOKU_PAYMENTS_ENABLED','DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','PUBLIC_APP_URL'];
+ const keys=['DOKU_CHECKOUT_PILOT_TENANTS','DOKU_SUBSCRIPTION_PAYMENT_MODE','DOKU_PAYMENTS_ENABLED','DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','PUBLIC_APP_URL'];
  process.env.DOKU_SUBSCRIPTION_PAYMENT_MODE='dynamic_qris_checkout';
  process.env.DOKU_API_URL='https://api-sandbox.doku.com';process.env.DOKU_CLIENT_ID='MCH-synthetic';
  process.env.DOKU_SECRET_KEY='synthetic-not-a-credential';process.env.DOKU_ALLOWED_CHANNELS='QRIS';process.env.PUBLIC_APP_URL='https://app.test.invalid';
@@ -28,7 +28,7 @@ export async function testQrisSubscriptions(db:Db) {
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
  const base='http://127.0.0.1:'+(server.address() as any).port;
  const make=async()=>{
-  const tenant=randomUUID(),owner='qris-'+randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Synthetic subscription QA',$2)",[tenant,owner]);
+  const tenant=randomUUID();process.env.DOKU_CHECKOUT_PILOT_TENANTS=[process.env.DOKU_CHECKOUT_PILOT_TENANTS,tenant].filter(Boolean).join(',');const owner='qris-'+randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Synthetic subscription QA',$2)",[tenant,owner]);
   return {tenant,owner};
  };
  const post=(owner:string,body:any)=>fetch(base+'/api/v1/subscription/checkout',{method:'POST',headers:{'x-auth-sub':owner,'content-type':'application/json'},body:JSON.stringify(body)});
@@ -63,7 +63,12 @@ export async function testQrisSubscriptions(db:Db) {
   delete process.env.DOKU_PAYMENTS_ENABLED;
   assert.equal((await post('unprovisioned-qa',input())).status,503);
   assert.equal((await db.query('SELECT count(*)::int n FROM internal.tenants')).rows[0].n,before);assert.equal(providerCalls,0);
-  process.env.DOKU_PAYMENTS_ENABLED='1';process.env.DOKU_CLIENT_ID='BSN-synthetic';
+  process.env.DOKU_PAYMENTS_ENABLED='1';
+  const pilot=await make(),pilotIds=process.env.DOKU_CHECKOUT_PILOT_TENANTS;
+  for(const ids of ['',randomUUID(),'*']){process.env.DOKU_CHECKOUT_PILOT_TENANTS=ids;assert.equal((await post(pilot.owner,{planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:0,requestKey:randomUUID()})).status,403);}
+  process.env.DOKU_CHECKOUT_PILOT_TENANTS=pilotIds;assert.equal(providerCalls,0);assert.equal((await db.query('SELECT id FROM billing.invoices WHERE tenant_id=$1',[pilot.tenant])).rowCount,0);
+  console.log('PASS Checkout pilot enforcement: missing/excluded/wildcard allowlist denied server-side before invoice/provider');
+  process.env.DOKU_CLIENT_ID='BSN-synthetic';
   const a=await make();assert.equal((await post(a.owner,input())).status,503);assert.equal(providerCalls,0);process.env.DOKU_CLIENT_ID='MCH-synthetic';
   console.log('PASS QRIS 1: explicit activation and Brand ID guards; no provisioning/provider side effects when paused');
   const body=input(),responses=await Promise.all([post(a.owner,body),post(a.owner,body)]);

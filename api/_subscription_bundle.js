@@ -1,3 +1,27 @@
+// services/shared/releaseGates.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidAllowlist(value) {
+  const ids = (value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (ids.some((id) => !UUID.test(id))) throw Error("RELEASE_ALLOWLIST_INVALID");
+  return [...new Set(ids)];
+}
+function betaAccessError(subject, env = process.env) {
+  if (!env.BETA_ACCESS_MODE || env.BETA_ACCESS_MODE === "open") return;
+  if (env.BETA_ACCESS_MODE !== "invite_only") return "BETA_CONFIGURATION_INVALID";
+  try {
+    return uuidAllowlist(env.BETA_ALLOWED_SUBJECTS).includes(subject.toLowerCase()) ? void 0 : "BETA_INVITE_REQUIRED";
+  } catch {
+    return "BETA_CONFIGURATION_INVALID";
+  }
+}
+function checkoutPilotAllowed(tenantId, env = process.env) {
+  try {
+    return uuidAllowlist(env.DOKU_CHECKOUT_PILOT_TENANTS).includes(tenantId.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -432,7 +456,7 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/invoicePaymentPolicy.ts
-var FINANCIAL_HOLD_REASONS = ["PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
+var FINANCIAL_HOLD_REASONS = ["EXTERNAL_CONFLICT_REQUIRES_REVIEW", "PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
 function financialReviewHold(i) {
   return FINANCIAL_HOLD_REASONS.some((reason) => reason === i?.reconciliation_note) ? i.reconciliation_note : void 0;
 }
@@ -443,7 +467,7 @@ function providerOrderTerminal(i) {
   return ["PROVIDER_ORDER_EXPIRED", "PROVIDER_CANCELLED", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW"].includes(i?.reconciliation_note);
 }
 function invoicePaymentUrl(i, currentRevision) {
-  if (!isQrisCheckoutInvoice(i) || i.payment_status !== "PENDING" || i.reconciliation_status !== "PENDING" || providerOrderTerminal(i) || ["PROVIDER_EXPIRED", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"].includes(i.reconciliation_note) || !Number.isFinite(new Date(i.due_date).getTime()) || new Date(i.due_date).getTime() <= Date.now() || currentRevision !== void 0 && i.quote.revision !== currentRevision) return null;
+  if (process.env.DOKU_PAYMENTS_ENABLED?.trim() !== "1" || !checkoutPilotAllowed(i?.tenant_id || "") || !isQrisCheckoutInvoice(i) || i.payment_status !== "PENDING" || i.reconciliation_status !== "PENDING" || providerOrderTerminal(i) || ["PROVIDER_EXPIRED", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"].includes(i.reconciliation_note) || !Number.isFinite(new Date(i.due_date).getTime()) || new Date(i.due_date).getTime() <= Date.now() || currentRevision !== void 0 && i.quote.revision !== currentRevision) return null;
   try {
     return validateDokuPaymentUrl(i.payment_link_url);
   } catch {
@@ -1121,6 +1145,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       throw new BillingError(503, e.message);
     }
     const tenantId = await tenant(req);
+    if (!checkoutPilotAllowed(tenantId)) throw new BillingError(403, "CHECKOUT_PILOT_ONLY");
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
     let configured = false;
@@ -1379,6 +1404,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
       if (!principal || principal.subject === "local-development") {
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
+      const betaError = betaAccessError(principal.subject);
+      if (betaError) return res.status(betaError === "BETA_INVITE_REQUIRED" ? 403 : 503).json({ ok: false, error: betaError });
       applyPrincipal(req, principal);
     }
     if (rawBodyRoutes.has(path) && req.method === "POST") {

@@ -1,3 +1,4 @@
+import {betaAccessError} from '../services/shared/releaseGates';
 import express from 'express';
 import { connectDb } from '../services/shared/db';
 import { registerBillingRoutes } from '../services/billing/routes';
@@ -58,6 +59,8 @@ export function createNativeApiHandler(authenticate=authenticateBearer,build=bui
         return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
       }
       if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
+      const betaError=path.startsWith('/api/admin/')?undefined:betaAccessError(principal.subject);
+      if(betaError)return res.status(betaError==='BETA_INVITE_REQUIRED'?403:503).json({ok:false,error:betaError});
       applyPrincipal(req,principal);
     }
     try{

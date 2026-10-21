@@ -9,7 +9,7 @@ import {ensureSubscription} from '../../services/billing/engine';
 import {reconcileInvoiceByInquiry} from '../../services/billing/recovery';
 
 export async function testDokuAdversarial(db:Db){
- const saved={...process.env};const keys=['DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','DOKU_PAYMENTS_ENABLED','DOKU_SUBSCRIPTION_PAYMENT_MODE','PUBLIC_APP_URL'];
+ const saved={...process.env};const keys=['DOKU_CHECKOUT_PILOT_TENANTS','DOKU_API_URL','DOKU_CLIENT_ID','DOKU_SECRET_KEY','DOKU_ALLOWED_CHANNELS','DOKU_PAYMENTS_ENABLED','DOKU_SUBSCRIPTION_PAYMENT_MODE','PUBLIC_APP_URL'];
  Object.assign(process.env,{DOKU_API_URL:'https://api-sandbox.doku.com',DOKU_CLIENT_ID:'MCH-independent-synthetic',DOKU_SECRET_KEY:'independent-synthetic-not-a-key',DOKU_ALLOWED_CHANNELS:'QRIS',DOKU_PAYMENTS_ENABLED:'1',DOKU_SUBSCRIPTION_PAYMENT_MODE:'dynamic_qris_checkout',PUBLIC_APP_URL:'https://audit.example.invalid'});
  let clock=Date.now(),inquiries=0,creations=0,timeout=false;let checkoutHook:((payload:any)=>Promise<void>)|undefined;
  const provider=async()=>{inquiries++;if(timeout)throw Error('SYNTHETIC_TIMEOUT');return{ok:false,status:'UNKNOWN' as const};};
@@ -22,7 +22,7 @@ export async function testDokuAdversarial(db:Db){
  const get=(at:number,owner:string,path:string)=>fetch(servers[at].url+'/api/v1/subscription/'+path,{headers:{'x-auth-sub':owner}});
  const post=(at:number,owner:string,input:any)=>fetch(servers[at].url+'/api/v1/subscription/checkout',{method:'POST',headers:{'content-type':'application/json','x-auth-sub':owner},body:JSON.stringify(input)});
  const make=async()=>{
-  const tenant=randomUUID(),owner=randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Independent synthetic audit',$2)",[tenant,owner]);
+  const tenant=randomUUID();process.env.DOKU_CHECKOUT_PILOT_TENANTS=[process.env.DOKU_CHECKOUT_PILOT_TENANTS,tenant].filter(Boolean).join(',');const owner=randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Independent synthetic audit',$2)",[tenant,owner]);
   const input={planId:'plan-plus-monthly',billingCycle:'MONTHLY',extraOutlets:0,requestKey:randomUUID()};
   const r=await post(0,owner,input);assert.equal(r.status,200);return{tenant,owner,input,invoice:(await r.json()).invoice};
  };
@@ -67,7 +67,7 @@ export async function testDokuAdversarial(db:Db){
   await deliver(replacement.invoice,'SUCCESS',1);const afterMismatch=await deliver(replacement.invoice);
   gate(afterMismatch.outcome==='REVIEW' && Number((await ensureSubscription(db,expired.tenant)).revision)===0,'A1 reconciliation hold survives amount mismatch followed by valid success');
 
-  const raceTenant=randomUUID(),raceOwner=randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Synthetic checkout race',$2)",[raceTenant,raceOwner]);
+  const raceTenant=randomUUID();process.env.DOKU_CHECKOUT_PILOT_TENANTS+=','+raceTenant;const raceOwner=randomUUID();await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,'Synthetic checkout race',$2)",[raceTenant,raceOwner]);
   checkoutHook=async payload=>{
    const row=(await db.query('SELECT * FROM billing.invoices WHERE invoice_number=$1',[payload.order.invoice_number])).rows[0];
    await deliver({id:row.id,invoiceNumber:row.invoice_number,amount:Number(row.amount)},'REFUNDED');throw Error('SYNTHETIC_CHECKOUT_RESPONSE_LOST');

@@ -1,3 +1,4 @@
+import {betaAccessError} from './releaseGates';
 /**
  * Boundary keamanan untuk seluruh API merchant.
  *
@@ -103,6 +104,9 @@ export async function requireGatewayAuthentication(req: Request, res: Response, 
   if (!principal) {
     return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
   }
+  const path=String(req.originalUrl||req.url||'').split('?')[0];
+  const betaError=path.startsWith('/api/admin/')?undefined:betaAccessError(principal.subject);
+  if(betaError)return res.status(betaError==='BETA_INVITE_REQUIRED'?403:503).json({ok:false,error:betaError});
   res.locals.principal = principal;
   next();
 }

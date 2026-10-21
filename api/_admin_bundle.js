@@ -1,3 +1,27 @@
+// services/shared/releaseGates.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidAllowlist(value) {
+  const ids = (value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (ids.some((id) => !UUID.test(id))) throw Error("RELEASE_ALLOWLIST_INVALID");
+  return [...new Set(ids)];
+}
+function betaAccessError(subject, env = process.env) {
+  if (!env.BETA_ACCESS_MODE || env.BETA_ACCESS_MODE === "open") return;
+  if (env.BETA_ACCESS_MODE !== "invite_only") return "BETA_CONFIGURATION_INVALID";
+  try {
+    return uuidAllowlist(env.BETA_ALLOWED_SUBJECTS).includes(subject.toLowerCase()) ? void 0 : "BETA_INVITE_REQUIRED";
+  } catch {
+    return "BETA_CONFIGURATION_INVALID";
+  }
+}
+function checkoutPilotAllowed(tenantId, env = process.env) {
+  try {
+    return uuidAllowlist(env.DOKU_CHECKOUT_PILOT_TENANTS).includes(tenantId.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 // api/_runtime.ts
 import express2 from "express";
 
@@ -355,7 +379,7 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
 }
 
 // services/billing/invoicePaymentPolicy.ts
-var FINANCIAL_HOLD_REASONS = ["PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
+var FINANCIAL_HOLD_REASONS = ["EXTERNAL_CONFLICT_REQUIRES_REVIEW", "PROVIDER_REFERENCE_CONFLICT", "REFUND_REQUIRES_REVIEW", "REVERSAL_REQUIRES_REVIEW", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"];
 function financialReviewHold(i) {
   return FINANCIAL_HOLD_REASONS.some((reason) => reason === i?.reconciliation_note) ? i.reconciliation_note : void 0;
 }
@@ -366,7 +390,7 @@ function providerOrderTerminal(i) {
   return ["PROVIDER_ORDER_EXPIRED", "PROVIDER_CANCELLED", "TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW"].includes(i?.reconciliation_note);
 }
 function invoicePaymentUrl(i, currentRevision) {
-  if (!isQrisCheckoutInvoice(i) || i.payment_status !== "PENDING" || i.reconciliation_status !== "PENDING" || providerOrderTerminal(i) || ["PROVIDER_EXPIRED", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"].includes(i.reconciliation_note) || !Number.isFinite(new Date(i.due_date).getTime()) || new Date(i.due_date).getTime() <= Date.now() || currentRevision !== void 0 && i.quote.revision !== currentRevision) return null;
+  if (process.env.DOKU_PAYMENTS_ENABLED?.trim() !== "1" || !checkoutPilotAllowed(i?.tenant_id || "") || !isQrisCheckoutInvoice(i) || i.payment_status !== "PENDING" || i.reconciliation_status !== "PENDING" || providerOrderTerminal(i) || ["PROVIDER_EXPIRED", "RELATED_LATE_PAYMENT_REQUIRES_REVIEW"].includes(i.reconciliation_note) || !Number.isFinite(new Date(i.due_date).getTime()) || new Date(i.due_date).getTime() <= Date.now() || currentRevision !== void 0 && i.quote.revision !== currentRevision) return null;
   try {
     return validateDokuPaymentUrl(i.payment_link_url);
   } catch {
@@ -1170,6 +1194,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       throw new BillingError(503, e.message);
     }
     const tenantId = await tenant2(req);
+    if (!checkoutPilotAllowed(tenantId)) throw new BillingError(403, "CHECKOUT_PILOT_ONLY");
     const key = String(req.body?.requestKey || "");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400, "CHECKOUT_REQUEST_KEY_REQUIRED");
     let configured = false;
@@ -1323,7 +1348,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
 }
 
 // src/server/adminRoutes.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -2745,6 +2770,59 @@ function registerClientSupportRoutes(app, getDb, guard, provider = createClientS
   }));
 }
 
+// services/billing/externalPayment.ts
+import { randomUUID as randomUUID7, createHash as createHash2 } from "node:crypto";
+async function externalPayment(c, tenantId, actor, action, b) {
+  if (process.env.DOKU_PAYMENTS_ENABLED?.trim() === "1") throw new BillingError(409, "PAYMENT_MODES_CONFLICT");
+  if (process.env.MANUAL_EXTERNAL_PAYMENTS_ENABLED !== "1") throw new BillingError(503, "EXTERNAL_PAYMENTS_PAUSED");
+  let allowed = false;
+  try {
+    allowed = uuidAllowlist(process.env.MANUAL_PAYMENT_PILOT_TENANTS).includes(tenantId.toLowerCase());
+  } catch {
+  }
+  if (!allowed) throw new BillingError(403, "EXTERNAL_PAYMENT_PILOT_ONLY");
+  await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+  if (action === "ISSUE_EXTERNAL_QUOTE") {
+    const quote = await createQuote(c, tenantId, b);
+    const open = (await c.query(`SELECT a.after_state->'external' AS issued FROM internal.support_actions a
+   WHERE a.tenant_id=$1 AND a.action='ISSUE_EXTERNAL_QUOTE' AND a.after_state->'external'->'quote'->>'revision'=$2::text
+   AND (a.after_state->'external'->>'expiresAt')::timestamptz>now()
+   AND NOT EXISTS(SELECT 1 FROM billing.invoices i WHERE i.id::text=a.after_state->'external'->>'quoteId') ORDER BY a.created_at LIMIT 1`, [tenantId, quote.revision])).rows[0]?.issued;
+    if (open) {
+      if (open.quote.planId !== quote.planId || open.quote.billingCycle !== quote.billingCycle || open.quote.extraOutlets !== quote.extraOutlets) throw new BillingError(409, "OUTSTANDING_EXTERNAL_QUOTE");
+      return open;
+    }
+    if ((await c.query("SELECT id FROM billing.invoices WHERE tenant_id=$1 AND quote->>'revision'=$2::text AND (payment_status='PENDING' OR reconciliation_status='REVIEW') LIMIT 1", [tenantId, quote.revision])).rowCount) throw new BillingError(409, "OUTSTANDING_PAYMENT_RECONCILE_FIRST");
+    if (quote.amount <= 0) throw new BillingError(409, "ZERO_CHARGE_REQUIRES_SUPPORT");
+    return { quoteId: randomUUID7(), quote, expiresAt: new Date(Date.now() + 864e5).toISOString(), provider: "DOKU_PAYMENT_LINK", actor };
+  }
+  const raw = b.proof || {}, proof = { brandId: raw.brandId, status: raw.status, currency: raw.currency, confirmation: raw.confirmation, reference: raw.reference, evidenceSha256: raw.evidenceSha256, evidenceId: raw.evidenceId, amount: raw.amount, paidAt: raw.paidAt, invoiceNumber: raw.invoiceNumber }, brand = process.env.MANUAL_DOKU_BRAND_ID || "";
+  if (!brand || /^BSN-/i.test(brand) || proof.brandId !== brand || proof.status !== "PAID" || proof.currency !== "IDR" || proof.confirmation !== "PROVIDER_DASHBOARD_PAID_VERIFIED" || !/^[A-Za-z0-9._:-]{1,128}$/.test(proof.reference || "") || !/^[a-f0-9]{64}$/.test(proof.evidenceSha256 || "") || !/^[A-Za-z0-9._:-]{1,128}$/.test(proof.evidenceId || "") || !Number.isSafeInteger(proof.amount) || proof.amount <= 0 || !Number.isFinite(Date.parse(proof.paidAt)) || Date.parse(proof.paidAt) > Date.now() + 3e5)
+    throw new BillingError(400, "EXTERNAL_PAYMENT_PROOF_INVALID");
+  const row = (await c.query("SELECT after_state,created_at FROM internal.support_actions WHERE tenant_id=$1 AND action='ISSUE_EXTERNAL_QUOTE' AND after_state->'external'->>'quoteId'=$2", [tenantId, String(b.quoteId || "")])).rows[0];
+  const issued = row?.after_state?.external;
+  if (!issued) throw new BillingError(404, "EXTERNAL_QUOTE_NOT_FOUND");
+  if (proof.invoiceNumber !== "NHM-" + issued.quoteId || proof.amount !== issued.quote.amount || Date.parse(proof.paidAt) < new Date(row.created_at).getTime() - 3e5) throw new BillingError(409, "EXTERNAL_PAYMENT_QUOTE_MISMATCH");
+  const key = "external-doku-" + createHash2("sha256").update(JSON.stringify([brand, proof.reference])).digest("hex");
+  await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+  const prior = (await c.query("SELECT * FROM billing.payment_events WHERE event_key=$1", [key])).rows[0];
+  const number = "NHM-" + issued.quoteId;
+  const digest3 = createHash2("sha256").update(JSON.stringify([tenantId, issued.quoteId, proof])).digest("hex");
+  if (prior) {
+    if (prior.invoice_number !== number || prior.payload?.contentDigest !== digest3) throw new BillingError(409, "EXTERNAL_RECEIPT_CONFLICT");
+    return { quoteId: issued.quoteId, invoiceNumber: number, outcome: prior.outcome, replayed: true, proof };
+  }
+  if (Date.parse(issued.expiresAt) < Date.now()) throw new BillingError(409, "EXTERNAL_QUOTE_EXPIRED_RECONCILE_FIRST");
+  if ((await c.query("SELECT id FROM billing.invoices WHERE id=$1", [issued.quoteId])).rowCount) throw new BillingError(409, "EXTERNAL_QUOTE_ALREADY_RECORDED");
+  const sub = await ensureSubscription(c, tenantId);
+  await c.query(`INSERT INTO billing.invoices(id,subscription_id,tenant_id,invoice_number,amount,currency,due_date,quote)
+ VALUES($1,$2,$3,$4,$5,'IDR',$6,$7::jsonb)`, [issued.quoteId, sub.id, tenantId, number, issued.quote.amount, issued.expiresAt, JSON.stringify({ ...issued.quote, paymentIntegration: "EXTERNAL_VERIFIED", provider: "DOKU_PAYMENT_LINK" })]);
+  const transactional = { ...c, tx: (fn) => fn(c) };
+  const conflicting = (await c.query("SELECT id FROM billing.invoices WHERE tenant_id=$1 AND id<>$2 AND quote->>'revision'=$3::text AND (payment_status='PENDING' OR reconciliation_status='REVIEW') LIMIT 1", [tenantId, issued.quoteId, issued.quote.revision])).rowCount > 0;
+  const result = await reconcilePayment(transactional, { validationIssue: conflicting ? "EXTERNAL_CONFLICT_REQUIRES_REVIEW" : void 0, eventKey: key, invoiceNumber: number, reference: proof.reference, amount: proof.amount, currency: "IDR", success: true, channel: "EXTERNAL_DOKU_PAYMENT_LINK", contentDigest: digest3, payload: { status: "SUCCESS" } });
+  return { quoteId: issued.quoteId, invoiceNumber: number, outcome: result.outcome, reason: result.reason, proof };
+}
+
 // src/server/subscriptionDetail.ts
 async function subscriptionDetail(db, tenantId) {
   return db.tx(async (c) => {
@@ -2881,13 +2959,14 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
       const reason = String(req.body?.reason || "").trim();
       const action = String(req.body?.action || "");
       if (reason.length < 10 || reason.length > 2e3) throw new BillingError(400, "REASON_MINIMUM_10_CHARACTERS");
-      if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
+      if (!["NOTE", "EXTEND_TRIAL", "GRANT_PLAN", "PAYMENT_NOTE", "ISSUE_EXTERNAL_QUOTE", "VERIFY_EXTERNAL_PAYMENT"].includes(action)) throw new BillingError(400, "INVALID_SUPPORT_ACTION");
       if (action !== "NOTE" && req.internal.role !== "ROLE_SUPERADMIN") throw new BillingError(403, "CAPABILITY_DENIED");
       const result = await db.tx(async (c) => {
         const tenant2 = await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [req.params.tenantId]);
         if (!tenant2.rowCount) throw new BillingError(404, "TENANT_NOT_FOUND");
         const before = await ensureSubscription(c, req.params.tenantId);
         let invoiceBefore = null, invoiceAfter = null;
+        const external = ["ISSUE_EXTERNAL_QUOTE", "VERIFY_EXTERNAL_PAYMENT"].includes(action) ? await externalPayment(c, req.params.tenantId, req.internal.id, action, req.body) : null;
         if (action === "EXTEND_TRIAL") {
           const days = Number(req.body.days);
           if (!Number.isInteger(days) || days < 1 || days > 14 || before.plan_id !== TRIAL_PLAN_ID) throw new BillingError(400, "INVALID_TRIAL_EXTENSION");
@@ -2923,14 +3002,14 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
           action,
           reason,
           JSON.stringify({ ...before, invoice: invoiceBefore }),
-          JSON.stringify({ ...after, invoice: invoiceAfter }),
+          JSON.stringify({ ...after, invoice: invoiceAfter, external }),
           req.auditRequestId,
           req.ip || null,
           String(req.headers["user-agent"] || "").slice(0, 512)
         ]);
-        return serializeSubscription(after);
+        return { subscription: serializeSubscription(after), external };
       });
-      res.json({ ok: true, subscription: result });
+      res.json({ ok: true, ...result });
     } catch (err) {
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "SUPPORT_ACTION_FAILED" });
     }
@@ -3517,7 +3596,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   app.use("/api/admin", (req, res, next) => {
     const forwarded = String(req.headers["x-request-id"] || "");
     const trusted = process.env.INTERNAL_GATEWAY_TOKEN && req.headers["x-newhope-gateway-token"] === process.env.INTERNAL_GATEWAY_TOKEN;
-    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID7();
+    req.auditRequestId = trusted && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwarded) ? forwarded : randomUUID8();
     res.setHeader("X-Request-ID", req.auditRequestId);
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -3955,7 +4034,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
     guard("VIEW_SECTOR_ANALYTICS"),
     wrap(async (req, res, db) => {
       const b = req.body || {};
-      const id = b.id ? String(b.id) : "blog-" + randomUUID7();
+      const id = b.id ? String(b.id) : "blog-" + randomUUID8();
       const slug = String(b.slug || "").trim();
       const title = String(b.title || "").trim();
       if (!slug || !title) return res.status(400).json({ ok: false, error: "TITLE_AND_SLUG_REQUIRED" });
@@ -4079,7 +4158,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash3, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -4089,8 +4168,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -4323,7 +4402,7 @@ async function writeActivity(db, a) {
 }
 
 // services/pos/finance.ts
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 var FinanceError = class extends Error {
@@ -4340,7 +4419,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS2.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS2.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -4619,7 +4698,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -4648,7 +4727,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -5265,7 +5344,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -5292,10 +5371,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -5593,7 +5672,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID4.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -6588,6 +6667,8 @@ function createNativeApiHandler(authenticate = authenticateBearer, build = build
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
       if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
+      const betaError = path.startsWith("/api/admin/") ? void 0 : betaAccessError(principal.subject);
+      if (betaError) return res.status(betaError === "BETA_INVITE_REQUIRED" ? 403 : 503).json({ ok: false, error: betaError });
       applyPrincipal(req, principal);
     }
     try {

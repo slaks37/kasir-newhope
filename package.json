@@ -16,7 +16,7 @@
     "env:import": "node scripts/dev/import-env.mjs",
     "env:set": "node scripts/dev/import-env.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
-    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
+    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts && npm run -s test:beta",
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
     "verify": "npm run lint && npm run build && npm run test:runtime && npm test",
@@ -56,7 +56,8 @@
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
     "test:qris:browser": "node scripts/payments/browser-e2e.mjs",
-    "payments:recover": "node --import tsx scripts/payments/reconcile-pending.ts"
+    "payments:recover": "node --import tsx scripts/payments/reconcile-pending.ts",
+    "test:beta": "node --import tsx scripts/dev/test-release-gates.ts"
   },
   "dependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

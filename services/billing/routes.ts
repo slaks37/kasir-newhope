@@ -1,3 +1,4 @@
+import {checkoutPilotAllowed} from '../shared/releaseGates';
 import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import type express from 'express';
 import { randomUUID } from 'node:crypto';
@@ -115,6 +116,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     let policy;
     try{policy=dokuSubscriptionPolicy();}catch(e){throw new BillingError(503,(e as Error).message);}
     const tenantId=await tenant(req);
+    if(!checkoutPilotAllowed(tenantId))throw new BillingError(403,'CHECKOUT_PILOT_ONLY');
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');
     let configured=false;try{configured=isDokuConfigured();}catch{/* configuration error, no provider call */}
