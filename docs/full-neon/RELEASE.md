@@ -30,6 +30,8 @@ The staging branch's previous database and fixtures are untouched. Production is
 - Offline reload restores only a prior verified profile and matching workspace within the existing 24-hour/plan boundary. It creates no Auth session and stores no bearer/password/admin proof in that profile. Reconnect reloads and revalidates managed Auth before sync; outbox bytes are retained.
 - Remote runtime bootstrap/DDL remains disabled. Runtime uses verified TLS, bounded pools, eight-second statement timeout, no SQL ownership/DDL/BYPASSRLS and no session-token/password-column access in managed Auth.
 - Full Neon rejects legacy Supabase runtime configuration and external gateways. DOKU requires explicit enablement generally and is forbidden by the Full Neon manifest. Free trial remains available.
+- Clean schema manifest now includes the AI cache/wallet and multi-business operational namespace artifacts. Reviewed outer transaction wrappers are removed so a late bootstrap failure rolls back every file. Clean-only analytics foreign keys bind the actual merchant and its tenant; populated ambiguous rows abort rather than being remapped.
+- Merchant-health now uses canonical refund/void-aware revenue, real UUIDs and schema columns, bounded batches, an advisory lock and atomic daily upserts. It does not infer paid MRR from manual subscription status. Native staging exercised non-empty merchant transactions and replay; all three cron handlers returned HTTP 200 (billing email remained dry-run).
 - Maintenance flag prevents business DB pools opening and disables all three cron jobs. It provides a fail-closed recovery deployment preserving Neon state after new writes.
 
 ## Evidence and limits
@@ -38,16 +40,16 @@ See `evidence/staging-2026-10-22.json`. `npm run verify` exercises lint/typechec
 
 Fresh source DB/auth backup was encrypted at source and decrypted privately to validate scope/integrity: 165 tables including Auth; ciphertext SHA-256 `e8544709d6b7991c231567bbf88910c01ccda3e86a9b7e5a4da39ebfc3571db3`, existing public-key fingerprint `dfee9e320c8de8e0e02c90ae8451d43486628152`. Backup, private key, records and private credentials are excluded from Git. This is local verification, not a claim of newly accepted independent escrow/restore.
 
-The native staging scenario took **5.48 seconds**. This is neither launch downtime nor alias propagation measurement. There is no measured production cutover timing yet. Do not publish an estimated downtime as a measured result.
+The latest native staging scenario duration is recorded in the evidence JSON (including the additional non-empty cron assertions). This is neither launch downtime nor alias propagation measurement. There is no measured production cutover timing yet. Do not publish an estimated downtime as a measured result.
 
 Authenticated hosted public signup, real email delivery/reset, Google callback, owner-device MFA, Safari cross-site session behavior and immutable production acceptance are **not yet PASS**. Anonymous-token/JWKS inspection is not authenticated-user acceptance; anonymous tokens use a different issuer/lifetime and must never authorize business APIs.
 
 ## Open external gates
 
-1. **Owner — SMTP credential entry.** Console login works; the main Auth form is prepared for Resend (`smtp.resend.com`, 465, username `resend`, sender `auth@kasir.newhope.space`). Owner must complete the password field and save, or authorize the separate official CLI session. Browser credential-entry rules require owner handoff. Configure equivalent staging SMTP and verification, then verify actual delivery/HTTPS reset and managed-session behavior. Do not claim previous self-hosted/Supabase email tests prove this new managed setup.
+1. **Release acceptance — managed email.** Owner saved main SMTP; read-only config confirmed custom Resend (`smtp.resend.com`, 465, username `resend`, sender `auth@kasir.newhope.space`). Official CLI authorization completed using the dedicated Keychain profile. Staging now has equivalent custom SMTP and mandatory OTP verification, with signup and signin verification delivery enabled. No additional email was sent in this setup step. Actual managed email delivery/HTTPS reset and session acceptance still require testing; previous Supabase/self-hosted results do not establish this.
 2. **Owner/Google — production OAuth client.** Shared development keys remain configured. Save legitimate client credentials only in ignored `.env.full-neon-oauth.local`, mode 0600. Register both managed callbacks below, configure the client via Neon, and verify hosted Google login. No credentials in chat/Git.
 3. **Owner — first admin identity.** Register/verify the new managed account, prove the exact new UUID, then authorize its explicit admin binding. No email-only claim or dummy admin seed. Complete TOTP and save recovery codes on the owner's device before public admin use.
-4. **Owner approval — two unused newly created API roles.** Neon API creation gave `newhope_full_runtime` elevated default flags. SQL could not disable it. The application uses the safe SQL-created replacement instead. A specific deletion approval is pending for only the two new unused roles on main/staging; no old role/data deletion is requested.
+4. **Resolved — unused elevated roles.** After explicit owner approval, deleted only the newly-created unused `newhope_full_runtime` roles on main and staging. The application uses the restricted SQL-created `newhope_clean_runtime` replacement. No old role or data was deleted.
 5. **Release engineer — production gates.** Automatic approval review rejected production business bootstrap while lint/provider gates were open. Do not bypass this. Once staging, provider and hosted gates are PASS, recheck those facts and execute the authorized reviewed production preparation. No production DB/env/deployment cutover has occurred.
 
 Callbacks:
@@ -80,3 +82,5 @@ https://kasir.newhope.space/reset-password
 Neon branch quota is currently 10/10. No old branch was deleted, no paid plan/resource was created. Cleanup is a later reviewed operation after launch/backup acceptance.
 
 **Current recommendation: NO-GO for public promotion until the explicit external and hosted gates above pass. Passing mock/native staging tests alone is not production acceptance.**
+
+Agent tooling was inspected and linked without overwriting environments; see [TOOLING.md](TOOLING.md).

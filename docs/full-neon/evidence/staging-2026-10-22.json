@@ -18,6 +18,7 @@
       "cash sale idempotent replay",
       "inventory deduction once",
       "cash ledger exact amount",
+      "merchant-health canonical FK, net revenue and daily replay",
       "cross-tenant rejected",
       "subscription trial independent of DOKU",
       "DOKU paused",
@@ -25,7 +26,7 @@
       "unsigned private read rejected",
       "managed session/password SELECT denied"
     ],
-    "durationSeconds": 7.14
+    "durationSeconds": 6.3
   },
   "content": {
     "posts": 137,
@@ -41,7 +42,13 @@
       "outlets": 0,
       "transactions": 0,
       "admins": 0
-    }
+    },
+    "completeManifestIncludes": [
+      "AI cache",
+      "canonical wallet ownership",
+      "multi-business namespace",
+      "canonical merchant-health and feature-event relationships"
+    ]
   },
   "backup": {
     "encryptedSourceSnapshot": true,
@@ -68,5 +75,62 @@
     "applicationHttpWrites": true,
     "directSupabaseNode": false,
     "inactiveRepairWorkflow": "DV9clz1h6m1paeox"
-  }
+  },
+  "cron": {
+    "target": "isolated-full-neon-staging",
+    "emptyBusinessDatabase": true,
+    "realEmailEnabled": false,
+    "checks": [
+      {
+        "job": "daily-insights",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "job": "daily-insights",
+          "processed": 0,
+          "written": 0,
+          "skipped": 0,
+          "failed": 0,
+          "scope": "up to 25 businesses per run"
+        }
+      },
+      {
+        "job": "merchant-health",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "job": "merchant-health",
+          "runId": "6b0be4ae-38cc-4a55-b646-de8e3c94c165",
+          "merchantsEvaluated": 0,
+          "durationMs": 382
+        }
+      },
+      {
+        "job": "billing-reminders",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "dryRun": true,
+          "candidates": 0,
+          "accepted": 0,
+          "skipped": 0,
+          "unverifiedOwners": 0,
+          "failed": 0,
+          "review": 0
+        }
+      }
+    ]
+  },
+  "authConfiguration": {
+    "mainCustomSmtpConfirmed": true,
+    "stagingCustomSmtpConfirmed": true,
+    "stagingRequiresEmailVerification": true,
+    "newEmailSent": false,
+    "productionGoogleClient": "MISSING",
+    "hostedAcceptance": "PENDING"
+  },
+  "approvedUnusedElevatedRolesDeleted": [
+    "br-falling-butterfly-az989m86",
+    "br-morning-darkness-azwfti4c"
+  ]
 }

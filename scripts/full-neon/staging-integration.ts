@@ -10,6 +10,7 @@ import {registerSyncRoutes} from '../../services/pos/sync';
 import {registerBillingRoutes} from '../../services/billing/routes';
 import {pastikanPaket} from '../../services/billing/store';
 import {SAAS_PLANS} from '../../src/config/saasPlans';
+import {createMerchantHealthHandler} from '../../src/server/merchantHealthHandler';
 import type {Db} from '../../services/shared/db';
 
 Object.assign(process.env,parse(fs.readFileSync('.env.full-neon-staging.local')));
@@ -47,6 +48,10 @@ try{
  assert.equal(Number((await c.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1',[stock])).rows[0].current_stock),9);
  const ledger=(await c.query('SELECT count(*)::int n,sum(amount) total FROM pos.cash_ledger WHERE tenant_id=$1',[tenant])).rows[0];assert.equal(ledger.n,1);assert.equal(Number(ledger.total),20000);
  assert.equal((await request('/api/v1/sync/transactions',sale,{...headers,'x-auth-sub':foreign})).status,403);
+ process.env.CRON_SECRET='synthetic-staging-only';process.env.CRON_ENABLED_JOBS='merchant-health';
+ const health=createMerchantHealthHandler(async()=>db);
+ for(let i=0;i<2;i++){let code=200,body:any;const res:any={status(n:number){code=n;return res;},json(v:any){body=v;return res;}};await health({method:'GET',headers:{authorization:'Bearer synthetic-staging-only'}},res);assert.equal(code,200);assert.equal(body.merchantsEvaluated,1);}
+ const healthRows=(await c.query('SELECT * FROM internal.merchant_health_logs WHERE merchant_id=$1',[product.merchant_id])).rows;assert.equal(healthRows.length,1);assert.equal(healthRows[0].tenant_id,tenant);assert.equal(Number(healthRows[0].daily_revenue),20000);assert.equal(healthRows[0].daily_transaction_count,1);assert.equal(Number(healthRows[0].mrr_idr),0);
  const subscription=(await request('/api/v1/subscription/status')).data;assert.equal(subscription.ok,true);assert.equal((await c.query('SELECT status FROM billing.subscriptions WHERE tenant_id=$1',[tenant])).rows[0].status,'TRIAL');
  assert.equal((await request('/api/v1/subscription/checkout',{})).data.error,'PAYMENTS_PAUSED');
  const file={id:randomUUID(),contentType:'text/csv',data:Buffer.from('synthetic,only\n1,2').toString('base64')};
@@ -63,6 +68,6 @@ try{
   await assert.rejects(auth.query('SELECT token FROM neon_auth.session LIMIT 0'),(e:any)=>e.code==='42501');
   await assert.rejects(auth.query('SELECT password FROM neon_auth.account LIMIT 0'),(e:any)=>e.code==='42501');
  }finally{await auth.end();}
- const evidence={status:'PASS',database:'newhope_full_neon_staging',syntheticIdentityFixture:true,realManagedEmailGoogleAcceptance:false,role:role.current_user,tlsVerified:true,businessChangesRolledBack:true,checks:['DDL denied','bootstrap evidence denied','immutable ledgers and file audit denied','verified trial45 onboarding','versioned catalog','cash sale idempotent replay','inventory deduction once','cash ledger exact amount','cross-tenant rejected','subscription trial independent of DOKU','DOKU paused','private S3 put/signed download/delete','unsigned private read rejected','managed session/password SELECT denied'],durationSeconds:Number(((performance.now()-started)/1000).toFixed(2))};
+ const evidence={status:'PASS',database:'newhope_full_neon_staging',syntheticIdentityFixture:true,realManagedEmailGoogleAcceptance:false,role:role.current_user,tlsVerified:true,businessChangesRolledBack:true,checks:['DDL denied','bootstrap evidence denied','immutable ledgers and file audit denied','verified trial45 onboarding','versioned catalog','cash sale idempotent replay','inventory deduction once','cash ledger exact amount','merchant-health canonical FK, net revenue and daily replay','cross-tenant rejected','subscription trial independent of DOKU','DOKU paused','private S3 put/signed download/delete','unsigned private read rejected','managed session/password SELECT denied'],durationSeconds:Number(((performance.now()-started)/1000).toFixed(2))};
  fs.writeFileSync('build/full-neon/staging-integration.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence));
 }finally{if(server)await new Promise(r=>server.close(r));await c.query('ROLLBACK').catch(()=>{});await c.end();}
