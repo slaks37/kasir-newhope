@@ -136,7 +136,10 @@
     "googleTestUsers": 1,
     "hostedGoogleAcceptance": "PENDING",
     "publicGoogleAccess": "PENDING",
-    "oauthCredentialPublished": false
+    "oauthCredentialPublished": false,
+    "googleProviderVerifiedIdentityCreated": true,
+    "rootCallbackBridge": "IMPLEMENTED_BUILT_ARTIFACT_TEST_PASS_HOSTED_PENDING",
+    "browserSessionAndOnboarding": "PENDING_UPDATED_PREVIEW"
   },
   "approvedUnusedElevatedRolesDeleted": [
     "br-falling-butterfly-az989m86",

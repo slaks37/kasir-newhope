@@ -2,6 +2,18 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- Managed OAuth can return a new account to the root. The public landing
+         deliberately has no Auth SDK; move only its verifier to the app shell. -->
+    <script data-auth-return>
+      (function () {
+        var current = new URL(window.location.href);
+        if (!current.searchParams.has('neon_auth_session_verifier')) return;
+        var target = new URL('/login', current.origin);
+        target.searchParams.set('neon_auth_session_verifier', current.searchParams.get('neon_auth_session_verifier') || '');
+        window.location.replace(target.pathname + target.search);
+      })();
+    </script>
 
     <!-- Google Search Console verification -->
     <meta name="google-site-verification" content="ivGpKqRhxNDNawyN6lzYxy0-dABZzhB_kferkzsBH7Y" />

@@ -21,7 +21,7 @@ The staging branch's previous database and fixtures are untouched. Production is
 ## Implemented and exercised
 
 - Official managed Neon Auth SDK. Its Supabase-shaped compatibility adapter calls managed Neon endpoints; it is not Supabase Auth. Cookie credentials are explicitly included. The application-hosted Better Auth handler returns 404 in Neon mode.
-- Full Neon login exposes the existing managed Google OAuth action. Its app callback lands on `/login`; provider failures surface in the UI. Initial analytics is suppressed for OAuth codes/session verifiers and the SDK callback route, before the SDK exchanges/removes those parameters. SDK tests exercise the actual installed adapter with synthetic provider success and denial.
+- Full Neon login exposes the existing managed Google OAuth action. Its requested app callback is `/login`; a narrowly scoped same-origin landing bridge also forwards root-return session verifiers to the session-aware app shell. Provider failures surface in the UI. Initial analytics is suppressed for OAuth codes/session verifiers and the SDK callback route, before the SDK exchanges/removes those parameters. SDK tests exercise the actual installed adapter with synthetic provider success and denial.
 - Signed EdDSA bearer validation, exact managed branch/JWKS binding, live verified/unbanned identity lookup, canonical UUID preservation and collision rejection. JWT role/MFA metadata cannot grant privileges. No automatic admin email linking in clean mode.
 - Verified server onboarding creates one owner tenant, merchant, outlet and 45-day trial atomically, protected against replay. Pricing, Free plan policy, POS authorization and immutable financial ledgers retain the baseline rules.
 - Managed password reset/verification UI. No screenshot, browser callback, or local profile authorizes a business API.
@@ -85,3 +85,7 @@ Neon branch quota is currently 10/10. No old branch was deleted, no paid plan/re
 **Current recommendation: NO-GO for public promotion until the explicit external and hosted gates above pass. Passing mock/native staging tests alone is not production acceptance.**
 
 Agent tooling was inspected and linked without overwriting environments; see [TOOLING.md](TOOLING.md).
+
+### Hosted Google callback repair
+
+The authorized owner test completed Google provider authentication and created one verified managed identity. The observed return reached the static root landing with a session verifier, so browser-session exchange and onboarding were not accepted. The landing now forwards only that opaque verifier to `/login`, drops unrelated callback parameters, and sends no referrer. The built-artifact regression verifies same-origin routing and inert marketing/untrusted redirect parameters. Full `npm run verify` passed after this fix; hosted acceptance still requires the updated Preview.
