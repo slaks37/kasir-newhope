@@ -44,7 +44,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   initialMode = "login",
 }) => {
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
 
   // URL owns the mode. A mirrored state/effect pair can overwrite navigation
   // while the next lazy route is still loading.
@@ -209,6 +209,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setMode("register");
     setError(null);
     setIsNotRegistered(false);
+  };
+
+  const handleGoogleAuth = async () => {
+    setLoading(true);setError(null);setSuccess(null);setIsNotRegistered(false);
+    try{const {error}=await signInWithGoogle();if(error)setError(error.message);}
+    catch{setError('Login Google belum berhasil. Silakan coba lagi.');}
+    finally{setLoading(false);}
   };
 
   return (
@@ -434,6 +441,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           )}
         </button>
       </form>
+      {usesNeonAuth&&mode==='login'&&<button type="button" disabled={loading}
+        className="nh-app-button-secondary nh-auth-submit mt-3" onClick={()=>void handleGoogleAuth()}>
+        {loading?<Loader2 size={18} className="animate-spin"/>:null} Masuk dengan Google
+      </button>}
       {usesBetterAuth&&mode==='login'&&<BetterLoginHelp/>}
       {usesNeonAuth&&mode==='login'&&<NeonLoginHelp/>}
       <p className="nh-auth-switch">

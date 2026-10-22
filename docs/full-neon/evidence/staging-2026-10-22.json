@@ -126,8 +126,17 @@
     "stagingCustomSmtpConfirmed": true,
     "stagingRequiresEmailVerification": true,
     "newEmailSent": false,
-    "productionGoogleClient": "MISSING",
-    "hostedAcceptance": "PENDING"
+    "productionGoogleClient": "CONFIGURED_CUSTOM",
+    "hostedAcceptance": "PENDING",
+    "googleProject": "new-hope-512409",
+    "googleProjectBillingAccountLinked": false,
+    "mainGoogleProviderReadback": "standard",
+    "stagingGoogleProviderReadback": "standard",
+    "googleAudience": "TESTING",
+    "googleTestUsers": 1,
+    "hostedGoogleAcceptance": "PENDING",
+    "publicGoogleAccess": "PENDING",
+    "oauthCredentialPublished": false
   },
   "approvedUnusedElevatedRolesDeleted": [
     "br-falling-butterfly-az989m86",
