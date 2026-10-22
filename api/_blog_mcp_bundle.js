@@ -1,6 +1,28 @@
 // src/server/blogMcpHandler.ts
 import express from "express";
 
+// services/shared/fullNeon.ts
+var fullNeonTargets = {
+  production: { branchId: "br-falling-butterfly-az989m86", host: "ep-twilight-moon-azqj69l8.c-3.ap-southeast-1.aws.neon.tech", database: "neondb", authUrl: "https://ep-twilight-moon-azqj69l8.neonauth.c-3.ap-southeast-1.aws.neon.tech/neondb/auth", publicBucket: "blog-media", privateBucket: "business-files" },
+  staging: { branchId: "br-morning-darkness-azwfti4c", host: "ep-flat-recipe-azti3hh0.c-3.ap-southeast-1.aws.neon.tech", database: "newhope_full_neon_staging", authUrl: "https://ep-flat-recipe-azti3hh0.neonauth.c-3.ap-southeast-1.aws.neon.tech/neondb/auth", publicBucket: "full-neon-public-media", privateBucket: "full-neon-business-files" }
+};
+function fullNeonConfig(env = process.env) {
+  const selection = env.FULL_NEON_TARGET;
+  if (selection !== "production" && selection !== "staging") throw Error("FULL_NEON_TARGET_REQUIRED");
+  const target = fullNeonTargets[selection];
+  if (["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "GATEWAY_URL"].some((k) => env[k]?.trim())) throw Error("FULL_NEON_LEGACY_RUNTIME_CONFIGURATION_FORBIDDEN");
+  if (selection === "production" && (env.APP_URL !== "https://kasir.newhope.space" || env.NEON_AUTH_EMAIL_READY !== "1" || env.NEON_AUTH_GOOGLE_READY !== "1" || !env.ADMIN_MFA_ENCRYPTION_KEY)) throw Error("FULL_NEON_PRODUCTION_AUTH_ACCEPTANCE_REQUIRED");
+  if (env.FULL_NEON_CLEAN_START !== "1" || env.AUTH_PROVIDER !== "neon" || env.STORAGE_PROVIDER !== "neon" || env.NEON_PROJECT_ID !== "steep-sea-66546931" || env.NEON_BRANCH_ID !== target.branchId || env.NEON_DB_PHASE1 === "1" || env.DOKU_PAYMENTS_ENABLED !== "0") throw Error("FULL_NEON_CONFIGURATION_MISMATCH");
+  if (env.NEON_AUTH_BASE_URL !== target.authUrl || env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL !== target.authUrl + "/.well-known/jwks.json") throw Error("FULL_NEON_AUTH_BRANCH_MISMATCH");
+  if (env.VERCEL_ENV === "production" && selection !== "production") throw Error("FULL_NEON_STAGING_CANNOT_SERVE_PRODUCTION");
+  return { ...target, issuer: new URL(target.authUrl).origin, jwksUrl: target.authUrl + "/.well-known/jwks.json" };
+}
+function assertFullNeonDatabase(connectionString, env = process.env) {
+  const t = fullNeonConfig(env), u = new URL(connectionString);
+  if (!["postgres:", "postgresql:"].includes(u.protocol) || u.hostname.replace("-pooler", "") !== t.host || u.pathname !== "/" + t.database || u.username !== "newhope_clean_runtime" || u.hash || u.port && u.port !== "5432" || [...u.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("FULL_NEON_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+var fullNeonMaintenance = (env = process.env) => env.FULL_NEON_CLEAN_START === "1" && env.FULL_NEON_MAINTENANCE === "1";
+
 // services/shared/db.ts
 import fs2 from "node:fs";
 
@@ -65,6 +87,10 @@ function hybridPhase1Config(env = process.env) {
   return { target, source, staging: env.HYBRID_STAGING === "1" };
 }
 function assertHybridDatabase(connectionString, env = process.env) {
+  if (env.FULL_NEON_CLEAN_START === "1") {
+    assertFullNeonDatabase(connectionString, env);
+    return;
+  }
   const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
   if (env.NEON_DB_PHASE1 !== "1") {
     if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
@@ -148,6 +174,7 @@ function konfigurasiSsl(connectionString) {
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
+  if (fullNeonMaintenance()) throw Error("FULL_NEON_MAINTENANCE");
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
@@ -156,7 +183,7 @@ async function connectDb(opts) {
     const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
     if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
   }
-  const pool = new pg.Pool({
+  const pool2 = new pg.Pool({
     .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
@@ -164,14 +191,14 @@ async function connectDb(opts) {
     ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
-  pool.on("error", (err) => {
+  pool2.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
   await waitForDatabase(async () => {
-    const probe = await pool.connect();
+    const probe = await pool2.connect();
     probe.release();
   }).catch(async (error) => {
-    await pool.end().catch(() => {
+    await pool2.end().catch(() => {
     });
     throw error;
   });
@@ -185,7 +212,7 @@ async function connectDb(opts) {
       await runner.query(sql);
     },
     async tx(fn) {
-      const client = await pool.connect();
+      const client = await pool2.connect();
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
@@ -201,10 +228,25 @@ async function connectDb(opts) {
       }
     },
     async close() {
-      await pool.end();
+      await pool2.end();
     }
   });
-  return wrap(pool);
+  return wrap(pool2);
+}
+
+// services/shared/neonAuthDatabase.ts
+import pg2 from "pg";
+var pool;
+function neonAuthDatabase() {
+  if (!pool) {
+    const t = fullNeonConfig(), url = new URL(process.env.NEON_AUTH_DATABASE_URL || process.env.DATABASE_URL || "");
+    if (url.hostname.replace("-pooler", "") !== t.host || url.pathname !== "/neondb" || url.username !== "newhope_clean_runtime") throw Error("MANAGED_AUTH_DATABASE_BINDING_REQUIRED");
+    pool = new pg2.Pool({ ...databaseTransport(url.href), max: 2, connectionTimeoutMillis: 5e3, statement_timeout: 8e3 });
+  }
+  return { query: async (sql, p) => {
+    const r = await pool.query(sql, p);
+    return { rows: r.rows, rowCount: r.rowCount || 0 };
+  } };
 }
 
 // services/shared/neonAuth.ts
@@ -212,6 +254,10 @@ import { createRemoteJWKSet, jwtVerify, errors } from "jose";
 
 // services/shared/neonPilot.ts
 function neonPilotConfig(env = process.env) {
+  if (env.FULL_NEON_CLEAN_START === "1") {
+    const c = fullNeonConfig(env);
+    return { authUrl: c.authUrl, jwksUrl: c.jwksUrl, issuer: c.issuer };
+  }
   if (env.NEON_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging")
     throw new Error("NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED");
   const base = new URL(env.NEON_AUTH_BASE_URL || "");
@@ -255,7 +301,7 @@ async function bindNeonIdentity(db, p, issuer, provider = "neon", authDb) {
   const email = p.email;
   return db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
-    const live = (await (provider === "better-auth" ? authDb : c).query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    const live = (await (authDb || c).query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
     if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
     const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
       FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
@@ -283,7 +329,7 @@ async function authenticateNeonBearer(token) {
       opening = void 0;
       throw e;
     });
-    return await bindNeonIdentity(await opening, p, config.issuer);
+    return await bindNeonIdentity(await opening, p, config.issuer, "neon", process.env.FULL_NEON_CLEAN_START === "1" ? neonAuthDatabase() : void 0);
   } catch {
     throw new NeonAuthUnavailableError("NEON_IDENTITY_UNAVAILABLE");
   }
@@ -294,7 +340,7 @@ import { betterAuth } from "better-auth";
 import { bearer, twoFactor } from "better-auth/plugins";
 import { createAuthMiddleware, APIError } from "better-auth/api";
 import { PostgresDialect } from "kysely";
-import pg2 from "pg";
+import pg3 from "pg";
 import { randomUUID } from "node:crypto";
 
 // neon/targets/full-restore.json
@@ -408,13 +454,13 @@ async function sendBetterAuthEmail(mail) {
 
 // services/shared/betterAuth.ts
 function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = sendBetterAuthEmail) {
-  const pool = new pg2.Pool({ ...databaseTransport(config.databaseUrl), ...databasePoolLimits(2) });
+  const pool2 = new pg3.Pool({ ...databaseTransport(config.databaseUrl), ...databasePoolLimits(2) });
   const auth = betterAuth({
     appName: "New Hope POS",
     baseURL: config.baseUrl,
     basePath: "/api/auth",
     secret: config.secret,
-    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    database: { dialect: new PostgresDialect({ pool: pool2 }), type: "postgres", schemaName: "newhope_auth" },
     trustedOrigins: config.allowedOrigins || [config.baseUrl],
     telemetry: { enabled: false },
     logger: { disabled: true },
@@ -468,7 +514,7 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
         if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
           const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
           if (current?.user.twoFactorEnabled) {
-            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+            const fresh = (await pool2.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
               WHERE session_id=$1 AND user_id=$2 AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
             if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
           }
@@ -481,13 +527,13 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
         const fresh = ctx.context.newSession;
         const sessionToken = fresh?.session.token || result.token;
         const userId = fresh?.user.id || result.user.id;
-        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,verified_at)
+        await pool2.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,verified_at)
           SELECT id,"userId",now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
           ON CONFLICT(session_id) DO UPDATE SET verified_at=EXCLUDED.verified_at`, [sessionToken, userId]);
       })
     }
   });
-  return { auth, pool, close: () => pool.end() };
+  return { auth, pool: pool2, close: () => pool2.end() };
 }
 var runtime;
 function getBetterAuthRuntime() {
@@ -500,17 +546,17 @@ var BetterAuthUnavailableError = class extends Error {
 var opening2;
 async function authenticateBetterBearer(token) {
   try {
-    const config = betterAuthPilotConfig(), { auth, pool } = getBetterAuthRuntime();
+    const config = betterAuthPilotConfig(), { auth, pool: pool2 } = getBetterAuthRuntime();
     const session = await auth.api.getSession({ headers: new Headers({ authorization: "Bearer " + token }), query: { disableCookieCache: true } });
     if (!session?.user.emailVerified || !session.user.isActive) return null;
     opening2 ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
       opening2 = void 0;
       throw e;
     });
-    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth", pool);
+    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth", pool2);
     if (!p) return null;
     if (session.user.twoFactorEnabled) {
-      const proof = (await pool.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
+      const proof = (await pool2.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
       if (proof) {
         p.aal = "aal2";
         p.mfaVerifiedAt = new Date(proof.verified_at).getTime() / 1e3;

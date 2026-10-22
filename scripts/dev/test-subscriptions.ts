@@ -20,6 +20,7 @@ import { testFreeSync } from './test-free-sync';
 import { merchantDirectory, merchantDetail } from '../../src/server/repo';
 
 async function main(){
+ process.env.DOKU_PAYMENTS_ENABLED='1'; // Explicit mock-only payment enablement; no cloud env is loaded.
  const pg=new PGlite();
  let failAudit=false,failPayment=false;
  const wrap=(runner:any):Db=>({query:async(sql,params)=>{if(failAudit && sql.includes('INSERT INTO internal.support_actions'))throw new Error('TEST_AUDIT_UNAVAILABLE');if(failPayment && sql.includes('UPDATE billing.subscriptions SET plan_id'))throw new Error('TEST_SUBSCRIPTION_UNAVAILABLE');const r=await runner.query(sql,params);return{rows:r.rows,rowCount:r.rows.length || r.affectedRows || 0};},exec:async(sql)=>{await runner.exec(sql);},tx:async(fn)=>pg.transaction(t=>fn(wrap(t))),close:()=>pg.close()});

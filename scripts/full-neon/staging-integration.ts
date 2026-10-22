@@ -1,0 +1,68 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {parse} from 'dotenv';
+import pg from 'pg';
+import express from 'express';
+import {databaseTransport} from '../../services/shared/databaseTls';
+import {assertFullNeonDatabase} from '../../services/shared/fullNeon';
+import {registerSyncRoutes} from '../../services/pos/sync';
+import {registerBillingRoutes} from '../../services/billing/routes';
+import {pastikanPaket} from '../../services/billing/store';
+import {SAAS_PLANS} from '../../src/config/saasPlans';
+import type {Db} from '../../services/shared/db';
+
+Object.assign(process.env,parse(fs.readFileSync('.env.full-neon-staging.local')));
+assert.equal(process.env.FULL_NEON_TARGET,'staging');assertFullNeonDatabase(process.env.DATABASE_URL!);
+const started=performance.now(),c=new pg.Client({...databaseTransport(process.env.DATABASE_URL!),connectionTimeoutMillis:15000});await c.connect();
+let savepoint=0,server:any;
+const db:Db={query:async<T>(s:string,p?:unknown[])=>{const x=await c.query(s,p);return {rows:x.rows as T[],rowCount:x.rowCount||0};},exec:async s=>{await c.query(s);},close:async()=>{},tx:async fn=>{const id='fixture_'+(++savepoint);await c.query('SAVEPOINT '+id);try{const result=await fn(db);await c.query('RELEASE SAVEPOINT '+id);return result;}catch(e){await c.query('ROLLBACK TO SAVEPOINT '+id);await c.query('RELEASE SAVEPOINT '+id);throw e;}}};
+try{
+ const role=(await c.query('SELECT current_user,rolsuper,rolbypassrls,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname=current_user')).rows[0];
+ assert.equal(role.current_user,'newhope_clean_runtime');assert(Object.entries(role).filter(([k])=>k!=='current_user').every(([,v])=>v===false));assert((c as any).connection.stream.authorized);
+ await c.query('BEGIN');
+ for(const sql of ['CREATE TABLE public.forbidden_full_neon_fixture(id int)','SELECT * FROM internal.full_neon_bootstrap_evidence','UPDATE pos.cash_ledger SET amount=amount WHERE false','UPDATE internal.business_file_events SET action=action WHERE false'])await assert.rejects(db.tx(x=>x.query(sql)),(e:any)=>e.code==='42501');
+ const owner=randomUUID(),foreign=randomUUID(),email='synthetic-'+owner+'@example.invalid';
+ await c.query('INSERT INTO internal.users(id,email,full_name) VALUES($1,$2,$3)',[owner,email,'Synthetic staging fixture']);
+ await c.query("INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref) VALUES('neon',$1,$2::text,$2::uuid,'NEW_VERIFIED_ACCOUNT')",[new URL(process.env.NEON_AUTH_BASE_URL!).origin,owner]);
+ await pastikanPaket(db,SAAS_PLANS);
+ const app=express();app.use(express.json({limit:'10mb'}));registerSyncRoutes(app,db);registerBillingRoutes(app,db,true);
+ server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const origin='http://127.0.0.1:'+server.address().port;
+ const headers={'x-auth-sub':owner,'x-auth-email':email,'x-auth-email-verified':'true','content-type':'application/json'};
+ const request=async(path:string,body?:any,h:Record<string,string>=headers,method=body?'POST':'GET')=>{const r=await fetch(origin+path,{method,headers:h,body:body?JSON.stringify(body):undefined});return {status:r.status,data:await r.json()};};
+ const onboarding=await request('/api/v1/sync/neon-onboarding',{store_name:'Synthetic staging only',business_sector:'FNB'});assert.equal(onboarding.status,200,JSON.stringify(onboarding.data));
+ assert.equal((await request('/api/v1/sync/neon-onboarding',{})).data.created,false);
+ const tenant=onboarding.data.tenantId,business=owner+'_FNB';
+ const productRef='synthetic-'+randomUUID();
+ const state=await request('/api/v1/sync/state',{sector:'FNB',operations:[{kind:'products',recordId:productRef,baseRevision:0,deleted:false,value:{id:productRef,name:'Synthetic product',price:20000,costPrice:5000,unit:'pcs'}}]});assert.equal(state.status,200,JSON.stringify(state.data));
+ const product=(await c.query('SELECT id,merchant_id,outlet_id FROM pos.products WHERE tenant_id=$1 AND external_ref=$2',[tenant,productRef])).rows[0];assert(product);
+ const stock=randomUUID(),location=randomUUID();
+ await c.query("INSERT INTO pos.inventory_items(id,tenant_id,merchant_id,item_name) VALUES($1,$2,$3,'Synthetic stock')",[stock,tenant,product.merchant_id]);
+ await c.query('INSERT INTO pos.inventory_locations(id,tenant_id,merchant_id,outlet_id) VALUES($1,$2,$3,$4)',[location,tenant,product.merchant_id,product.outlet_id]);
+ await c.query('INSERT INTO pos.inventory_balances(tenant_id,merchant_id,outlet_id,location_id,inventory_item_id,current_stock) VALUES($1,$2,$3,$4,$5,10)',[tenant,product.merchant_id,product.outlet_id,location,stock]);
+ await c.query('UPDATE pos.products SET inventory_item_id=$2 WHERE id=$1',[product.id,stock]);
+ const sale={businessId:business,sector:'FNB',idempotencyKey:'synthetic-'+randomUUID(),transactions:[{clientTxnId:'synthetic-'+randomUUID(),subtotal:20000,totalAmount:20000,paymentMethod:'CASH',paymentStatus:'PAID',items:[{productRef,productName:'Synthetic product',unitPrice:20000,unitCost:5000,quantity:1}]}]};
+ const paid=await request('/api/v1/sync/transactions',sale);assert.equal(paid.status,200,JSON.stringify(paid.data));assert.equal(paid.data.accepted,1);
+ assert.equal((await request('/api/v1/sync/transactions',sale)).data.replayed,true);
+ assert.equal(Number((await c.query('SELECT current_stock FROM pos.inventory_balances WHERE inventory_item_id=$1',[stock])).rows[0].current_stock),9);
+ const ledger=(await c.query('SELECT count(*)::int n,sum(amount) total FROM pos.cash_ledger WHERE tenant_id=$1',[tenant])).rows[0];assert.equal(ledger.n,1);assert.equal(Number(ledger.total),20000);
+ assert.equal((await request('/api/v1/sync/transactions',sale,{...headers,'x-auth-sub':foreign})).status,403);
+ const subscription=(await request('/api/v1/subscription/status')).data;assert.equal(subscription.ok,true);assert.equal((await c.query('SELECT status FROM billing.subscriptions WHERE tenant_id=$1',[tenant])).rows[0].status,'TRIAL');
+ assert.equal((await request('/api/v1/subscription/checkout',{})).data.error,'PAYMENTS_PAUSED');
+ const file={id:randomUUID(),contentType:'text/csv',data:Buffer.from('synthetic,only\n1,2').toString('base64')};
+ assert.equal((await request('/api/v1/sync/files',file)).status,201);
+ const download=(await request('/api/v1/sync/files?id='+file.id)).data;assert.equal(download.expiresIn,300);
+ const signed=await fetch(download.url);assert.equal(signed.status,200);assert.equal(await signed.text(),'synthetic,only\n1,2');
+ const unsigned=new URL(download.url);unsigned.search='';assert.equal((await fetch(unsigned)).status,403,'Private bucket must reject anonymous read');
+ assert.equal((await request('/api/v1/sync/files?id='+file.id,undefined,{...headers,'x-auth-sub':foreign})).status,403);
+ assert.equal((await request('/api/v1/sync/files',{id:file.id},headers,'DELETE')).status,200);
+ assert.equal((await request('/api/v1/sync/files?id='+file.id)).status,404);
+ await c.query('ROLLBACK');
+ const auth=new pg.Client(databaseTransport(process.env.NEON_AUTH_DATABASE_URL!));await auth.connect();try{
+  await auth.query('SELECT id,email,"emailVerified",banned FROM neon_auth."user" LIMIT 0');
+  await assert.rejects(auth.query('SELECT token FROM neon_auth.session LIMIT 0'),(e:any)=>e.code==='42501');
+  await assert.rejects(auth.query('SELECT password FROM neon_auth.account LIMIT 0'),(e:any)=>e.code==='42501');
+ }finally{await auth.end();}
+ const evidence={status:'PASS',database:'newhope_full_neon_staging',syntheticIdentityFixture:true,realManagedEmailGoogleAcceptance:false,role:role.current_user,tlsVerified:true,businessChangesRolledBack:true,checks:['DDL denied','bootstrap evidence denied','immutable ledgers and file audit denied','verified trial45 onboarding','versioned catalog','cash sale idempotent replay','inventory deduction once','cash ledger exact amount','cross-tenant rejected','subscription trial independent of DOKU','DOKU paused','private S3 put/signed download/delete','unsigned private read rejected','managed session/password SELECT denied'],durationSeconds:Number(((performance.now()-started)/1000).toFixed(2))};
+ fs.writeFileSync('build/full-neon/staging-integration.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence));
+}finally{if(server)await new Promise(r=>server.close(r));await c.query('ROLLBACK').catch(()=>{});await c.end();}

@@ -1,3 +1,4 @@
+import {createManagedNeonClient} from './auth/neonManaged';
 /**
  * Klien Supabase — satu instance untuk seluruh frontend.
  *
@@ -16,10 +17,12 @@ import {createBetterPilotClient} from './auth/betterClient';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 if(import.meta.env.VITE_NEON_DB_PHASE1==='1'&&(import.meta.env.VITE_AUTH_PROVIDER!=='supabase'||supabaseUrl!=='https://fqxrhumsgigcgjtlbfuo.supabase.co'))throw Error('HYBRID_FRONTEND_PROVIDER_MISMATCH');
+export const usesNeonAuth=import.meta.env.VITE_AUTH_PROVIDER==='neon';
+if(usesNeonAuth&&(supabaseUrl||supabaseAnonKey))throw Error('NEON_FRONTEND_LEGACY_AUTH_CONFIGURATION_FORBIDDEN');
 export const usesBetterAuth=import.meta.env.VITE_AUTH_PROVIDER==='better-auth';
-if(import.meta.env.VITE_AUTH_PROVIDER && !['supabase','better-auth'].includes(import.meta.env.VITE_AUTH_PROVIDER))throw new Error('UNSUPPORTED_AUTH_PROVIDER');
+if(import.meta.env.VITE_AUTH_PROVIDER && !['supabase','better-auth','neon'].includes(import.meta.env.VITE_AUTH_PROVIDER))throw new Error('UNSUPPORTED_AUTH_PROVIDER');
 
-if (!usesBetterAuth && (!supabaseUrl || !supabaseAnonKey)) {
+if (!usesNeonAuth && !usesBetterAuth && (!supabaseUrl || !supabaseAnonKey)) {
   console.warn(
     '[supabase] VITE_SUPABASE_URL atau VITE_SUPABASE_ANON_KEY belum diisi. ' +
     'OAuth tidak akan berfungsi. Isi kedua nilai itu di .env lalu restart dev server.'
@@ -31,11 +34,11 @@ if (!usesBetterAuth && (!supabaseUrl || !supabaseAnonKey)) {
  * supaya storage/postgrest/realtime/functions tidak ikut ke bundle setiap halaman.
  */
 export const supabase = {
-  auth: usesBetterAuth?createBetterPilotClient():createAuthClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key'),
+  auth: usesNeonAuth?createManagedNeonClient():usesBetterAuth?createBetterPilotClient():createAuthClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key'),
 };
 
 /** True kalau konfigurasi Supabase sudah terisi (bukan placeholder). */
 export const isSupabaseConfigured =
-  usesBetterAuth || (!!supabaseUrl &&
+  usesNeonAuth || usesBetterAuth || (!!supabaseUrl &&
   !!supabaseAnonKey &&
   !supabaseUrl.includes('placeholder'));

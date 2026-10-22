@@ -1,3 +1,4 @@
+import {neonAuthDatabase} from './neonAuthDatabase';
 import {createRemoteJWKSet,jwtVerify,errors,type JWTVerifyGetKey} from 'jose';
 import type {AuthPrincipal} from './auth';
 import type {Db} from './db';
@@ -33,7 +34,7 @@ export async function bindNeonIdentity(db:Db,p:AuthPrincipal,issuer:string,provi
   const email=p.email;
   return db.tx(async c=>{
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[issuer+':'+p.subject]);
-    const live=(await (provider==='better-auth'?authDb!:c).query(provider==='better-auth'
+    const live=(await (authDb||c).query(provider==='better-auth'
       ?'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1'
       :'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1',[p.subject])).rows[0];
     if(!live || !live.emailVerified || live.banned || live.email.toLowerCase()!==email.toLowerCase())return null;
@@ -58,7 +59,7 @@ export async function authenticateNeonBearer(token:string) {
   if(!p)return null;
   try {
     opening??=connectDb({schema:'internal',max:2}).catch(e=>{opening=undefined;throw e;});
-    return await bindNeonIdentity(await opening,p,config.issuer);
+    return await bindNeonIdentity(await opening,p,config.issuer,'neon',process.env.FULL_NEON_CLEAN_START==='1'?neonAuthDatabase():undefined);
   } catch {throw new NeonAuthUnavailableError('NEON_IDENTITY_UNAVAILABLE');}
 }
 
@@ -67,7 +68,7 @@ export async function authenticateNeonBearer(token:string) {
 export async function reauthenticateNeonOwner(db:Db,email:string,password:string,canonicalSubject:string) {
   const config=neonPilotConfig();
   let response:Response;
-  try {response=await fetch(config.authUrl+'/sign-in/email',{method:'POST',headers:{'content-type':'application/json',origin:config.issuer},
+  try {response=await fetch(config.authUrl+'/sign-in/email',{method:'POST',headers:{'content-type':'application/json',origin:new URL(process.env.APP_URL||config.issuer).origin},
     body:JSON.stringify({email,password}),redirect:'error',signal:AbortSignal.timeout(5000)});}
   catch {throw new NeonAuthUnavailableError('NEON_REAUTH_UNAVAILABLE');}
   if(response.status>=500 || response.status===429)throw new NeonAuthUnavailableError('NEON_REAUTH_UNAVAILABLE');
@@ -80,7 +81,7 @@ export async function reauthenticateNeonOwner(db:Db,email:string,password:string
       WHERE provider='neon' AND issuer=$1 AND provider_subject=$2 AND is_active`,[config.issuer,data.user.id])).rows[0];
     return binding?.canonical_user_id===canonicalSubject;
   } finally {
-    if(cookies)await fetch(config.authUrl+'/sign-out',{method:'POST',headers:{cookie:cookies,origin:config.issuer},
+    if(cookies)await fetch(config.authUrl+'/sign-out',{method:'POST',headers:{cookie:cookies,origin:new URL(process.env.APP_URL||config.issuer).origin},
       redirect:'error',signal:AbortSignal.timeout(5000)}).catch(()=>{});
   }
 }

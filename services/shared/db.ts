@@ -1,3 +1,4 @@
+import {fullNeonMaintenance} from './fullNeon';
 /**
  * Klien database untuk service.
  *
@@ -68,6 +69,7 @@ function konfigurasiSsl(connectionString: string) {
 }
 
 export async function connectDb(opts: DbOptions): Promise<Db> {
+  if(fullNeonMaintenance())throw Error('FULL_NEON_MAINTENANCE');
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
 

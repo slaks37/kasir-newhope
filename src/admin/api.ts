@@ -206,7 +206,7 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   const target='/api/admin/'+path+(query.size?'?'+query:'');
   const run=()=>withRequestDeadline(async signal=>{
   const response=await fetch(target,
-    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json',...(sessionStorage.getItem('nh-neon-admin-mfa')?{'x-newhope-admin-mfa':sessionStorage.getItem('nh-neon-admin-mfa')!}:{})},body:body?JSON.stringify(body):undefined});
   const contentType=response.headers.get('content-type') || '';
   let result:any=null;
   if(contentType.includes('application/json')) {
@@ -265,7 +265,7 @@ export const api={
   integrations:(offset=0)=>request('integrations',{offset}),
   updateMcpSettings:(body:{enabled:boolean;expectedUpdatedAt:string|null;reason:string})=>request('integrations/mcp',undefined,body,'PUT'),
   revokeMcpConnection:(id:string,reason:string)=>request('integrations/mcp/connections/'+encodeURIComponent(id)+'/revoke',undefined,{reason},'POST'),
-  logout:async()=>{const {error}=await supabase.auth.signOut();if(error)throw error;setIdentity(null);},
+  logout:async()=>{sessionStorage.removeItem('nh-neon-admin-mfa');const {error}=await supabase.auth.signOut();if(error)throw error;setIdentity(null);},
   login:async(email:string,password:string):Promise<Session>=>{
     if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');
     const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});

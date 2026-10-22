@@ -1,3 +1,4 @@
+import {fullNeonMaintenance} from '../../services/shared/fullNeon';
 import {assertHybridDatabase} from '../../services/shared/hybridPhase1';
 /**
  * Lapisan akses database — satu antarmuka, dua driver.
@@ -65,6 +66,7 @@ export interface Db {
 /* -------------------------------------------------------------------------- */
 
 async function createPgDb(connectionString: string): Promise<Db> {
+  if(fullNeonMaintenance())throw Error('FULL_NEON_MAINTENANCE');
   assertHybridDatabase(connectionString);
   const { default: pg } = await import('pg');
 

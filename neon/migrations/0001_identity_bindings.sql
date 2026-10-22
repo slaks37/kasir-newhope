@@ -1,5 +1,5 @@
 -- NEON PILOT ONLY. Additive; no tenant, ledger or Supabase auth row rewrites.
-CREATE TABLE internal.auth_identity_bindings (
+CREATE TABLE IF NOT EXISTS internal.auth_identity_bindings (
  provider text NOT NULL CHECK(provider IN('supabase','neon')),
  issuer text NOT NULL, provider_subject text NOT NULL,
  canonical_user_id uuid NOT NULL REFERENCES internal.users(id),

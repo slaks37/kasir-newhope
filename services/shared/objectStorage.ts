@@ -1,9 +1,11 @@
+import {fullNeonConfig} from './fullNeon';
 import {S3Client,PutObjectCommand,GetObjectCommand,HeadObjectCommand} from '@aws-sdk/client-s3';
 
 export const BLOG_MEDIA_BUCKET='blog-media';
 export interface ObjectStorageConfig {endpoint:string;region:string;accessKeyId:string;secretAccessKey:string;branchId:string}
 /** Credential/endpoint binding is checked before signing. No browser env vars. */
 export function neonStorageConfig(env=process.env):ObjectStorageConfig {
+  if(env.FULL_NEON_CLEAN_START==='1')fullNeonConfig(env);
   if(env.NEON_PROJECT_ID!=='steep-sea-66546931'||!/^br-[a-z0-9-]+$/.test(env.NEON_BRANCH_ID||''))throw Error('NEON_STORAGE_BRANCH_REQUIRED');
   const endpoint=new URL(env.AWS_ENDPOINT_URL_S3||'');
   if(endpoint.protocol!=='https:'||endpoint.username||endpoint.password||endpoint.port||endpoint.pathname!=='/'||endpoint.search||endpoint.hash||

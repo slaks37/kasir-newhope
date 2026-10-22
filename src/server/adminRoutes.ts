@@ -1,3 +1,4 @@
+import {registerNeonAdminMfa,withNeonAdminStepUp} from './neonAdminMfa';
 import { blogViewTrackingEnabled } from '../../services/shared/blogAnalytics';
 /**
  * API admin panel — semuanya membaca database, tidak ada lagi Map di memori.
@@ -97,11 +98,11 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   function guard(capability: InternalCapability, enrollmentOnly=false) {
     return async(req:AdminRequest,res:express.Response,next:express.NextFunction)=>{
       try {
-        const principal=await authenticate(req);
+        let principal=await authenticate(req);
         if(!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
         const db=await getDb();
         let {rows}=await db.query('SELECT id,email,full_name,role FROM internal.internal_users WHERE sso_subject=$1 AND is_active',[principal.subject]);
-        if(!rows[0] && principal.email) {
+        if(!rows[0] && principal.email && process.env.FULL_NEON_CLEAN_START!=='1') {
           // Linking by email requires a verified email in every environment (prevents unverified email takeover).
           if (!principal.isEmailVerified) {
             return res.status(403).json({
@@ -150,6 +151,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
             detail: 'Akun terdaftar, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di sistem internal.',
           });
         }
+        if(process.env.AUTH_PROVIDER==='neon')principal=await withNeonAdminStepUp(db,principal,req);
         const who:InternalIdentity={id:rows[0].id,email:rows[0].email,fullName:rows[0].full_name,role:rows[0].role};
         req.mfaRequired=principal.aal!=='aal2';
         const securityError=adminSecurityError(principal,req.method);
@@ -200,6 +202,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   /* SESI                                                                    */
   /* ---------------------------------------------------------------------- */
 
+  registerNeonAdminMfa(app,getDb,guard);
   // Identitas dan menu hanya tersedia setelah token dan membership diverifikasi.
   app.get('/api/admin/me',guard('VIEW_MERCHANT_HEALTH',true),(req:AdminRequest,res)=>{
     res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO',mfaRequired:req.mfaRequired});

@@ -1,3 +1,4 @@
+import {NeonLoginHelp} from './NeonAccountRecovery';
 /**
  * LoginPage — Halaman Masuk & Pendaftaran Akun Toko Baru
  *
@@ -10,7 +11,7 @@
 
 import React, { useState } from "react";
 import {BetterLoginHelp} from './BetterAccountRecovery';
-import {usesBetterAuth} from '../../lib/supabase';
+import {usesBetterAuth,usesNeonAuth} from '../../lib/supabase';
 import "../../styles/app-theme.css";
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
@@ -434,6 +435,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </button>
       </form>
       {usesBetterAuth&&mode==='login'&&<BetterLoginHelp/>}
+      {usesNeonAuth&&mode==='login'&&<NeonLoginHelp/>}
       <p className="nh-auth-switch">
         {mode === "login" ? "Baru di New Hope POS?" : "Sudah punya akun?"}{" "}
         <button
