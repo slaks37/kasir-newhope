@@ -1,0 +1,95 @@
+{
+  "capturedAt": "2026-10-23T13:49:37.520Z",
+  "sourceSha": "2c6464ed8bdbfca8f222bf0fcc44f6f532eee477",
+  "deployment": "https://kasir-newhope-nqqyzcaq5-slaks37s-projects.vercel.app",
+  "deploymentId": "dpl_8K6gBZwZY8fYhSGG5kMo9PjQ22kK",
+  "sourceProof": {
+    "method": "Git-tracked archive uploaded by CLI",
+    "archiveSha256": "ddf17392b3bfe4e9c2ff0ceaa3ccdd4674facca8315ad6162595628a3766bbe5",
+    "privateEnvironmentOrBackupIncluded": false,
+    "remoteGitSourceMetadataAvailable": false
+  },
+  "google": {
+    "hostedLogin": "PASS",
+    "exactIdentityOnboarding": "PASS",
+    "tenantMerchantOutletAndTrial45": "one each"
+  },
+  "admin": {
+    "explicitMainOwnerGrantApproved": true,
+    "exactVerifiedIdentityOnly": true,
+    "adminCount": 1,
+    "grantAuditCount": 1,
+    "ownerDeviceMfaEnrollment": "PASS",
+    "recoveryCodeAcknowledgement": "PASS_OWNER_CONFIRMED",
+    "hostedSuperadminDashboard": "PASS",
+    "factorOrRecoverySecretsRead": false
+  },
+  "email": {
+    "initialMainSignup": "created one unverified identity; no new message in connected Resend delivery or request logs",
+    "diagnosis": "Main stored SMTP credential hint differed from the known working authorized staging credential. Exact prior key validity or account cannot be determined from masked readback.",
+    "repair": "Reused the existing authorized staging SMTP credential after a successful TLS AUTH-only probe; verified masked main readback. No new API key created.",
+    "verificationSentAt": "2026-10-23T13:30:26.438Z",
+    "verificationProviderStatus": "delivered",
+    "emailVerified": true,
+    "hostedLogin": "PASS",
+    "exactIdentityOnboarding": "PASS",
+    "tenantMerchantOutletOwnerMembershipAndTrial45": "one each",
+    "platformPrivilegeCount": 0,
+    "separateFromGoogleOwner": true,
+    "resetSentAt": "2026-10-23T13:33:47.441Z",
+    "resetProviderStatus": "delivered",
+    "resetRequestCount": 1,
+    "resetCompletion": "PASS_OWNER_COMPLETION_AND_CREDENTIAL_UPDATE",
+    "activeSessionsBeforeReset": 1,
+    "passwordsOtpOrResetTokensRead": false,
+    "inboxVersusSpam": "NOT_REPORTED",
+    "issuedBearerLimit": "Previously issued API JWTs may remain valid within the existing 15-minute validation window; immediate bearer revocation has not been proved.",
+    "credentialUpdatedAt": "2026-10-23T13:35:56.818Z",
+    "newPasswordLogin": "PASS_HOSTED_AND_NEW_SESSION_METADATA",
+    "newSessionAfterPasswordUpdate": true,
+    "automaticSessionRevocation": "NOT_OCCURRED: one pre-reset unexpired session remained at 13:38:31Z; it ended after explicit logout, not because of the reset",
+    "selfServiceSessionRevocation": {
+      "implemented": true,
+      "uses": "official managed SDK revokeSessions, authenticated provider cookie, no user or tenant selector",
+      "unitSdkAndSyntheticBrowser": "PASS",
+      "nativeHosted": "PENDING_UPDATED_CANDIDATE",
+      "posOutboxRetained": true,
+      "automaticResetRevocation": "not claimed; not exposed in current managed configuration",
+      "issuedBearerRevocation": "Existing 15-minute API JWT limit remains; no immediate bearer revocation claim"
+    }
+  },
+  "http": {
+    "passed": 13,
+    "failed": 0,
+    "checks": [
+      "home, login, register, reset page HTTP 200",
+      "reset page no-referrer and private no-store",
+      "blog, newest captured article, sitemap and RSS HTTP 200",
+      "canonical public domain preserved; no legacy Supabase Storage reference in checked article",
+      "application-hosted Auth HTTP 404",
+      "anonymous admin HTTP 401",
+      "all three cron routes reject anonymous requests with HTTP 401"
+    ],
+    "limit": "Anonymous cron rejection does not prove a scheduled authenticated invocation. Candidate jobs are intentionally disabled pending the final release allowlist/build."
+  },
+  "privateStorage": {
+    "tlsAuthenticatedPutAndGet": "PASS",
+    "signedRead": "HTTP 200, 60-second expiry",
+    "unsignedRead": "HTTP 403",
+    "deleteOnlyNewSyntheticProbe": "PASS, confirmed absent",
+    "existingObjectsDeleted": 0
+  },
+  "publicDomainPromoted": false,
+  "dokuEnabled": false,
+  "realPaymentExecuted": false,
+  "releaseCronPlan": {
+    "allowlist": [
+      "daily-insights",
+      "merchant-health",
+      "billing-reminders"
+    ],
+    "billingReminderEmailsEnabled": false,
+    "appliedToFutureBuildsOnly": true,
+    "newImmutableBuildRequired": true
+  }
+}
