@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {preservedBlogCounters} from '../full-neon/contentDelta';
+const row={id:'synthetic-post',slug:'synthetic-post',content:'original',seo:{title:'Original'},created_at:'2026-10-22T02:00:00Z',updated_at:'2026-10-22T02:00:00Z',view_count:24,likes_count:2};
+const columns=Object.keys(row);
+assert.equal(preservedBlogCounters(row,{...row},columns),null);
+assert.throws(()=>preservedBlogCounters(row,{...row,view_count:30},columns),/REVIEWED_DELTA/);
+assert.deepEqual(preservedBlogCounters(row,{...row,view_count:30,likes_count:1},columns,true),{view_count:30,likes_count:2},'Source increments apply; newer target counts never decrease');
+for(const changed of [{id:'foreign'},{slug:'foreign'},{content:'edited'},{seo:{title:'Changed'}},{updated_at:'2026-10-23T02:00:00Z'},{view_count:-1},{likes_count:NaN}])assert.throws(()=>preservedBlogCounters(row,{...row,...changed},columns,true));
+assert.throws(()=>preservedBlogCounters({...row,view_count:-1},row,columns,true));
+console.log('PASS preserved blog delta: explicit review required, counters monotonic, UUID/slug/content/metadata/timestamps immutable, invalid counters rejected');
