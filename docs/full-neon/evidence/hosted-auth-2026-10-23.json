@@ -53,13 +53,37 @@
   "emailSignup": {
     "managedAccountCreated": true,
     "emailVerifiedAtInvestigation": false,
-    "providerVerificationMessages": 1,
+    "providerVerificationMessages": 2,
     "providerStatus": "DELIVERED",
-    "resendsByAgent": 0,
+    "resendsByAgent": 1,
     "resetMessages": 0,
     "actualInboxOrSpam": "PENDING_OWNER",
     "installedAdapterBug": "REPRODUCED_FAILED_TO_RETRIEVE_USER_SESSION_AFTER_UNVERIFIED_SUCCESS",
     "nativeSignupFixTests": "PASS",
-    "newHostedPatchAcceptance": "PENDING_PREVIEW"
+    "newHostedPatchAcceptance": "PREVIEW_READY_EMAIL_VERIFICATION_PENDING",
+    "replacementOwnerApproved": true,
+    "replacementProviderStatus": "DELIVERED",
+    "verificationAttempts": [
+      "ORIGINAL_OTP_EXPIRED",
+      "REPLACEMENT_CONSUMED_VERIFIED_ACCOUNT_WITH_INVALID_OTP_UI_OBSERVED"
+    ],
+    "emailVerifiedAtLatestRead": true,
+    "managedVerificationUpdatedAt": "2026-10-23T06:52:50.121Z",
+    "hostedEmailVerification": "PASS_AUTHORITATIVE_READBACK",
+    "passwordLogin": "PENDING_OWNER"
+  },
+  "emailRecoveryRepair": {
+    "observedFormRecipientMatchedApprovedAddress": false,
+    "observedInputNumeric": false,
+    "codeOrDifferentRecipientPublished": false,
+    "sharedControlledEmail": true,
+    "numericInputGuard": true,
+    "providerErrorsLocalized": true,
+    "automaticRetryOrResend": false,
+    "sdkTransportMock": "PASS",
+    "componentRender": "PASS",
+    "syntheticBrowser": "PASS",
+    "realVerification": "PASS_AUTHORITATIVE_USER_FLAG",
+    "invalidOtpRootCause": "NOT_FULLY_ATTRIBUTED_ALREADY_VERIFIED_AT_06_52_50Z_FORM_LATER_SHOWED_INVALID_OTP"
   }
 }

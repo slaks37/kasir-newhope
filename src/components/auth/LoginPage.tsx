@@ -448,7 +448,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {loading?<Loader2 size={18} className="animate-spin"/>:null} Masuk dengan Google
       </button>}
       {usesBetterAuth&&mode==='login'&&<BetterLoginHelp/>}
-      {usesNeonAuth&&mode==='login'&&<NeonLoginHelp/>}
+      {usesNeonAuth&&mode==='login'&&<NeonLoginHelp email={email} onEmailChange={setEmail}/>}
       <p className="nh-auth-switch">
         {mode === "login" ? "Baru di New Hope POS?" : "Sudah punya akun?"}{" "}
         <button

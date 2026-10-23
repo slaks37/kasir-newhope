@@ -1,11 +1,43 @@
-import {useState,useEffect,type FormEvent} from 'react';
+import {useState,useEffect,useRef,type FormEvent} from 'react';
 import {managedAuth} from '../../lib/auth/neonManaged';
+import {recoveryEmail,verificationCode,verificationFailure} from '../../lib/auth/managedRecovery';
 import {AuthLayout} from './AuthLayout';
-export function NeonLoginHelp(){
- const [email,setEmail]=useState(''),[code,setCode]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
- async function send(kind:'verify'|'reset'){setBusy(true);setMessage('');try{if(!managedAuth)throw Error('Auth belum tersedia');const r=kind==='verify'?await managedAuth.emailOtp.sendVerificationOtp({email,type:'email-verification'}):await managedAuth.requestPasswordReset({email,redirectTo:window.location.origin+'/reset-password'});if(r.error)throw Error('Permintaan belum berhasil.');setMessage('Jika akun memenuhi syarat, periksa email dan spam Anda.');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
- async function verify(e:FormEvent){e.preventDefault();setBusy(true);try{const r=await managedAuth!.emailOtp.verifyEmail({email,otp:code});if(r.error)throw Error('Kode tidak valid atau kedaluwarsa.');setCode('');setMessage('Email terverifikasi. Silakan masuk dengan password Anda.');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
- return <details className="mt-6"><summary>Verifikasi email atau lupa password</summary><div className="space-y-3 mt-3"><label>Email<input type="email" autoComplete="email" className="nh-input" value={email} onChange={e=>setEmail(e.target.value)}/></label><div className="flex gap-3"><button disabled={busy||!email} type="button" onClick={()=>void send('verify')}>Kirim kode verifikasi</button><button disabled={busy||!email} type="button" onClick={()=>void send('reset')}>Reset password</button></div><form onSubmit={verify}><label>Kode verifikasi email<input className="nh-input" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e=>setCode(e.target.value)} required/></label><button disabled={busy||!email||!code}>Verifikasi email</button></form>{message&&<p role="status">{message}</p>}</div></details>;
+export function NeonLoginHelp({email,onEmailChange}:{email:string;onEmailChange:(email:string)=>void}){
+ const recipient=recoveryEmail(email);
+ const [entry,setEntry]=useState({email:'',code:''}),[notice,setNotice]=useState({email:'',message:''}),[busy,setBusy]=useState(false);
+ const inFlight=useRef(false);
+ useEffect(()=>{setEntry({email:recipient,code:''});setNotice({email:recipient,message:''});},[recipient]);
+ // Changing either email input invalidates the previous code and notice.
+ const code=entry.email===recipient?entry.code:'',message=notice.email===recipient?notice.message:'';
+ function begin(){if(inFlight.current||!recipient)return false;inFlight.current=true;setBusy(true);setNotice({email:recipient,message:''});return true;}
+ function finish(){inFlight.current=false;setBusy(false);}
+ async function send(kind:'verify'|'reset'){
+  if(!begin())return;
+  try{
+   if(!managedAuth)throw Error('Auth belum tersedia');
+   const r=kind==='verify'?await managedAuth.emailOtp.sendVerificationOtp({email:recipient,type:'email-verification'}):await managedAuth.requestPasswordReset({email:recipient,redirectTo:window.location.origin+'/reset-password'});
+   if(r.error)throw r.error;
+   setEntry({email:recipient,code:''});
+   setNotice({email:recipient,message:'Jika akun memenuhi syarat, periksa email dan spam Anda. Gunakan pesan terbaru untuk alamat di atas.'});
+  }catch{setNotice({email:recipient,message:'Permintaan belum berhasil. Coba lagi secara manual; pesan tidak dikirim ulang otomatis.'});}
+  finally{finish();}
+ }
+ async function verify(e:FormEvent){
+  e.preventDefault();const otp=verificationCode(code);if(!otp||!begin())return;
+  try{
+   if(!managedAuth)throw Error('Auth belum tersedia');
+   const r=await managedAuth.emailOtp.verifyEmail({email:recipient,otp});if(r.error)throw r.error;
+   setEntry({email:recipient,code:''});setNotice({email:recipient,message:'Email terverifikasi. Silakan masuk dengan password Anda.'});
+  }catch(error){setNotice({email:recipient,message:verificationFailure(error)});}
+  finally{finish();}
+ }
+ return <details className="mt-6"><summary>Verifikasi email atau lupa password</summary><div className="space-y-3 mt-3">
+  <label>Email untuk verifikasi/reset<input type="email" autoComplete="email" className="nh-input" value={email} disabled={busy} onChange={e=>onEmailChange(e.target.value)}/></label>
+  <p>{recipient?<>Kode harus berasal dari email terbaru untuk <strong>{recipient}</strong>.</>:'Isi email akun di atas terlebih dahulu.'} Masukkan kode angka dari email, bukan password. Tidak ada pengiriman otomatis.</p>
+  <div className="flex gap-3"><button disabled={busy||!recipient} type="button" onClick={()=>void send('verify')}>Kirim kode verifikasi</button><button disabled={busy||!recipient} type="button" onClick={()=>void send('reset')}>Reset password</button></div>
+  <form onSubmit={verify}><label>Kode verifikasi email<input className="nh-input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]+" maxLength={32} title="Masukkan hanya angka dari email verifikasi terbaru." disabled={busy} value={code} onChange={e=>setEntry({email:recipient,code:e.target.value.trim()})} required/></label><button disabled={busy||!recipient||!verificationCode(code)}>Verifikasi email</button></form>
+  {message&&<p role="status">{message}</p>}
+ </div></details>;
 }
 export function NeonResetPasswordPage(){
  const [token]=useState(()=>new URLSearchParams(location.search).get('token')),[password,setPassword]=useState(''),[confirmation,setConfirmation]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[done,setDone]=useState(false);
