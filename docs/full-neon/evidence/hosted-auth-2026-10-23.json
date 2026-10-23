@@ -112,5 +112,10 @@
     "browserWorkspaceAtRead": "GOOGLE_OWNER_SESSION; NOT_ATTRIBUTED_TO_EMAIL_ACCOUNT",
     "passwordOrHashOrTokenRead": false,
     "extraEmailSent": false
+  },
+  "safari": {
+    "loginAndReload": "PASS_OWNER_ATTESTED",
+    "directAutomatedUiEvidence": false,
+    "extraEmailSent": false
   }
 }

@@ -1,0 +1,64 @@
+{
+  "capturedAt": "2026-10-23T12:56:30.181Z",
+  "target": "clean-production-candidate-main-no-traffic",
+  "role": {
+    "current_user": "newhope_clean_runtime",
+    "rolsuper": false,
+    "rolbypassrls": false,
+    "rolcreatedb": false,
+    "rolcreaterole": false,
+    "rolreplication": false
+  },
+  "tlsVerified": true,
+  "settings": {
+    "statement_timeout": "8s",
+    "idle_timeout": "10s"
+  },
+  "privilegedPermissions": {
+    "ddl": false,
+    "evidence": false,
+    "ledger_update": false,
+    "ledger_delete": false,
+    "audit_update": false
+  },
+  "selectedManagedUserColumnsAllowed": true,
+  "passwordAndSessionTokenColumnsDenied": true,
+  "counts": {
+    "tenants": 0,
+    "merchants": 0,
+    "outlets": 0,
+    "transactions": 0,
+    "ledger": 0,
+    "subscriptions": 0,
+    "admins": 0,
+    "plans": 4
+  },
+  "dokuEnabled": false,
+  "cronEnabledJobs": [],
+  "businessOrIdentityWrites": 0,
+  "bootstrap": {
+    "migrations": 72,
+    "authSchemaPreserved": true,
+    "dummyAccountsSeeded": false
+  },
+  "managedEmailConfig": {
+    "verifyOnSignup": true,
+    "verifyOnSignin": true,
+    "requireVerification": true,
+    "additionalTestEmailSent": false
+  },
+  "productionBaselineStillActive": "d480cf841c4010ac23e2af2c9f8aeeaabdaa29e9",
+  "immutableProductionAcceptance": "PENDING",
+  "promotionExecuted": false,
+  "publicContent": {
+    "status": "PASS",
+    "target": "production",
+    "posts": 154,
+    "sourceContentSha256": "d2f923862a9c57064acc464be5359745d4f12dd2d64cad3031cfd0a007fea649",
+    "transferredOnly": "public.blog_posts and referenced public images",
+    "businessAccountsImported": 0,
+    "reusedMediaEvidence": 0,
+    "newMediaHashesVerified": 151,
+    "reviewedCounterRows": 0
+  }
+}

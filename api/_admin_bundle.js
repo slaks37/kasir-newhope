@@ -1729,7 +1729,8 @@ function registerNeonAdminMfa(app, getDb, guard) {
   const route = (path, fn) => app.post("/api/admin/mfa/" + path, guard("VIEW_MERCHANT_HEALTH", true), async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const previewOrigin = process.env.FULL_NEON_TARGET === "staging" && process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : void 0;
-    if (req.headers.origin && req.headers.origin !== process.env.APP_URL && req.headers.origin !== process.env.PUBLIC_APP_URL && req.headers.origin !== previewOrigin) return res.status(403).json({ ok: false, error: "INVALID_ORIGIN" });
+    const productionOrigin = process.env.FULL_NEON_CLEAN_START === "1" && process.env.FULL_NEON_TARGET === "production" && process.env.VERCEL_ENV === "production" && /^kasir-newhope-[a-z0-9]+-slaks37s-projects\.vercel\.app$/.test(process.env.VERCEL_URL || "") ? "https://" + process.env.VERCEL_URL : void 0;
+    if (req.headers.origin && req.headers.origin !== process.env.APP_URL && req.headers.origin !== process.env.PUBLIC_APP_URL && req.headers.origin !== previewOrigin && req.headers.origin !== productionOrigin) return res.status(403).json({ ok: false, error: "INVALID_ORIGIN" });
     try {
       res.json({ ok: true, ...await fn(await getDb(), req) });
     } catch (e) {

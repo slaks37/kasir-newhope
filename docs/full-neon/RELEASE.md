@@ -10,11 +10,11 @@ Baseline: production `d480cf841c4010ac23e2af2c9f8aeeaabdaa29e9`, including the d
 |---|---|---|
 | Neon project | `steep-sea-66546931` | same project |
 | Branch | `br-falling-butterfly-az989m86` (`main`) | `br-morning-darkness-azwfti4c` |
-| Business DB | `neondb` — not yet bootstrapped | **new** `newhope_full_neon_staging` |
+| Business DB | `neondb` — clean schema bootstrapped | **new** `newhope_full_neon_staging` |
 | Managed Auth DB | existing managed `neondb` | existing managed `neondb`, read through separate restricted pool |
 | Public bucket | `blog-media` | `full-neon-public-media` |
 | Private bucket | `business-files` | `full-neon-business-files` |
-| Runtime SQL login | `newhope_clean_runtime` (production not yet provisioned) | `newhope_clean_runtime` |
+| Runtime SQL login | `newhope_clean_runtime` (production provisioned; restricted role verification PASS) | `newhope_clean_runtime` |
 
 The staging branch's previous database and fixtures are untouched. Production is never pointed to this fixture branch. New business DB bootstrap refuses any populated business catalog and applies schema atomically. It excludes historical example admin/blog seeds. Only canonical plan configuration and preserved public blog content are seeded; no user or financial imports.
 
@@ -43,7 +43,7 @@ Fresh source DB/auth backup was encrypted at source and decrypted privately to v
 
 The latest native staging scenario duration is recorded in the evidence JSON (including the additional non-empty cron assertions). This is neither launch downtime nor alias propagation measurement. There is no measured production cutover timing yet. Do not publish an estimated downtime as a measured result.
 
-Hosted Google sign-in, exact-UUID onboarding, logout/relogin and owner-device admin MFA are **PASS**. Real managed email verification/reset and a new credential-account session are **PASS** by owner completion plus authoritative metadata. Safari cross-site session behavior and immutable production acceptance are **not yet PASS**. Anonymous-token/JWKS inspection is not authenticated-user acceptance; anonymous tokens use a different issuer/lifetime and must never authorize business APIs.
+Hosted Google sign-in, exact-UUID onboarding, logout/relogin and owner-device admin MFA are **PASS**. Real managed email verification/reset and a new credential-account session are **PASS** by owner completion plus authoritative metadata. Safari login/reload is **PASS by owner-device attestation**, with automated inspection unavailable. Immutable production acceptance remains pending. Anonymous-token/JWKS inspection is not authenticated-user acceptance; anonymous tokens use a different issuer/lifetime and must never authorize business APIs.
 
 ## Open external gates
 
@@ -51,7 +51,7 @@ Hosted Google sign-in, exact-UUID onboarding, logout/relogin and owner-device ad
 2. **Google OAuth — hosted owner acceptance and publication PASS.** Created the owner-approved Web OAuth client in dedicated project `new-hope-512409`, verified without a billing account. Credentials are only in ignored mode-0600 local storage and managed Neon settings. Both exact branch callbacks below are registered, and readback confirms standard/custom Google credentials on main and staging. Branding uses the live application, privacy and terms URLs plus `newhope.space`. With explicit owner approval, the OAuth app is now In production. Verification Center states data-access verification is not required for its three basic identity scopes; branding is separately not displayed to users. Hosted owner Google sign-in, callback exchange, reload, logout/relogin and exact UUID onboarding passed on Preview `9f61a5e`; these do not prove public OAuth availability or email-password recovery.
 3. **Staging owner admin — PASS.** After actual signed Google login and exact-UUID verification, the owner explicitly approved the first staging Superadmin grant. It produced one durable grant audit, and the owner completed TOTP enrollment plus recovery-code acknowledgement. No email-only linking or dummy admin seed. Production has a separate identity/admin/MFA acceptance gate; the staging grant does not authorize a production grant.
 4. **Resolved — unused elevated roles.** After explicit owner approval, deleted only the newly-created unused `newhope_full_runtime` roles on main and staging. The application uses the restricted SQL-created `newhope_clean_runtime` replacement. No old role or data was deleted.
-5. **Release engineer — production gates.** Automatic approval review rejected production business bootstrap while lint/provider gates were open. Do not bypass this. Once staging, provider and hosted gates are PASS, recheck those facts and execute the authorized reviewed production preparation. No production DB/env/deployment cutover has occurred.
+5. **Release engineer — production gates.** Automatic approval review rejected production business bootstrap while lint/provider gates were open. Do not bypass this. Once staging, provider and hosted gates are PASS, recheck those facts and execute the authorized reviewed production preparation. Clean main schema/runtime preparation is now executed; live-domain cutover has not occurred.
 
 Callbacks:
 
@@ -64,7 +64,7 @@ Application password reset:
 https://kasir.newhope.space/reset-password
 ```
 
-## Reviewed launch sequence — conditional, not executed
+## Reviewed launch sequence — preparation underway; promotion conditional
 
 1. Complete external Auth/MFA gates and exact-commit CI/Preview acceptance. Refresh production deployment metadata; abort if the baseline changed unexpectedly.
 2. Recheck source public-content count/hash against the encrypted snapshot. Refresh/review only public-content delta if it changed; never overwrite newer destination rows. Old dummy business data is not a migration gate.
@@ -117,3 +117,11 @@ No active session predating the credential update remained at inspection. The pr
 A fresh read-only source comparison found 151 published posts versus 137 on staging: 14 new IDs, zero missing IDs and two existing rows changed only in view counts (0→1 and 24→30). All 151 captured source row hashes were compared with the reviewed source payload. The isolated staging copy now contains 151 posts and 148 preserved images. Only the 14 new images were downloaded and hash-verified through authenticated and anonymous access; 134 previously verified mappings were reused after existence checks and exact destination/hash-key validation. Counter-only updates require an explicit reviewed-delta flag and use the maximum of source/target, preserving newer target counters. UUID/slug, content, metadata and timestamp conflicts still abort; there is no blanket upsert or deletion.
 
 An independent read-only comparison reconciled every field of all 151 staged posts against the captured source and asset mapping, with no legacy Supabase Storage references. Source and production writes remained zero. See `evidence/public-delta-2026-10-23.json`. This is a point-in-time public-content snapshot; recheck the final source delta immediately before launch because the existing writer remains active. Dummy business records were not imported.
+
+### Clean main preparation and immutable MFA origin
+
+After exact `870112a` CI/Preview, hosted provider/email/MFA and owner Safari acceptance passed, main was rechecked empty and the previous production-bootstrap rejection was re-evaluated through the approval reviewer. Atomic bootstrap succeeded with 72 migrations and the managed Auth schema preserved. Runtime provisioning uses a separate SQL-only restricted login and independent MFA key. Only the four unchanged canonical packages were seeded. Read-only verification confirms verified TLS, 8s statement/10s idle transaction timeouts, no privileged role flags/DDL, immutable ledger/audit ACLs, selected managed user columns only, and denial of password/session-token columns. Business accounts, transactions and admin seeds remain zero; see `evidence/production-preparation-2026-10-23.json`. Supabase and the live `d480cf8` deployment remain intact.
+
+A real handler reproduction found that MFA on a production immutable Vercel URL was rejected with HTTP 403 before promotion. The handler now accepts only its own platform-injected immutable hostname pinned to the existing project/team, and only in Full Neon production mode. Membership and MFA are still required. Tests reject different deployments/teams, lookalike domains, HTTP, paths, preview-mode production access and missing authentication, with no MFA database reads on denial. Main managed Auth still needs that exact immutable origin registered after deployment; wildcard origins are never used.
+
+Main content preparation now preserves the refreshed point-in-time source snapshot: 154 posts and 151 public media objects. All 151 destination objects passed authenticated and anonymous byte/hash verification on the production bucket. New source changes since the earlier 151-post snapshot were limited to three additional posts and two readership-counter changes, with no missing IDs or content/metadata rewrite. Final public-writer reconciliation is still required immediately before promotion.
