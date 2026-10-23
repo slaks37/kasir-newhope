@@ -1,3 +1,4 @@
+import {NeonLoginHelp} from './NeonAccountRecovery';
 /**
  * LoginPage — Halaman Masuk & Pendaftaran Akun Toko Baru
  *
@@ -10,7 +11,7 @@
 
 import React, { useState } from "react";
 import {BetterLoginHelp} from './BetterAccountRecovery';
-import {usesBetterAuth} from '../../lib/supabase';
+import {usesBetterAuth,usesNeonAuth} from '../../lib/supabase';
 import "../../styles/app-theme.css";
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
@@ -43,7 +44,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   initialMode = "login",
 }) => {
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
 
   // URL owns the mode. A mirrored state/effect pair can overwrite navigation
   // while the next lazy route is still loading.
@@ -171,7 +172,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         } else if (requiresEmailConfirmation) {
           setPassword('');
-          setSuccess('Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
+          setSuccess(usesNeonAuth
+            ? 'Periksa inbox dan folder spam email Anda. Ikuti tautan verifikasi atau masukkan kode pada bagian Verifikasi email, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.'
+            : 'Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
           setMode('login');
         } else {
           if (storeName.trim()) {
@@ -208,6 +211,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setMode("register");
     setError(null);
     setIsNotRegistered(false);
+  };
+
+  const handleGoogleAuth = async () => {
+    setLoading(true);setError(null);setSuccess(null);setIsNotRegistered(false);
+    try{const {error}=await signInWithGoogle();if(error)setError(error.message);}
+    catch{setError('Login Google belum berhasil. Silakan coba lagi.');}
+    finally{setLoading(false);}
   };
 
   return (
@@ -433,7 +443,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           )}
         </button>
       </form>
+      {usesNeonAuth&&mode==='login'&&<button type="button" disabled={loading}
+        className="nh-app-button-secondary nh-auth-submit mt-3" onClick={()=>void handleGoogleAuth()}>
+        {loading?<Loader2 size={18} className="animate-spin"/>:null} Masuk dengan Google
+      </button>}
       {usesBetterAuth&&mode==='login'&&<BetterLoginHelp/>}
+      {usesNeonAuth&&mode==='login'&&<NeonLoginHelp email={email} onEmailChange={setEmail}/>}
       <p className="nh-auth-switch">
         {mode === "login" ? "Baru di New Hope POS?" : "Sudah punya akun?"}{" "}
         <button

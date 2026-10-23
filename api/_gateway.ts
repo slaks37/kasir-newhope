@@ -7,6 +7,7 @@ import { TRUSTED_IDENTITY_HEADERS } from '../src/server/serverlessBoundary';
 export async function proxyToGateway(req:any,res:any):Promise<void>{
   normalizeVercelUrl(req);
   const base=(process.env.GATEWAY_URL || '').replace(/\/$/,'');
+  if(base&&process.env.FULL_NEON_CLEAN_START==='1')return void res.status(503).json({ok:false,error:'FULL_NEON_EXTERNAL_GATEWAY_BLOCKED'});
   if(base){
     try{
       if(new URL(base).host===req.headers.host) return void res.status(503).json({ok:false,error:'GATEWAY_SELF_REFERENCE'});

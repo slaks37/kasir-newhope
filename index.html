@@ -9,7 +9,7 @@
     <meta name="google-site-verification" content="IkdM0Qd3yU44Mxl6gdzJTUOhFKgFB1WjmANYRNDjzrE" />
 
     <!-- Google Tag Manager -->
-    <script>(function(w,d,s,l,i){if(/^\/(?:login|register|reset-password|verify-email|api\/auth)(?:\/|$)/.test(w.location.pathname)||new URLSearchParams(w.location.search).has('token'))return;w[l]=w[l]||[];w[l].push({'gtm.start':
+    <script>(function(w,d,s,l,i){if(/^\/(?:login|register|reset-password|verify-email|auth\/callback|api\/auth)(?:\/|$)/.test(w.location.pathname)||['token','code','access_token','refresh_token','id_token','neon_auth_session_verifier','neon_popup','neon_popup_callback'].some(function(k){return new URLSearchParams(w.location.search).has(k)||new URLSearchParams(w.location.hash.slice(1)).has(k)}))return;w[l]=w[l]||[];w[l].push({'gtm.start':
     new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
     j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);

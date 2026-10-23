@@ -1,3 +1,4 @@
+import {readManagedOfflineProfile,clearManagedOfflineProfile} from '../lib/auth/neonOffline';
 import {prepareHybridSession} from '../lib/auth/hybridSession';
 /**
  * AuthContext — sesi Supabase Auth sebagai React context.
@@ -18,7 +19,7 @@ import {prepareHybridSession} from '../lib/auth/hybridSession';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { User, Session, AuthError } from '@supabase/auth-js';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured,usesNeonAuth } from '../lib/supabase';
 import { hashPin, verifyPinHash } from '../lib/auth/pinSecurity';
 import { BusinessSector } from '../types';
 import { registerCloudAccount } from '../lib/auth/cloudSignup';
@@ -144,13 +145,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    if(usesNeonAuth&&navigator.onLine===false){
+      const profile=readManagedOfflineProfile();
+      setUser(profile);setSession(null);setRestoreError(!profile);setLoading(false);
+      // Re-enter the managed session and server authorization path on reconnect.
+      const reconnect=()=>window.location.reload();window.addEventListener('online',reconnect,{once:true});
+      return()=>window.removeEventListener('online',reconnect);
+    }
     return restoreAuthSession<Session|null>(
       supabase.auth.getSession().then(({data,error})=>{if(error)throw error;return prepareHybridSession(data.session);}),
       receive=>{
         const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{queueMicrotask(()=>void prepareHybridSession(session).then(receive).catch(()=>{setRestoreError(true);setLoading(false);}));});
         return()=>subscription.unsubscribe();
       },
-      session=>{setSession(session);setUser(session?.user??null);setRestoreError(false);setLoading(false);},
+      session=>{if(usesNeonAuth&&!session)clearManagedOfflineProfile();setSession(session);setUser(session?.user??null);setRestoreError(false);setLoading(false);},
       error=>{console.warn('[auth] Session restoration failed:',error);setRestoreError(true);setLoading(false);}
     );
   }, []);
@@ -169,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: usesNeonAuth ? window.location.origin+'/login' : window.location.origin,
       },
     });
     return { error };
@@ -263,7 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: cleanEmail, password, fullName, storeName, sector,
           firstOutletName: opts.firstOutletName?.trim() || `${storeName} — Cabang Utama`,
           secondOutletName: opts.secondOutletName?.trim() || '',
-          redirectTo: window.location.origin,
+          redirectTo: usesNeonAuth ? window.location.origin+'/login' : window.location.origin,
         });
         if (result.session) {
           setSession(result.session);
@@ -284,9 +292,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
   const signOut = useCallback(async () => {
     if (isSupabaseConfigured) {
+      if(usesNeonAuth&&navigator.onLine===false)throw Error('Sambungkan internet untuk mencabut sesi server.');
       const {error}=await supabase.auth.signOut();
       if(error)throw error;
     }
+    if(usesNeonAuth){clearManagedOfflineProfile();sessionStorage.removeItem('nh-neon-admin-mfa');}
     localStorage.removeItem(LOCAL_SESSION_KEY);
     localStorage.removeItem('newhope_pos_guest_mode');
     sessionStorage.removeItem('nhpos_internal_identity');

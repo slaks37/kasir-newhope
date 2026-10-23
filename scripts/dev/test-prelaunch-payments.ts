@@ -6,8 +6,8 @@ const app=express();app.use(express.json());registerBillingRoutes(app,db,true,as
 const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 try{
  const base='http://127.0.0.1:'+(server.address() as import('node:net').AddressInfo).port;
- for(const value of ['0',' 0\n','invalid','']){
-  process.env.DOKU_PAYMENTS_ENABLED=value;
+ for(const value of [undefined,'0',' 0\n','invalid','']){
+  if(value===undefined)delete process.env.DOKU_PAYMENTS_ENABLED;else process.env.DOKU_PAYMENTS_ENABLED=value;
   const r=await fetch(base+'/api/v1/subscription/checkout',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
   assert.equal(r.status,503);assert.equal((await r.json()).error,'PAYMENTS_PAUSED');assert.equal(dbCalls,0);assert.equal(providerCalls,0);
  }

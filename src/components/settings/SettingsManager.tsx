@@ -3,6 +3,7 @@ import { usePOSFields } from '../../context/POSDomains';
 import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
 import {PrivacyRequestsTab} from './PrivacyRequestsTab';
+import {ManagedSessionSecurity} from './ManagedSessionSecurity';
 import { SubscriptionBillingTab } from './SubscriptionBillingTab';
 import {
   Settings,
@@ -326,6 +327,7 @@ export const SettingsManager: React.FC = () => {
         </div>
       </div>
 
+      <ManagedSessionSecurity/>
       {activeTab === 'PRIVACY' ? <PrivacyRequestsTab/> : activeTab === 'BILLING' ? (
         <SubscriptionBillingTab />
       ) : activeTab === 'USERS' ? (

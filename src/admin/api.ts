@@ -4,7 +4,7 @@
  * Membaca API server yang memverifikasi identitas, role, dan audit akses.
  */
 
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, usesNeonAuth } from '../lib/supabase';
 import {coalescedRead} from '../lib/sync/refreshCoordinator';
 import {withRequestDeadline,RequestDeadlineError} from '../lib/requestDeadline';
 
@@ -206,7 +206,7 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   const target='/api/admin/'+path+(query.size?'?'+query:'');
   const run=()=>withRequestDeadline(async signal=>{
   const response=await fetch(target,
-    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json',...(sessionStorage.getItem('nh-neon-admin-mfa')?{'x-newhope-admin-mfa':sessionStorage.getItem('nh-neon-admin-mfa')!}:{})},body:body?JSON.stringify(body):undefined});
   const contentType=response.headers.get('content-type') || '';
   let result:any=null;
   if(contentType.includes('application/json')) {
@@ -265,7 +265,12 @@ export const api={
   integrations:(offset=0)=>request('integrations',{offset}),
   updateMcpSettings:(body:{enabled:boolean;expectedUpdatedAt:string|null;reason:string})=>request('integrations/mcp',undefined,body,'PUT'),
   revokeMcpConnection:(id:string,reason:string)=>request('integrations/mcp/connections/'+encodeURIComponent(id)+'/revoke',undefined,{reason},'POST'),
-  logout:async()=>{const {error}=await supabase.auth.signOut();if(error)throw error;setIdentity(null);},
+  loginWithGoogle:async()=>{
+    if(!usesNeonAuth || !isSupabaseConfigured)throw new ApiError(503,'AUTH_NOT_CONFIGURED','Login Google admin belum tersedia.');
+    const {error}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin+'/admin'}});
+    if(error)throw new ApiError(401,'GOOGLE_LOGIN_FAILED','Login Google belum berhasil. Coba kembali.');
+  },
+  logout:async()=>{sessionStorage.removeItem('nh-neon-admin-mfa');const {error}=await supabase.auth.signOut();if(error)throw error;setIdentity(null);},
   login:async(email:string,password:string):Promise<Session>=>{
     if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');
     const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
@@ -275,7 +280,7 @@ export const api={
       await supabase.auth.signOut();
       setIdentity(null);
       if (err?.code === 'INTERNAL_MEMBERSHIP_REQUIRED' || err?.message === 'INTERNAL_MEMBERSHIP_REQUIRED') {
-        throw new ApiError(403, 'INTERNAL_MEMBERSHIP_REQUIRED', 'Akun terdaftar di Supabase Auth, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di database internal.');
+        throw new ApiError(403, 'INTERNAL_MEMBERSHIP_REQUIRED', 'Akun terdaftar, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di database internal.');
       }
       throw err;
     }

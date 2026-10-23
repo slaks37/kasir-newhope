@@ -1,3 +1,4 @@
+import {registerBusinessFiles} from './businessFiles';
 import {registerHybridOnboarding} from './hybridOnboarding';
 import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 import {registerNeonOnboarding} from './neonOnboarding';
@@ -154,7 +155,7 @@ const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_i
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerHybridOnboarding(app,db);
-  registerNeonOnboarding(app,db);
+  registerNeonOnboarding(app,db);registerBusinessFiles(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);

@@ -1,5 +1,7 @@
+import {fullNeonConfig} from './fullNeon';
 /** This branch is a migration experiment, not a production auth cutover. */
 export function neonPilotConfig(env = process.env) {
+  if(env.FULL_NEON_CLEAN_START==='1'){const c=fullNeonConfig(env);return {authUrl:c.authUrl,jwksUrl:c.jwksUrl,issuer:c.issuer};}
   if (env.NEON_MIGRATION_PILOT !== '1' || env.VERCEL_ENV === 'production' ||
     (env.NODE_ENV === 'production' && env.VERCEL_ENV !== 'preview' && env.APP_ENV !== 'staging'))
     throw new Error('NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED');

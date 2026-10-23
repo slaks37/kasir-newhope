@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile, access} from 'node:fs/promises';
 import path from 'node:path';
+import vm from 'node:vm';
 
 const page = await readFile('dist/landing.html', 'utf8');
 const app = await readFile('dist/app.html', 'utf8');
@@ -18,6 +19,15 @@ assert.ok(bootstrap && bootstrap.includes('import('), 'Interactive features rema
 assert.ok(Buffer.byteLength(bootstrap) < 12000, 'Initial bootstrap stays small');
 assert.equal(/react-dom|react\.production|hydrateRoot/.test(bootstrap), false, 'React runtime stays out of initial execution');
 assert.equal(/gtm\.js\?id=/.test(page), false, 'Empty GTM container has no runtime download');
+assert.ok(page.includes('<meta name="referrer" content="no-referrer" />'));
+const authReturn=page.match(/<script data-auth-return>([\s\S]*?)<\/script>/)?.[1];
+assert.ok(authReturn,'Root OAuth callbacks must reach the session-aware app shell');
+for(const query of ['', '?utm_source=test', '?next=https://foreign.invalid', '?neon_auth_session_verifier=synthetic%2Bopaque%2Fvalue&next=https://foreign.invalid&code=discard']){
+  const location=new URL('https://staging.example.invalid/'+query);const redirects=[];
+  location.replace=value=>redirects.push(value);
+  vm.runInNewContext(authReturn,{window:{location},URL,URLSearchParams});
+  assert.deepEqual(redirects,query.includes('neon_auth_session_verifier')?['/login?neon_auth_session_verifier=synthetic%2Bopaque%2Fvalue']:[], 'Only the exact opaque verifier is forwarded on the same origin; marketing and untrusted redirects remain inert');
+}
 assert.equal(/fonts\.(googleapis|gstatic)\.com/.test(page), false, 'Public font is local');
 assert.ok(page.includes('google-site-verification') && page.includes('ai-catalog') && page.includes('rel="canonical"'), 'Search and AI discovery metadata preserved');
 assert.ok(app.includes('<div id="root"></div>'), 'Cashier keeps its independent session-aware shell');

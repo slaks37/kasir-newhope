@@ -108,7 +108,7 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   }));
   app.post('/api/v1/subscription/checkout',run(async(req,res)=>{
     // Explicit pre-launch hold: no tenant provisioning, invoice or provider call.
-    if(process.env.DOKU_PAYMENTS_ENABLED!==undefined&&process.env.DOKU_PAYMENTS_ENABLED.trim()!=='1')throw new BillingError(503,'PAYMENTS_PAUSED');
+    if(process.env.DOKU_PAYMENTS_ENABLED?.trim()!=='1')throw new BillingError(503,'PAYMENTS_PAUSED');
     const tenantId=await tenant(req);
     const key=String(req.body?.requestKey || '');
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new BillingError(400,'CHECKOUT_REQUEST_KEY_REQUIRED');

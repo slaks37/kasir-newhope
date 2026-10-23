@@ -14,7 +14,7 @@ const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 assert(script);
 assert(html.includes('<meta name="referrer" content="no-referrer" />'));
 assert(!html.includes('googletagmanager.com/ns.html'));
-for(const path of ['/login','/register','/reset-password','/verify-email','/api/auth/verify-email','/app?token=fixture']){
+for(const path of ['/login','/register','/reset-password','/verify-email','/api/auth/verify-email','/app?token=fixture','/auth/callback','/app?neon_auth_session_verifier=fixture','/?code=fixture','/app#access_token=fixture','/?neon_popup=fixture','/?neon_popup_callback=fixture']){
   const url=new URL(path,'https://fixture.invalid');
   const requested:string[]=[];
   const context={window:{location:url},URLSearchParams,Date,document:{

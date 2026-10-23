@@ -22,7 +22,7 @@ import 'dotenv/config';
  * jalur verifikasi token yang sama seperti produksi. Token gateway dibuat acak
  * per sesi dev bila belum diisi.
  */
-const AUTH_LOKAL = process.env.NODE_ENV !== 'production' && !process.env.SUPABASE_URL && !process.env.VITE_SUPABASE_URL;
+const AUTH_LOKAL = (!process.env.AUTH_PROVIDER||process.env.AUTH_PROVIDER==='supabase') && process.env.NODE_ENV !== 'production' && !process.env.SUPABASE_URL && !process.env.VITE_SUPABASE_URL;
 if (AUTH_LOKAL) {
   const url = `http://127.0.0.1:${process.env.DEV_AUTH_PORT || 54321}`;
   Object.assign(process.env, { SUPABASE_URL: url, VITE_SUPABASE_URL: url, SUPABASE_ANON_KEY: 'dev-local-anon', VITE_SUPABASE_ANON_KEY: 'dev-local-anon' });
@@ -144,6 +144,7 @@ async function tungguSiap(url, batasMs = 30_000) {
 }
 
 async function main() {
+  if(!process.env.DATABASE_URL){
   console.log('[dev] 1/3 database…');
   jalankan('db-server', ['services/db-server/index.ts']);
 
@@ -160,6 +161,8 @@ async function main() {
     matikan(1);
     return;
   }
+
+  }else console.log('[dev] remote database: reviewed migrations are applied separately; no runtime DDL.');
 
   if (AUTH_LOKAL) {
     jalankan('dev-auth', ['services/dev-auth/index.ts']);

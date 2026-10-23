@@ -1,0 +1,18 @@
+{
+  "capturedAt": "2026-10-23T07:31:08.583Z",
+  "target": "isolated-staging",
+  "sourceRows": 151,
+  "targetRows": 151,
+  "allRowFieldsReconciled": true,
+  "identitySlugMetadataContentPreserved": true,
+  "retainedNewerTargetCounters": 0,
+  "legacyStorageReferences": 0,
+  "mediaObjects": 148,
+  "newMediaHashesVerified": 14,
+  "reusedVerifiedMediaEvidence": 134,
+  "reviewedCounterRows": 2,
+  "sourceContentSha256": "4cf20d856a279dced780a066062faa036001a2aa9df4b2dfff9f1f643c9bdba2",
+  "targetHash": "cbc8620bed86a93a28f3809f04b8f428a0739e1212495e364e6ecce4af0c3e2b",
+  "productionWrites": 0,
+  "sourceWrites": 0
+}

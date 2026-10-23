@@ -1,3 +1,5 @@
+import {saveManagedOfflineProfile,readManagedOfflineProfile,clearManagedOfflineProfile} from '../../src/lib/auth/neonOffline';
+import type {User as AuthUser} from '@supabase/auth-js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {SharedStateSync} from '../../src/lib/sync/sharedState';
@@ -7,7 +9,7 @@ import type {SaaSSubscription} from '../../src/types';
 import {readReceiptLogo,saveReceiptLogo} from '../../src/lib/workspace/receiptLogo';
 
 const disk=new Map<string,string>(),network={onLine:true};
-Object.defineProperty(globalThis,'localStorage',{value:{getItem:(key:string)=>disk.get(key)??null,setItem:(key:string,value:string)=>disk.set(key,value)},configurable:true});
+Object.defineProperty(globalThis,'localStorage',{value:{getItem:(key:string)=>disk.get(key)??null,setItem:(key:string,value:string)=>disk.set(key,value),removeItem:(key:string)=>disk.delete(key)},configurable:true});
 Object.defineProperty(globalThis,'navigator',{value:network,configurable:true});
 const owner=randomUUID(),tenant=randomUUID(),businessId=randomUUID(),otherBusiness=randomUUID(),outlet=randomUUID(),now=Date.now();
 saveReceiptLogo(owner,businessId,'data:image/png;base64,iVBORw0KGgo=');
@@ -20,6 +22,12 @@ const directory:Directory={tenantId:tenant,capabilities:{multiBusiness:true},bus
   transportRef:owner+'_business_'+businessId,outlets:[{outletId:outlet,businessId,name:'Laundry branch',address:'',status:'ACTIVE'}]}]};
 const subscription:SaaSSubscription={id:randomUUID(),tenantId:tenant,planId:'plan-free',status:'TRIAL',currentPeriodStart:new Date(now).toISOString(),currentPeriodEnd:new Date(now+2*86400000).toISOString(),cancelAtPeriodEnd:false};
 saveVerifiedBootstrap(owner,directory,subscription,now);
+saveManagedOfflineProfile({id:owner,email:'synthetic@example.invalid',email_confirmed_at:new Date(now).toISOString(),created_at:new Date(now).toISOString(),aud:'authenticated',app_metadata:{role:'SUPERADMIN'},user_metadata:{full_name:'Synthetic owner',role:'SUPERADMIN',password:'MUST_NOT_PERSIST'}} as AuthUser,localStorage,now);
+const profileBytes=disk.get('nh-managed-neon-offline-profile-v1')!;
+assert(!profileBytes.includes('SUPERADMIN')&&!profileBytes.includes('MUST_NOT_PERSIST')&&!profileBytes.includes('access_token'));
+assert.equal(readManagedOfflineProfile(localStorage,now)?.id,owner);
+assert.equal(readManagedOfflineProfile(localStorage,now+86400001),null);
+clearManagedOfflineProfile();assert.equal(readManagedOfflineProfile(localStorage,now),null);
 const cached=readOfflineBootstrap(owner,now)!;assert(cached);assert.equal(cached.directory.businesses[0].businessId,businessId);
 assert.equal(readOfflineBootstrap(randomUUID(),now),null,'Another account cannot restore the cache');
 assert.equal(readOfflineBootstrap(owner,now+86400001),null,'Offline UI cache expires within 24 hours');

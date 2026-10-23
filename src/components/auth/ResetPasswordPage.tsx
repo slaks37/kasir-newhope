@@ -1,8 +1,9 @@
+import {NeonResetPasswordPage} from './NeonAccountRecovery';
 import {BetterResetPasswordPage} from './BetterAccountRecovery';
 import {useState,type FormEvent} from 'react';
 import '../../styles/app-theme.css';
 import {useAuth} from '../../context/AuthContext';
-import {supabase,usesBetterAuth} from '../../lib/supabase';
+import {supabase,usesBetterAuth,usesNeonAuth} from '../../lib/supabase';
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {AuthLayout} from './AuthLayout';
 
@@ -36,4 +37,4 @@ function SupabaseResetPasswordPage() {
   </div></AuthLayout>;
 }
 
-export default function ResetPasswordPage(){return usesBetterAuth?<BetterResetPasswordPage/>:<SupabaseResetPasswordPage/>;}
+export default function ResetPasswordPage(){return usesNeonAuth?<NeonResetPasswordPage/>:usesBetterAuth?<BetterResetPasswordPage/>:<SupabaseResetPasswordPage/>;}

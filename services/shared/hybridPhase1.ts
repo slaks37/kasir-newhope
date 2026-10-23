@@ -1,3 +1,4 @@
+import {assertFullNeonDatabase} from './fullNeon';
 import stagingTarget from '../../neon/targets/hybrid-staging.json';
 import prelaunchTarget from '../../neon/targets/prelaunch-rehearsal.json';
 import candidateTarget from '../../neon/targets/hybrid-candidate.json';
@@ -20,6 +21,7 @@ export function hybridPhase1Config(env=process.env){
  return {target,source,staging:env.HYBRID_STAGING==='1'};
 }
 export function assertHybridDatabase(connectionString:string,env=process.env){
+ if(env.FULL_NEON_CLEAN_START==='1'){assertFullNeonDatabase(connectionString,env);return;}
  const url=new URL(connectionString),neon=/(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
  if(env.NEON_DB_PHASE1!=='1'){
   if(neon&&(!env.AUTH_PROVIDER||env.AUTH_PROVIDER==='supabase')&&(env.VERCEL==='1'||env.VERCEL_ENV==='production'))throw Error('HYBRID_EXPLICIT_MODE_REQUIRED');

@@ -1,6 +1,7 @@
+import NeonAdminMfa from './NeonAdminMfa';
 import { useEffect, useState } from 'react';
 import BetterAdminMfa from './BetterAdminMfa';
-import { supabase,usesBetterAuth } from '../lib/supabase';
+import { supabase,usesBetterAuth,usesNeonAuth } from '../lib/supabase';
 import { api, type Session } from './api';
 import { AuthLayout } from '../components/auth/AuthLayout';
 
@@ -79,4 +80,4 @@ function SupabaseAdminMfa({onVerified,onLogout,embedded=false}:{onVerified:(sess
   return embedded?content:<AuthLayout admin>{content}</AuthLayout>;
 }
 
-export default function AdminMfa(props:Parameters<typeof SupabaseAdminMfa>[0]) {return usesBetterAuth?<BetterAdminMfa {...props}/>:<SupabaseAdminMfa {...props}/>;}
+export default function AdminMfa(props:Parameters<typeof SupabaseAdminMfa>[0]) {return usesNeonAuth?<NeonAdminMfa {...props}/>:usesBetterAuth?<BetterAdminMfa {...props}/>:<SupabaseAdminMfa {...props}/>;}

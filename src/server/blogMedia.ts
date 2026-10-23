@@ -1,3 +1,4 @@
+import {fullNeonConfig} from '../../services/shared/fullNeon';
 import {hybridExternalWritesBlocked} from '../../services/shared/hybridPhase1';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
@@ -13,11 +14,11 @@ export function createBlogMediaProvider(): BlogMediaProvider {
     return {async upload(bytes,path){
       if(bytes.length<100||bytes.length>500000)throw Error('INVALID_BLOG_PHOTO');
       storage??=createNeonObjectStorage();
-      return storage.upload(bytes,objectKey(path));
+      return storage.upload(bytes,objectKey(path),process.env.FULL_NEON_CLEAN_START==='1'?fullNeonConfig().publicBucket:undefined);
     }};
   }
   // A Neon migration deployment must never silently write new media to Supabase.
-  if(process.env.AUTH_PROVIDER==='better-auth')return {async upload(){throw Error('BLOG_STORAGE_NOT_CONFIGURED');}};
+  if(['neon','better-auth'].includes(process.env.AUTH_PROVIDER||''))return {async upload(){throw Error('BLOG_STORAGE_NOT_CONFIGURED');}};
   return { async upload(bytes, path) {
     if(hybridExternalWritesBlocked())throw Error('HYBRID_STAGING_STORAGE_WRITE_BLOCKED');
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;

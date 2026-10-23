@@ -1,3 +1,25 @@
+// services/shared/fullNeon.ts
+var fullNeonTargets = {
+  production: { branchId: "br-falling-butterfly-az989m86", host: "ep-twilight-moon-azqj69l8.c-3.ap-southeast-1.aws.neon.tech", database: "neondb", authUrl: "https://ep-twilight-moon-azqj69l8.neonauth.c-3.ap-southeast-1.aws.neon.tech/neondb/auth", publicBucket: "blog-media", privateBucket: "business-files" },
+  staging: { branchId: "br-morning-darkness-azwfti4c", host: "ep-flat-recipe-azti3hh0.c-3.ap-southeast-1.aws.neon.tech", database: "newhope_full_neon_staging", authUrl: "https://ep-flat-recipe-azti3hh0.neonauth.c-3.ap-southeast-1.aws.neon.tech/neondb/auth", publicBucket: "full-neon-public-media", privateBucket: "full-neon-business-files" }
+};
+function fullNeonConfig(env = process.env) {
+  const selection = env.FULL_NEON_TARGET;
+  if (selection !== "production" && selection !== "staging") throw Error("FULL_NEON_TARGET_REQUIRED");
+  const target = fullNeonTargets[selection];
+  if (["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "GATEWAY_URL"].some((k) => env[k]?.trim())) throw Error("FULL_NEON_LEGACY_RUNTIME_CONFIGURATION_FORBIDDEN");
+  if (selection === "production" && (env.APP_URL !== "https://kasir.newhope.space" || env.NEON_AUTH_EMAIL_READY !== "1" || env.NEON_AUTH_GOOGLE_READY !== "1" || !env.ADMIN_MFA_ENCRYPTION_KEY)) throw Error("FULL_NEON_PRODUCTION_AUTH_ACCEPTANCE_REQUIRED");
+  if (env.FULL_NEON_CLEAN_START !== "1" || env.AUTH_PROVIDER !== "neon" || env.STORAGE_PROVIDER !== "neon" || env.NEON_PROJECT_ID !== "steep-sea-66546931" || env.NEON_BRANCH_ID !== target.branchId || env.NEON_DB_PHASE1 === "1" || env.DOKU_PAYMENTS_ENABLED !== "0") throw Error("FULL_NEON_CONFIGURATION_MISMATCH");
+  if (env.NEON_AUTH_BASE_URL !== target.authUrl || env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL !== target.authUrl + "/.well-known/jwks.json") throw Error("FULL_NEON_AUTH_BRANCH_MISMATCH");
+  if (env.VERCEL_ENV === "production" && selection !== "production") throw Error("FULL_NEON_STAGING_CANNOT_SERVE_PRODUCTION");
+  return { ...target, issuer: new URL(target.authUrl).origin, jwksUrl: target.authUrl + "/.well-known/jwks.json" };
+}
+function assertFullNeonDatabase(connectionString, env = process.env) {
+  const t = fullNeonConfig(env), u = new URL(connectionString);
+  if (!["postgres:", "postgresql:"].includes(u.protocol) || u.hostname.replace("-pooler", "") !== t.host || u.pathname !== "/" + t.database || u.username !== "newhope_clean_runtime" || u.hash || u.port && u.port !== "5432" || [...u.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("FULL_NEON_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
+}
+var fullNeonMaintenance = (env = process.env) => env.FULL_NEON_CLEAN_START === "1" && env.FULL_NEON_MAINTENANCE === "1";
+
 // neon/targets/hybrid-staging.json
 var hybrid_staging_default = {
   projectId: "steep-sea-66546931",
@@ -59,6 +81,10 @@ function hybridPhase1Config(env = process.env) {
   return { target, source, staging: env.HYBRID_STAGING === "1" };
 }
 function assertHybridDatabase(connectionString, env = process.env) {
+  if (env.FULL_NEON_CLEAN_START === "1") {
+    assertFullNeonDatabase(connectionString, env);
+    return;
+  }
   const url = new URL(connectionString), neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
   if (env.NEON_DB_PHASE1 !== "1") {
     if (neon && (!env.AUTH_PROVIDER || env.AUTH_PROVIDER === "supabase") && (env.VERCEL === "1" || env.VERCEL_ENV === "production")) throw Error("HYBRID_EXPLICIT_MODE_REQUIRED");
@@ -68,12 +94,45 @@ function assertHybridDatabase(connectionString, env = process.env) {
   if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hostname.replace("-pooler", "") !== target.host || url.pathname !== "/" + target.database || decodeURIComponent(url.username) !== "newhope_runtime_login" || url.hash || url.port && url.port !== "5432" || [...url.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("HYBRID_DATABASE_ROLE_OR_ENDPOINT_MISMATCH");
 }
 
+// services/shared/neonAuthDatabase.ts
+import pg from "pg";
+
+// services/shared/databaseTls.ts
+import fs from "node:fs";
+function databaseTransport(connectionString, env = process.env) {
+  const url = new URL(connectionString);
+  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
+  if (neon) {
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hash || [...url.searchParams.keys()].some((key) => !["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "channel_binding", "application_name"].includes(key)))
+      throw Error("DATABASE_CONNECTION_OVERRIDE_REJECTED");
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
+    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
+  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
+}
+
+// services/shared/neonAuthDatabase.ts
+var pool;
+function neonAuthDatabase() {
+  if (!pool) {
+    const t = fullNeonConfig(), url = new URL(process.env.NEON_AUTH_DATABASE_URL || process.env.DATABASE_URL || "");
+    if (url.hostname.replace("-pooler", "") !== t.host || url.pathname !== "/neondb" || url.username !== "newhope_clean_runtime") throw Error("MANAGED_AUTH_DATABASE_BINDING_REQUIRED");
+    pool = new pg.Pool({ ...databaseTransport(url.href), max: 2, connectionTimeoutMillis: 5e3, statement_timeout: 8e3 });
+  }
+  return { query: async (sql, p) => {
+    const r = await pool.query(sql, p);
+    return { rows: r.rows, rowCount: r.rowCount || 0 };
+  } };
+}
+
 // services/shared/neonAuth.ts
 import { createRemoteJWKSet, jwtVerify, errors } from "jose";
 
 // services/shared/db.ts
 import fs2 from "node:fs";
-import pg from "pg";
+import pg2 from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
@@ -117,25 +176,9 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
   throw Object.assign(new Error(`Database tidak bisa dihubungi setelah ${attempts} percobaan`), { cause });
 }
 
-// services/shared/databaseTls.ts
-import fs from "node:fs";
-function databaseTransport(connectionString, env = process.env) {
-  const url = new URL(connectionString);
-  const neon = /(?:^|\.)neon\.(?:tech|build)$/.test(url.hostname);
-  if (neon) {
-    if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hash || [...url.searchParams.keys()].some((key) => !["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "channel_binding", "application_name"].includes(key)))
-      throw Error("DATABASE_CONNECTION_OVERRIDE_REJECTED");
-    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat"]) url.searchParams.delete(key);
-    return { connectionString: url.href, ssl: { rejectUnauthorized: true } };
-  }
-  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
-  if (local || url.searchParams.get("sslmode") === "disable") return { connectionString, ssl: void 0 };
-  return { connectionString, ssl: env.PGSSLROOTCERT ? { ca: fs.readFileSync(env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true } : { rejectUnauthorized: false } };
-}
-
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
@@ -146,6 +189,7 @@ function konfigurasiSsl(connectionString) {
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
+  if (fullNeonMaintenance()) throw Error("FULL_NEON_MAINTENANCE");
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
@@ -154,7 +198,7 @@ async function connectDb(opts) {
     const configured = new URL(process.env.DATABASE_URL || ""), actual = new URL(connectionString);
     if (decodeURIComponent(actual.username) !== "newhope_runtime_login" || actual.hostname.replace("-pooler", "") !== configured.hostname.replace("-pooler", "") || actual.pathname !== configured.pathname) throw Error("NEON_APPLICATION_ROLE_REQUIRED");
   }
-  const pool = new pg.Pool({
+  const pool2 = new pg2.Pool({
     .../(?:^|\.)neon\.(?:tech|build)$/.test(new URL(connectionString).hostname) ? databaseTransport(connectionString) : { connectionString, ssl: konfigurasiSsl(connectionString) },
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
     // batas koneksi di db-server; pool besar per service akan menghabiskannya
@@ -162,14 +206,14 @@ async function connectDb(opts) {
     ...databasePoolLimits(opts.max ?? Number(process.env.PGPOOL_MAX || 4))
   });
   void opts.schema;
-  pool.on("error", (err) => {
+  pool2.on("error", (err) => {
     console.error("[db] koneksi idle bermasalah:", err.message);
   });
   await waitForDatabase(async () => {
-    const probe = await pool.connect();
+    const probe = await pool2.connect();
     probe.release();
   }).catch(async (error) => {
-    await pool.end().catch(() => {
+    await pool2.end().catch(() => {
     });
     throw error;
   });
@@ -183,7 +227,7 @@ async function connectDb(opts) {
       await runner.query(sql);
     },
     async tx(fn) {
-      const client = await pool.connect();
+      const client = await pool2.connect();
       try {
         await client.query("BEGIN");
         await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs()}`);
@@ -199,14 +243,18 @@ async function connectDb(opts) {
       }
     },
     async close() {
-      await pool.end();
+      await pool2.end();
     }
   });
-  return wrap(pool);
+  return wrap(pool2);
 }
 
 // services/shared/neonPilot.ts
 function neonPilotConfig(env = process.env) {
+  if (env.FULL_NEON_CLEAN_START === "1") {
+    const c = fullNeonConfig(env);
+    return { authUrl: c.authUrl, jwksUrl: c.jwksUrl, issuer: c.issuer };
+  }
   if (env.NEON_MIGRATION_PILOT !== "1" || env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging")
     throw new Error("NEON_PILOT_PRODUCTION_CUTOVER_BLOCKED");
   const base = new URL(env.NEON_AUTH_BASE_URL || "");
@@ -250,7 +298,7 @@ async function bindNeonIdentity(db, p, issuer, provider = "neon", authDb) {
   const email = p.email;
   return db.tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [issuer + ":" + p.subject]);
-    const live = (await (provider === "better-auth" ? authDb : c).query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
+    const live = (await (authDb || c).query(provider === "better-auth" ? 'SELECT id,email,"emailVerified",NOT "isActive" AS banned FROM newhope_auth."user" WHERE id=$1' : 'SELECT id,email,"emailVerified",banned FROM neon_auth."user" WHERE id::text=$1', [p.subject])).rows[0];
     if (!live || !live.emailVerified || live.banned || live.email.toLowerCase() !== email.toLowerCase()) return null;
     const binding = (await c.query(`SELECT b.canonical_user_id,b.is_active,u.is_active AS canonical_active
       FROM internal.auth_identity_bindings b JOIN internal.users u ON u.id=b.canonical_user_id
@@ -278,7 +326,7 @@ async function authenticateNeonBearer(token) {
       opening = void 0;
       throw e;
     });
-    return await bindNeonIdentity(await opening, p, config.issuer);
+    return await bindNeonIdentity(await opening, p, config.issuer, "neon", process.env.FULL_NEON_CLEAN_START === "1" ? neonAuthDatabase() : void 0);
   } catch {
     throw new NeonAuthUnavailableError("NEON_IDENTITY_UNAVAILABLE");
   }
@@ -289,7 +337,7 @@ async function reauthenticateNeonOwner(db, email, password, canonicalSubject) {
   try {
     response = await fetch(config.authUrl + "/sign-in/email", {
       method: "POST",
-      headers: { "content-type": "application/json", origin: config.issuer },
+      headers: { "content-type": "application/json", origin: new URL(process.env.APP_URL || config.issuer).origin },
       body: JSON.stringify({ email, password }),
       redirect: "error",
       signal: AbortSignal.timeout(5e3)
@@ -309,7 +357,7 @@ async function reauthenticateNeonOwner(db, email, password, canonicalSubject) {
   } finally {
     if (cookies) await fetch(config.authUrl + "/sign-out", {
       method: "POST",
-      headers: { cookie: cookies, origin: config.issuer },
+      headers: { cookie: cookies, origin: new URL(process.env.APP_URL || config.issuer).origin },
       redirect: "error",
       signal: AbortSignal.timeout(5e3)
     }).catch(() => {
@@ -322,7 +370,7 @@ import { betterAuth } from "better-auth";
 import { bearer, twoFactor } from "better-auth/plugins";
 import { createAuthMiddleware, APIError } from "better-auth/api";
 import { PostgresDialect } from "kysely";
-import pg2 from "pg";
+import pg3 from "pg";
 import { randomUUID } from "node:crypto";
 
 // neon/targets/full-restore.json
@@ -436,13 +484,13 @@ async function sendBetterAuthEmail(mail) {
 
 // services/shared/betterAuth.ts
 function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = sendBetterAuthEmail) {
-  const pool = new pg2.Pool({ ...databaseTransport(config.databaseUrl), ...databasePoolLimits(2) });
+  const pool2 = new pg3.Pool({ ...databaseTransport(config.databaseUrl), ...databasePoolLimits(2) });
   const auth = betterAuth({
     appName: "New Hope POS",
     baseURL: config.baseUrl,
     basePath: "/api/auth",
     secret: config.secret,
-    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    database: { dialect: new PostgresDialect({ pool: pool2 }), type: "postgres", schemaName: "newhope_auth" },
     trustedOrigins: config.allowedOrigins || [config.baseUrl],
     telemetry: { enabled: false },
     logger: { disabled: true },
@@ -496,7 +544,7 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
         if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
           const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
           if (current?.user.twoFactorEnabled) {
-            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+            const fresh = (await pool2.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
               WHERE session_id=$1 AND user_id=$2 AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
             if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
           }
@@ -509,13 +557,13 @@ function createBetterAuthRuntime(config = betterAuthPilotConfig(), sendEmail = s
         const fresh = ctx.context.newSession;
         const sessionToken = fresh?.session.token || result.token;
         const userId = fresh?.user.id || result.user.id;
-        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,verified_at)
+        await pool2.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,verified_at)
           SELECT id,"userId",now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
           ON CONFLICT(session_id) DO UPDATE SET verified_at=EXCLUDED.verified_at`, [sessionToken, userId]);
       })
     }
   });
-  return { auth, pool, close: () => pool.end() };
+  return { auth, pool: pool2, close: () => pool2.end() };
 }
 var runtime;
 function getBetterAuthRuntime() {
@@ -528,17 +576,17 @@ var BetterAuthUnavailableError = class extends Error {
 var opening2;
 async function authenticateBetterBearer(token) {
   try {
-    const config = betterAuthPilotConfig(), { auth, pool } = getBetterAuthRuntime();
+    const config = betterAuthPilotConfig(), { auth, pool: pool2 } = getBetterAuthRuntime();
     const session = await auth.api.getSession({ headers: new Headers({ authorization: "Bearer " + token }), query: { disableCookieCache: true } });
     if (!session?.user.emailVerified || !session.user.isActive) return null;
     opening2 ??= connectDb({ schema: "internal", max: 2 }).catch((e) => {
       opening2 = void 0;
       throw e;
     });
-    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth", pool);
+    const p = await bindNeonIdentity(await opening2, { subject: session.user.id, email: session.user.email, isEmailVerified: true, aal: "aal1" }, config.baseUrl, "better-auth", pool2);
     if (!p) return null;
     if (session.user.twoFactorEnabled) {
-      const proof = (await pool.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
+      const proof = (await pool2.query("SELECT verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2", [session.session.id, session.user.id])).rows[0];
       if (proof) {
         p.aal = "aal2";
         p.mfaVerifiedAt = new Date(proof.verified_at).getTime() / 1e3;
@@ -679,8 +727,157 @@ async function tenantForPrincipal(db, principal) {
   return null;
 }
 
+// services/pos/businessFiles.ts
+import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { GetObjectCommand as GetObjectCommand2, PutObjectCommand as PutObjectCommand2, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+// services/shared/objectStorage.ts
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+var BLOG_MEDIA_BUCKET = "blog-media";
+function neonStorageConfig(env = process.env) {
+  if (env.FULL_NEON_CLEAN_START === "1") fullNeonConfig(env);
+  if (env.NEON_PROJECT_ID !== "steep-sea-66546931" || !/^br-[a-z0-9-]+$/.test(env.NEON_BRANCH_ID || "")) throw Error("NEON_STORAGE_BRANCH_REQUIRED");
+  const endpoint = new URL(env.AWS_ENDPOINT_URL_S3 || "");
+  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.port || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || !endpoint.hostname.startsWith(env.NEON_BRANCH_ID + ".storage.") || !endpoint.hostname.endsWith(".ap-southeast-1.aws.neon.tech") || env.AWS_REGION !== "ap-southeast-1") throw Error("NEON_STORAGE_ENDPOINT_MISMATCH");
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("NEON_STORAGE_CREDENTIAL_REQUIRED");
+  return { endpoint: endpoint.origin, region: env.AWS_REGION, accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, branchId: env.NEON_BRANCH_ID };
+}
+function objectKey(key) {
+  if (!key || key.length > 1024 || /^[/.]|[\\\u0000-\u001f\u007f]/.test(key) || key.split("/").some((p) => !p || p === "." || p === "..")) throw Error("INVALID_OBJECT_KEY");
+  return key;
+}
+function publicObjectUrl(config, bucket, key) {
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) throw Error("INVALID_OBJECT_BUCKET");
+  return config.endpoint + "/" + bucket + "/" + objectKey(key).split("/").map(encodeURIComponent).join("/");
+}
+function createNeonObjectStorage(config = neonStorageConfig()) {
+  const client = new S3Client({
+    endpoint: config.endpoint,
+    region: config.region,
+    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+    forcePathStyle: true,
+    maxAttempts: 3,
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED"
+  });
+  return {
+    client,
+    config,
+    async upload(bytes, key, bucket = BLOG_MEDIA_BUCKET, contentType = "image/jpeg") {
+      objectKey(key);
+      await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: contentType, CacheControl: "public, max-age=31536000, immutable" }), { abortSignal: AbortSignal.timeout(18e3) });
+      return publicObjectUrl(config, bucket, key);
+    },
+    async download(key, bucket = BLOG_MEDIA_BUCKET) {
+      const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey(key) }), { abortSignal: AbortSignal.timeout(18e3) });
+      if (!result.Body) throw Error("NEON_STORAGE_EMPTY_BODY");
+      return new Uint8Array(await result.Body.transformToByteArray());
+    },
+    async exists(key, bucket = BLOG_MEDIA_BUCKET) {
+      try {
+        await client.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey(key) }), { abortSignal: AbortSignal.timeout(18e3) });
+        return true;
+      } catch (e) {
+        if (e.$metadata?.httpStatusCode === 404) return false;
+        throw e;
+      }
+    },
+    close() {
+      client.destroy();
+    }
+  };
+}
+
+// services/pos/businessFiles.ts
+var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var types = /* @__PURE__ */ new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "text/csv"]);
+function createBusinessFileProvider() {
+  const t = fullNeonConfig(), s = createNeonObjectStorage();
+  return {
+    async put(key, bytes, type) {
+      await s.client.send(new PutObjectCommand2({ Bucket: t.privateBucket, Key: key, Body: bytes, ContentType: type, CacheControl: "private, no-store", ContentDisposition: "attachment" }), { abortSignal: AbortSignal.timeout(8e3) });
+    },
+    signedGet(key) {
+      return getSignedUrl(s.client, new GetObjectCommand2({ Bucket: t.privateBucket, Key: key, ResponseContentDisposition: "attachment" }), { expiresIn: 300 });
+    },
+    async remove(key) {
+      await s.client.send(new DeleteObjectCommand({ Bucket: t.privateBucket, Key: key }), { abortSignal: AbortSignal.timeout(8e3) });
+    }
+  };
+}
+function registerBusinessFiles(app, db, provider) {
+  if (!provider && process.env.FULL_NEON_CLEAN_START !== "1") return;
+  let storage = provider;
+  const run = (fn) => async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const p = trustedPrincipal(req);
+    if (!p?.isEmailVerified) return res.status(401).json({ ok: false, error: "VERIFIED_ACCOUNT_REQUIRED" });
+    try {
+      const rows = (await db.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND is_active AND merged_into IS NULL", [p.subject])).rows;
+      if (rows.length !== 1) return res.status(403).json({ ok: false, error: "ACTIVE_OWNER_REQUIRED" });
+      return await fn(req, res, rows[0].id, p.subject);
+    } catch (e) {
+      return res.status(e.status || 503).json({ ok: false, error: e.status ? e.message : "FILE_STORAGE_UNAVAILABLE" });
+    }
+  };
+  const error = (status, message) => Object.assign(Error(message), { status });
+  const audit = (c, tenant, subject, id, action) => c.query("INSERT INTO internal.business_file_events(id,tenant_id,file_id,actor_subject,action) VALUES($1,$2,$3,$4,$5)", [randomUUID2(), tenant, id, subject, action]);
+  app.get("/api/v1/sync/files", run(async (req, res, tenant, subject) => {
+    if (req.query.id) {
+      if (typeof req.query.id !== "string" || !uuid.test(req.query.id)) throw error(400, "INVALID_FILE_ID");
+      const row = (await db.query("SELECT object_key FROM internal.business_files WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL", [req.query.id, tenant])).rows[0];
+      if (!row) throw error(404, "FILE_NOT_FOUND");
+      storage ??= createBusinessFileProvider();
+      const url = await storage.signedGet(row.object_key);
+      await audit(db, tenant, subject, req.query.id, "DOWNLOAD_AUTHORIZED");
+      return res.json({ ok: true, url, expiresIn: 300 });
+    }
+    const files = (await db.query("SELECT id,content_type,size_bytes,created_at FROM internal.business_files WHERE tenant_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC,id LIMIT 101", [tenant])).rows;
+    return res.json({ ok: true, files: files.slice(0, 100), hasMore: files.length > 100 });
+  }));
+  app.post("/api/v1/sync/files", run(async (req, res, tenant, subject) => {
+    const { id: rawId, contentType, data } = req.body || {};
+    const id = typeof rawId === "string" ? rawId.toLowerCase() : "";
+    if (!uuid.test(String(id)) || !types.has(contentType) || typeof data !== "string" || data.length > 7e6 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw error(400, "INVALID_FILE");
+    const bytes = Buffer.from(data, "base64");
+    if (!bytes.length || bytes.length > 5e6 || bytes.toString("base64") !== data) throw error(400, "INVALID_FILE");
+    const digest2 = createHash2("sha256").update(bytes).digest("hex"), key = "tenants/" + tenant + "/" + id + "/" + digest2;
+    const replayed = await db.tx(async (c) => {
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["file:" + id]);
+      const old = (await c.query("SELECT tenant_id,sha256,content_type,deleted_at FROM internal.business_files WHERE id=$1", [id])).rows[0];
+      if (old) {
+        if (old.tenant_id !== tenant || old.sha256 !== digest2 || old.content_type !== contentType || old.deleted_at) throw error(409, "FILE_REQUEST_CONFLICT");
+        return true;
+      }
+      storage ??= createBusinessFileProvider();
+      await storage.put(key, bytes, contentType);
+      await c.query("INSERT INTO internal.business_files(id,tenant_id,object_key,content_type,size_bytes,created_by,sha256) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, tenant, key, contentType, bytes.length, subject, digest2]);
+      await audit(c, tenant, subject, id, "UPLOADED");
+      return false;
+    });
+    return res.status(replayed ? 200 : 201).json({ ok: true, id, replayed });
+  }));
+  app.delete("/api/v1/sync/files", run(async (req, res, tenant, subject) => {
+    const id = req.body?.id;
+    if (typeof id !== "string" || !uuid.test(id)) throw error(400, "INVALID_FILE_ID");
+    const row = await db.tx(async (c) => {
+      const old = (await c.query("SELECT object_key,deleted_at FROM internal.business_files WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [id, tenant])).rows[0];
+      if (!old) throw error(404, "FILE_NOT_FOUND");
+      if (!old.deleted_at) {
+        await c.query("UPDATE internal.business_files SET deleted_at=clock_timestamp() WHERE id=$1 AND tenant_id=$2", [id, tenant]);
+        await audit(c, tenant, subject, id, "DELETED");
+      }
+      return old;
+    });
+    storage ??= createBusinessFileProvider();
+    await storage.remove(row.object_key);
+    return res.json({ ok: true, id });
+  }));
+}
+
 // services/pos/hybridOnboarding.ts
-import { randomUUID as randomUUID2, randomBytes } from "node:crypto";
+import { randomUUID as randomUUID3, randomBytes } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -830,15 +1027,15 @@ function registerHybridOnboarding(app, db) {
         const created = Date.parse(p.sourceCreatedAt || "");
         if (!Number.isFinite(created) || created <= new Date(state.source_cutover_at).getTime() || created > Date.now() + 3e4) throw Error("SOURCE_CREATION_PROOF_REQUIRED");
         if ((await c.query("SELECT 1 FROM internal.users WHERE lower(email)=lower($1)", [p.email])).rows.length) throw Error("SOURCE_UUID_EMAIL_CONFLICT_REQUIRES_REVIEW");
-        const id = randomUUID2(), name = label(req.body?.store_name, "Toko Baru", 100), owner = label(req.body?.full_name, "Pemilik Toko", 150), sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
+        const id = randomUUID3(), name = label(req.body?.store_name, "Toko Baru", 100), owner = label(req.body?.full_name, "Pemilik Toko", 150), sector = sectors.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
         const first = label(req.body?.first_outlet_name, name + " (Cabang Utama)", 150), second = label(req.body?.second_outlet_name, "", 150);
         await c.query("INSERT INTO internal.users(id,email,full_name,is_active) VALUES($1,lower($2),$3,true)", [p.subject, p.email, owner]);
         await c.query("INSERT INTO internal.tenants(id,name,business_sector,owner_user_ref,owner_user_id,is_active) VALUES($1,$2,$3,$4::text,$4::uuid,true)", [id, name, sector, p.subject]);
         await c.query("INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref,is_active) VALUES($1,$2,$3,$4,true)", [id, name, sector, p.subject]);
         await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref,is_active) VALUES($1,$1,$2,$3,$4,true)", [id, name, sector, `${p.subject}_${sector}`]);
-        for (const outlet of second && second !== first ? [first, second] : [first]) await c.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$2,$3,true)", [randomUUID2(), id, outlet]);
-        await c.query("INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active) VALUES($1,$2,$3,$3,'OWNER',$4,true)", [randomUUID2(), p.subject, id, randomBytes(32).toString("hex")]);
-        await c.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial) VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)", [randomUUID2(), id]);
+        for (const outlet of second && second !== first ? [first, second] : [first]) await c.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$2,$3,true)", [randomUUID3(), id, outlet]);
+        await c.query("INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active) VALUES($1,$2,$3,$3,'OWNER',$4,true)", [randomUUID3(), p.subject, id, randomBytes(32).toString("hex")]);
+        await c.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial) VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)", [randomUUID3(), id]);
         await c.query("INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at) VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')", [id, SAAS_PLANS.find((v) => v.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
         return { created: true };
       });
@@ -851,7 +1048,7 @@ function registerHybridOnboarding(app, db) {
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes as randomBytes2, scrypt as derive, timingSafeEqual } from "node:crypto";
+import { createHash as createHash3, randomBytes as randomBytes2, scrypt as derive, timingSafeEqual } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -861,8 +1058,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -994,7 +1191,7 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
 }
 
 // services/pos/neonOnboarding.ts
-import { randomUUID as randomUUID3, randomBytes as randomBytes3 } from "node:crypto";
+import { randomUUID as randomUUID4, randomBytes as randomBytes3 } from "node:crypto";
 var sectors2 = /* @__PURE__ */ new Set(["FNB", "RETAIL", "LAUNDRY", "CARWASH", "BARBERSHOP"]);
 var label2 = (v, fallback, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
 function registerNeonOnboarding(app, db) {
@@ -1032,7 +1229,7 @@ function registerNeonOnboarding(app, db) {
         if (existing.length) return { tenantId: existing[0].id, created: false };
         const member = (await c.query("SELECT 1 FROM internal.memberships WHERE user_id=$1", [p.subject])).rows.length;
         if (!binding || binding.verification_ref !== "NEW_VERIFIED_ACCOUNT" || member || binding.is_platform_user || binding.platform_role) throw Error("IDENTITY_REVIEW_REQUIRED");
-        const id = randomUUID3(), name = label2(req.body?.store_name, "Toko Baru", 100);
+        const id = randomUUID4(), name = label2(req.body?.store_name, "Toko Baru", 100);
         const fullName = label2(req.body?.full_name, "Pemilik Toko", 150);
         const sector = sectors2.has(req.body?.business_sector) ? req.body.business_sector : "FNB";
         const first = label2(req.body?.first_outlet_name, name + " (Cabang Utama)", 150);
@@ -1044,13 +1241,13 @@ function registerNeonOnboarding(app, db) {
         await c.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$1,$2,$3,$4)", [id, name, sector, `${p.subject}_${sector}`]);
         for (const outlet of second && second !== first ? [first, second] : [first]) await c.query(
           "INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$2,$3)",
-          [randomUUID3(), id, outlet]
+          [randomUUID4(), id, outlet]
         );
         await c.query(`INSERT INTO internal.memberships(id,user_id,tenant_id,merchant_id,role,pin,is_active)
-          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID3(), p.subject, id, randomBytes3(32).toString("hex")]);
+          VALUES($1,$2,$3,$3,'OWNER',$4,true)`, [randomUUID4(), p.subject, id, randomBytes3(32).toString("hex")]);
         await c.query(`INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end,
           grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
-          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID3(), id]);
+          VALUES($1,$2,'plan-free','TRIAL',now(),now()+interval '45 days',now()+interval '59 days',now(),now()+interval '45 days',true)`, [randomUUID4(), id]);
         await c.query(`INSERT INTO ai.merchant_ai_credits(merchant_id,tenant_id,balance,monthly_grant,used_this_month,period_reset_at)
           VALUES($1,$1,$2,$2,0,date_trunc('month',now())+interval '1 month')`, [id, SAAS_PLANS.find((p2) => p2.id === TRIAL_PLAN_ID).aiQuotaMonthly]);
         return { tenantId: id, created: true };
@@ -2732,6 +2929,7 @@ var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_numb
 function registerSyncRoutes(app, db) {
   registerHybridOnboarding(app, db);
   registerNeonOnboarding(app, db);
+  registerBusinessFiles(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -3585,6 +3783,7 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 // src/server/syncHandler.ts
 var allowedMethods = {
   "/api/v1/sync/identity": ["GET"],
+  "/api/v1/sync/files": ["GET", "POST", "DELETE"],
   "/api/v1/sync/hybrid-onboarding": ["POST"],
   "/api/v1/sync/neon-onboarding": ["POST"],
   "/api/v1/privacy/requests": ["GET", "POST"],

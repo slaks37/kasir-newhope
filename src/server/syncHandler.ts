@@ -5,6 +5,7 @@ import { createServerlessBoundary } from './serverlessBoundary';
 
 const allowedMethods: Record<string, readonly string[]> = {
   '/api/v1/sync/identity':['GET'],
+  '/api/v1/sync/files':['GET','POST','DELETE'],
   '/api/v1/sync/hybrid-onboarding':['POST'],
   '/api/v1/sync/neon-onboarding':['POST'],
   '/api/v1/privacy/requests':['GET','POST'],

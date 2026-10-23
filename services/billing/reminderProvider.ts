@@ -1,20 +1,22 @@
 import {hybridExternalWritesBlocked} from '../shared/hybridPhase1';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import {managedOwnerIdentity} from '../shared/neonAuthDatabase';
 import {betterOwnerIdentity} from '../shared/betterAuthOwner';
 import type { ReminderDependencies } from './reminders';
 
 export function createReminderProvider(): ReminderDependencies {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const better=process.env.AUTH_PROVIDER==='better-auth';
-  if ((!better&&(!url||!key)) || !process.env.RESEND_API_KEY) throw new Error('REMINDER_PROVIDER_NOT_CONFIGURED');
-  const auth = !better?createClient(url!,key!,{auth:{persistSession:false,autoRefreshToken:false},
+  const better=process.env.AUTH_PROVIDER==='better-auth',neon=process.env.AUTH_PROVIDER==='neon';
+  if ((!better&&!neon&&(!url||!key)) || !process.env.RESEND_API_KEY) throw new Error('REMINDER_PROVIDER_NOT_CONFIGURED');
+  const auth = !better&&!neon?createClient(url!,key!,{auth:{persistSession:false,autoRefreshToken:false},
     global:{fetch:(input,init)=>fetch(input,{...init,signal:AbortSignal.timeout(5000)})}}):null;
   const resend = new Resend(process.env.RESEND_API_KEY);
   return {
     async verifiedOwnerEmail(subject) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(subject || '')) return null;
+      if(neon){const u=await managedOwnerIdentity(subject);return u?.verified?u.email:null;}
       if(better){const u=await betterOwnerIdentity(subject);return u?.verified?u.email:null;}
       const {data,error} = await auth!.auth.admin.getUserById(subject);
       if (error) { if (error.status === 404) return null; throw new Error('OWNER_LOOKUP_FAILED'); }
@@ -23,7 +25,7 @@ export function createReminderProvider(): ReminderDependencies {
       return user?.id === subject && user.email_confirmed_at && user.email ? user.email : null;
     },
     async send(mail,idempotencyKey) {
-      if(hybridExternalWritesBlocked())throw Error('HYBRID_STAGING_EMAIL_BLOCKED');
+      if(hybridExternalWritesBlocked()||process.env.FULL_NEON_CLEAN_START==='1'&&process.env.FULL_NEON_TARGET!=='production')throw Error('STAGING_EMAIL_BLOCKED');
       const {data,error} = await resend.emails.send(mail,{idempotencyKey});
       if (error || !data?.id) throw new Error('EMAIL_PROVIDER_REJECTED');
       return data.id;

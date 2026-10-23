@@ -1,0 +1,148 @@
+{
+  "capturedAt": "2026-10-22T05:42:16.579Z",
+  "baseline": "d480cf841c4010ac23e2af2c9f8aeeaabdaa29e9",
+  "stage": {
+    "status": "PASS",
+    "database": "newhope_full_neon_staging",
+    "syntheticIdentityFixture": true,
+    "realManagedEmailGoogleAcceptance": false,
+    "role": "newhope_clean_runtime",
+    "tlsVerified": true,
+    "businessChangesRolledBack": true,
+    "checks": [
+      "DDL denied",
+      "bootstrap evidence denied",
+      "immutable ledgers and file audit denied",
+      "verified trial45 onboarding",
+      "versioned catalog",
+      "cash sale idempotent replay",
+      "inventory deduction once",
+      "cash ledger exact amount",
+      "merchant-health canonical FK, net revenue and daily replay",
+      "cross-tenant rejected",
+      "subscription trial independent of DOKU",
+      "DOKU paused",
+      "private S3 put/signed download/delete",
+      "unsigned private read rejected",
+      "managed session/password SELECT denied"
+    ],
+    "durationSeconds": 6.3
+  },
+  "content": {
+    "posts": 137,
+    "verifiedPublicImages": 134,
+    "sourceContentSha256": "81afdd3ce9422d79590332587fdbbc0fa9a47dd68ae5572f8498c2c1c70bf610",
+    "businessAccountsImported": 0
+  },
+  "bootstrap": {
+    "originalFilesApplied": 64,
+    "initialBusinessCounts": {
+      "tenants": 0,
+      "merchants": 0,
+      "outlets": 0,
+      "transactions": 0,
+      "admins": 0
+    },
+    "completeManifestIncludes": [
+      "AI cache",
+      "canonical wallet ownership",
+      "multi-business namespace",
+      "canonical merchant-health and feature-event relationships"
+    ]
+  },
+  "backup": {
+    "encryptedSourceSnapshot": true,
+    "decryptionVerified": true,
+    "customerRecordsPublished": false
+  },
+  "production": {
+    "cutover": false,
+    "businessSchemaApplied": false,
+    "authCustomSmtpVerified": false,
+    "authGoogleOwnCredentialsVerified": false,
+    "positiveHostedAcceptance": false
+  },
+  "additiveRuntimeMigration": {
+    "file": "migrations/0063_managed_neon_runtime.sql",
+    "sha256": "6cca25a0a717f7afeee83c41285dae5bf8e2184aba23f2812955f4a045b30abe"
+  },
+  "sourcePublicContentRechecked": {
+    "rows": 137,
+    "maxUpdatedAt": "2026-10-22T02:01:10.342461Z"
+  },
+  "n8n": {
+    "activeWorkflow": "LY2WqUqboTtPgBSE",
+    "applicationHttpWrites": true,
+    "directSupabaseNode": false,
+    "inactiveRepairWorkflow": "DV9clz1h6m1paeox"
+  },
+  "cron": {
+    "target": "isolated-full-neon-staging",
+    "emptyBusinessDatabase": true,
+    "realEmailEnabled": false,
+    "checks": [
+      {
+        "job": "daily-insights",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "job": "daily-insights",
+          "processed": 0,
+          "written": 0,
+          "skipped": 0,
+          "failed": 0,
+          "scope": "up to 25 businesses per run"
+        }
+      },
+      {
+        "job": "merchant-health",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "job": "merchant-health",
+          "runId": "6b0be4ae-38cc-4a55-b646-de8e3c94c165",
+          "merchantsEvaluated": 0,
+          "durationMs": 382
+        }
+      },
+      {
+        "job": "billing-reminders",
+        "status": 200,
+        "result": {
+          "ok": true,
+          "dryRun": true,
+          "candidates": 0,
+          "accepted": 0,
+          "skipped": 0,
+          "unverifiedOwners": 0,
+          "failed": 0,
+          "review": 0
+        }
+      }
+    ]
+  },
+  "authConfiguration": {
+    "mainCustomSmtpConfirmed": true,
+    "stagingCustomSmtpConfirmed": true,
+    "stagingRequiresEmailVerification": true,
+    "newEmailSent": false,
+    "productionGoogleClient": "CONFIGURED_CUSTOM",
+    "hostedAcceptance": "PENDING",
+    "googleProject": "new-hope-512409",
+    "googleProjectBillingAccountLinked": false,
+    "mainGoogleProviderReadback": "standard",
+    "stagingGoogleProviderReadback": "standard",
+    "googleAudience": "TESTING",
+    "googleTestUsers": 1,
+    "hostedGoogleAcceptance": "PENDING",
+    "publicGoogleAccess": "PENDING",
+    "oauthCredentialPublished": false,
+    "googleProviderVerifiedIdentityCreated": true,
+    "rootCallbackBridge": "IMPLEMENTED_BUILT_ARTIFACT_TEST_PASS_HOSTED_PENDING",
+    "browserSessionAndOnboarding": "PENDING_UPDATED_PREVIEW"
+  },
+  "approvedUnusedElevatedRolesDeleted": [
+    "br-falling-butterfly-az989m86",
+    "br-morning-darkness-azwfti4c"
+  ]
+}

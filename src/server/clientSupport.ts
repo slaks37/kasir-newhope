@@ -1,4 +1,6 @@
 import {hybridExternalWritesBlocked} from '../../services/shared/hybridPhase1';
+import {managedOwnerIdentity} from '../../services/shared/neonAuthDatabase';
+import {fullNeonConfig} from '../../services/shared/fullNeon';
 import {createClient} from '@supabase/supabase-js';
 import {betterOwnerIdentity} from '../../services/shared/betterAuthOwner';
 import {getBetterAuthRuntime} from '../../services/shared/betterAuth';
@@ -19,6 +21,20 @@ export interface ClientSupportProvider {
 class SupportError extends Error {constructor(readonly status:number,code:string){super(code);}}
 
 export function createClientSupportProvider():ClientSupportProvider {
+  if(process.env.AUTH_PROVIDER==='neon') {
+    const send=async(path:string,body:Record<string,string>)=>{
+      const target=fullNeonConfig();
+      if(process.env.FULL_NEON_TARGET!=='production'&&process.env.AUTH_STAGING_EMAIL_APPROVED!=='1')throw new SupportError(403,'STAGING_EMAIL_NOT_APPROVED');
+      const origin=new URL(process.env.APP_URL||'');
+      const r=await fetch(target.authUrl+path,{method:'POST',headers:{'content-type':'application/json',origin:origin.origin},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
+      if(!r.ok)throw new SupportError(502,'MANAGED_AUTH_EMAIL_REJECTED');
+    };
+    return {configured:process.env.NEON_AUTH_EMAIL_READY==='1',ownerIdentity:managedOwnerIdentity,
+      async ownerEmail(subject){const u=await managedOwnerIdentity(subject);return u?.verified?u.email:null;},
+      async sendConfirmation(email){await send('/email-otp/send-verification-otp',{email,type:'email-verification'});},
+      async sendReset(email){await send('/request-password-reset',{email,redirectTo:new URL('/reset-password',process.env.APP_URL).href});},
+    };
+  }
   if(process.env.AUTH_PROVIDER==='better-auth')return {
     configured:process.env.AUTH_EMAIL_ENABLED==='1'&&!!process.env.RESEND_API_KEY&&!!process.env.AUTH_EMAIL_FROM,
     ownerIdentity:betterOwnerIdentity,

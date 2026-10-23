@@ -45,6 +45,7 @@ const StaffCommissions=lazy(()=>import('./pages/StaffCommissions'));
 const Integrations=lazy(()=>import('./pages/Integrations'));
 const BlogConnections=lazy(()=>import('./pages/BlogConnections'));
 import AdminMfa from './AdminMfa';
+import {usesNeonAuth} from '../lib/supabase';
 
 type PageId =
   | "overview"
@@ -223,6 +224,10 @@ function LoginScreen({
           <ArrowRight size={18} />
         </button>
       </form>
+      {usesNeonAuth && <button type="button" className="nh-app-button-secondary nh-auth-submit" disabled={loading} onClick={async()=>{
+        setLoading(true);setErr(null);
+        try{await api.loginWithGoogle();}catch(e){setErr((e as Error).message);}finally{setLoading(false);}
+      }}>Masuk admin dengan Google</button>}
       <div className="nh-auth-switch flex items-center justify-center gap-2">
         <ShieldCheck size={16} /> Khusus administrator yang berwenang.
       </div>
@@ -342,13 +347,15 @@ export default function AdminApp() {
   }, [navOpen]);
 
   const load = useCallback(() => {
-    if (!getIdentity()) {
+    // A browser identity hint is not a managed session or an authorization gate.
+    if (!usesNeonAuth && !getIdentity()) {
       setBooting(false);
       return;
     }
     api.me().then(
       (s) => {
         setSession(s);
+        setIdentity(s.user.email);
         setError(null);
         setBooting(false);
         const allowed = NAV.filter((n) => s.capabilities.includes(n.cap));
@@ -357,7 +364,7 @@ export default function AdminApp() {
       },
       (e) => {
         setIdentity(null);
-        setError({ code: e.code, message: e.message });
+        setError(e.status===401 ? null : { code: e.code, message: e.message });
         setBooting(false);
       },
     );

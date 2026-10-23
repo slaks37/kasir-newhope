@@ -1,0 +1,121 @@
+{
+  "capturedAt": "2026-10-23",
+  "scope": "isolated-full-neon-staging",
+  "testedCodeSha": "9f61a5e1150227d7fd54d9a2414d9095d9bc89b7",
+  "preview": "https://kasir-newhope-93w73usaf-slaks37s-projects.vercel.app",
+  "actualManagedGoogle": {
+    "signIn": "PASS",
+    "sessionVerifierRemoved": "PASS",
+    "workspaceVisible": "PASS",
+    "reloadSession": "PASS",
+    "logout": "PASS",
+    "reloginSameWorkspace": "PASS"
+  },
+  "exactManagedIdentityOnboarding": {
+    "exactbinding": 1,
+    "ownedtenants": 1,
+    "merchants": 1,
+    "outlets": 1,
+    "ownermemberships": 1,
+    "trial45": 1,
+    "platformadmins": 0
+  },
+  "privacy": {
+    "identityUuidPublished": false,
+    "tokensPublished": false
+  },
+  "adminClientRepair": {
+    "automatedChecks": "PASS",
+    "hostedNewClientAcceptance": "PASS",
+    "platformGrantExecuted": true,
+    "firstStagingAdminOwnerApproval": "APPROVED_AND_APPLIED_TO_EXACT_UUID",
+    "ownerDeviceMfa": "PASS",
+    "verifiedFactorCount": 1,
+    "mfaVerificationAuditCount": 1,
+    "recoveryCodeRetention": "OWNER_ATTESTED_AND_UI_ACKNOWLEDGED"
+  },
+  "remaining": {
+    "managedEmailSignupAndReset": "PASS_OWNER_COMPLETION_AND_AUTHORITATIVE_METADATA",
+    "googleAudience": "IN_PRODUCTION_OWNER_APPROVED",
+    "publicGooglePublication": "PASS",
+    "immutableProductionAcceptance": "PENDING",
+    "sessionRevocation": "NO_ACTIVE_PRE_RESET_SESSION_OBSERVED; PRE_RESET_JWT_REPLAY_NOT_CAPTURED"
+  },
+  "production": {
+    "businessBootstrap": false,
+    "envChanged": false,
+    "promoted": false,
+    "dokuEnabled": false
+  },
+  "googleVerificationCenter": {
+    "dataAccess": "NOT_REQUIRED_NO_SENSITIVE_OR_RESTRICTED_SCOPES",
+    "branding": "NOT_SHOWN_TO_USERS"
+  },
+  "emailSignup": {
+    "managedAccountCreated": true,
+    "emailVerifiedAtInvestigation": false,
+    "providerVerificationMessages": 2,
+    "providerStatus": "DELIVERED",
+    "resendsByAgent": 1,
+    "resetMessages": 1,
+    "actualInboxOrSpam": "NOT_SPECIFIED_BY_OWNER",
+    "installedAdapterBug": "REPRODUCED_FAILED_TO_RETRIEVE_USER_SESSION_AFTER_UNVERIFIED_SUCCESS",
+    "nativeSignupFixTests": "PASS",
+    "newHostedPatchAcceptance": "PREVIEW_READY_EMAIL_VERIFICATION_PENDING",
+    "replacementOwnerApproved": true,
+    "replacementProviderStatus": "DELIVERED",
+    "verificationAttempts": [
+      "ORIGINAL_OTP_EXPIRED",
+      "REPLACEMENT_CONSUMED_VERIFIED_ACCOUNT_WITH_INVALID_OTP_UI_OBSERVED"
+    ],
+    "emailVerifiedAtLatestRead": true,
+    "managedVerificationUpdatedAt": "2026-10-23T06:52:50.121Z",
+    "hostedEmailVerification": "PASS_AUTHORITATIVE_READBACK",
+    "passwordLogin": "PASS_OWNER_ATTESTED_AND_NEW_CREDENTIAL_ACCOUNT_SESSION",
+    "resetProviderStatus": "DELIVERED",
+    "resetDeliveredAt": "2026-10-23T07:07:20.868Z",
+    "resetCompletion": "PASS_OWNER_ATTESTED_AND_CREDENTIAL_UPDATED_AT",
+    "credentialUpdatedAt": "2026-10-23T07:10:04.361Z",
+    "newCredentialSessionAt": "2026-10-23T07:13:50.018Z",
+    "activeSessionsBeforeCredentialChangeAtRead": 0,
+    "activeSessionsAfterCredentialChangeAtRead": 1,
+    "postResetOnboarding": {
+      "exactBinding": 1,
+      "ownedTenants": 1,
+      "merchants": 1,
+      "outlets": 1,
+      "ownerMemberships": 1,
+      "trial45": 1,
+      "platformAdmins": 0
+    }
+  },
+  "emailRecoveryRepair": {
+    "observedFormRecipientMatchedApprovedAddress": false,
+    "observedInputNumeric": false,
+    "codeOrDifferentRecipientPublished": false,
+    "sharedControlledEmail": true,
+    "numericInputGuard": true,
+    "providerErrorsLocalized": true,
+    "automaticRetryOrResend": false,
+    "sdkTransportMock": "PASS",
+    "componentRender": "PASS",
+    "syntheticBrowser": "PASS",
+    "realVerification": "PASS_AUTHORITATIVE_USER_FLAG",
+    "invalidOtpRootCause": "NOT_FULLY_ATTRIBUTED_ALREADY_VERIFIED_AT_06_52_50Z_FORM_LATER_SHOWED_INVALID_OTP"
+  },
+  "sessionAcceptanceLimits": {
+    "preResetSessionAlreadySignedOutByAgent": true,
+    "activePreResetSessionsAtRead": 0,
+    "preResetBearerCaptured": false,
+    "immediateBearerRevocationProven": false,
+    "apiMaxJwtAgeMinutes": 15,
+    "browserWorkspaceAtRead": "GOOGLE_OWNER_SESSION; NOT_ATTRIBUTED_TO_EMAIL_ACCOUNT",
+    "passwordOrHashOrTokenRead": false,
+    "extraEmailSent": false
+  },
+  "safari": {
+    "loginAndReload": "PASS_OWNER_ATTESTED",
+    "directAutomatedUiEvidence": false,
+    "extraEmailSent": false
+  }
+}
