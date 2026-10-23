@@ -1,0 +1,46 @@
+{
+  "capturedAt": "2026-10-23",
+  "scope": "isolated-full-neon-staging",
+  "testedCodeSha": "9f61a5e1150227d7fd54d9a2414d9095d9bc89b7",
+  "preview": "https://kasir-newhope-93w73usaf-slaks37s-projects.vercel.app",
+  "actualManagedGoogle": {
+    "signIn": "PASS",
+    "sessionVerifierRemoved": "PASS",
+    "workspaceVisible": "PASS",
+    "reloadSession": "PASS",
+    "logout": "PASS",
+    "reloginSameWorkspace": "PASS"
+  },
+  "exactManagedIdentityOnboarding": {
+    "exactbinding": 1,
+    "ownedtenants": 1,
+    "merchants": 1,
+    "outlets": 1,
+    "ownermemberships": 1,
+    "trial45": 1,
+    "platformadmins": 0
+  },
+  "privacy": {
+    "identityUuidPublished": false,
+    "tokensPublished": false
+  },
+  "adminClientRepair": {
+    "automatedChecks": "PASS",
+    "hostedNewClientAcceptance": "PENDING_NEW_PREVIEW",
+    "platformGrantExecuted": false,
+    "firstStagingAdminOwnerApproval": "PENDING",
+    "ownerDeviceMfa": "PENDING"
+  },
+  "remaining": {
+    "managedEmailSignupAndReset": "PENDING",
+    "googleAudience": "TESTING",
+    "publicGooglePublication": "PENDING",
+    "immutableProductionAcceptance": "PENDING"
+  },
+  "production": {
+    "businessBootstrap": false,
+    "envChanged": false,
+    "promoted": false,
+    "dokuEnabled": false
+  }
+}
