@@ -26,15 +26,18 @@
   },
   "adminClientRepair": {
     "automatedChecks": "PASS",
-    "hostedNewClientAcceptance": "PENDING_NEW_PREVIEW",
-    "platformGrantExecuted": false,
-    "firstStagingAdminOwnerApproval": "PENDING",
-    "ownerDeviceMfa": "PENDING"
+    "hostedNewClientAcceptance": "PASS",
+    "platformGrantExecuted": true,
+    "firstStagingAdminOwnerApproval": "APPROVED_AND_APPLIED_TO_EXACT_UUID",
+    "ownerDeviceMfa": "PASS",
+    "verifiedFactorCount": 1,
+    "mfaVerificationAuditCount": 1,
+    "recoveryCodeRetention": "OWNER_ATTESTED_AND_UI_ACKNOWLEDGED"
   },
   "remaining": {
     "managedEmailSignupAndReset": "PENDING",
-    "googleAudience": "TESTING",
-    "publicGooglePublication": "PENDING",
+    "googleAudience": "IN_PRODUCTION_OWNER_APPROVED",
+    "publicGooglePublication": "PASS",
     "immutableProductionAcceptance": "PENDING"
   },
   "production": {
@@ -42,5 +45,21 @@
     "envChanged": false,
     "promoted": false,
     "dokuEnabled": false
+  },
+  "googleVerificationCenter": {
+    "dataAccess": "NOT_REQUIRED_NO_SENSITIVE_OR_RESTRICTED_SCOPES",
+    "branding": "NOT_SHOWN_TO_USERS"
+  },
+  "emailSignup": {
+    "managedAccountCreated": true,
+    "emailVerifiedAtInvestigation": false,
+    "providerVerificationMessages": 1,
+    "providerStatus": "DELIVERED",
+    "resendsByAgent": 0,
+    "resetMessages": 0,
+    "actualInboxOrSpam": "PENDING_OWNER",
+    "installedAdapterBug": "REPRODUCED_FAILED_TO_RETRIEVE_USER_SESSION_AFTER_UNVERIFIED_SUCCESS",
+    "nativeSignupFixTests": "PASS",
+    "newHostedPatchAcceptance": "PENDING_PREVIEW"
   }
 }

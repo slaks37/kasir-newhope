@@ -172,7 +172,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         } else if (requiresEmailConfirmation) {
           setPassword('');
-          setSuccess('Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
+          setSuccess(usesNeonAuth
+            ? 'Periksa inbox dan folder spam email Anda. Ikuti tautan verifikasi atau masukkan kode pada bagian Verifikasi email, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.'
+            : 'Periksa inbox dan folder spam email Anda. Klik tautan verifikasi, lalu login untuk melanjutkan. Jika email sudah terdaftar, gunakan login atau reset password.');
           setMode('login');
         } else {
           if (storeName.trim()) {

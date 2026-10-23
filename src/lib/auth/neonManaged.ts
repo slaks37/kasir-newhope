@@ -1,3 +1,4 @@
+import {signUpManagedEmail} from './managedSignup';
 import {saveManagedOfflineProfile,clearManagedOfflineProfile} from './neonOffline';
 import {createAuthClient} from '@neondatabase/auth';
 import {SupabaseAuthAdapter,BetterAuthVanillaAdapter} from '@neondatabase/auth/vanilla/adapters';
@@ -9,14 +10,15 @@ if(import.meta.env.VITE_AUTH_PROVIDER==='neon'&&(!url||!/^https:\/\/ep-(twilight
 export const managedAuth=url?createAuthClient(url,{adapter:BetterAuthVanillaAdapter({fetchOptions:{credentials:'include'}})}):null;
 export function createManagedNeonClient(){
  if(!url)throw Error('NEON_MANAGED_URL_REQUIRED');
- const sdk=createAuthClient(url,{adapter:SupabaseAuthAdapter({fetchOptions:{credentials:'include'}})});
- const signUp=sdk.signUp.bind(sdk);
+ // Normalize the SDK's nested compatibility types at this boundary.
+ const sdk=createAuthClient(url,{adapter:SupabaseAuthAdapter({fetchOptions:{credentials:'include'}})}) as unknown as GoTrueClient;
  sdk.signUp=async credentials=>{
   const info='options' in credentials?credentials.options?.data:undefined;
   localStorage.setItem('nh-neon-pending-onboarding',JSON.stringify(info||{}));
-  return signUp(credentials);
+  if(!('email' in credentials) || !credentials.email || !credentials.password)return {data:{user:null,session:null},error:{message:'Email dan password wajib diisi.'} as import('@supabase/auth-js').AuthError};
+  return signUpManagedEmail(input=>managedAuth!.signUp.email(input),()=>sdk.getSession(),credentials);
  };
- return sdk as unknown as GoTrueClient;
+ return sdk;
 }
 export async function prepareManagedSession(session:Session|null){
  if(!session || navigator.onLine===false)return session;

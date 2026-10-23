@@ -271,7 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: cleanEmail, password, fullName, storeName, sector,
           firstOutletName: opts.firstOutletName?.trim() || `${storeName} — Cabang Utama`,
           secondOutletName: opts.secondOutletName?.trim() || '',
-          redirectTo: window.location.origin,
+          redirectTo: usesNeonAuth ? window.location.origin+'/login' : window.location.origin,
         });
         if (result.session) {
           setSession(result.session);

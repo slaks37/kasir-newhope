@@ -59,7 +59,7 @@
     "test:release-readiness": "node scripts/dev/test-release-readiness.mjs && node scripts/dev/test-business-delta.mjs && node --import tsx scripts/dev/test-release-runtime.ts && node scripts/dev/test-delta-sequence.mjs",
     "test:hybrid-phase1": "node --import tsx scripts/dev/test-hybrid-phase1.ts",
     "test:blog-seo": "node --import tsx scripts/dev/test-blog-seo-recovery.ts",
-    "test:full-neon": "node --import tsx scripts/dev/test-full-neon-bootstrap.ts && node --import tsx scripts/dev/test-full-neon.ts && node --import tsx scripts/dev/test-managed-neon-sdk.ts && node --import tsx scripts/dev/test-managed-admin-client.ts"
+    "test:full-neon": "node --import tsx scripts/dev/test-full-neon-bootstrap.ts && node --import tsx scripts/dev/test-full-neon.ts && node --import tsx scripts/dev/test-managed-neon-sdk.ts && node --import tsx scripts/dev/test-managed-admin-client.ts && node --import tsx scripts/dev/test-managed-signup.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1150.0",
