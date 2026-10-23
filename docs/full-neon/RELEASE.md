@@ -4,6 +4,20 @@ Owner decision: old users, merchants, outlets, POS transactions and subscription
 
 Baseline: production `d480cf841c4010ac23e2af2c9f8aeeaabdaa29e9`, including the deployed SEO fixes. This branch adds selected Full Neon changes to that exact baseline. Its review base is `codex/neon-auth-migration`, currently at the same SHA. It does not merge PR #21, #23 or #24, or change `main`.
 
+## Current release — 24 October 2026
+
+**Full Neon is live at https://kasir.newhope.space.** The exact immutable production deployment is `dpl_3rmFrZpteS3RRgpcGRVqK6ugPGTM`, runtime source `050347828c54857a506a630b708d5cd9b9002224`, Singapore (`sin1`). This release adds no payment activation. The original Supabase project, encrypted backup and prior deployment remain intact. Sections below record the preparation history; their earlier pending gates are superseded by this dated acceptance, not silently relabelled as historical success.
+
+The runtime commit passed full CI and PostgreSQL17 migration/authorization/rollback CI. Main Google, owner-device MFA, managed email verification, reset/new-password login and exact UUID onboarding were accepted before promotion. Native explicit managed session revocation then reduced active sessions from one to zero and returned the browser to login. Reset itself does not revoke existing sessions; previously issued API JWTs retain the existing maximum 15-minute window.
+
+A fresh public-content delta preserved all 159 source posts and 156 referenced public images, with no dummy business import, missing IDs or content rewrite. Five new images passed authenticated and anonymous byte/hash checks. An independent read-only comparison reconciled every captured field. Only readership counters use the maximum of source and target. The final content fingerprint matched a fresh source read.
+
+Vercel reported promotion success in three seconds. That is promotion duration, **not measured downtime**. Public HTTP acceptance passed 15 checks, including both redirect domains. Actual public Google login and reload reached the same owner workspace. Available device diagnostics showed zero financial/device/operational pending records and zero operational conflicts; the existing legacy-data review banner remains, and no local records were deleted.
+
+The public blog writer was not paused: it had zero in-flight executions before promotion, and its hourly workflow follows the same public-domain HTTP APIs, with no direct Supabase/Postgres node. No manual AI workflow run occurred. Post-promotion scheduled blog execution remains to be observed. All three cron handlers passed native isolated tests and reject anonymous public requests; their authenticated production schedules have not yet run in this observation window. Billing reminder email and DOKU remain OFF.
+
+Rollback after the existing Neon registrations must keep Neon resources and use `FULL_NEON_MAINTENANCE=1` with the same bindings, preserve new dependent data and roll forward a tested correction. Returning the domain directly to Supabase is not a safe data rollback. Independent backup-key escrow/restore acceptance is not newly claimed. See [dated public release evidence](evidence/public-launch-2026-10-24.json). Any later evidence-only commit does not change the runtime source SHA above.
+
 ## Targets
 
 | Resource | Clean production target | Isolated staging |
@@ -82,7 +96,7 @@ https://kasir.newhope.space/reset-password
 
 Neon branch quota is currently 10/10. No old branch was deleted, no paid plan/resource was created. Cleanup is a later reviewed operation after launch/backup acceptance.
 
-**Current recommendation: NO-GO for public promotion until the explicit external and hosted gates above pass. Passing mock/native staging tests alone is not production acceptance.**
+**Current recommendation: GO for the launched Full Neon free-trial release; NO-GO for real DOKU payments. See the dated current-release acceptance above.**
 
 Agent tooling was inspected and linked without overwriting environments; see [TOOLING.md](TOOLING.md).
 
@@ -137,3 +151,24 @@ The reset did not automatically remove a pre-existing unexpired managed session.
 Candidate HTTP smoke checks passed 13/13: public pages/blog/sitemap/RSS, canonical URLs, no old Storage reference in the checked article, private/no-referrer reset headers, application-hosted Auth 404, anonymous admin 401 and anonymous denial at all three cron endpoints. A native main private-file probe passed authenticated/signed access, unsigned 403 and deletion of only its newly-created synthetic object. No financial fixture or payment was written to main. See `evidence/main-hosted-acceptance-2026-10-23.json`.
 
 The first candidate intentionally disabled all cron jobs. Future-build configuration now allows `daily-insights,merchant-health,billing-reminders`; the first two compute internal deterministic summaries without a paid AI request, and billing reminders remain dry-run (`BILLING_REMINDERS_ENABLED=0`). DOKU remains OFF. A new immutable build and acceptance are required before promoting this configuration. `kasir.newhope.space` still points to the preserved `d480cf8` deployment; preparing main or changing future-build variables is not a domain cutover.
+
+### Incident commands for the launched runtime
+
+Run from the reviewed checkout. Keep the tracked-source archive and the same project production bindings; never upload private `.env`, backups or local build evidence. These commands are **prepared, not executed as an incident response**:
+
+```sh
+cd build/full-neon/production-source-0503478
+npx --offline vercel deploy --prod --skip-domain --yes \
+  --project prj_pgXrNyqfggZUHT3nFhSFkEzok6HU \
+  --scope slaks37s-projects --regions sin1 \
+  --env FULL_NEON_MAINTENANCE=1
+```
+
+Capture the returned immutable maintenance URL. Verify READY, unchanged managed Auth/DB/Storage bindings, maintenance refusal at representative business APIs, disabled cron writes, and preserved state. Then, only under the incident release authority, run:
+
+```sh
+npx --offline vercel promote <verified-maintenance-deployment-url> \
+  --scope slaks37s-projects --yes
+```
+
+Do not replace the placeholder with the old Supabase deployment. This pauses affected business operations; it does not reverse ledger entries, remove registrations, revoke MFA or delete objects. Preserve the current Neon snapshot and dependent writes before any separately reviewed data repair. Restore service by promoting a verified compatible Full Neon correction, keeping the same resources. No maintenance deployment or incident promotion was performed during normal launch.

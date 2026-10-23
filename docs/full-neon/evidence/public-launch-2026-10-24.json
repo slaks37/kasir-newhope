@@ -1,0 +1,269 @@
+{
+  "recordedAt": "2026-10-23T23:57:43.011307+00:00",
+  "status": "PUBLIC_FULL_NEON_LAUNCHED",
+  "runtimeSourceSha": "050347828c54857a506a630b708d5cd9b9002224",
+  "deploymentId": "dpl_3rmFrZpteS3RRgpcGRVqK6ugPGTM",
+  "immutableUrl": "https://kasir-newhope-baw9khaua-slaks37s-projects.vercel.app",
+  "publicUrl": "https://kasir.newhope.space",
+  "region": "sin1",
+  "sourceProof": {
+    "method": "Git-tracked archive uploaded by CLI",
+    "sha256": "6c63f87521a226c19daa094f8714afc915e9749c05a24dc1be3fbf2fc010018f",
+    "remoteGitSourceAvailable": false
+  },
+  "ci": {
+    "lintRegressionBuild": {
+      "run": 39964827270,
+      "result": "SUCCESS"
+    },
+    "postgres17AuthorizationRollback": {
+      "run": 39964827277,
+      "result": "SUCCESS"
+    },
+    "duplicateCancelledRuns": [
+      39964906517,
+      39964906451
+    ]
+  },
+  "promotion": {
+    "result": "SUCCESS",
+    "cliReportedSeconds": 3,
+    "downtimeMeasured": false,
+    "baselinePreserved": "d480cf841c4010ac23e2af2c9f8aeeaabdaa29e9",
+    "publicDomainVerifiedByDeploymentMetadata": true
+  },
+  "publicHttp": {
+    "at": "2026-10-23T23:55:18.104Z",
+    "origin": "https://kasir.newhope.space",
+    "sourceSha": "050347828c54857a506a630b708d5cd9b9002224",
+    "deploymentId": "dpl_3rmFrZpteS3RRgpcGRVqK6ugPGTM",
+    "status": "PASS",
+    "checks": [
+      {
+        "path": "/",
+        "status": 200,
+        "expected": 200,
+        "ms": 485,
+        "pass": true
+      },
+      {
+        "path": "/login",
+        "status": 200,
+        "expected": 200,
+        "ms": 48,
+        "pass": true
+      },
+      {
+        "path": "/register",
+        "status": 200,
+        "expected": 200,
+        "ms": 44,
+        "pass": true
+      },
+      {
+        "path": "/reset-password",
+        "status": 200,
+        "expected": 200,
+        "ms": 40,
+        "pass": true,
+        "noReferrer": true,
+        "noStore": true
+      },
+      {
+        "path": "/blog",
+        "status": 200,
+        "expected": 200,
+        "ms": 120,
+        "pass": true
+      },
+      {
+        "path": "/blog/qris-sudah-wujud-di-kota-besar-kalau-di-kota-kecil-kamu-sudah-ikutan",
+        "status": 200,
+        "expected": 200,
+        "ms": 81,
+        "pass": true,
+        "noSupabaseStorage": true,
+        "canonical": true
+      },
+      {
+        "path": "/sitemap.xml",
+        "status": 200,
+        "expected": 200,
+        "ms": 67,
+        "pass": true,
+        "latestArticle": true,
+        "canonicalOnly": true
+      },
+      {
+        "path": "/rss.xml",
+        "status": 200,
+        "expected": 200,
+        "ms": 99,
+        "pass": true
+      },
+      {
+        "path": "/api/auth/get-session",
+        "status": 404,
+        "expected": 404,
+        "ms": 94,
+        "pass": true
+      },
+      {
+        "path": "/api/admin/me",
+        "status": 401,
+        "expected": 401,
+        "ms": 160,
+        "pass": true
+      },
+      {
+        "path": "/api/cron/daily-insights",
+        "status": 401,
+        "expected": 401,
+        "ms": 66,
+        "pass": true,
+        "deniesAnonymous": true
+      },
+      {
+        "path": "/api/cron/merchant-health",
+        "status": 401,
+        "expected": 401,
+        "ms": 68,
+        "pass": true,
+        "deniesAnonymous": true
+      },
+      {
+        "path": "/api/cron/billing-reminders",
+        "status": 401,
+        "expected": 401,
+        "ms": 64,
+        "pass": true,
+        "deniesAnonymous": true
+      },
+      {
+        "host": "admin.newhope.space",
+        "status": 307,
+        "location": "https://kasir.newhope.space/",
+        "pass": true
+      },
+      {
+        "host": "kasir-newhope.vercel.app",
+        "status": 301,
+        "location": "https://kasir.newhope.space/",
+        "pass": true
+      }
+    ],
+    "paymentTests": 0,
+    "emailSends": 0
+  },
+  "content": {
+    "capturedAt": "2026-10-23T23:53:51.724Z",
+    "target": "clean-production-candidate-main",
+    "sourceRows": 159,
+    "targetRows": 159,
+    "allRowFieldsReconciled": true,
+    "identitySlugMetadataContentPreserved": true,
+    "retainedNewerTargetCounters": 2,
+    "legacyStorageReferences": 0,
+    "mediaObjects": 156,
+    "newMediaHashesVerified": 5,
+    "reusedVerifiedMediaEvidence": 151,
+    "reviewedCounterRows": 4,
+    "sourceContentSha256": "e8ba8faaa59fde024c3b71678a8acb77954f0080e2936022589e8d9740d220ac",
+    "targetHash": "37eb584888ae760df7ab2705195c32c7c808087f0f6b2c63101259d8b9ae20eb",
+    "verificationWrites": 0,
+    "activeProductionSupabaseWrites": 0,
+    "sourceWrites": 0
+  },
+  "finalSourceFingerprint": {
+    "at": "2026-10-23T23:54:29.283Z",
+    "status": "PASS",
+    "publishedPosts": 159,
+    "sourceCaptureContentFingerprint": "ae26651bea5266198a5a737cb16ad4fa",
+    "latestSourceContentFingerprint": "ae26651bea5266198a5a737cb16ad4fa",
+    "excludesOnly": [
+      "view_count",
+      "likes_count"
+    ],
+    "sourceWrites": 0
+  },
+  "managedSessions": {
+    "explicitOwnerApproval": true,
+    "nativeRevocation": "PASS",
+    "before": {
+      "capturedAt": "2026-10-23T23:48:44.030Z",
+      "phase": "before",
+      "identityFingerprint": "cbfe77fbaf8cb496",
+      "activeSessions": 1
+    },
+    "after": {
+      "capturedAt": "2026-10-23T23:49:05.004Z",
+      "phase": "after",
+      "identityFingerprint": "cbfe77fbaf8cb496",
+      "activeSessions": 0
+    },
+    "browserReturnedToLogin": true,
+    "automaticPasswordResetRevocation": false,
+    "issuedBearerMaximumMinutes": 15
+  },
+  "publicGoogle": {
+    "login": "PASS",
+    "reload": "PASS",
+    "sameManagedIdentityAndOnboarding": "PASS",
+    "noNewPrivilegesGranted": true,
+    "authoritativeExactBindingTenantMerchantOutletOwnerMembershipTrial45Counts": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "deviceDiagnostics": {
+    "scope": "available owner Chrome at public origin",
+    "financePending": 0,
+    "deviceRecordsAwaitingCloud": 0,
+    "operationalPending": 0,
+    "operationalConflicts": 0,
+    "oldBrowserDataDeleted": false,
+    "legacyDataReviewBannerRemains": true
+  },
+  "writer": {
+    "workflowId": "LY2WqUqboTtPgBSE",
+    "activeVersionId": "c8993641-7af1-4575-b8ff-2a5a4f806ab2",
+    "inFlightBeforePromotion": 0,
+    "paused": false,
+    "schedule": "hourly",
+    "directSupabaseOrPostgresNodes": 0,
+    "target": "same public-domain RSS/validate/publish/cover HTTP APIs",
+    "postPromotionScheduledExecution": "NOT_YET_OBSERVED"
+  },
+  "crons": {
+    "allowlist": [
+      "daily-insights",
+      "merchant-health",
+      "billing-reminders"
+    ],
+    "nativeIsolatedHandlers": "PASS",
+    "anonymousPublicRequests": "DENIED",
+    "productionScheduledInvocations": "NOT_YET_OBSERVED",
+    "billingEmailsEnabled": false
+  },
+  "preserved": {
+    "oldSupabaseProjectAndBackup": true,
+    "oldDummyAccountsOrTransactionsImported": false,
+    "deployedSEO": true,
+    "pricingAndPOSRules": true
+  },
+  "dokuEnabled": false,
+  "realPaymentExecuted": false,
+  "newEmailSentThisFinalAcceptance": false,
+  "independentBackupEscrowAcceptance": "NOT_NEWLY_VERIFIED",
+  "rollback": "Keep Neon Auth/DB/Storage; maintenance deployment with same bindings, preserve dependent writes/queues/objects, then tested fix forward. Do not alias back to Supabase after Neon registrations or writes.",
+  "runtimeLogObservation": {
+    "window": "10 minutes ending approximately 2026-10-23T23:57:54Z",
+    "sampledErrorStreamMessages": "Node.js DEP0169 url.parse deprecation warnings",
+    "limit": "stderr classification does not establish failed business requests; not a claim of zero application errors",
+    "followUp": "Update the responsible dependency through a separately tested maintenance change; do not suppress warnings globally"
+  }
+}
