@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {dokuChannelEvidence,dokuPaymentReference} from '../services/billing/dokuChannelEvidence';
 
 export interface DokuLineItem {
   name: string;
@@ -16,6 +17,7 @@ export interface DokuCheckoutPayload {
     line_items?: DokuLineItem[];
   };
   payment: {
+    payment_method_types?: string[];
     payment_due_date: number; // Durasi dalam menit sebelum expired
   };
   customer?: {
@@ -30,11 +32,13 @@ export interface DokuCheckoutResponse {
   response?: {
     order?: {
       invoice_number?: string;
-      amount?: number;
+      amount?: number | string;
+      currency?: string;
     };
     payment?: {
       url?: string;
       expired_date?: string;
+      payment_method_types?: string[];
     };
   };
   error?: {
@@ -55,15 +59,29 @@ export function getDokuClientId(): string {
   return validateDokuBrandClientId(process.env.DOKU_CLIENT_ID || '');
 }
 
-/** Gateway requests use the Brand Client ID, never the dashboard Business ID. */
+/** A Business ID belongs to the dashboard, never the Checkout gateway. */
 export function validateDokuBrandClientId(value: string): string {
-  const clientId = value.replace(/["']/g, '').trim();
-  if (/^BSN-/i.test(clientId)) throw new Error('DOKU_BRAND_CLIENT_ID_REQUIRED');
-  return clientId;
+  const id = value.trim();
+  if (/^['"]?BSN-/i.test(id)) throw new Error('DOKU_BRAND_CLIENT_ID_REQUIRED');
+  // Header transport validation, not an invented BRN/MCH/OCO prefix schema.
+  if(id&&(id.length>128||!/^[\x21-\x7e]+$/.test(id)||/[,"']/.test(id)))throw new Error('DOKU_CLIENT_ID_INVALID');
+  return id;
+}
+
+/** URL is returned by the server, never accepted from the payer. */
+export function validateDokuPaymentUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('DOKU_PAYMENT_URL_INVALID'); }
+  const sandbox = getDokuApiUrl() === 'https://api-sandbox.doku.com';
+  const hosts = sandbox ? ['sandbox.doku.com'] : ['checkout.doku.com', 'jokul.doku.com'];
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) {
+    throw new Error('DOKU_PAYMENT_URL_INVALID');
+  }
+  return url.href;
 }
 
 export function getDokuSecretKey(): string {
-  return (process.env.DOKU_SECRET_KEY || '').replace(/["']/g, '').trim();
+  return (process.env.DOKU_SECRET_KEY || '').trim();
 }
 
 const DOKU_API_URLS = new Set(['https://api.doku.com', 'https://api-sandbox.doku.com']);
@@ -132,6 +150,7 @@ export function generateGetSignature(
 
 export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<{
   paymentUrl: string;
+  expiresAt?: string;
   rawResponse: DokuCheckoutResponse;
 }> {
   const clientId = getDokuClientId();
@@ -142,7 +161,10 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
     throw new Error('DOKU_CREDENTIALS_NOT_CONFIGURED');
   }
 
-  const requestId = crypto.randomUUID();
+  if(!/^[A-Za-z0-9._:-]{1,64}$/.test(payload.order.invoice_number) || !Number.isSafeInteger(payload.order.amount) || payload.order.amount<=0 || payload.order.amount>999999999999) {
+    throw new Error('DOKU_CHECKOUT_ORDER_INVALID');
+  }
+  const requestId = payload.order.invoice_number;
   const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
   const requestTarget = '/checkout/v1/payment';
   const digest = generateDigest(payload);
@@ -176,17 +198,46 @@ export async function createDokuCheckout(payload: DokuCheckoutPayload): Promise<
     throw new Error(`DOKU_API_ERROR_HTTP_${response.status}`);
   }
 
+  const echoed = data.response.order;
+  if (!echoed || echoed.invoice_number !== payload.order.invoice_number || Number(echoed.amount) !== payload.order.amount ||
+    (echoed.currency !== undefined && echoed.currency !== (payload.order.currency || 'IDR'))) {
+    throw new Error('DOKU_CHECKOUT_ORDER_MISMATCH');
+  }
+  const returnedMethods=data.response.payment.payment_method_types,requestedMethods=payload.payment.payment_method_types;
+  // Optional in the official response. If present it must not widen the
+  // requested scope, omit the requested method, or contain malformed values.
+  if(returnedMethods!==undefined && requestedMethods &&
+    (!Array.isArray(returnedMethods) || !returnedMethods.length ||
+      returnedMethods.some(method=>!requestedMethods.includes(method)) || requestedMethods.some(method=>!returnedMethods.includes(method))))
+    throw new Error('DOKU_CHECKOUT_METHOD_MISMATCH');
+  const expiresAt=parseDokuExpiry(data.response.payment.expired_date);
+  if(!expiresAt||Date.parse(expiresAt)<=Date.now())throw Error('DOKU_CHECKOUT_EXPIRY_INVALID');
   return {
-    paymentUrl: data.response.payment.url,
+    paymentUrl: validateDokuPaymentUrl(data.response.payment.url),
+    expiresAt,
     rawResponse: data,
   };
 }
 
+/** Official Checkout expired_date is yyyyMMddHHmmss in UTC+7. */
+export function parseDokuExpiry(value:unknown):string|undefined {
+ if(typeof value!=='string'||!/^\d{14}$/.test(value))return;
+ const p=[value.slice(0,4),value.slice(4,6),value.slice(6,8),value.slice(8,10),value.slice(10,12),value.slice(12,14)].map(Number);
+ const t=Date.UTC(p[0],p[1]-1,p[2],p[3]-7,p[4],p[5]),date=new Date(t);
+ if(!Number.isFinite(t)||new Date(t+7*3600000).toISOString().slice(0,19).replace(/[-:T]/g,'')!==value)return;
+ return date.toISOString();
+}
+
 export interface DokuOrderStatusResponse {
   ok: boolean;
-  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN';
+  status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'EXPIRED' | 'ORDER_EXPIRED' | 'CANCELLED' | 'REFUNDED' | 'UNKNOWN';
+  invoiceNumber?: string;
+  amount?: number;
+  currency?: string;
   transactionId?: string;
   channelId?: string;
+  providerChannelId?: string;
+  validationIssue?: string;
   rawResponse?: any;
 }
 
@@ -201,7 +252,8 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
 
   const requestId = crypto.randomUUID();
   const requestTimestamp = new Date().toISOString().slice(0, 19) + 'Z';
-  const requestTarget = `/orders/v1/status/${invoiceNumber}`;
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(invoiceNumber)) throw new Error('DOKU_INVOICE_INVALID');
+  const requestTarget = `/orders/v1/status/${encodeURIComponent(invoiceNumber)}`;
   const signature = generateGetSignature(
     clientId,
     requestId,
@@ -231,16 +283,22 @@ export async function checkDokuOrderStatus(invoiceNumber: string): Promise<DokuO
 
   const data = (await response.json()) as any;
   const txStatus = String(data?.transaction?.status || data?.order?.status || '').toUpperCase();
-  const status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'UNKNOWN' =
-    txStatus === 'SUCCESS' ? 'SUCCESS' :
-    ['FAILED', 'EXPIRED', 'CANCELLED', 'ORDER_EXPIRED'].includes(txStatus) ? 'FAILED' :
+  const status: DokuOrderStatusResponse['status'] =
+    ['SUCCESS', 'FAILED', 'EXPIRED', 'ORDER_EXPIRED', 'CANCELLED', 'REFUNDED'].includes(txStatus) ? txStatus as DokuOrderStatusResponse['status'] :
     ['PENDING', 'WAITING', 'ORDER_GENERATED'].includes(txStatus) ? 'PENDING' : 'UNKNOWN';
+  const rawAmount = data?.order?.amount;
+  const amount = ['string','number'].includes(typeof rawAmount) && /^\d+(?:\.0{1,2})?$/.test(String(rawAmount)) && Number.isSafeInteger(Number(rawAmount)) ? Number(rawAmount) : undefined;
 
   return {
     ok: true,
     status,
-    transactionId: data?.transaction?.original_request_id || data?.transaction?.reference_id,
-    channelId: data?.channel?.id,
+    invoiceNumber: typeof data?.order?.invoice_number === 'string' ? data.order.invoice_number : undefined,
+    amount,
+    currency: data?.order?.currency === undefined ? 'IDR' : String(data.order.currency),
+    transactionId: dokuPaymentReference(data),
+    channelId: dokuChannelEvidence(data).channel,
+    providerChannelId: dokuChannelEvidence(data).providerChannel,
+    validationIssue: dokuChannelEvidence(data).issue,
     rawResponse: data,
   };
 }
@@ -267,7 +325,8 @@ export function verifyDokuWebhookSignature(
   const requestTimestamp = getHeader('Request-Timestamp');
   const incomingSignature = getHeader('Signature');
 
-  if (!clientId || clientId !== getDokuClientId() || !requestId || !requestTimestamp || !incomingSignature) {
+  let configuredClientId='';try{configuredClientId=getDokuClientId();}catch{return false;}
+  if (requestTarget!==DOKU_NOTIFICATION_PATH||!clientId || clientId !== configuredClientId || !requestId || !requestTimestamp || !incomingSignature) {
     return false;
   }
 

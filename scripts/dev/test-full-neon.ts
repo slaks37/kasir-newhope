@@ -21,7 +21,11 @@ const env={FULL_NEON_TARGET:'staging',FULL_NEON_CLEAN_START:'1',AUTH_PROVIDER:'n
 Object.assign(process.env,env);process.env.ADMIN_MFA_ENCRYPTION_KEY=randomBytes(32).toString('base64');
 assert.equal(fullNeonConfig().database,t.database);
 process.env.FULL_NEON_MAINTENANCE='1';await assert.rejects(connectDb({schema:'pos',connectionString:'postgres://invalid.invalid/no-connect'}),/FULL_NEON_MAINTENANCE/);assert.equal(isCronJobEnabled('daily-insights'),false);delete process.env.FULL_NEON_MAINTENANCE;
-for(const [k,v] of Object.entries({AUTH_PROVIDER:'better-auth',STORAGE_PROVIDER:'supabase',NEON_BRANCH_ID:fullNeonTargets.production.branchId,NEON_DB_PHASE1:'1',DOKU_PAYMENTS_ENABLED:'1',VERCEL_ENV:'production',SUPABASE_URL:'https://legacy.invalid',GATEWAY_URL:'https://legacy.invalid'}))assert.throws(()=>fullNeonConfig({...env,[k]:v}));
+for(const [k,v] of Object.entries({AUTH_PROVIDER:'better-auth',STORAGE_PROVIDER:'supabase',NEON_BRANCH_ID:fullNeonTargets.production.branchId,NEON_DB_PHASE1:'1',VERCEL_ENV:'production',SUPABASE_URL:'https://legacy.invalid',GATEWAY_URL:'https://legacy.invalid'}))assert.throws(()=>fullNeonConfig({...env,[k]:v}));
+// Payment authorization is exercised by the dedicated durable acceptance tests.
+// Incomplete DOKU configuration must not take the whole Full Neon app offline.
+assert.doesNotThrow(()=>fullNeonConfig({...env,DOKU_PAYMENTS_ENABLED:'1'}));
+assert.doesNotThrow(()=>fullNeonConfig({...env,DOKU_PAYMENTS_ENABLED:'0',DOKU_CLIENT_ID:'BSN-invalid'}));
 const url='postgresql://newhope_clean_runtime:synthetic@'+t.host+'/'+t.database+'?sslmode=verify-full';assert.doesNotThrow(()=>assertFullNeonDatabase(url));
 for(const s of [url.replace('newhope_clean_runtime','neondb_owner'),url.replace(t.database,'neondb'),url.replace(t.host,'foreign.neon.tech')])assert.throws(()=>assertFullNeonDatabase(s));
 

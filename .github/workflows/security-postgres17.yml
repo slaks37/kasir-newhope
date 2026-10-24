@@ -37,11 +37,13 @@ jobs:
         run: node scripts/dev/test-rehearsal-target.mjs
       - name: Apply reviewed migrations and exercise rollback with synthetic data
         run: node scripts/dev/rehearse-security-postgres17.mjs
+      - name: Exercise DOKU billing races and release acceptance on separate disposable PostgreSQL17
+        run: node --import tsx scripts/dev/rehearse-payments-postgres17.ts
       - name: Save bounded evidence even when a rehearsal fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: postgres17-security-evidence
-          path: build/security-rehearsal/postgres17.json
+          path: build/security-rehearsal/*.json
           if-no-files-found: warn
           retention-days: 30

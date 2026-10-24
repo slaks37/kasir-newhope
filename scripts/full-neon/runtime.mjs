@@ -35,6 +35,8 @@ try{
  await c.query(`ALTER ROLE ${role} SET statement_timeout='8s'`);
  await c.query(`ALTER ROLE ${role} SET idle_in_transaction_session_timeout='10s'`);
  await c.query(`REVOKE UPDATE,DELETE,TRUNCATE ON internal.business_file_events FROM ${role}`);
+ await c.query(`REVOKE ALL ON billing.doku_release_acceptances FROM ${role}`);
+ await c.query(`GRANT SELECT ON billing.doku_release_acceptances TO ${role}`);
  await c.query('COMMIT');
  const a=new URL(u.href);a.pathname='/neondb';
  const auth=new pg.Client({connectionString:a.href,ssl:{rejectUnauthorized:true},connectionTimeoutMillis:15000});await auth.connect();
