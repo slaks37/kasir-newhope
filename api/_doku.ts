@@ -17,6 +17,7 @@ export interface DokuCheckoutPayload {
   };
   payment: {
     payment_due_date: number; // Durasi dalam menit sebelum expired
+    payment_method_types?: string[]; // Explicitly limit Checkout to approved payment channels
   };
   customer?: {
     id?: string;
