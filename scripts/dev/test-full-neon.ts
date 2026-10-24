@@ -21,26 +21,11 @@ const env={FULL_NEON_TARGET:'staging',FULL_NEON_CLEAN_START:'1',AUTH_PROVIDER:'n
 Object.assign(process.env,env);process.env.ADMIN_MFA_ENCRYPTION_KEY=randomBytes(32).toString('base64');
 assert.equal(fullNeonConfig().database,t.database);
 process.env.FULL_NEON_MAINTENANCE='1';await assert.rejects(connectDb({schema:'pos',connectionString:'postgres://invalid.invalid/no-connect'}),/FULL_NEON_MAINTENANCE/);assert.equal(isCronJobEnabled('daily-insights'),false);delete process.env.FULL_NEON_MAINTENANCE;
-for(const [k,v] of Object.entries({AUTH_PROVIDER:'better-auth',STORAGE_PROVIDER:'supabase',NEON_BRANCH_ID:fullNeonTargets.production.branchId,NEON_DB_PHASE1:'1',DOKU_PAYMENTS_ENABLED:'1',VERCEL_ENV:'production',SUPABASE_URL:'https://legacy.invalid',GATEWAY_URL:'https://legacy.invalid'}))assert.throws(()=>fullNeonConfig({...env,[k]:v}));
-// Payment enablement is allowed only with owner-accepted production credentials,
-// exact app origin, and QRIS-only scope. All other Full Neon gates remain intact.
-const liveDokuEnv={
- ...env,FULL_NEON_TARGET:'production',NEON_BRANCH_ID:fullNeonTargets.production.branchId,
- NEON_AUTH_BASE_URL:fullNeonTargets.production.authUrl,
- APP_URL:'https://kasir.newhope.space',PUBLIC_APP_URL:'https://kasir.newhope.space',
- NEON_AUTH_EMAIL_READY:'1',NEON_AUTH_GOOGLE_READY:'1',ADMIN_MFA_ENCRYPTION_KEY:'synthetic-only',
- DOKU_PAYMENTS_ENABLED:'1',DOKU_ACTIVATION_APPROVED:'1',
- DOKU_API_URL:'https://api.doku.com',DOKU_CLIENT_ID:'BRN-0000-123456789',
- DOKU_SECRET_KEY:'synthetic-not-real',DOKU_ALLOWED_CHANNELS:'QRIS'
-};
-assert.equal(fullNeonConfig(liveDokuEnv).database,fullNeonTargets.production.database);
-for(const [key,value] of Object.entries({
- DOKU_ACTIVATION_APPROVED:'0',DOKU_API_URL:'https://api-sandbox.doku.com',
- DOKU_CLIENT_ID:'BSN-0000-123456789',DOKU_SECRET_KEY:'',
- DOKU_ALLOWED_CHANNELS:'QRIS,VIRTUAL_ACCOUNT_BCA',
- PUBLIC_APP_URL:'https://wrong.invalid'
-}))assert.throws(()=>fullNeonConfig({...liveDokuEnv,[key]:value}),/DOKU_LIVE_GATE/);
-assert.throws(()=>fullNeonConfig({...liveDokuEnv,FULL_NEON_TARGET:'staging',NEON_BRANCH_ID:t.branchId,NEON_AUTH_BASE_URL:t.authUrl}),/DOKU_LIVE_GATE/);
+for(const [k,v] of Object.entries({AUTH_PROVIDER:'better-auth',STORAGE_PROVIDER:'supabase',NEON_BRANCH_ID:fullNeonTargets.production.branchId,NEON_DB_PHASE1:'1',VERCEL_ENV:'production',SUPABASE_URL:'https://legacy.invalid',GATEWAY_URL:'https://legacy.invalid'}))assert.throws(()=>fullNeonConfig({...env,[k]:v}));
+// Payment authorization is exercised by the dedicated durable acceptance tests.
+// Incomplete DOKU configuration must not take the whole Full Neon app offline.
+assert.doesNotThrow(()=>fullNeonConfig({...env,DOKU_PAYMENTS_ENABLED:'1'}));
+assert.doesNotThrow(()=>fullNeonConfig({...env,DOKU_PAYMENTS_ENABLED:'0',DOKU_CLIENT_ID:'BSN-invalid'}));
 const url='postgresql://newhope_clean_runtime:synthetic@'+t.host+'/'+t.database+'?sslmode=verify-full';assert.doesNotThrow(()=>assertFullNeonDatabase(url));
 for(const s of [url.replace('newhope_clean_runtime','neondb_owner'),url.replace(t.database,'neondb'),url.replace(t.host,'foreign.neon.tech')])assert.throws(()=>assertFullNeonDatabase(s));
 

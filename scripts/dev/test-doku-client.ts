@@ -1,3 +1,4 @@
+import {futureDokuExpiry} from './doku-synthetic-release';
 // Mocked outbound HTTP only; never counts as DOKU sandbox evidence.
 import assert from 'node:assert/strict';
 import {captureSandboxCheckout} from '../batch/doku-sandbox-evidence';
@@ -41,7 +42,7 @@ try {
     const parsed=JSON.parse(String(init.body));
     assert.deepEqual(parsed.payment.payment_method_types,['QRIS']);
     assert.equal(init.headers.Signature,generateSignature(client,init.headers['Request-Id'],init.headers['Request-Timestamp'],'/checkout/v1/payment',generateDigest(String(init.body)),secret));
-    return new Response(JSON.stringify({response:{payment:{url:'https://checkout.doku.com/SYNTHETIC'}}}),{status:200});
+    return new Response(JSON.stringify({response:{order:parsed.order,payment:{url:'https://sandbox.doku.com/SYNTHETIC',expired_date:futureDokuExpiry()}}}),{status:200});
   }) as typeof fetch;
   const qris=await createDokuCheckout({order:{invoice_number:'NH-SYNTHETIC',amount:10000},payment:{payment_due_date:60,payment_method_types:['QRIS']}});
   assert.ok(qris.paymentUrl.endsWith('/SYNTHETIC'));

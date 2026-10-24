@@ -9,18 +9,8 @@ export function fullNeonConfig(env=process.env){
  if(['SUPABASE_URL','SUPABASE_ANON_KEY','SUPABASE_SERVICE_ROLE_KEY','VITE_SUPABASE_URL','VITE_SUPABASE_ANON_KEY','GATEWAY_URL'].some(k=>env[k]?.trim()))throw Error('FULL_NEON_LEGACY_RUNTIME_CONFIGURATION_FORBIDDEN');
  if(selection==='production'&&(env.APP_URL!=='https://kasir.newhope.space'||env.NEON_AUTH_EMAIL_READY!=='1'||env.NEON_AUTH_GOOGLE_READY!=='1'||!env.ADMIN_MFA_ENCRYPTION_KEY))throw Error('FULL_NEON_PRODUCTION_AUTH_ACCEPTANCE_REQUIRED');
  if(env.FULL_NEON_CLEAN_START!=='1'||env.AUTH_PROVIDER!=='neon'||env.STORAGE_PROVIDER!=='neon'||env.NEON_PROJECT_ID!=='steep-sea-66546931'||env.NEON_BRANCH_ID!==target.branchId||env.NEON_DB_PHASE1==='1'||!['0','1'].includes(env.DOKU_PAYMENTS_ENABLED||''))throw Error('FULL_NEON_CONFIGURATION_MISMATCH');
- // Live payment enablement is a separate owner-accepted release, never an
- // implicit effect of deploying Full Neon or adding provider credentials.
- if(env.DOKU_PAYMENTS_ENABLED==='1'){
-   const channels=(env.DOKU_ALLOWED_CHANNELS||'').trim();
-   const brandClientId=(env.DOKU_CLIENT_ID||'').trim();
-   if(selection!=='production'||env.DOKU_ACTIVATION_APPROVED!=='1'||
-     env.DOKU_API_URL!=='https://api.doku.com'||
-     !/^(?:BRN|MCH|OCO)-[A-Z0-9-]{5,80}$/i.test(brandClientId)||
-     !(env.DOKU_SECRET_KEY||'').trim()||
-     channels!=='QRIS'||env.PUBLIC_APP_URL!=='https://kasir.newhope.space')
-     throw Error('FULL_NEON_DOKU_LIVE_GATE_NOT_ACCEPTED');
- }
+ // Billing checks its own provider/owner acceptance before any Checkout.
+ // A missing payment configuration must not disable Auth, POS or free trial.
  if(env.NEON_AUTH_BASE_URL!==target.authUrl || env.NEON_AUTH_JWKS_URL && env.NEON_AUTH_JWKS_URL!==target.authUrl+'/.well-known/jwks.json')throw Error('FULL_NEON_AUTH_BRANCH_MISMATCH');
  if(env.VERCEL_ENV==='production'&&selection!=='production')throw Error('FULL_NEON_STAGING_CANNOT_SERVE_PRODUCTION');
  return {...target,issuer:new URL(target.authUrl).origin,jwksUrl:target.authUrl+'/.well-known/jwks.json'};

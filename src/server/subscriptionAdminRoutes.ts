@@ -1,4 +1,5 @@
 import type express from 'express';
+import {financialReviewHold,providerOrderTerminal} from '../../services/billing/invoicePaymentPolicy';
 import { subscriptionDetail } from './subscriptionDetail';
 import type { Db } from '../../services/shared/db';
 import { BillingError } from '../../services/billing/engine';
@@ -109,8 +110,9 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
           const invoice=await c.query('SELECT id,reconciliation_note,reconciliation_status,payment_status FROM billing.invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE',[req.body.invoiceId,req.params.tenantId]);
           if(!invoice.rowCount) throw new BillingError(404,'INVOICE_NOT_FOUND');
           invoiceBefore=invoice.rows[0];
-          await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[req.body.invoiceId,reason]);
-          invoiceAfter={...invoiceBefore,reconciliation_note:reason};
+          const protectedState=financialReviewHold(invoiceBefore)||providerOrderTerminal(invoiceBefore);
+          if(!protectedState)await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[req.body.invoiceId,reason]);
+          invoiceAfter={...invoiceBefore,reconciliation_note:protectedState?invoiceBefore.reconciliation_note:reason};
         }
         const after=(await c.query('SELECT * FROM billing.subscriptions WHERE id=$1',[before.id])).rows[0];
         // Required audit and mutation share one transaction: audit failure rolls
