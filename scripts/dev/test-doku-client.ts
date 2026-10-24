@@ -34,6 +34,18 @@ try {
   globalThis.fetch=(async()=>new Response(JSON.stringify({error:{message:'PRIVATE_PROVIDER_RESPONSE'}}),{status:422})) as typeof fetch;
   await assert.rejects(()=>createDokuCheckout({order:{invoice_number:'test',amount:10000},payment:{payment_due_date:60}}),e=>String(e)==='Error: DOKU_API_ERROR_HTTP_422');
 
+  // The requested payment-method list must be preserved in the signed
+  // Checkout request; no implicit extra channel can be offered by our body.
+  globalThis.fetch=(async(url:any,init:any)=>{
+    assert.equal(url,'https://api-sandbox.doku.com/checkout/v1/payment');
+    const parsed=JSON.parse(String(init.body));
+    assert.deepEqual(parsed.payment.payment_method_types,['QRIS']);
+    assert.equal(init.headers.Signature,generateSignature(client,init.headers['Request-Id'],init.headers['Request-Timestamp'],'/checkout/v1/payment',generateDigest(String(init.body)),secret));
+    return new Response(JSON.stringify({response:{payment:{url:'https://checkout.doku.com/SYNTHETIC'}}}),{status:200});
+  }) as typeof fetch;
+  const qris=await createDokuCheckout({order:{invoice_number:'NH-SYNTHETIC',amount:10000},payment:{payment_due_date:60,payment_method_types:['QRIS']}});
+  assert.ok(qris.paymentUrl.endsWith('/SYNTHETIC'));
+
   // Test GET signature and order status inquiry
   globalThis.fetch=(async(url:any,init:any)=>{
     assert.equal(url,'https://api-sandbox.doku.com/orders/v1/status/INV-123');
