@@ -1,3 +1,5 @@
+import { authorizeNativeModule } from './modules';
+import { BillingError } from '../billing/engine';
 import type { Express, Request } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal } from '../shared/auth';
@@ -91,6 +93,8 @@ async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<
   if (!rows.length) throw new ReportRequestError(403, 'REPORT_SCOPE_FORBIDDEN');
   const row = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [row.tenant_id, row.merchant_id]);
+  try { await authorizeNativeModule(db,subject,row.merchant_id,row.outlet_id,[['reports']]); }
+  catch(error) { if(error instanceof BillingError)throw new ReportRequestError(error.status,error.message);throw error; }
   return { tenantId: row.tenant_id, merchantId: row.merchant_id, outletId: row.outlet_id,
     sector: row.business_sector, from: filter.from, to: filter.to, timezone: filter.timezoneExplicit?filter.timezone:row.timezone||'Asia/Jakarta' };
 }

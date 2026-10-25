@@ -11,6 +11,7 @@ import type { Db } from './db';
  * migration is picked up without a redeploy.
  */
 const FEATURES = {
+  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
   /** migration 0054 / 20261004090200 */
   syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
     WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,

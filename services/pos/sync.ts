@@ -18,6 +18,7 @@ import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthor
  */
 
 import type express from 'express';
+import {authorizeNativeModule,registerModuleRoutes} from './modules';
 import {registerBusinessDirectory} from './businessDirectory';
 import {BusinessScopeError,resolveBusinessScope} from './businessScope';
 import { randomBytes } from 'node:crypto';
@@ -151,6 +152,7 @@ function perSaleRejection(error: unknown): string | null {
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
+  registerModuleRoutes(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -365,6 +367,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         }
         const defaultInventoryLocationId=await ensureInventoryLocation(c,tenantId,merchantId,outletId);
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tenantId,merchantId]);
+        await authorizeNativeModule(c,ownerRef,merchantId,outletId,[['pos']]);
         const financialScope={tenantId,merchantId,outletId,sector:sector as Sector,actorRef:ownerRef};
 
         /* -- STAF & PRODUK -------------------------------------------------- */
@@ -891,10 +894,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       return res.status(403).json({ ok: false, error: 'FORBIDDEN' });
     }
 
-    const { rows } = await db.query(
+    try { const result=await db.tx(async c=>{
+    const merchant=(await c.query('SELECT id FROM internal.merchants WHERE external_ref=$1 OR id::text=$1',[businessId])).rows[0];
+    if(!merchant)return {ok:true,synced:false};
+    await authorizeNativeModule(c,principal.subject,merchant.id,req.query.outletId,[['pos','reports']]);
+    const { rows } = await c.query(
       `SELECT m.id, m.name, m.business_sector,
               COUNT(x.id)::int              AS synced_transactions,
-              COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
+              COALESCE((SELECT SUM(r.total_amount) FROM contract.merchant_revenue r WHERE r.tenant_id=m.tenant_id AND r.merchant_id=m.id),0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
          FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
          LEFT JOIN pos.transactions x ON x.tenant_id = t.id AND x.merchant_id=m.id
@@ -904,8 +911,10 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       [businessId,principal.subject]
     );
 
-    if (!rows.length) return res.json({ ok: true, synced: false });
-    res.json({ ok: true, synced: true, ...rows[0] });
+    if (!rows.length) return { ok: true, synced: false };
+    return { ok: true, synced: true, ...rows[0] };
+    });res.json(result);
+    }catch(error){res.status(error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof BillingError?error.message:'SYNC_STATUS_UNAVAILABLE'});}
   });
 
   /**
@@ -939,7 +948,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     }
 
     try {
-      const tenantRes = await db.query(
+      const result = await db.tx(async c=>{
+      const tenantRes = await c.query(
         `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
@@ -947,11 +957,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         [businessId, ownerRef,sector]
       );
       if (!tenantRes.rows.length) {
-        return res.json({ ok: true, products: [], categories: [] });
+        return { ok: true, products: [], categories: [] };
       }
       const tenantId = tenantRes.rows[0].tenant_id;
       const merchantId = tenantRes.rows[0].merchant_id;
-      const prodRes = await db.query(
+      await authorizeNativeModule(c,ownerRef,merchantId,req.query.outletId,[['pos','tables','inventory','reports','ai']]);
+      const prodRes = await c.query(
           `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
                   p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
@@ -960,7 +971,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           [tenantId, merchantId]
       );
       const categoryId = (r: any) => r.category_id || `category:${r.category_name}`;
-      res.json({
+      return {
         ok: true,
         products: prodRes.rows.map((r: any) => ({
           id: r.external_ref || r.id,
@@ -977,9 +988,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         categories: [...new Map(prodRes.rows.map((r: any) => [categoryId(r), {
           id: categoryId(r), name: r.category_name,
         }])).values()],
+      };
       });
+      res.json(result);
     } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message || 'CATALOG_FETCH_FAILED' });
+      res.status(err instanceof BillingError?err.status:500).json({ ok: false, error: err instanceof BillingError?err.message:'CATALOG_FETCH_FAILED' });
     }
   });
 

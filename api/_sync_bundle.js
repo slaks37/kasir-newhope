@@ -329,94 +329,6 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
 }
 
-// services/pos/businessDirectory.ts
-function registerBusinessDirectory(app, db) {
-  app.get("/api/v1/sync/business", async (req, res) => {
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    try {
-      const tenantId = await tenantForPrincipal(db, principal);
-      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
-      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
-        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
-        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
-        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
-        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
-      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
-      const businesses = /* @__PURE__ */ new Map();
-      for (const row of result.rows) {
-        let business = businesses.get(row.id);
-        if (!business) {
-          business = {
-            businessId: row.id,
-            tenantId: row.tenant_id,
-            name: row.name,
-            sector: row.business_sector,
-            status: row.is_active ? "ACTIVE" : "INACTIVE",
-            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
-            transportRef: row.external_ref || row.id,
-            outlets: []
-          };
-          businesses.set(row.id, business);
-        }
-        if (row.outlet_id) business.outlets.push({
-          outletId: row.outlet_id,
-          businessId: row.id,
-          name: row.outlet_name,
-          address: row.address || "",
-          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
-          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
-        });
-      }
-      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
-    } catch {
-      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
-    }
-  });
-}
-
-// services/pos/businessScope.ts
-var BusinessScopeError = class extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-};
-async function resolveBusinessScope(db, subject, sector, businessId) {
-  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
-    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) {
-    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-    return null;
-  }
-  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
-      AND m.business_sector=$3 AND m.is_active
-      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
-  const rows = result.rows;
-  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
-  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
-  if (!selected) {
-    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
-    return null;
-  }
-  return {
-    tenantId,
-    merchantId: selected.merchant_id,
-    businessName: selected.business_name,
-    transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
-  };
-}
-
-// services/pos/sync.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
-
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
 var FREE_PRODUCT_LIMIT = 10;
@@ -606,8 +518,569 @@ async function assertTenantWritable(db, tenantId) {
   if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
 }
 
+// src/modules/fnb/manifest.ts
+var manifest = {
+  "id": "fnb",
+  "name": "New Hope F&B",
+  "sector": "FNB",
+  "pages": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "tab": "overview",
+      "permission": "overview"
+    },
+    {
+      "id": "pos",
+      "label": "Kasir & pesanan",
+      "tab": "pos",
+      "permission": "pos"
+    },
+    {
+      "id": "operations",
+      "label": "Dapur & pesanan",
+      "tab": "tables",
+      "permission": "tables"
+    },
+    {
+      "id": "tables",
+      "label": "Meja restoran",
+      "tab": "tables",
+      "permission": "tables"
+    },
+    {
+      "id": "inventory",
+      "label": "Katalog & persediaan",
+      "tab": "inventory",
+      "permission": "inventory"
+    },
+    {
+      "id": "customers",
+      "label": "Pelanggan",
+      "tab": "customers",
+      "permission": "customers"
+    },
+    {
+      "id": "labor",
+      "label": "Staf & komisi",
+      "tab": "labor",
+      "permission": "labor"
+    },
+    {
+      "id": "reports",
+      "label": "Laporan",
+      "tab": "reports",
+      "permission": "reports"
+    },
+    {
+      "id": "group-reports",
+      "label": "Laporan semua bisnis",
+      "tab": "reports",
+      "permission": "reports",
+      "ownerOnly": true
+    },
+    {
+      "id": "ai",
+      "label": "Intelligence",
+      "tab": "ai",
+      "permission": "ai"
+    },
+    {
+      "id": "settings",
+      "label": "Pengaturan",
+      "tab": "settings",
+      "permission": "settings"
+    },
+    {
+      "id": "payment",
+      "label": "Langganan",
+      "tab": "payment",
+      "permission": "payment"
+    },
+    {
+      "id": "businesses",
+      "label": "Bisnis & outlet",
+      "tab": "businesses",
+      "permission": "businesses"
+    }
+  ],
+  "workflow": [
+    "Pesanan diterima",
+    "Dimasak",
+    "Siap",
+    "Disajikan"
+  ],
+  "dependencies": [
+    "pos.shared_state_records",
+    "pos.order_context_fnb",
+    "pos.tables",
+    "pos.kds_stations"
+  ],
+  "integrations": [
+    "notifications"
+  ],
+  "settings": [
+    "kitchen",
+    "menu",
+    "recipes"
+  ],
+  "dashboardKinds": [
+    "kds_tickets",
+    "tables"
+  ],
+  "limitations": ["Mode pilot memakai satu outlet. Resep dan persediaan bahan masih memakai pengelolaan lama."],
+  "adapter": "sector-native"
+};
+
+// src/modules/retail/manifest.ts
+var manifest2 = {
+  "id": "retail",
+  "name": "New Hope Retail",
+  "sector": "RETAIL",
+  "pages": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "tab": "overview",
+      "permission": "overview"
+    },
+    {
+      "id": "pos",
+      "label": "Kasir barcode",
+      "tab": "pos",
+      "permission": "pos"
+    },
+    {
+      "id": "operations",
+      "label": "Produk, SKU & stok",
+      "tab": "inventory",
+      "permission": "inventory"
+    },
+    { "id": "inventory", "label": "Katalog", "tab": "inventory", "permission": "inventory" },
+    {
+      "id": "customers",
+      "label": "Pelanggan",
+      "tab": "customers",
+      "permission": "customers"
+    },
+    {
+      "id": "labor",
+      "label": "Staf & komisi",
+      "tab": "labor",
+      "permission": "labor"
+    },
+    {
+      "id": "reports",
+      "label": "Laporan",
+      "tab": "reports",
+      "permission": "reports"
+    },
+    {
+      "id": "group-reports",
+      "label": "Laporan semua bisnis",
+      "tab": "reports",
+      "permission": "reports",
+      "ownerOnly": true
+    },
+    {
+      "id": "ai",
+      "label": "Intelligence",
+      "tab": "ai",
+      "permission": "ai"
+    },
+    {
+      "id": "settings",
+      "label": "Pengaturan",
+      "tab": "settings",
+      "permission": "settings"
+    },
+    {
+      "id": "payment",
+      "label": "Langganan",
+      "tab": "payment",
+      "permission": "payment"
+    },
+    {
+      "id": "businesses",
+      "label": "Bisnis & outlet",
+      "tab": "businesses",
+      "permission": "businesses"
+    }
+  ],
+  "workflow": [
+    "Purchase order",
+    "Penerimaan",
+    "Stok tersedia",
+    "Penjualan",
+    "Replenishment"
+  ],
+  "dependencies": [
+    "pos.shared_state_records",
+    "pos.order_context_retail",
+    "pos.inventory_transactions"
+  ],
+  "integrations": [
+    "notifications"
+  ],
+  "settings": [
+    "barcode",
+    "sku",
+    "replenishment"
+  ],
+  "dashboardKinds": [
+    "products",
+    "stock_items",
+    "inventory_logs"
+  ],
+  "limitations": ["Purchase order, penerimaan barang, transfer, dan retur belum tersedia sebagai satu alur modul."],
+  "adapter": "sector-native"
+};
+
+// src/modules/laundry/manifest.ts
+var manifest3 = {
+  "id": "laundry",
+  "name": "New Hope Laundry",
+  "sector": "LAUNDRY",
+  "pages": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "tab": "overview",
+      "permission": "overview"
+    },
+    {
+      "id": "pos",
+      "label": "Penerimaan laundry",
+      "tab": "pos",
+      "permission": "pos"
+    },
+    {
+      "id": "operations",
+      "label": "Produksi & pengambilan",
+      "tab": "tables",
+      "permission": "tables"
+    },
+    {
+      "id": "inventory",
+      "label": "Katalog & persediaan",
+      "tab": "inventory",
+      "permission": "inventory"
+    },
+    {
+      "id": "customers",
+      "label": "Pelanggan",
+      "tab": "customers",
+      "permission": "customers"
+    },
+    {
+      "id": "labor",
+      "label": "Staf & komisi",
+      "tab": "labor",
+      "permission": "labor"
+    },
+    {
+      "id": "reports",
+      "label": "Laporan",
+      "tab": "reports",
+      "permission": "reports"
+    },
+    {
+      "id": "group-reports",
+      "label": "Laporan semua bisnis",
+      "tab": "reports",
+      "permission": "reports",
+      "ownerOnly": true
+    },
+    {
+      "id": "ai",
+      "label": "Intelligence",
+      "tab": "ai",
+      "permission": "ai"
+    },
+    {
+      "id": "settings",
+      "label": "Pengaturan",
+      "tab": "settings",
+      "permission": "settings"
+    },
+    {
+      "id": "payment",
+      "label": "Langganan",
+      "tab": "payment",
+      "permission": "payment"
+    },
+    {
+      "id": "businesses",
+      "label": "Bisnis & outlet",
+      "tab": "businesses",
+      "permission": "businesses"
+    }
+  ],
+  "workflow": [
+    "Diterima",
+    "Cuci",
+    "Kering",
+    "Setrika",
+    "Packing",
+    "Siap ambil",
+    "Diambil"
+  ],
+  "dependencies": [
+    "pos.shared_state_records",
+    "pos.order_context_laundry",
+    "pos.operational_jobs"
+  ],
+  "integrations": [
+    "notifications"
+  ],
+  "settings": [
+    "pricing",
+    "fragrance",
+    "rack"
+  ],
+  "dashboardKinds": [
+    "order_operations"
+  ],
+  "limitations": ["Penjadwalan mesin dan pengiriman notifikasi otomatis belum terintegrasi."],
+  "adapter": "sector-native"
+};
+
+// src/modules/carwash/manifest.ts
+var manifest4 = {
+  "id": "carwash",
+  "name": "New Hope Carwash",
+  "sector": "CARWASH",
+  "pages": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "tab": "overview",
+      "permission": "overview"
+    },
+    {
+      "id": "pos",
+      "label": "Checkout kendaraan",
+      "tab": "pos",
+      "permission": "pos"
+    },
+    {
+      "id": "operations",
+      "label": "Antrean kendaraan",
+      "tab": "tables",
+      "permission": "tables"
+    },
+    {
+      "id": "inventory",
+      "label": "Katalog & persediaan",
+      "tab": "inventory",
+      "permission": "inventory"
+    },
+    {
+      "id": "customers",
+      "label": "Pelanggan",
+      "tab": "customers",
+      "permission": "customers"
+    },
+    {
+      "id": "labor",
+      "label": "Staf & komisi",
+      "tab": "labor",
+      "permission": "labor"
+    },
+    {
+      "id": "reports",
+      "label": "Laporan",
+      "tab": "reports",
+      "permission": "reports"
+    },
+    {
+      "id": "group-reports",
+      "label": "Laporan semua bisnis",
+      "tab": "reports",
+      "permission": "reports",
+      "ownerOnly": true
+    },
+    {
+      "id": "ai",
+      "label": "Intelligence",
+      "tab": "ai",
+      "permission": "ai"
+    },
+    {
+      "id": "settings",
+      "label": "Pengaturan",
+      "tab": "settings",
+      "permission": "settings"
+    },
+    {
+      "id": "payment",
+      "label": "Langganan",
+      "tab": "payment",
+      "permission": "payment"
+    },
+    {
+      "id": "businesses",
+      "label": "Bisnis & outlet",
+      "tab": "businesses",
+      "permission": "businesses"
+    }
+  ],
+  "workflow": [
+    "Antrean bay",
+    "Cuci",
+    "Kering & vakum",
+    "Inspeksi",
+    "Siap keluar"
+  ],
+  "dependencies": [
+    "pos.shared_state_records",
+    "pos.order_context_carwash",
+    "pos.bays",
+    "pos.vehicles"
+  ],
+  "integrations": [
+    "notifications"
+  ],
+  "settings": [
+    "bay",
+    "vehicle",
+    "service"
+  ],
+  "dashboardKinds": [
+    "carwash_queue"
+  ],
+  "limitations": ["Resource bay dan riwayat kendaraan kanonis belum terhubung penuh ke antrean."],
+  "adapter": "sector-native"
+};
+
+// src/modules/barber/manifest.ts
+var manifest5 = {
+  "id": "barber",
+  "name": "New Hope Barbershop",
+  "sector": "BARBERSHOP",
+  "pages": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "tab": "overview",
+      "permission": "overview"
+    },
+    {
+      "id": "pos",
+      "label": "Layanan & produk",
+      "tab": "pos",
+      "permission": "pos"
+    },
+    {
+      "id": "operations",
+      "label": "Booking & stylist",
+      "tab": "tables",
+      "permission": "tables"
+    },
+    {
+      "id": "inventory",
+      "label": "Katalog & persediaan",
+      "tab": "inventory",
+      "permission": "inventory"
+    },
+    {
+      "id": "customers",
+      "label": "Pelanggan",
+      "tab": "customers",
+      "permission": "customers"
+    },
+    {
+      "id": "labor",
+      "label": "Staf & komisi",
+      "tab": "labor",
+      "permission": "labor"
+    },
+    {
+      "id": "reports",
+      "label": "Laporan",
+      "tab": "reports",
+      "permission": "reports"
+    },
+    {
+      "id": "group-reports",
+      "label": "Laporan semua bisnis",
+      "tab": "reports",
+      "permission": "reports",
+      "ownerOnly": true
+    },
+    {
+      "id": "ai",
+      "label": "Intelligence",
+      "tab": "ai",
+      "permission": "ai"
+    },
+    {
+      "id": "settings",
+      "label": "Pengaturan",
+      "tab": "settings",
+      "permission": "settings"
+    },
+    {
+      "id": "payment",
+      "label": "Langganan",
+      "tab": "payment",
+      "permission": "payment"
+    },
+    {
+      "id": "businesses",
+      "label": "Bisnis & outlet",
+      "tab": "businesses",
+      "permission": "businesses"
+    }
+  ],
+  "workflow": [
+    "Booking / walk-in",
+    "Antrean",
+    "Stylist",
+    "Layanan",
+    "Pembayaran",
+    "Komisi"
+  ],
+  "dependencies": [
+    "pos.shared_state_records",
+    "pos.order_context_barber",
+    "pos.chairs",
+    "pos.staff_commissions"
+  ],
+  "integrations": [
+    "notifications"
+  ],
+  "settings": [
+    "chair",
+    "stylist",
+    "commission"
+  ],
+  "dashboardKinds": [
+    "bookings",
+    "staff_members"
+  ],
+  "limitations": ["Pencegahan bentrok jadwal, walk-in, dan komisi per modul masih perlu validasi lanjutan."],
+  "adapter": "sector-native"
+};
+
+// src/platform/modules/contracts.ts
+var MODULE_IDS = ["fnb", "retail", "laundry", "carwash", "barber"];
+function isBusinessModuleId(value) {
+  return typeof value === "string" && MODULE_IDS.includes(value);
+}
+
+// src/platform/modules/registry.ts
+var moduleRegistry = Object.freeze({ fnb: manifest, retail: manifest2, laundry: manifest3, carwash: manifest4, barber: manifest5 });
+function moduleManifest(id) {
+  return isBusinessModuleId(id) ? moduleRegistry[id] : null;
+}
+function legacyModuleForSector(sector) {
+  return Object.values(moduleRegistry).find((m) => m.sector === sector) || null;
+}
+
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
   /** migration 0054 / 20261004090200 */
   syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
     WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
@@ -623,6 +1096,320 @@ async function hasSchemaFeature(db, feature, now = Date.now()) {
   known.set(feature, { ok, at: now });
   return ok;
 }
+
+// services/pos/modules.ts
+var UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+var ModuleAccessError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+var moduleWorkspacesEnabled = () => process.env.NEW_HOPE_MODULE_WORKSPACES === "1";
+var permissionsForModuleRole = (role) => {
+  const roles = {
+    OWNER: ["overview", "pos", "tables", "inventory", "customers", "labor", "reports", "ai", "settings", "payment", "businesses"],
+    ADMIN: ["overview", "pos", "tables", "inventory", "customers", "labor", "reports", "ai", "settings"],
+    MANAGER: ["overview", "pos", "tables", "inventory", "customers", "labor", "reports"],
+    CASHIER: ["overview", "pos", "tables", "customers"],
+    BARISTA: ["overview", "tables"],
+    CHEF: ["overview", "tables"],
+    WASHER: ["overview", "tables"],
+    KAPSTER: ["overview", "tables"],
+    STAFF: ["overview", "tables"]
+  };
+  return roles[role] || [];
+};
+async function resolveModuleAccess(db, subject, businessId, outletId) {
+  if (typeof businessId !== "string" || !UUID.test(businessId) || typeof outletId !== "string" || !UUID.test(outletId))
+    throw new ModuleAccessError(400, "INVALID_MODULE_SCOPE");
+  const { rows } = await db.query(`SELECT t.id AS tenant_id,m.business_sector,t.owner_user_ref=$3 AS tenant_owner,
+    CASE WHEN t.owner_user_ref=$3 THEN 'OWNER' ELSE membership.role END AS role,
+    (SELECT count(*)::int FROM internal.outlets ox WHERE ox.merchant_id=m.id) AS outlet_count
+    FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    JOIN internal.tenants t ON t.id=m.tenant_id
+    LEFT JOIN LATERAL (SELECT ms.role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id
+      WHERE u.id::text=$3 AND u.is_active AND ms.is_active AND ms.tenant_id=t.id
+      AND (ms.scope_type='TENANT' OR ms.merchant_id=m.id AND
+        (ms.scope_type='MERCHANT' OR ms.scope_type='OUTLET' AND ms.outlet_id=o.id))
+      ORDER BY CASE ms.role WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
+    ) membership ON true
+    WHERE m.id=$1 AND o.id=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active AND o.is_active
+      AND (t.owner_user_ref=$3 OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
+  if (rows.length !== 1) throw new ModuleAccessError(403, "MODULE_SCOPE_FORBIDDEN");
+  const scope = rows[0];
+  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenant_id, businessId]);
+  if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "moduleAssignments"))
+    return { enabled: false, businessId, outletId, modules: [] };
+  await assertTenantWritable(db, scope.tenant_id);
+  if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, "MODULE_PILOT_REQUIRES_PAID_OR_TRIAL");
+  const assignments = await db.query(`SELECT mm.module_id, e.features FROM internal.merchant_modules mm
+    JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
+    LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
+      AND om.module_id=mm.module_id AND om.outlet_id=$3
+    WHERE mm.tenant_id=$1 AND mm.merchant_id=$2 AND mm.enabled AND COALESCE(om.enabled,true)
+      AND e.enabled AND e.expires_at>now() ORDER BY mm.module_id`, [scope.tenant_id, businessId, outletId]);
+  const permissions = permissionsForModuleRole(scope.role);
+  const modules = [];
+  for (const row of assignments.rows) {
+    const manifest6 = moduleManifest(row.module_id);
+    if (!manifest6 || manifest6.sector !== scope.business_sector || scope.outlet_count !== 1) continue;
+    modules.push({ id: manifest6.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner) });
+  }
+  return { enabled: true, businessId, outletId, modules };
+}
+async function authorizeNativeModule(db, subject, merchantId, outletId, requirements) {
+  if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "moduleAssignments")) return;
+  const merchant = (await db.query("SELECT tenant_id,business_sector FROM internal.merchants WHERE id=$1", [merchantId])).rows[0];
+  if (!merchant) throw new BillingError(403, "MODULE_SCOPE_FORBIDDEN");
+  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [merchant.tenant_id, merchantId]);
+  const enrolled = await db.query("SELECT module_id FROM internal.merchant_modules WHERE tenant_id=$1 AND merchant_id=$2 AND guard_legacy_apis", [merchant.tenant_id, merchantId]);
+  if (!enrolled.rows.length) return;
+  const outlets = await db.query("SELECT id FROM internal.outlets WHERE merchant_id=$1", [merchantId]);
+  const target = outletId ?? (outlets.rows.length === 1 ? outlets.rows[0].id : null);
+  const manifest6 = legacyModuleForSector(merchant.business_sector);
+  try {
+    const access = await resolveModuleAccess(db, subject, merchantId, target);
+    const grant = manifest6 && access.modules.find((module) => module.id === manifest6.id);
+    if (!access.enabled || !grant || requirements.some((options) => !options.some((permission) => grant.permissions.includes(permission) && grant.features.includes(permission))))
+      throw new ModuleAccessError(403, "MODULE_COMMAND_FORBIDDEN");
+  } catch (error) {
+    if (error instanceof ModuleAccessError) throw new BillingError(error.status, error.message);
+    throw error;
+  }
+}
+var stateReadPermissions = {
+  store_settings: permissionsForModuleRole("OWNER"),
+  users: permissionsForModuleRole("OWNER"),
+  staff_members: ["pos", "tables", "labor", "settings"],
+  products: ["pos", "tables", "inventory", "reports", "ai"],
+  categories: ["pos", "tables", "inventory", "reports", "ai"],
+  tables: ["pos", "tables"],
+  customers: ["pos", "customers", "ai"],
+  order_operations: ["pos", "tables"],
+  held_orders: ["pos"],
+  inventory_logs: ["inventory"],
+  promo_codes: ["pos", "inventory"],
+  stock_items: ["inventory", "ai"],
+  bundles: ["pos", "inventory"],
+  attendance_logs: ["labor"],
+  kds_tickets: ["tables"],
+  carwash_queue: ["tables"],
+  bookings: ["tables"],
+  commission_rules: ["labor"],
+  payroll_slips: ["labor"],
+  sent_lifecycle_hooks: ["customers", "tables", "ai"]
+};
+var stateWritePermissions = {
+  ...stateReadPermissions,
+  store_settings: ["settings"],
+  users: ["settings"],
+  staff_members: ["labor", "settings"],
+  products: ["inventory"],
+  categories: ["inventory"],
+  tables: ["tables"],
+  customers: ["customers", "pos"],
+  stock_items: ["inventory"],
+  bundles: ["inventory"],
+  promo_codes: ["inventory"]
+};
+var moduleStateRequirements = (kinds, write = false) => {
+  const map = write ? stateWritePermissions : stateReadPermissions;
+  return (kinds || Object.keys(map)).map((kind) => map[kind] || []);
+};
+async function authorizeModulePage(db, subject, query) {
+  const access = await resolveModuleAccess(db, subject, query.businessId, query.outletId);
+  if (!access.enabled || !isBusinessModuleId(query.moduleId)) throw new ModuleAccessError(403, "MODULE_NOT_ENABLED");
+  const manifest6 = moduleManifest(query.moduleId);
+  const page = manifest6.pages.find((p) => p.id === query.page);
+  const grant = access.modules.find((m) => m.id === manifest6.id);
+  if (!page || !grant || page.ownerOnly && !grant.tenantOwner || !grant.permissions.includes(page.permission) || !grant.features.includes(page.permission))
+    throw new ModuleAccessError(403, "MODULE_PAGE_FORBIDDEN");
+  return { access, manifest: manifest6, page };
+}
+function respondError(res, error) {
+  if (error instanceof ModuleAccessError || error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
+  return res.status(503).json({ ok: false, error: "MODULE_ACCESS_UNAVAILABLE" });
+}
+function registerModuleRoutes(app, db) {
+  app.get("/api/v1/sync/modules/revenue", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const from = String(req.query.from || ""), to = String(req.query.to || "");
+      const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+      if (!validDate(from) || !validDate(to) || to < from || Date.parse(to) - Date.parse(from) > 90 * 864e5)
+        throw new ModuleAccessError(400, "INVALID_REPORT_PERIOD");
+      const offset = Number(req.query.offset ?? 0);
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1e5) throw new ModuleAccessError(400, "INVALID_REPORT_OFFSET");
+      const result = await db.tx(async (c) => {
+        const { access, page } = await authorizeModulePage(c, principal.subject, req.query);
+        if (!["reports", "group-reports"].includes(page.id)) throw new ModuleAccessError(403, "MODULE_PAGE_FORBIDDEN");
+        const owner = await c.query(`SELECT id FROM internal.tenants WHERE id::text=current_setting('app.tenant_id',true)
+          AND owner_user_ref=$1 AND is_active AND merged_into IS NULL`, [principal.subject]);
+        if (owner.rows.length !== 1) throw new ModuleAccessError(403, "GROUP_REPORT_OWNER_REQUIRED");
+        const groups = await c.query(`WITH grouped AS (
+          SELECT r.merchant_id,r.outlet_id,r.business_sector,count(*)::int AS transactions,
+            sum(r.total_amount) AS net_revenue,sum(r.refund_amount) AS refunds,sum(r.cogs_amount) AS cogs
+          FROM contract.merchant_revenue r WHERE r.tenant_id=$1
+            AND r.created_at>=($2::date::timestamp AT TIME ZONE 'Asia/Jakarta')
+            AND r.created_at<(($3::date+1)::timestamp AT TIME ZONE 'Asia/Jakarta')
+          GROUP BY r.merchant_id,r.outlet_id,r.business_sector
+        ) SELECT *,count(*) OVER()::int AS total_groups,sum(net_revenue) OVER() AS total_net_revenue,
+          sum(transactions) OVER() AS total_transactions FROM grouped
+          ORDER BY merchant_id,outlet_id NULLS FIRST,business_sector LIMIT 50 OFFSET $4`, [owner.rows[0].id, from, to, offset]);
+        return {
+          businessId: access.businessId,
+          rows: groups.rows.map((row) => ({ ...row, moduleId: null, attribution: "historical_sector" })),
+          nextOffset: groups.rows.length === 50 && offset + 50 < groups.rows[0].total_groups ? offset + 50 : null,
+          attribution: "historical_sector",
+          from,
+          to,
+          timezone: "Asia/Jakarta"
+        };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return respondError(res, error);
+    }
+  });
+  app.get("/api/v1/sync/modules/dashboard", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const result = await db.tx(async (c) => {
+        const { access, manifest: manifest6, page } = await authorizeModulePage(c, principal.subject, req.query);
+        if (page.id !== "dashboard") throw new ModuleAccessError(403, "MODULE_PAGE_FORBIDDEN");
+        const definitions = {
+          fnb: { kind: "kds_tickets", field: "status" },
+          retail: { kind: "products", field: "stock" },
+          laundry: { kind: "order_operations", field: "laundryStage" },
+          carwash: { kind: "carwash_queue", field: "stage" },
+          barber: { kind: "bookings", field: "status" }
+        };
+        const definition = definitions[manifest6.id];
+        const rows = await c.query(`SELECT
+          CASE WHEN $4='products' THEN CASE WHEN value->>'stock' ~ '^-?[0-9]+([.][0-9]+)?$' THEN CASE
+            WHEN (value->>'stock')::numeric<=0 THEN 'OUT_OF_STOCK'
+            WHEN (value->>'stock')::numeric<=(CASE WHEN value->>'minStockAlert' ~ '^[0-9]+([.][0-9]+)?$' THEN (value->>'minStockAlert')::numeric END) THEN 'LOW_STOCK'
+            ELSE 'AVAILABLE' END ELSE 'UNKNOWN' END
+          ELSE COALESCE(NULLIF(value->>$5,''),'UNKNOWN') END AS status,count(*)::int AS count
+          FROM (SELECT DISTINCT ON(record_id) record_id,value,deleted
+            FROM pos.shared_state_records
+            WHERE tenant_id::text=current_setting('app.tenant_id',true) AND merchant_id=$1
+              AND scope=ANY($2::text[]) AND kind=$4
+            ORDER BY record_id,updated_at DESC,revision DESC,(scope LIKE 'BUSINESS:%') DESC
+          ) records WHERE NOT deleted AND COALESCE(value->>'branchId',value->>'outletId',$3)=$3
+          GROUP BY 1 ORDER BY 1`, [access.businessId, [manifest6.sector, "BUSINESS:" + access.businessId], access.outletId, definition.kind, definition.field]);
+        return { buckets: rows.rows, total: rows.rows.reduce((sum, row) => sum + row.count, 0), generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return respondError(res, error);
+    }
+  });
+  app.get("/api/v1/sync/modules/access", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const result = await db.tx(async (c) => req.query.moduleId !== void 0 || req.query.page !== void 0 ? (await authorizeModulePage(c, principal.subject, req.query)).access : resolveModuleAccess(c, principal.subject, req.query.businessId, req.query.outletId));
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      return respondError(res, error);
+    }
+  });
+}
+
+// services/pos/businessDirectory.ts
+function registerBusinessDirectory(app, db) {
+  app.get("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const tenantId = await tenantForPrincipal(db, principal);
+      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
+      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
+        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
+        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
+        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
+      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
+      const businesses = /* @__PURE__ */ new Map();
+      for (const row of result.rows) {
+        let business = businesses.get(row.id);
+        if (!business) {
+          business = {
+            businessId: row.id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            sector: row.business_sector,
+            status: row.is_active ? "ACTIVE" : "INACTIVE",
+            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
+            transportRef: row.external_ref || row.id,
+            outlets: []
+          };
+          businesses.set(row.id, business);
+        }
+        if (row.outlet_id) business.outlets.push({
+          outletId: row.outlet_id,
+          businessId: row.id,
+          name: row.outlet_name,
+          address: row.address || "",
+          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
+          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
+        });
+      }
+      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
+    } catch {
+      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
+    }
+  });
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
+}
+
+// services/pos/sync.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
 
 // services/pos/activity.ts
 var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
@@ -674,7 +1461,7 @@ async function writeActivity(db, a) {
 }
 
 // services/pos/finance.ts
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 var FinanceError = class extends Error {
@@ -691,7 +1478,7 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
-  if (!SECTORS.includes(sector) || !UUID.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -706,6 +1493,7 @@ async function scopeFor(db, req) {
   assertFreeScope(free, sector, []);
   if (free.free && free.selection?.branchId !== outletId) throw new FinanceError(403, "FREE_OUTLET_MISMATCH");
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [tenantId, row.merchant_id]);
+  await authorizeNativeModule(db, principal.subject, row.merchant_id, outletId, [req.method === "GET" ? req.path.endsWith("/reconciliation") ? ["reports"] : ["pos", "reports"] : ["pos"]]);
   return { tenantId, merchantId: row.merchant_id, outletId, sector, actorRef: principal.subject };
 }
 async function applyRefund(db, scope, transactionId, command) {
@@ -970,7 +1758,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -999,7 +1787,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID2.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -1344,6 +2132,7 @@ function registerSharedStateRoutes(app, db) {
           "SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId, scope.merchantId]
         );
+        await authorizeNativeModule(c, principal.subject, scope.merchantId, req.query.outletId, moduleStateRequirements(kinds));
         const parameters2 = [scope.tenantId, [sector, "BUSINESS:" + scope.merchantId], scope.merchantId, kinds];
         const stamp = await hasSchemaFeature(c, "sharedStateVersions") ? await c.query(`SELECT md5(COALESCE(string_agg(v.scope||'/'||v.kind||'/'||v.version,'|' ORDER BY v.scope,v.kind),'')) AS version
           FROM pos.shared_state_versions v WHERE v.tenant_id=$1 AND
@@ -1402,7 +2191,7 @@ function registerSharedStateRoutes(app, db) {
         }))
       });
     } catch (error) {
-      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
+      if (error instanceof BusinessScopeError || error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
       return res.status(503).json({ ok: false, error: "STATE_UNAVAILABLE" });
     }
   });
@@ -1423,6 +2212,7 @@ function registerSharedStateRoutes(app, db) {
           "SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId, scope.merchantId]
         );
+        await authorizeNativeModule(c, principal.subject, scope.merchantId, requestedOutletId || void 0, moduleStateRequirements(operations.map((op) => op.kind), true));
         const free = await freePlanState(c, scope.tenantId);
         assertFreeScope(free, sector, []);
         if (free.free && !(await c.query(
@@ -1606,7 +2396,7 @@ function registerSharedStateRoutes(app, db) {
       });
       return res.json({ ok: true, ...versions });
     } catch (error) {
-      if (error instanceof BusinessScopeError) return res.status(error.status).json({ ok: false, error: error.message });
+      if (error instanceof BusinessScopeError || error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
       if (error instanceof StateConflict) return res.status(409).json({ ok: false, error: "STATE_CONFLICT", kind: error.kind, recordId: error.recordId });
       if (error instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: error.message });
       if (error instanceof BillingError) return res.status(error.status).json({ ok: false, error: error.message });
@@ -1616,7 +2406,7 @@ function registerSharedStateRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -1643,10 +2433,10 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID3.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID3.test(merchantId) || tenantId && !UUID3.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -1696,6 +2486,12 @@ async function scopeFor2(db, subject, filter) {
   if (!rows.length) throw new ReportRequestError(403, "REPORT_SCOPE_FORBIDDEN");
   const row = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [row.tenant_id, row.merchant_id]);
+  try {
+    await authorizeNativeModule(db, subject, row.merchant_id, row.outlet_id, [["reports"]]);
+  } catch (error) {
+    if (error instanceof BillingError) throw new ReportRequestError(error.status, error.message);
+    throw error;
+  }
   return {
     tenantId: row.tenant_id,
     merchantId: row.merchant_id,
@@ -1944,7 +2740,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID3.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID4.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -2115,6 +2911,7 @@ function perSaleRejection(error) {
 }
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
+  registerModuleRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -2301,6 +3098,7 @@ function registerSyncRoutes(app, db) {
         }
         const defaultInventoryLocationId = await ensureInventoryLocation(c, tenantId, merchantId, outletId);
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [tenantId, merchantId]);
+        await authorizeNativeModule(c, ownerRef, merchantId, outletId, [["pos"]]);
         const financialScope = { tenantId, merchantId, outletId, sector, actorRef: ownerRef };
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
@@ -2740,20 +3538,30 @@ function registerSyncRoutes(app, db) {
     if (!await canAccessBusiness(db, principal, businessId)) {
       return res.status(403).json({ ok: false, error: "FORBIDDEN" });
     }
-    const { rows } = await db.query(
-      `SELECT m.id, m.name, m.business_sector,
+    try {
+      const result = await db.tx(async (c) => {
+        const merchant = (await c.query("SELECT id FROM internal.merchants WHERE external_ref=$1 OR id::text=$1", [businessId])).rows[0];
+        if (!merchant) return { ok: true, synced: false };
+        await authorizeNativeModule(c, principal.subject, merchant.id, req.query.outletId, [["pos", "reports"]]);
+        const { rows } = await c.query(
+          `SELECT m.id, m.name, m.business_sector,
               COUNT(x.id)::int              AS synced_transactions,
-              COALESCE(SUM(x.total_amount), 0) AS synced_revenue,
+              COALESCE((SELECT SUM(r.total_amount) FROM contract.merchant_revenue r WHERE r.tenant_id=m.tenant_id AND r.merchant_id=m.id),0) AS synced_revenue,
               MAX(x.created_at)             AS last_transaction_at
          FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
          LEFT JOIN pos.transactions x ON x.tenant_id = t.id AND x.merchant_id=m.id
         WHERE (m.external_ref = $1 OR m.id::text=$1) AND t.owner_user_ref=$2
           AND t.is_active AND t.merged_into IS NULL AND m.is_active
         GROUP BY m.id, m.name, m.business_sector`,
-      [businessId, principal.subject]
-    );
-    if (!rows.length) return res.json({ ok: true, synced: false });
-    res.json({ ok: true, synced: true, ...rows[0] });
+          [businessId, principal.subject]
+        );
+        if (!rows.length) return { ok: true, synced: false };
+        return { ok: true, synced: true, ...rows[0] };
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof BillingError ? error.message : "SYNC_STATUS_UNAVAILABLE" });
+    }
   });
   app.post("/api/v1/sync/customers", async (req, res) => {
     if (!trustedPrincipal(req)) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
@@ -2769,48 +3577,52 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({ ok: false, error: "BAD_REQUEST", detail: "businessId dan sector wajib" });
     }
     try {
-      const tenantRes = await db.query(
-        `SELECT t.id AS tenant_id, m.id AS merchant_id
+      const result = await db.tx(async (c) => {
+        const tenantRes = await c.query(
+          `SELECT t.id AS tenant_id, m.id AS merchant_id
            FROM internal.tenants t
            JOIN internal.merchants m ON m.tenant_id = t.id
           WHERE (m.external_ref = $1 OR m.id::text = $1) AND m.business_sector=$3 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,
-        [businessId, ownerRef, sector]
-      );
-      if (!tenantRes.rows.length) {
-        return res.json({ ok: true, products: [], categories: [] });
-      }
-      const tenantId = tenantRes.rows[0].tenant_id;
-      const merchantId = tenantRes.rows[0].merchant_id;
-      const prodRes = await db.query(
-        `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
+          [businessId, ownerRef, sector]
+        );
+        if (!tenantRes.rows.length) {
+          return { ok: true, products: [], categories: [] };
+        }
+        const tenantId = tenantRes.rows[0].tenant_id;
+        const merchantId = tenantRes.rows[0].merchant_id;
+        await authorizeNativeModule(c, ownerRef, merchantId, req.query.outletId, [["pos", "tables", "inventory", "reports", "ai"]]);
+        const prodRes = await c.query(
+          `SELECT p.id, p.external_ref, p.name, p.sku, p.price, p.cost_price, p.unit, p.description,
                   p.is_available, COALESCE(p.category_name, 'Lainnya') AS category_name
              FROM pos.products p
             WHERE p.tenant_id = $1 AND p.merchant_id = $2 AND NOT p.sync_quarantined
             ORDER BY p.name ASC`,
-        [tenantId, merchantId]
-      );
-      const categoryId = (r) => r.category_id || `category:${r.category_name}`;
-      res.json({
-        ok: true,
-        products: prodRes.rows.map((r) => ({
-          id: r.external_ref || r.id,
-          name: r.name,
-          sku: r.sku,
-          price: Number(r.price || 0),
-          costPrice: Number(r.cost_price || 0),
-          unit: r.unit,
-          description: r.description,
-          categoryName: r.category_name,
-          categoryId: categoryId(r),
-          isAvailable: Boolean(r.is_available)
-        })),
-        categories: [...new Map(prodRes.rows.map((r) => [categoryId(r), {
-          id: categoryId(r),
-          name: r.category_name
-        }])).values()]
+          [tenantId, merchantId]
+        );
+        const categoryId = (r) => r.category_id || `category:${r.category_name}`;
+        return {
+          ok: true,
+          products: prodRes.rows.map((r) => ({
+            id: r.external_ref || r.id,
+            name: r.name,
+            sku: r.sku,
+            price: Number(r.price || 0),
+            costPrice: Number(r.cost_price || 0),
+            unit: r.unit,
+            description: r.description,
+            categoryName: r.category_name,
+            categoryId: categoryId(r),
+            isAvailable: Boolean(r.is_available)
+          })),
+          categories: [...new Map(prodRes.rows.map((r) => [categoryId(r), {
+            id: categoryId(r),
+            name: r.category_name
+          }])).values()]
+        };
       });
+      res.json(result);
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message || "CATALOG_FETCH_FAILED" });
+      res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "CATALOG_FETCH_FAILED" });
     }
   });
   app.post("/api/v1/sync/attendance", (req, res) => {
@@ -2964,6 +3776,9 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 
 // src/server/syncHandler.ts
 var allowedMethods = {
+  "/api/v1/sync/modules/access": ["GET"],
+  "/api/v1/sync/modules/dashboard": ["GET"],
+  "/api/v1/sync/modules/revenue": ["GET"],
   "/api/v1/privacy/requests": ["GET", "POST"],
   "/api/v1/privacy/notices": ["POST"],
   "/api/v1/sync/business": ["GET", "POST"],

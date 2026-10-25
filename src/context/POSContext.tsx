@@ -463,7 +463,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getScopedKey=(entity:string,_owner:string,_sector:BusinessSector)=>cache.current!.key(entity);
   const safeSetLocalStorage=(key:string,value:string)=>{try{cache.current!.write(key,value);}catch(error){console.warn('[storage] Cache write failed; original data retained',error);}};
   const loadScopedData=<T,>(entity:string,owner:string,sector:BusinessSector,fallback:T):T=>{
-    try{return cache.current!.load(entity,fallback,kindsForModule(activeTab));
+    try{return cache.current!.load(entity,fallback,kindsForModule(activeTab,selectedBusiness.sector));
     }catch{return fallback;}
   };
   // Store identity is independent of the local cashier profile.
@@ -611,7 +611,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         notify('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
       }
-      if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
+      if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab,selectedBusiness.sector)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
       if(!navigator.onLine&&(!workspaceBusiness.offlineExpiresAt||Date.now()>=workspaceBusiness.offlineExpiresAt))throw Error('OFFLINE_VERIFICATION_EXPIRED');
       return fn(...args);
     }) as T;
@@ -862,7 +862,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     attendanceLogs,setAttendanceLogs,clockInStaff,clockOutStaff,getActiveAttendance,commissionRules,setCommissionRules,
     payrollSlips,setPayrollSlips,saveCommissionRule,savePayrollSlip,deletePayrollSlip}=useLaborState({
       tenant,free:isFreePlan(settings.subscription),load:(kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback),
-      loadRoster:()=>cache.current!.loadRoster(kindsForModule(activeTab)),
+      loadRoster:()=>cache.current!.loadRoster(kindsForModule(activeTab,selectedBusiness.sector)),
       outlet:()=>activeBranch,sound:kind=>{if(soundEnabled)playPOSSound(kind);},
     });
   const {stockItems,setStockItems,bundles,setBundles,saveStockItem,deleteStockItem,saveBundle,deleteBundle,toggleBundleAvailability,adjustStockItemQuantity}=useInventoryState(
@@ -1031,7 +1031,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     },status=>{const error=operationalCacheError(authUser.id,activeSector,storageId);setSharedSyncStatus(error?{...status,ready:false,error}:status);},{businessId:selectedBusiness.businessId,transportRef:storageId,namespace:operationalNamespace});
     sharedSync.current=store;
-    store.setKinds(kindsForModule(activeTab));
+    store.setKinds(kindsForModule(activeTab,selectedBusiness.sector));
     const prime=<T extends object>(kind:string,rows:T[])=>store.prime(kind,rows);
     prime('categories',categories);prime('products',syncProducts);prime('tables',tables);prime('customers',customers);
     prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
@@ -1053,7 +1053,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(()=>{
     const store=sharedSync.current;if(!store)return;
-    if(store.setKinds(kindsForModule(activeTab)))void store.refresh(false);
+    if(store.setKinds(kindsForModule(activeTab,selectedBusiness.sector)))void store.refresh(false);
   },[activeTab,activeSector]);
 
   useEffect(()=>{

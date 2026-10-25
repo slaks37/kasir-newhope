@@ -4,6 +4,9 @@ import { registerSyncRoutes } from '../../services/pos/sync';
 import { createServerlessBoundary } from './serverlessBoundary';
 
 const allowedMethods: Record<string, readonly string[]> = {
+  '/api/v1/sync/modules/access': ['GET'],
+  '/api/v1/sync/modules/dashboard': ['GET'],
+  '/api/v1/sync/modules/revenue': ['GET'],
   '/api/v1/privacy/requests':['GET','POST'],
   '/api/v1/privacy/notices':['POST'],
   '/api/v1/sync/business': ['GET','POST'],

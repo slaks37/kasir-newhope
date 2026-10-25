@@ -1,3 +1,4 @@
+import { authorizeNativeModule } from './modules';
 import {registerFinancialApprovalRoutes,consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 import type { Express, Request } from 'express';
 import type { Db } from '../shared/db';
@@ -35,6 +36,7 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
   const free=await freePlanState(db,tenantId);assertFreeScope(free,sector,[]);
   if(free.free&&free.selection?.branchId!==outletId)throw new FinanceError(403,'FREE_OUTLET_MISMATCH');
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tenantId,row.merchant_id]);
+  await authorizeNativeModule(db,principal.subject,row.merchant_id,outletId,[req.method==='GET'?(req.path.endsWith('/reconciliation')?['reports']:['pos','reports']):['pos']]);
   return {tenantId,merchantId:row.merchant_id,outletId,sector,actorRef:principal.subject};
 }
 
