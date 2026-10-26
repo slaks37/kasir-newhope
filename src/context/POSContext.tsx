@@ -1,3 +1,4 @@
+import {assertNativeFinancialReady} from '../platform/runtime/platform';
 import {readRegisterPreference,enqueueRegisterClose,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
 import {moduleManifest} from '../platform/modules/registry';
 import {pendingWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
@@ -707,6 +708,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const financialStatus=(businessId:string,inFlight=false)=>combineFinancialSyncStatus(getSyncStatus(businessId,inFlight),getCashSyncStatus(businessId));
   function requireFinancialWritable<T extends (...args:any[])=>any>(fn:T):T{
     return requireWritable(((...args:Parameters<T>)=>{
+      assertNativeFinancialReady();
       if(!cloudReady||!sharedSyncStatus.ready||!syncTarget.outletId)throw new Error('CLOUD_OUTLET_NOT_READY');
       if(!navigator.onLine&&workspaceBusiness.offlineExpiresAt&&Date.now()>=workspaceBusiness.offlineExpiresAt)throw Error('OFFLINE_VERIFICATION_EXPIRED');
       return fn(...args);

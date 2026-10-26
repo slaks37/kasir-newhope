@@ -1,3 +1,4 @@
+import {nativeCors} from '../../services/shared/nativeCors';
 import express from 'express';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import type { Db } from '../../services/shared/db';
@@ -82,6 +83,7 @@ export function createServerlessBoundary(
     res.setHeader('Cache-Control', 'no-store');
     const path = String(req.url || '').split('?')[0].replace(/\/+$/, '');
     if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+    if ((options.name==='sync'||options.name==='billing'&&path.startsWith('/api/v1/subscription/'))&&nativeCors(req,res,options.routes[path]))return;
     if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
 
     if (publicRoutes.has(path)) {

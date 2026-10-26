@@ -290,3 +290,12 @@ html, body {
 .receipt-thermal-grayscale {
   filter: grayscale(100%) contrast(125%);
 }
+
+/* Shared touch/safe-area behavior; individual module entitlements remain unchanged. */
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px; }
+  button, [role="button"] { min-height: 44px; }
+  [role="dialog"] { max-height: 92dvh; overflow-y: auto; overscroll-behavior: contain; }
+}
+body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

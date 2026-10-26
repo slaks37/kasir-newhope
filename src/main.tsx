@@ -1,3 +1,5 @@
+import {InstallHelp} from './pwa/InstallHelp';
+import {isNative} from './platform/runtime/platform';
 // Safety shim to prevent "Uncaught TypeError: Cannot set property fetch of #<Window> which has only a getter"
 try {
   const win = typeof window !== 'undefined' ? (window as any) : null;
@@ -33,7 +35,9 @@ import { registerServiceWorker } from './pwa/serviceWorker';
 
 installAuthenticatedFetch();
 normalizeLegacyRoute();
+if(isNative())void import('./platform/runtime/nativeLifecycle').then(m=>m.installNativeLifecycle()).catch(()=>window.dispatchEvent(new CustomEvent("native-auth-error")));
 registerServiceWorker();
+const NativeStatus=lazy(()=>import('./platform/runtime/NativeStatus').then(m=>({default:m.NativeStatus})));
 const McpConnections = lazy(() => import('./components/mcp/McpConnections').then(m => ({ default: m.McpConnections })));
 const Notifier = lazy(() => import('./components/ui/Notifier').then(m => ({ default: m.Notifier })));
 
@@ -50,6 +54,7 @@ function POSSession() {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>
+      {isNative()&&<Suspense fallback={null}><NativeStatus/></Suspense>}
       <AuthProvider>
         {window.location.pathname === '/mcp/connect' || window.location.pathname === '/mcp/connections'
           ? <Suspense fallback={<p role="status">Memuat koneksi MCP…</p>}><McpConnections consent={window.location.pathname === '/mcp/connect'} /></Suspense>
@@ -57,7 +62,7 @@ createRoot(document.getElementById('root')!).render(
       </AuthProvider>
     </LanguageProvider>
     <Suspense fallback={null}>
-      <Notifier />
+      <Notifier /><InstallHelp />
     </Suspense>
   </StrictMode>,
 );

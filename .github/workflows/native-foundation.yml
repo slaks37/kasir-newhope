@@ -1,0 +1,43 @@
+name: Native foundation
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 21}
+      - run: npm ci
+      - run: npm run test:platform
+      - run: npm run native:sync
+      - run: ./gradlew assembleDebug bundleRelease lintDebug
+        working-directory: android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-android-unconfigured-preview
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+          retention-days: 14
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: xcodebuild -version
+      - run: npm run native:ios:simulator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-ios-simulator-unconfigured-preview
+          path: build/ios/Build/Products/Debug-iphonesimulator/App.app
+          retention-days: 14

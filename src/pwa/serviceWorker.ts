@@ -1,3 +1,4 @@
+import {isNative} from '../platform/runtime/platform';
 /**
  * Service worker aplikasi kasir, dibangkitkan saat build (vite.config.ts).
  *
@@ -87,7 +88,7 @@ self.addEventListener('fetch', (event) => {
 
 /** Registers the worker in production builds only, never for the internal console. */
 export function registerServiceWorker(): void {
-  if (!import.meta.env.PROD || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  if (isNative() || !import.meta.env.PROD || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
   if (window.location.pathname.startsWith('/admin')) return;
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((error) => console.warn('[pwa] registrasi service worker gagal:', error));
