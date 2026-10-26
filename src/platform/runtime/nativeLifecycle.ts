@@ -13,7 +13,7 @@ export async function installNativeLifecycle(){
  supabase.auth.onAuthStateChange(event=>{if(event==='PASSWORD_RECOVERY')recovering=true;});
  const receive=async(raw:string)=>{
   const code=parseAuthCallback(raw,nativeCallback);if(!code||exchanging)return;
-  exchanging=true;
+  exchanging=true;recovering=false;
   try{const {error}=await supabase.auth.exchangeCodeForSession(code);if(error)throw error;await Browser.close().catch(()=>{});navigate(recovering?'/reset-password':'/overview',true);}
   catch{window.dispatchEvent(new CustomEvent('native-auth-error'));}
   finally{exchanging=false;}
@@ -23,7 +23,7 @@ export async function installNativeLifecycle(){
  await App.addListener('appStateChange',({isActive})=>{
   if(!isActive){supabase.auth.stopAutoRefresh();return;}
   supabase.auth.startAutoRefresh();
-  void supabase.auth.getSession().then(()=>window.dispatchEvent(new Event('focus')));
+  void supabase.auth.getSession().then(()=>window.dispatchEvent(new Event('focus'))).catch(()=>window.dispatchEvent(new CustomEvent('native-auth-error')));
  });
  await App.addListener('backButton',({canGoBack})=>{if(canGoBack)window.history.back();else void App.minimizeApp();});
  await Network.addListener('networkStatusChange',({connected})=>window.dispatchEvent(new Event(connected?'online':'offline')));

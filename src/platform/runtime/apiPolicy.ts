@@ -9,7 +9,7 @@ export function apiTarget(raw:string,appOrigin:string,native:boolean,configured:
  const origin=httpsOrigin(configured);return new URL(u.pathname+u.search,origin);
 }
 export function parseAuthCallback(raw:string,expected:string):string|null {
- const u=new URL(raw),e=new URL(expected);
+ let u:URL,e:URL;try{u=new URL(raw);e=new URL(expected);}catch{return null;}
  if(u.protocol!==e.protocol||u.host!==e.host||u.pathname!==e.pathname||u.username||u.password||u.hash)return null;
  if([...u.searchParams.keys()].some(k=>!['code','state'].includes(k))||u.searchParams.getAll('code').length!==1)return null;
  const code=u.searchParams.get('code');return code&&code.length<4096?code:null;

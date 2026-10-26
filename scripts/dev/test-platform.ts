@@ -9,7 +9,7 @@ assert.equal(apiTarget('https://evil.invalid/api/x','https://app.invalid',true,'
 assert.equal(apiTarget('/assets/file.js','https://app.invalid',true,'https://api.invalid'),null);
 assert.equal(apiTarget('/api/test','https://app.invalid',false,'')?.origin,'https://app.invalid');
 const callback='space.newhope.kasir://auth/callback';assert.equal(parseAuthCallback(callback+'?code=valid',callback),'valid');
-for(const url of ['evil://auth/callback?code=valid',callback+'/extra?code=x',callback+'?code=a&code=b',callback+'#access_token=secret',callback+'?code=a&next=https://evil.invalid'])assert.equal(parseAuthCallback(url,callback),null);
+for(const url of ['not a URL','evil://auth/callback?code=valid',callback+'/extra?code=x',callback+'?code=a&code=b',callback+'#access_token=secret',callback+'?code=a&next=https://evil.invalid'])assert.equal(parseAuthCallback(url,callback),null);
 const response=()=>({statusCode:200,headers:{} as Record<string,string>,body:null as any,status(n:number){this.statusCode=n;return this;},json(b:any){this.body=b;return this;},end(){return this;},setHeader(k:string,v:string){this.headers[k]=v;}});
 const req={method:'OPTIONS',headers:{origin:'capacitor://localhost','access-control-request-method':'GET','access-control-request-headers':'authorization'}};
 delete process.env.NEW_HOPE_NATIVE_ORIGINS;let res=response();assert(nativeCors(req,res,['GET']));assert.equal(res.statusCode,403);
