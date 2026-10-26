@@ -21,12 +21,12 @@
       "purpose": "any"
     }
   ],
-  "start_url": "/app",
+  "start_url": "/overview",
   "background_color": "#ffffff",
   "theme_color": "#f59e0b",
   "display": "standalone",
   "orientation": "any",
-  "id": "/app",
+  "id": "/",
   "scope": "/",
   "description": "Kasir dan operasi outlet New Hope"
 }

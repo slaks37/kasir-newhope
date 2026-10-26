@@ -34,3 +34,4 @@ try{
  const authorized=await fetch(url,{headers:{origin:'capacitor://localhost',authorization:'Bearer verified','x-auth-sub':'forged'}});assert.equal(authorized.status,200);assert.equal((await authorized.json()).actor,'real-actor');
  console.log('PASS native CORS boundary: preflight without DB, verified Bearer required, forged identity stripped');
 }finally{delete process.env.NEW_HOPE_NATIVE_ORIGINS;await new Promise<void>(r=>server.close(()=>r()));}
+const fs=await import('node:fs');const manifest=JSON.parse(fs.readFileSync('public/manifest.json','utf8'));assert.equal(manifest.id,'/','Preserve the previous implicit installation identity');assert.equal(manifest.start_url,'/overview');for(const size of ['192x192','512x512'])assert(manifest.icons.some((i:any)=>i.sizes===size&&fs.existsSync('public'+i.src)));
