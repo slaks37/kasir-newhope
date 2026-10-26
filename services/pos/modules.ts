@@ -1,3 +1,4 @@
+import {registerCapabilities} from '../../src/platform/modules/registerCapabilities';
 import type { Express } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal } from '../shared/auth';
@@ -48,7 +49,7 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
   await assertTenantWritable(db, scope.tenant_id);
   // Existing Free behavior remains on legacy routes; no paid feature is implicitly granted.
   if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, 'MODULE_PILOT_REQUIRES_PAID_OR_TRIAL');
-  const isolated=await hasSchemaFeature(db,'workspaceIsolation');
+  const isolated=await hasSchemaFeature(db,'workspaceIsolation')&&await hasSchemaFeature(db,'cashierRegisters');
   const assignments = await db.query(`SELECT mm.module_id, e.features,e.expires_at,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm
     JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
     LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
@@ -63,7 +64,7 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
     if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)))continue;
     // Until sector adapters and legacy outlet caches are disentangled, fail closed.
     if (!manifest || Number(row.workspace_version)!==2 && (manifest.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest.id, permissions, features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest.id, permissions, capabilities:Number(row.workspace_version)===2?registerCapabilities(scope.role):[], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }

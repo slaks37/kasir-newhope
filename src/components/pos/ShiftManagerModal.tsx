@@ -1,3 +1,4 @@
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import React, { useState } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -23,12 +24,16 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { notify } from '../../lib/ui/notify';
+const CashierFinanceModal=React.lazy(()=>import('./CashierFinanceModal'));
 
 interface ShiftManagerModalProps {
   onClose: () => void;
 }
 
-export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose }) => {
+export const ShiftManagerModal: React.FC<ShiftManagerModalProps> = ({onClose})=>{
+ const runtime=useBusinessModule();return runtime?.grant.workspaceVersion===2?<React.Suspense fallback={<div role="status">Memuat keuangan outlet…</div>}><CashierFinanceModal onClose={onClose}/></React.Suspense>:<LegacyShiftManagerModal onClose={onClose}/>;
+};
+const LegacyShiftManagerModal: React.FC<ShiftManagerModalProps> = ({ onClose }) => {
   const { shift, shiftHistory, startShift, endShift, orders } = usePOSFields(["shift","shiftHistory","startShift","endShift","orders"]);
   const { t } = useTranslation();
 

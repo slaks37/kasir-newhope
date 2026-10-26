@@ -57,7 +57,14 @@ async function main(){
   await db.query("INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,command) VALUES($1,$2,$3,'financial-fixture','CASH_IN',28000,$4::jsonb)",[client,business,outlet,JSON.stringify({eventId:'financial-fixture',amount:28000})]);
   await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,deleted,recovery_value,quarantine_reason) VALUES($1,$2::uuid,'BUSINESS:'||$2::text,'products','prod-ld-12',null,true,$3::jsonb,'RECOVERY_FIXTURE')",[client,business,JSON.stringify({id:'prod-ld-12',name:'Preserved recovery',sector:'LAUNDRY'})]);
   const before=await financialSnapshot();
-  const app=express();app.use(express.json());registerAdminRoutes(app,async()=>db,async req=>principals[String(req.headers.authorization||'').replace('Bearer ','')]||null,provider);
+  const app=express();app.use(express.json());registerAdminRoutes(app,async()=>db,async req=>{
+    const token=String(req.headers.authorization||'').replace('Bearer ',''),principal=principals[token];
+    // Keep boundary fixtures relative to verification time: slow isolated migrations
+    // must not turn a deliberately future MFA timestamp into a current one.
+    if(token==='future')return {...principal,mfaVerifiedAt:Math.floor(Date.now()/1000)+120};
+    if(token==='stale')return {...principal,mfaVerifiedAt:Math.floor(Date.now()/1000)-601};
+    return principal||null;
+  },provider);
   app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({ok:false,error:'BOUNDARY_FAILURE'}));
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
   const base='http://127.0.0.1:'+(server.address() as any).port;

@@ -1,3 +1,6 @@
+import {readRegisterPreference,enqueueRegisterClose,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
+import {moduleManifest} from '../platform/modules/registry';
+import {pendingWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
 import {submitWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
 import {modulePath} from '../platform/modules/routing';
 import {navigate} from '../lib/navigation/workspaceRouter';
@@ -378,8 +381,8 @@ export interface POSContextType {
   deleteTable: (tableId: string) => void;
   updateSettings: (newSettings: StoreSettings) => void;
   activateBusinessSector: (sector: BusinessSector, customStoreName?: string) => void;
-  startShift: (cashierName: string, initialCash: number) => Promise<Shift>;
-  endShift: (actualCash: number, notes?: string) => Promise<Shift>;
+  startShift: (cashierName: string, initialCash: number, registerId?:string) => Promise<Shift>;
+  endShift: (actualCash: number, notes?: string, drawerShift?:Shift) => Promise<Shift>;
   
   // Cash Movements & Petty Cash Management
   cashMovements: CashMovement[];
@@ -1121,12 +1124,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const migration=target.workspace?null:migrateLegacyFinancialData(target,{outletMappings:mappings});
         setLegacyMigrationStatus(migration);
         if(migration?.error)throw new Error(migration.error);
-        const query={outletId:target.outletId,sector:target.sector,...(target.workspace?{businessId:target.workspace.merchantId,moduleId:target.workspace.moduleId,purpose:'pos'}:{})};
+        const query={outletId:target.outletId,sector:target.sector,...(target.workspace?{businessId:target.workspace.merchantId,moduleId:target.workspace.moduleId,purpose:'pos',registerId:readRegisterPreference(target.workspace)}:{})};
         const {transactions:remote,shiftData:initialShift}=await fetchFinancialWorkspace(query,activeTab!=='reports',controller.signal);
         let shiftData=initialShift;
-        if(activeTab==='pos'&&!shiftData.shift&&!shiftData.history?.length){
+        if(activeTab==='pos'&&!shiftData.shift&&!shiftData.history?.length&&(!shiftData.registers||shiftData.registers.length<=1)){
           const shiftResponse=await fetch('/api/v1/finance/shift/open',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({...workspaceApi,sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
+            body:JSON.stringify({...workspaceApi,...(target.workspace?{registerId:readRegisterPreference(target.workspace)}:{}),sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
           const opened=await shiftResponse.json();if(!shiftResponse.ok||!opened.ok)throw new Error(opened.error||'SHIFT_OPEN_FAILED');
           shiftData={...shiftData,shift:opened.shift};
         }
@@ -1667,6 +1670,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       skipClearCart?: boolean;
     }
   ): Order | null => {
+    if(isolated&&(shift.status!=='OPEN'||shift.canClose===false))throw Error('OWN_OPEN_REGISTER_SHIFT_REQUIRED');
     if (cart.length === 0) return null;
     const priorSplit=extraOptions?.paymentTender&&extraOptions.parentOrderId?orders.find(order=>order.id===extraOptions.parentOrderId):null;
     if(priorSplit&&extraOptions?.paymentTender){
@@ -2670,13 +2674,30 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     else navigateModule("businesses");
   };
 
-  const startShift = async (cashierName:string,initialCash:number):Promise<Shift> => {
+  const startShift = async (cashierName:string,initialCash:number,registerId?:string):Promise<Shift> => {
     const response=await fetch('/api/v1/finance/shift/open',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({sector:activeSector,outletId:syncTarget.outletId,clientShiftId:newId('shift'),cashierName,initialCash})});
+      body:JSON.stringify({...workspaceApi,sector:activeSector,outletId:syncTarget.outletId,clientShiftId:newId('shift'),cashierName,initialCash,registerId})});
     const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'SHIFT_OPEN_FAILED');
     setShift(data.shift);window.dispatchEvent(new Event('financial-updated'));return data.shift;
   };
-  const endShift = async (actualCash:number,notes?:string):Promise<Shift> => {
+  const endShift = async (actualCash:number,notes?:string,drawerShift?:Shift):Promise<Shift> => {
+    if(workspace){
+      const target=drawerShift||shift;
+      if(!target.registerId||!target.version||!Number.isFinite(actualCash)||actualCash<0)throw Error('REGISTER_SHIFT_SNAPSHOT_REQUIRED');
+      let pending=pendingRegisterClose(workspace,target.registerId);
+      if(pending&&(pending.command.actualCash!==actualCash||pending.command.notes!==String(notes||'').trim()))throw Error('SHIFT_CLOSE_PENDING_RETRY_REQUIRED');
+      if(!pending){enqueueRegisterClose(workspace,{...workspaceApi,businessId:workspace.merchantId,moduleId:workspace.moduleId,outletId:workspace.outletId,registerId:target.registerId,clientShiftId:target.id,clientCloseId:crypto.randomUUID(),expectedVersion:target.version,actualCash,notes:String(notes||'').trim()});pending=pendingRegisterClose(workspace,target.registerId);}
+      for(const moduleId of target.moduleIds||[workspace.moduleId]){
+        const module=moduleManifest(moduleId);if(!module)throw Error('WORKSPACE_MODULE_REQUIRED');
+        const moduleWorkspace={...workspace,moduleId},id=financialWorkspaceKey(moduleWorkspace);
+        await runSync({...syncTarget,workspace:moduleWorkspace,businessId:id,sector:module.sector},true);
+        const status=financialStatus(id);
+        if(status.pending||status.inFlight||status.quarantined||status.lastError)throw Error('PENDING_FINANCIAL_SYNC');
+        if(pendingWorkspaceInventory(moduleWorkspace)?.purchase)throw Error('PENDING_PURCHASE_SYNC');
+      }
+      const closed=await flushRegisterClose(workspace,target.registerId);if(!closed)throw Error('SHIFT_CLOSE_NOT_CONFIRMED');
+      setShift(closed);setShiftHistory(previous=>[closed,...previous.filter(row=>row.id!==closed.id)]);return closed;
+    }
     await runSync(syncTarget,true);
     const status=financialStatus(financialId);
     if(status.pending||status.lastError)throw new Error('PENDING_FINANCIAL_SYNC');

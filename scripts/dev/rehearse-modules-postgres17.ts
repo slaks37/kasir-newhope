@@ -1,3 +1,4 @@
+import {cashierAcceptance} from './cashier-acceptance';
 import {workspaceAcceptance} from './workspace-acceptance';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -31,7 +32,7 @@ try{
  await admin.query("INSERT INTO internal.memberships(user_id,tenant_id,merchant_id,outlet_id,scope_type,role) VALUES($1,$2,$3,$4,'OUTLET','CASHIER')",[staff,tenant,merchant,outlet]);
  const fingerprint=async()=>digest((await admin.query("SELECT id,user_id,tenant_id,merchant_id,outlet_id,scope_type,role FROM internal.memberships ORDER BY id")).rows);
  const before=await fingerprint();
- for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql'])await apply('migrations/'+file);
+ for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql','0068_cashier_register_operations.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
@@ -61,6 +62,7 @@ try{
  const isolatedMerchant=(await admin.query('SELECT m.id,t.owner_user_ref FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE EXISTS(SELECT 1 FROM internal.merchant_modules mm WHERE mm.merchant_id=m.id AND mm.workspace_version=2) LIMIT 1')).rows[0];
  await assert.rejects(()=>loadMerchantSnapshot(ai,{subject:isolatedMerchant.owner_user_ref},isolatedMerchant.id),/EXPLICIT_WORKSPACE_REQUIRED/,'Actual AI service cannot use legacy snapshots for mixed modules');
  evidence.workspaceWorkflows=workflows;
+ evidence.cashierWorkflows=await cashierAcceptance(wrap(admin),pos,await asService('svc_pos'));
  evidence.checks={postgres17:'PASS',migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log('PASS: PostgreSQL17 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards');
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}
 finally{delete process.env.NEW_HOPE_MODULE_WORKSPACES;fs.mkdirSync('build/module-rehearsal',{recursive:true});fs.writeFileSync('build/module-rehearsal/postgres17.json',JSON.stringify(evidence,null,2)+'\n');await Promise.all(connections.map(c=>c.end()));await admin.end();}

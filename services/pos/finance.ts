@@ -1,3 +1,6 @@
+import {RegisterError,bindRegisterCash,registerCashierFinanceRoutes,openRegisterShift,readRegisterShifts,closeRegisterShift} from './registerOperations';
+import type {WorkspaceScope} from './workspaceScope';
+import {hasSchemaFeature} from '../shared/schemaFeatures';
 import {resolveWorkspaceScope,requireWorkspaceRole} from './workspaceScope';
 import {ModuleAccessError} from './modules';
 import { authorizeNativeModule } from './modules';
@@ -26,7 +29,7 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
   if(!principal||principal.subject==='local-development')throw new FinanceError(401,'UNAUTHENTICATED');
   if(input?.moduleId!==undefined){
     const scope=await resolveWorkspaceScope(db,principal.subject,input,[req.path.endsWith('/reconciliation')?'reports':'pos']);
-    if(req.method!=='GET'&&!req.path.endsWith('/shift/open'))requireWorkspaceRole(scope,['OWNER','ADMIN','MANAGER']);
+    if(req.method!=='GET'&&!req.path.endsWith('/shift/open')&&!(req.path.endsWith('/shift/close')&&await hasSchemaFeature(db,'cashierRegisters')))requireWorkspaceRole(scope,['OWNER','ADMIN','MANAGER']);
     return {...scope,sector:scope.sector as Sector};
   }
   if(!(SECTORS as readonly string[]).includes(sector)||!UUID.test(String(outletId)))throw new FinanceError(400,'INVALID_FINANCIAL_SCOPE');
@@ -133,9 +136,11 @@ export async function applyCashEvent(c:Db,s:FinancialScope,b:any){
       typeof b.amount!=='number'||!Number.isFinite(b.amount)||b.amount<0||b.amount>9999999999||
       typeof b.description!=='string'||b.description.length>500||typeof b.category!=='string'||b.category.length>64)
       throw new FinanceError(400,'INVALID_CASH_EVENT');
+    if(s.moduleId&&b.registerId&&await hasSchemaFeature(c,'cashierRegisters'))await bindRegisterCash(c,s as WorkspaceScope,b.registerId);
+    if(b.category==='KOREKSI_KAS'&&!b.description.trim())throw new FinanceError(400,'CORRECTION_REASON_REQUIRED');
     if(b.type==='CASH_OUT')await consumeFinancialApproval(c,s,'CASH_OUT',b.clientEventId,b,b.approvalGrant);
     const amount=money(b.amount)*(b.type==='CASH_OUT'?-1:1),occurredAt=timestamp(b.occurredAt);
-    const command={clientEventId:b.clientEventId,type:b.type,amount,occurredAt,category:b.category,description:b.description.trim(),shiftId:String(b.shiftId||''),recipientOrSource:String(b.recipientOrSource||'').slice(0,200)};
+    const command={clientEventId:b.clientEventId,type:b.type,amount,occurredAt,category:b.category,description:b.description.trim(),shiftId:String(b.shiftId||''),...(b.registerId?{registerId:b.registerId}:{}),recipientOrSource:String(b.recipientOrSource||'').slice(0,200)};
     const prev=(await c.query(`SELECT id,command=$2::jsonb AS same,outlet_id,to_jsonb(cash_ledger)->>'module_id' AS module_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3`,[s.tenantId,JSON.stringify(command),b.clientEventId])).rows[0];
     if(prev){if(!prev.same||prev.outlet_id!==s.outletId||s.moduleId&&prev.module_id!==s.moduleId)throw new FinanceError(409,'CASH_EVENT_ID_CONFLICT');return{id:prev.id,replayed:true};}
     const row=(await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,actor_ref,actor_name,shift_ref,recipient_or_source,occurred_at,command)
@@ -146,9 +151,10 @@ export async function applyCashEvent(c:Db,s:FinancialScope,b:any){
 
 export function registerFinanceRoutes(app:Express,db:Db){
   registerFinancialApprovalRoutes(app,db,scopeFor);
+  registerCashierFinanceRoutes(app,db);
   const route=(path:string,run:(c:Db,s:FinancialScope,req:Request)=>Promise<unknown>)=>app.post(path,async(req,res)=>{
     try{const result=await db.tx(async c=>run(c,await scopeFor(c,req),req));res.json({ok:true,...result as object});}
-    catch(error){const known=error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
+    catch(error){const known=error instanceof RegisterError||error instanceof RegisterError||error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
       if(!known&&!(error instanceof FreePlanAccessError)){
         const diagnostic=error as {code?:string;constraint?:string;column?:string};
         console.error('[finance] write failed',{route:path,code:diagnostic.code,constraint:diagnostic.constraint,column:diagnostic.column});
@@ -171,17 +177,19 @@ export function registerFinanceRoutes(app:Express,db:Db){
     res.setHeader('Cache-Control','no-store');
     try{const result=await db.tx(async c=>{
       const s=await scopeFor(c,req);
+      if(s.moduleId&&await hasSchemaFeature(c,'cashierRegisters'))return readRegisterShifts(c,s as WorkspaceScope,req.query.registerId,req.query.historyCursor,req.query.historyLimit);
       const rows=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`,[s.tenantId,s.merchantId,s.outletId])).rows;
       const current=rows.find(r=>r.status==='OPEN');
       return {shift:current?await calculateShift(c,s,current):null,history:rows.filter(r=>r.status==='CLOSED').map(r=>r.summary).filter(Boolean)};
     });res.json({ok:true,...result,generatedAt:new Date().toISOString()});}catch(error){
-      if(!(error instanceof FinanceError)&&!(error instanceof BillingError)){
+      if(!(error instanceof RegisterError)&&!(error instanceof FinanceError)&&!(error instanceof BillingError)&&!(error instanceof ModuleAccessError)){
         const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[finance] shift read failed',{code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
       }
-      res.status(error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
+      res.status(error instanceof RegisterError||error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof RegisterError||error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
   });
   route('/api/v1/finance/shift/open',async(c,s,req)=>{
+    if(s.moduleId&&await hasSchemaFeature(c,'cashierRegisters'))return openRegisterShift(c,s as WorkspaceScope,req.body);
     const b=req.body;if(!ID.test(b.clientShiftId||'')||!Number.isFinite(b.initialCash)||b.initialCash<0||b.initialCash>9999999999)throw new FinanceError(400,'INVALID_SHIFT');
     await c.query('SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE',[s.outletId]);
     const active=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`,[s.tenantId,s.outletId])).rows[0];
@@ -197,6 +205,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
     return {shift:await calculateShift(c,s,row),replayed:false};
   });
   route('/api/v1/finance/shift/close',async(c,s,req)=>{
+    if(s.moduleId&&await hasSchemaFeature(c,'cashierRegisters'))return closeRegisterShift(c,s as WorkspaceScope,req.body);
     const b=req.body;if(!ID.test(b.clientShiftId||'')||!Number.isFinite(b.actualCash)||b.actualCash<0||b.actualCash>9999999999)throw new FinanceError(400,'INVALID_SHIFT');
     const row=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`,[s.tenantId,s.merchantId,s.outletId,b.clientShiftId])).rows[0];
     if(!row)throw new FinanceError(409,'SHIFT_NOT_FOUND');

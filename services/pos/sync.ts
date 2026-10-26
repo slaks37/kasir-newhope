@@ -1,3 +1,4 @@
+import {RegisterError,bindRegisterSale,clearRegisterBinding} from './registerOperations';
 import {registerWorkspaceInventoryRoutes,workspaceProduct,lockWorkspaceStock} from './workspaceInventory';
 import {resolveWorkspaceScope} from './workspaceScope';
 import {ModuleAccessError} from './modules';
@@ -135,7 +136,7 @@ export function invalidTransaction(x: SyncTxn): string | null {
 
 /** Deterministic per-sale failures are quarantined; anything else fails the batch so it is retried. */
 function perSaleRejection(error: unknown): string | null {
-  if (error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
+  if (error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String((error as { code?: string })?.code || '');
   if (/^(22|23)/.test(code)) return 'REJECTED_BY_DATABASE:' + ((error as { constraint?: string }).constraint || code);
   return null;
@@ -495,7 +496,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
           if(workspace){
             if(x.branchId&&x.branchId!==workspace.outletId||x.workspace&&(['tenantId','merchantId','outletId','moduleId','actorRef'] as const).some(f=>x.workspace![f]!==workspace[f]))throw new FinanceError(403,'IMMUTABLE_WORKSPACE_MISMATCH');
-            if(x.shiftId&&!(await c.query('SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)',[tenantId,merchantId,outletId,workspace.moduleId,x.shiftId])).rows.length)throw new FinanceError(403,'SHIFT_WORKSPACE_MISMATCH');
+            if(await hasSchemaFeature(c,'cashierRegisters')){
+              await clearRegisterBinding(c);
+              const recorded=(await c.query('SELECT id,client_shift_id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4',[tenantId,merchantId,outletId,clientId])).rows[0];
+              if(x.shiftId&&!recorded)await bindRegisterSale(c,workspace,x.shiftId);
+              if(!x.shiftId&&!recorded)throw new RegisterError(409,'EXPLICIT_REGISTER_SHIFT_REQUIRED');
+              if(recorded&&x.shiftId&&recorded.client_shift_id!==x.shiftId)throw new FinanceError(409,'TRANSACTION_SHIFT_IMMUTABLE');
+            }else if(x.shiftId&&!(await c.query('SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)',[tenantId,merchantId,outletId,workspace.moduleId,x.shiftId])).rows.length)throw new FinanceError(403,'SHIFT_WORKSPACE_MISMATCH');
             if(x.paymentStatus==='CANCELLED'&&!['OWNER','ADMIN','MANAGER'].includes(workspace.role))throw new FinanceError(403,'WORKSPACE_ROLE_FORBIDDEN');
             const lineSubtotal=x.items.reduce((sum,i)=>sum+i.unitPrice*i.quantity,0);if(Math.abs(lineSubtotal-x.subtotal)>0.011||Math.abs((x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0))-x.totalAmount)>0.011)throw new FinanceError(400,'TRANSACTION_TOTAL_MISMATCH');
           }

@@ -4,7 +4,7 @@ import type { ServerReportSummary, ServerTransactionsResponse, ServerTransaction
 import { coalescedRead, refreshCoordinator } from '../sync/refreshCoordinator';
 import type {Shift} from '../../types';
 
-export interface ReportQuery {businessId?:string;moduleId?:string;purpose?:string;outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
+export interface ReportQuery {businessId?:string;moduleId?:string;purpose?:string;registerId?:string;outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
 export function reportParams(query:ReportQuery):URLSearchParams{
   return new URLSearchParams(Object.entries(query).filter(([,value])=>value!==undefined&&value!=='').sort(([a],[b])=>a.localeCompare(b)) as [string,string][]);
 }
@@ -33,7 +33,7 @@ export async function fetchFinancialWorkspace(query:ReportQuery,includeRecent:bo
     if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');
     const result=await response.json();
     if(!response.ok||!result.ok)throw Error(result.error||'SHIFT_UNAVAILABLE');
-    return result as {ok:true;shift:Shift|null;history:Shift[];generatedAt?:string};
+    return result as {ok:true;shift:Shift|null;history:Shift[];registers?:any[];generatedAt?:string};
   },signal);
   const [shiftData,transactions]=await Promise.all([shiftRead,includeRecent?fetchRecentServerTransactions(query,signal):Promise.resolve(null)]);
   return {shiftData,transactions};

@@ -2,6 +2,8 @@
 
 Baseline: PR27 commit `452ff06`; verification repair `8b75cd7`. The existing registry, native sector screens, authentication boundary, canonical financial/inventory ledgers and immutable offline outboxes are extended in place. Both rollout flags remain `0`. No production migration, deployment, Auth configuration or payment activation was performed.
 
+The cashier/register continuation is specified and tested in [cashier-financial-acceptance.md](cashier-financial-acceptance.md): scoped outlet revenue, physical shared/dedicated drawers, cashier-owned closing, immutable variance review, cost redaction and durable close recovery. This adds purpose-specific POS capabilities without granting CASHIER management reports.
+
 ## Acceptance matrix
 
 “Operational in staging” below means the listed synthetic workflow and authorization assertions pass. It does not mean production rollout, external Auth/provider acceptance, or untested sector features are ready.

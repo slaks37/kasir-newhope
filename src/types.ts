@@ -543,6 +543,12 @@ export interface CashMovement {
 }
 
 export interface Shift {
+  registerId?:string;
+  serverShiftId?:string;
+  moduleIds?:string[];
+  openedBy?:string;
+  version?:string;
+  canClose?:boolean;
   id: string;
   cashierName: string;
   startTime: string;

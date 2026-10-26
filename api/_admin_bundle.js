@@ -31,7 +31,7 @@ function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
 }
 
 // services/shared/databaseStartup.ts
-async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))) {
   const attempts = vercel === "1" ? 1 : 15;
   let cause;
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -543,8 +543,8 @@ async function activateFreeTrial(db, tenantId) {
   return serializeSubscription(rows[0]);
 }
 function serializeSubscription(s) {
-  const iso2 = (x) => new Date(x).toISOString();
-  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: iso2(s.current_period_end) });
+  const iso3 = (x) => new Date(x).toISOString();
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: iso3(s.current_period_end) });
   const planId = free ? FREE_PLAN_ID : s.plan_id;
   return {
     id: s.id,
@@ -553,13 +553,13 @@ function serializeSubscription(s) {
     status: free ? "FREE" : s.status,
     plan: findSaaSPlan(planId),
     freeSelection: free ? s.free_selection : void 0,
-    currentPeriodStart: iso2(s.current_period_start),
-    currentPeriodEnd: iso2(s.current_period_end),
-    gracePeriodEnd: s.grace_period_end ? iso2(s.grace_period_end) : void 0,
+    currentPeriodStart: iso3(s.current_period_start),
+    currentPeriodEnd: iso3(s.current_period_end),
+    gracePeriodEnd: s.grace_period_end ? iso3(s.grace_period_end) : void 0,
     billingCycle: s.billing_cycle,
     extraOutlets: free ? 0 : s.extra_outlets,
-    trialStartedAt: s.trial_started_at ? iso2(s.trial_started_at) : null,
-    trialEndsAt: s.trial_ends_at ? iso2(s.trial_ends_at) : null,
+    trialStartedAt: s.trial_started_at ? iso3(s.trial_started_at) : null,
+    trialEndsAt: s.trial_ends_at ? iso3(s.trial_ends_at) : null,
     hasUsedTrial: Boolean(s.has_used_trial)
   };
 }
@@ -1611,8 +1611,8 @@ function siteUrl() {
 }
 var esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var json = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
-var date = (iso2) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso2));
-var timestamp = (iso2) => `${date(iso2)}, ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Jakarta" }).format(new Date(iso2)).replace(".", ":")} WIB`;
+var date = (iso3) => new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso3));
+var timestamp = (iso3) => `${date(iso3)}, ${new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Jakarta" }).format(new Date(iso3)).replace(".", ":")} WIB`;
 var postUrl = (slug) => `${siteUrl()}/blog/${slug}`;
 var DEFAULT_IMAGE = "/new-hope-logo-mark.png";
 var BRAND_IMAGE = "/new-hope-logo-mark.png";
@@ -1940,7 +1940,7 @@ var parseJson = (value, fallback) => {
   }
 };
 function rowToPublicPost(r) {
-  const iso2 = (v) => v ? new Date(v).toISOString() : (/* @__PURE__ */ new Date(0)).toISOString();
+  const iso3 = (v) => v ? new Date(v).toISOString() : (/* @__PURE__ */ new Date(0)).toISOString();
   return {
     id: r.id,
     slug: r.slug,
@@ -1956,8 +1956,8 @@ function rowToPublicPost(r) {
     mediaEmbeds: parseJson(r.media_embeds, []),
     seo: parseJson(r.seo, {}),
     isPublished: Boolean(r.is_published),
-    createdAt: iso2(r.created_at),
-    updatedAt: iso2(r.updated_at)
+    createdAt: iso3(r.created_at),
+    updatedAt: iso3(r.updated_at)
   };
 }
 var isMissingStore = (error) => ["42P01", "42501"].includes(String(error?.code));
@@ -3904,6 +3904,41 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
   );
 }
 
+// services/pos/registerOperations.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// services/shared/schemaFeatures.ts
+var FEATURES = {
+  cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+  /** migration 0054 / 20261004090200 */
+  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+  /** migration 0055 / 20261004090300 */
+  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+};
+var ABSENT_RECHECK_MS = 6e4;
+var known = /* @__PURE__ */ new Map();
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+
+// src/platform/modules/registerCapabilities.ts
+var REGISTER_CAPABILITIES = ["outlet_revenue.read", "shift.open", "shift.read", "shift_history.read", "shift.close", "shift_variance.submit", "shift_variance.approve", "register.configure"];
+function registerCapabilities(role) {
+  if (["OWNER", "ADMIN"].includes(role)) return [...REGISTER_CAPABILITIES];
+  if (role === "MANAGER") return REGISTER_CAPABILITIES.filter((c) => c !== "register.configure");
+  if (role === "CASHIER") return REGISTER_CAPABILITIES.filter((c) => !["register.configure", "shift_variance.approve"].includes(c));
+  return [];
+}
+
 // src/modules/fnb/manifest.ts
 var manifest = {
   "id": "fnb",
@@ -4465,28 +4500,6 @@ function legacyModuleForSector(sector) {
   return Object.values(moduleRegistry).find((m) => m.sector === sector) || null;
 }
 
-// services/shared/schemaFeatures.ts
-var FEATURES = {
-  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
-  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
-  /** migration 0054 / 20261004090200 */
-  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
-    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
-  /** migration 0055 / 20261004090300 */
-  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
-};
-var ABSENT_RECHECK_MS = 6e4;
-var known = /* @__PURE__ */ new Map();
-async function hasSchemaFeature(db, feature, now = Date.now()) {
-  const cached = known.get(feature);
-  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
-  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
-  known.set(feature, { ok, at: now });
-  return ok;
-}
-
 // services/pos/modules.ts
 var UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ModuleAccessError = class extends Error {
@@ -4533,7 +4546,7 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
     return { enabled: false, businessId, outletId, modules: [] };
   await assertTenantWritable(db, scope.tenant_id);
   if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, "MODULE_PILOT_REQUIRES_PAID_OR_TRIAL");
-  const isolated = await hasSchemaFeature(db, "workspaceIsolation");
+  const isolated = await hasSchemaFeature(db, "workspaceIsolation") && await hasSchemaFeature(db, "cashierRegisters");
   const assignments = await db.query(`SELECT mm.module_id, e.features,e.expires_at,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm
     JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
     LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
@@ -4548,7 +4561,7 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
     if (operationalModule[scope.role] && operationalModule[scope.role] !== row.module_id) continue;
     if (Number(row.workspace_version) === 2 && (!isolated || !["retail", "barber"].includes(row.module_id))) continue;
     if (!manifest6 || Number(row.workspace_version) !== 2 && (manifest6.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest6.id, permissions, features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest6.id, permissions, capabilities: Number(row.workspace_version) === 2 ? registerCapabilities(scope.role) : [], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -4746,9 +4759,362 @@ function requireWorkspaceRole(scope, roles) {
   if (!roles.includes(scope.role)) throw new ModuleAccessError(403, "WORKSPACE_ROLE_FORBIDDEN");
 }
 
+// services/pos/activity.ts
+var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
+var APP_MODULES2 = [
+  "POS",
+  "TABLES",
+  "INVENTORY",
+  "CUSTOMERS",
+  "REPORTS",
+  "AI",
+  "SETTINGS",
+  "SYNC",
+  "AUTH"
+];
+var SEVERITIES2 = ["INFO", "NOTICE", "WARNING", "CRITICAL"];
+var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function pick2(allowed, v) {
+  return typeof v === "string" && allowed.includes(v) ? v : null;
+}
+async function writeActivity(db, a) {
+  const sector = pick2(SECTORS2, a.businessSector);
+  const mod = pick2(APP_MODULES2, a.appModule);
+  if (!sector || !mod || !UUID_RE2.test(a.merchantId)) return null;
+  const { rows } = await db.query(
+    await hasSchemaFeature(db, "merchantActivityAppend") ? `SELECT internal.append_merchant_activity($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::uuid,$7::text,$8::text,$9::numeric,$10::text,$11::jsonb,$12::timestamptz) AS id` : `INSERT INTO internal.audit_logs
+       (merchant_id, tenant_id, domain,
+        event_type, severity, actor_id, actor_name, actor_role,
+        amount_idr, summary, detail, occurred_at)
+     VALUES ($1::uuid, $2::uuid, $3,
+             $4, $5, $6::uuid, $7, $8,
+             $9, $10, $11::jsonb, COALESCE($12::timestamptz, CURRENT_TIMESTAMP))
+     RETURNING id`,
+    [
+      a.merchantId,
+      a.tenantId && UUID_RE2.test(a.tenantId) ? a.tenantId : a.merchantId,
+      mod,
+      a.eventType.slice(0, 48),
+      pick2(SEVERITIES2, a.severity) ?? "INFO",
+      a.actorUserId && UUID_RE2.test(a.actorUserId) ? a.actorUserId : null,
+      a.actorName ?? null,
+      a.actorRole ?? null,
+      a.amountIdr ?? null,
+      a.summary.slice(0, 240),
+      JSON.stringify({ ...a.detail, businessSector: a.businessSector, businessId: a.businessId, transactionId: a.transactionId }),
+      a.occurredAt ?? null
+    ]
+  );
+  return rows[0]?.id ?? null;
+}
+
+// services/pos/registerOperations.ts
+var UUID2 = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
+var round = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
+var hash = (v) => createHash2("sha256").update(JSON.stringify(v)).digest("hex");
+var iso = (v) => new Date(String(v)).toISOString();
+var RegisterError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+function requireRegisterCapability(scope, cap) {
+  if (!registerCapabilities(scope.role).includes(cap)) throw new RegisterError(403, "REGISTER_CAPABILITY_FORBIDDEN");
+}
+async function resolve(db, req, cap) {
+  const principal = trustedPrincipal(req);
+  if (!principal || principal.subject === "local-development") throw new RegisterError(401, "UNAUTHENTICATED");
+  if (!await hasSchemaFeature(db, "cashierRegisters")) throw new RegisterError(503, "REGISTER_MIGRATION_REQUIRED");
+  const scope = await resolveWorkspaceScope(db, principal.subject, req.method === "GET" ? req.query : req.body, ["pos"]);
+  requireRegisterCapability(scope, cap);
+  return scope;
+}
+async function moduleContext(db, scope, moduleId) {
+  await db.query("SELECT set_config('app.module_id',$1,true)", [moduleId]);
+}
+async function authorizedModules(db, scope, moduleIds) {
+  if (!Array.isArray(moduleIds) || !moduleIds.length || moduleIds.length > 5 || new Set(moduleIds).size !== moduleIds.length) throw new RegisterError(400, "EXPLICIT_REGISTER_MODULES_REQUIRED");
+  for (const moduleId of [...moduleIds].sort()) await resolveWorkspaceScope(db, scope.actorRef, { businessId: scope.merchantId, outletId: scope.outletId, moduleId }, ["pos"]);
+  await moduleContext(db, scope, scope.moduleId);
+  return [...moduleIds].sort();
+}
+async function clearRegisterBinding(db) {
+  await db.query("SELECT set_config('app.register_id','',true),set_config('app.register_shift_id','',true)");
+}
+async function setBinding(db, registerId, shiftId) {
+  await db.query("SELECT set_config('app.register_id',$1,true),set_config('app.register_shift_id',$2,true)", [registerId, shiftId]);
+}
+async function bindRegisterSale(db, scope, clientShiftId) {
+  await clearRegisterBinding(db);
+  const row = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND (client_shift_id=$4 OR id::text=$4)", [scope.tenantId, scope.merchantId, scope.outletId, clientShiftId])).rows[0];
+  if (row && !row.workspace_modules && row.module_id === scope.moduleId) return null;
+  if (!row || !row.workspace_modules?.includes(scope.moduleId)) throw new RegisterError(403, "SHIFT_WORKSPACE_MISMATCH");
+  await authorizedModules(db, scope, row.workspace_modules);
+  await db.query("SELECT id FROM pos.cash_registers WHERE id=$1 FOR UPDATE", [row.register_id]);
+  const locked = (await db.query("SELECT * FROM pos.shifts WHERE id=$1 FOR UPDATE", [row.id])).rows[0];
+  if (locked.status !== "OPEN") throw new RegisterError(409, "SHIFT_CLOSED_REQUIRES_REVIEW");
+  if (scope.role === "CASHIER" && locked.opened_by_user_id !== scope.actorRef) throw new RegisterError(403, "SHIFT_OPERATOR_REQUIRED");
+  await setBinding(db, row.register_id, row.id);
+  return row;
+}
+async function bindRegisterCash(db, scope, registerId) {
+  if (!UUID2.test(String(registerId))) throw new RegisterError(400, "INVALID_REGISTER");
+  const r = (await db.query("SELECT * FROM pos.cash_registers WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4", [registerId, scope.tenantId, scope.merchantId, scope.outletId])).rows[0];
+  if (!r?.workspace_modules?.includes(scope.moduleId)) throw new RegisterError(403, "REGISTER_SCOPE_FORBIDDEN");
+  await authorizedModules(db, scope, r.workspace_modules);
+  await db.query("SELECT id FROM pos.cash_registers WHERE id=$1 FOR UPDATE", [r.id]);
+  const shift = (await db.query("SELECT id FROM pos.shifts WHERE register_id=$1 AND status='OPEN' FOR UPDATE", [r.id])).rows[0];
+  if (!shift) throw new RegisterError(409, "OPEN_REGISTER_SHIFT_REQUIRED");
+  await setBinding(db, r.id, shift.id);
+}
+async function registers(db, scope) {
+  const rows = (await db.query("SELECT id,name,module_id,workspace_modules,status FROM pos.cash_registers WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND status='ACTIVE' ORDER BY name,id", [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId])).rows;
+  const result = [];
+  for (const row of rows) {
+    try {
+      await authorizedModules(db, scope, row.workspace_modules);
+      result.push(row);
+    } catch (e) {
+      if (!(e instanceof ModuleAccessError)) throw e;
+    }
+  }
+  await moduleContext(db, scope, scope.moduleId);
+  return result;
+}
+async function openRegisterShift(db, scope, b) {
+  requireRegisterCapability(scope, "shift.open");
+  if (!ID.test(b.clientShiftId || "") || !Number.isFinite(b.initialCash) || b.initialCash < 0 || b.initialCash > 9999999999 || Math.abs(b.initialCash * 100 - Math.round(b.initialCash * 100)) > 1e-3) throw new RegisterError(400, "INVALID_SHIFT");
+  await clearRegisterBinding(db);
+  await db.query("SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE", [scope.outletId]);
+  let choices = await registers(db, scope), register = choices.find((r) => r.id === b.registerId);
+  if (b.registerId && !register) throw new RegisterError(403, "REGISTER_SCOPE_FORBIDDEN");
+  if (!register) {
+    if (choices.length > 1) throw new RegisterError(409, "EXPLICIT_REGISTER_REQUIRED");
+    register = choices[0];
+  }
+  if (!register) {
+    const mapped = (await db.query("SELECT id FROM pos.cash_registers WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[]", [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId])).rows.length;
+    throw new RegisterError(mapped ? 403 : 409, mapped ? "REGISTER_SCOPE_FORBIDDEN" : "REGISTER_CONFIGURATION_REQUIRED");
+  }
+  await authorizedModules(db, scope, register.workspace_modules);
+  await db.query("SELECT id FROM pos.cash_registers WHERE id=$1 FOR UPDATE", [register.id]);
+  const active = (await db.query("SELECT * FROM pos.shifts WHERE register_id=$1 AND status='OPEN' FOR UPDATE", [register.id])).rows[0];
+  if (active) {
+    if (scope.role === "CASHIER" && active.opened_by_user_id !== scope.actorRef) throw new RegisterError(409, "REGISTER_IN_USE");
+    if (active.client_shift_id !== b.clientShiftId && Number(b.initialCash) !== 0) throw new RegisterError(409, "REGISTER_ALREADY_OPEN");
+    return { shift: await registerSnapshot(db, scope, active), replayed: true };
+  }
+  if ((await db.query("SELECT id FROM pos.shifts WHERE tenant_id=$1 AND client_shift_id=$2", [scope.tenantId, b.clientShiftId])).rows.length) throw new RegisterError(409, "SHIFT_ALREADY_CLOSED");
+  const user = (await db.query("SELECT full_name FROM internal.users WHERE id::text=$1 AND is_active", [scope.actorRef])).rows[0];
+  const row = (await db.query(`INSERT INTO pos.shifts(tenant_id,merchant_id,outlet_id,register_id,client_shift_id,actor_name,opened_by_user_id,opening_cash,business_date,workspace_modules) VALUES($1,$2,$3,$4,$5,$6,$7,$8,(now() AT TIME ZONE 'Asia/Jakarta')::date,$9) RETURNING *`, [scope.tenantId, scope.merchantId, scope.outletId, register.id, b.clientShiftId, user.full_name, scope.actorRef, round(b.initialCash), register.workspace_modules])).rows[0];
+  await setBinding(db, register.id, row.id);
+  await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,shift_ref,actor_ref,actor_name) VALUES($1,$2,$3,$4,'OPENING',$5,'Modal awal shift','MODAL_AWAL',$6,$7,$8)`, [scope.tenantId, scope.merchantId, scope.outletId, "opening:" + row.id, round(b.initialCash), b.clientShiftId, scope.actorRef, user.full_name]);
+  await audit2(db, scope, "SHIFT_OPENED", { shiftId: row.id, registerId: register.id, moduleIds: row.workspace_modules, initialCash: round(b.initialCash) });
+  return { shift: await registerSnapshot(db, scope, row), replayed: false };
+}
+async function audit2(db, s, eventType, detail) {
+  await moduleContext(db, s, s.moduleId);
+  await writeActivity(db, { tenantId: s.tenantId, merchantId: s.merchantId, businessSector: s.sector, appModule: "POS", eventType, severity: "INFO", summary: eventType, detail });
+}
+async function financialTotals(db, s, moduleId, shiftId, day) {
+  await moduleContext(db, s, moduleId);
+  const p = [s.tenantId, s.merchantId, s.outletId, moduleId, shiftId, day];
+  const where = `t.tenant_id=$1 AND t.merchant_id=$2 AND t.outlet_id=$3 AND t.module_id=$4 AND ($5::uuid IS NULL OR t.register_shift_id=$5) AND ($6::date IS NULL OR t.created_at>=($6::date::timestamp AT TIME ZONE 'Asia/Jakarta') AND t.created_at<(($6::date+1)::timestamp AT TIME ZONE 'Asia/Jakarta'))`;
+  const revenue = (await db.query(`SELECT count(r.id)::int orders,COALESCE(sum(t.subtotal),0) gross_sales,COALESCE(sum(t.total_amount),0) gross_receivable,COALESCE(sum(r.total_amount),0) net_revenue,COALESCE(sum(r.refund_amount),0) refunds FROM pos.transactions t JOIN contract.merchant_revenue r ON r.id=t.id AND r.tenant_id=t.tenant_id WHERE ${where}`, p)).rows[0];
+  const payments = (await db.query(`SELECT p.payment_method,count(*)::int count,sum(p.amount) amount,COALESCE(sum(p.amount) FILTER(WHERE p.verification_origin='PROVIDER_VERIFIED'),0) provider_verified,COALESCE(sum(p.amount) FILTER(WHERE p.verification_origin<>'PROVIDER_VERIFIED'),0) unverified FROM pos.payments p JOIN pos.transactions t ON t.id=p.transaction_id AND t.tenant_id=p.tenant_id WHERE ${where} AND p.payment_status IN('PAID','SETTLED') GROUP BY p.payment_method ORDER BY p.payment_method`, p)).rows;
+  const pending = (await db.query(`SELECT count(*)::int count,COALESCE(sum(t.total_amount),0) amount FROM pos.transactions t WHERE ${where} AND NOT EXISTS(SELECT 1 FROM contract.merchant_revenue r WHERE r.id=t.id) AND t.order_status NOT IN('VOIDED','CANCELLED')`, p)).rows[0];
+  return { moduleId, grossSales: round(revenue.gross_sales), grossReceivable: round(revenue.gross_receivable), netRevenue: round(revenue.net_revenue), refunds: round(revenue.refunds), orderCount: revenue.orders, payments: payments.map((p2) => ({ method: p2.payment_method, count: p2.count, receipts: round(p2.amount), providerVerified: round(p2.provider_verified), unverified: round(p2.unverified) })), pendingOrders: pending.count, pendingAmount: round(pending.amount) };
+}
+async function registerSnapshot(db, s, row) {
+  if (row.status === "CLOSED") return row.summary;
+  await authorizedModules(db, s, row.workspace_modules);
+  const modules = [], cashRows = [];
+  for (const moduleId of row.workspace_modules) {
+    modules.push(await financialTotals(db, s, moduleId, row.id, null));
+    cashRows.push((await db.query(`SELECT count(*)::int count,COALESCE(sum(c.amount),0) balance,
+   COALESCE(sum(c.amount) FILTER(WHERE COALESCE(original.event_type,c.event_type)='OPENING'),0) opening,
+   COALESCE(sum(c.amount) FILTER(WHERE c.event_type='SALE'),0) sales,
+   COALESCE(-sum(c.amount) FILTER(WHERE c.event_type='REFUND'),0) refunds,
+   COALESCE(-sum(c.amount) FILTER(WHERE c.event_type='VOID'),0) voids,
+   COALESCE(sum(c.amount) FILTER(WHERE COALESCE(original.event_type,c.event_type)='CASH_IN'),0) cash_in,
+   COALESCE(-sum(c.amount) FILTER(WHERE COALESCE(original.event_type,c.event_type)='CASH_OUT'),0) cash_out,
+   md5(COALESCE(string_agg(c.id::text,',' ORDER BY c.id),'')) fingerprint
+   FROM pos.cash_ledger c LEFT JOIN pos.cash_ledger original ON c.event_type='REVERSAL' AND original.id::text=c.reference_id AND original.tenant_id=c.tenant_id
+   WHERE c.tenant_id=$1 AND c.merchant_id=$2 AND c.outlet_id=$3 AND c.module_id=$4 AND c.register_shift_id=$5`, [s.tenantId, s.merchantId, s.outletId, moduleId, row.id])).rows[0]);
+  }
+  await moduleContext(db, s, s.moduleId);
+  const sum = (field) => {
+    const cents = cashRows.reduce((n, r) => n + Math.round(Number(r[field] || 0) * 100), 0);
+    if (!Number.isSafeInteger(cents)) throw new RegisterError(503, "DRAWER_AMOUNT_TOO_LARGE");
+    return cents / 100;
+  };
+  const methods = modules.flatMap((m) => m.payments);
+  const method = (allowed) => round(methods.filter((p) => allowed.includes(p.method)).reduce((n, p) => n + p.receipts, 0));
+  const summary2 = {
+    id: row.client_shift_id,
+    serverShiftId: row.id,
+    registerId: row.register_id,
+    moduleIds: row.workspace_modules,
+    openedBy: row.opened_by_user_id,
+    cashierName: row.actor_name,
+    startTime: iso(row.opened_at),
+    businessDate: typeof row.business_date === "string" ? row.business_date.slice(0, 10) : iso(row.business_date).slice(0, 10),
+    timezone: "Asia/Jakarta",
+    status: row.status,
+    initialCash: sum("opening"),
+    cashSales: sum("sales"),
+    cashRefunds: sum("refunds"),
+    cashVoids: sum("voids"),
+    qrisSales: method(["QRIS", "QRIS_STATIC", "QRIS_DYNAMIC"]),
+    cardSales: method(["CARD", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD"]),
+    eWalletSales: method(["E_WALLET", "EWALLET", "GOPAY", "OVO", "DANA", "SHOPEEPAY"]),
+    grossSales: round(modules.reduce((n, m) => n + m.grossSales, 0)),
+    totalSales: round(modules.reduce((n, m) => n + m.netRevenue, 0)),
+    totalOrders: modules.reduce((n, m) => n + m.orderCount, 0),
+    totalCashIn: sum("cash_in"),
+    totalCashOut: sum("cash_out"),
+    expectedCash: sum("balance"),
+    modules,
+    ledgerEntries: cashRows.reduce((n, r) => n + r.count, 0),
+    canClose: scopeCanClose(s, row)
+  };
+  return { ...summary2, version: hash({ ...summary2, canClose: void 0, cashFingerprints: cashRows.map((r) => r.fingerprint) }) };
+}
+function scopeCanClose(s, row) {
+  return registerCapabilities(s.role).includes("shift.close") && (s.role !== "CASHIER" || row.opened_by_user_id === s.actorRef);
+}
+async function readRegisterShifts(db, s, registerId, historyCursor, historyLimit = 50) {
+  requireRegisterCapability(s, "shift.read");
+  requireRegisterCapability(s, "shift_history.read");
+  const limit = Number(historyLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new RegisterError(400, "INVALID_SHIFT_HISTORY_LIMIT");
+  const choices = await registers(db, s);
+  if (registerId !== void 0 && !choices.some((r) => r.id === registerId)) throw new RegisterError(403, "REGISTER_SCOPE_FORBIDDEN");
+  let cursor = null;
+  if (historyCursor !== void 0) {
+    try {
+      const decoded = JSON.parse(Buffer.from(String(historyCursor), "base64url").toString("utf8"));
+      if (!Array.isArray(decoded) || decoded.length !== 2 || !UUID2.test(decoded[1]) || !Number.isFinite(Date.parse(decoded[0]))) throw Error();
+      cursor = [decoded[0], decoded[1]];
+    } catch {
+      throw new RegisterError(400, "INVALID_SHIFT_HISTORY_CURSOR");
+    }
+  }
+  const params = [s.tenantId, s.merchantId, s.outletId, s.moduleId, registerId || null];
+  const activeRows = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND ($5::uuid IS NULL OR register_id=$5) AND status='OPEN' ORDER BY opened_at DESC,id DESC LIMIT 100", params)).rows;
+  const closedRows = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND ($5::uuid IS NULL OR register_id=$5) AND status='CLOSED' AND ($6::timestamptz IS NULL OR (opened_at,id)<($6::timestamptz,$7::uuid)) ORDER BY opened_at DESC,id DESC LIMIT $8", [...params, cursor?.[0] || null, cursor?.[1] || null, limit + 1])).rows;
+  const last = closedRows[Math.min(limit - 1, closedRows.length - 1)], nextHistoryCursor = closedRows.length > limit ? Buffer.from(JSON.stringify([iso(last.opened_at), last.id])).toString("base64url") : null;
+  const rows = [...activeRows, ...closedRows.slice(0, limit)];
+  const allowed = [];
+  for (const r of rows) {
+    try {
+      await authorizedModules(db, s, r.workspace_modules);
+      allowed.push(r);
+    } catch (e) {
+      if (!(e instanceof ModuleAccessError)) throw e;
+    }
+  }
+  const active = allowed.filter((r) => r.status === "OPEN");
+  const selected = registerId ? active.find((r) => r.register_id === registerId) : active.find((r) => r.opened_by_user_id === s.actorRef) || active[0];
+  const history = allowed.filter((r) => r.status === "CLOSED").slice(0, 100).map((r) => ({ ...r.summary, canClose: false }));
+  const events = history.length ? (await db.query(`SELECT id,shift_id,action,submission_id,actor_ref,reason,created_at FROM pos.shift_variance_events WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND shift_id=ANY($4::uuid[]) ORDER BY created_at,id`, [s.tenantId, s.merchantId, s.outletId, history.map((r) => r.serverShiftId)])).rows : [];
+  await moduleContext(db, s, s.moduleId);
+  return { shift: selected ? await registerSnapshot(db, s, selected) : null, history, registers: choices, varianceEvents: events, historyTruncated: !!nextHistoryCursor, nextHistoryCursor, capabilities: registerCapabilities(s.role) };
+}
+async function closeRegisterShift(db, s, b) {
+  requireRegisterCapability(s, "shift.close");
+  if (!ID.test(b.clientShiftId || "") || !UUID2.test(b.clientCloseId || "") || typeof b.expectedVersion !== "string" || !/^[a-f0-9]{64}$/.test(b.expectedVersion) || !Number.isFinite(b.actualCash) || b.actualCash < 0 || b.actualCash > 9999999999 || Math.abs(b.actualCash * 100 - Math.round(b.actualCash * 100)) > 1e-3 || typeof b.notes !== "string" || b.notes.length > 500) throw new RegisterError(400, "INVALID_SHIFT_CLOSE");
+  const first = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4", [s.tenantId, s.merchantId, s.outletId, b.clientShiftId])).rows[0];
+  if (!first?.workspace_modules) throw new RegisterError(409, "EXPLICIT_REGISTER_SHIFT_REQUIRED");
+  await authorizedModules(db, s, first.workspace_modules);
+  if (!scopeCanClose(s, first)) throw new RegisterError(403, "SHIFT_OPERATOR_REQUIRED");
+  await db.query("SELECT id FROM pos.cash_registers WHERE id=$1 FOR UPDATE", [first.register_id]);
+  const row = (await db.query("SELECT * FROM pos.shifts WHERE id=$1 FOR UPDATE", [first.id])).rows[0];
+  const command = { clientCloseId: b.clientCloseId, actualCash: round(b.actualCash), notes: b.notes.trim(), expectedVersion: b.expectedVersion };
+  if (row.status === "CLOSED") {
+    const same = (await db.query("SELECT close_command=$2::jsonb AS same FROM pos.shifts WHERE id=$1", [row.id, JSON.stringify(command)])).rows[0].same;
+    if (!same) throw new RegisterError(409, "SHIFT_CLOSE_CONFLICT");
+    return { shift: { ...row.summary, canClose: false }, replayed: true };
+  }
+  const current = await registerSnapshot(db, s, row);
+  if (current.version !== b.expectedVersion) throw new RegisterError(409, "DRAWER_CHANGED_RECOUNT_REQUIRED");
+  const difference = round(b.actualCash - current.expectedCash);
+  if (difference !== 0 && !command.notes) throw new RegisterError(400, "VARIANCE_EXPLANATION_REQUIRED");
+  const summary2 = { ...current, canClose: false, status: "CLOSED", endTime: (/* @__PURE__ */ new Date()).toISOString(), actualCash: command.actualCash, difference, notes: command.notes, closedBy: s.actorRef };
+  await db.query(`UPDATE pos.shifts SET status='CLOSED',closed_at=$2,closing_cash=$3,expected_cash=$4,cash_difference=$5,summary=$6::jsonb,notes=$7,closed_by_user_id=$8,close_command=$9::jsonb WHERE id=$1`, [row.id, summary2.endTime, summary2.actualCash, summary2.expectedCash, difference, JSON.stringify(summary2), command.notes, s.actorRef, JSON.stringify(command)]);
+  if (difference !== 0) await db.query(`INSERT INTO pos.shift_variance_events(tenant_id,merchant_id,outlet_id,shift_id,client_command_id,action,actor_ref,reason) VALUES($1,$2,$3,$4,$5,'SUBMIT',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, row.id, "close:" + b.clientCloseId, s.actorRef, command.notes]);
+  await audit2(db, s, "SHIFT_CLOSED", { shiftId: row.id, registerId: row.register_id, clientCloseId: b.clientCloseId, actualCash: summary2.actualCash, expectedCash: summary2.expectedCash, difference, notes: summary2.notes, moduleIds: row.workspace_modules });
+  return { shift: summary2, replayed: false };
+}
+function registerCashierFinanceRoutes(app, db) {
+  const run = (path, method, cap, fn) => app[method](path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const result = await db.tx(async (c) => {
+        if (method === "get") await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        return fn(c, await resolve(c, req, cap), req);
+      });
+      res.json({ ok: true, ...result, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    } catch (e) {
+      const known2 = e instanceof RegisterError || e instanceof ModuleAccessError || e instanceof BillingError;
+      if (!known2) console.error("[register-operations]", { message: e.message, code: e.code });
+      res.status(known2 ? e.status : 503).json({ ok: false, error: known2 ? e.message : "REGISTER_OPERATIONS_UNAVAILABLE" });
+    }
+  });
+  run("/api/v1/finance/outlet", "get", "outlet_revenue.read", async (c, s, req) => {
+    const requested = req.query.moduleIds === void 0 ? [s.moduleId] : String(req.query.moduleIds).split(",");
+    const ids = await authorizedModules(c, s, requested);
+    const day = String(req.query.businessDate || new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(/* @__PURE__ */ new Date()));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new RegisterError(400, "INVALID_BUSINESS_DATE");
+    const modules = [];
+    for (const moduleId of ids) modules.push(await financialTotals(c, s, moduleId, null, day));
+    await moduleContext(c, s, s.moduleId);
+    return { businessId: s.merchantId, outletId: s.outletId, businessDate: day, timezone: "Asia/Jakarta", from: day + "T00:00:00+07:00", to: new Date(Date.parse(day + "T00:00:00+07:00") + 864e5).toISOString(), modules, netRevenue: round(modules.reduce((n, m) => n + m.netRevenue, 0)), orderCount: modules.reduce((n, m) => n + m.orderCount, 0), capabilities: registerCapabilities(s.role) };
+  });
+  run("/api/v1/finance/registers", "get", "shift.read", async (c, s) => ({ registers: await registers(c, s) }));
+  run("/api/v1/finance/registers", "post", "register.configure", async (c, s, req) => {
+    const b = req.body, ids = await authorizedModules(c, s, b.moduleIds);
+    if (!ids.includes(s.moduleId) || typeof b.name !== "string" || !b.name.trim() || b.name.length > 100 || !UUID2.test(b.registerId || "")) throw new RegisterError(400, "INVALID_REGISTER");
+    await c.query("SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE", [s.outletId]);
+    const prev = (await c.query("SELECT * FROM pos.cash_registers WHERE id=$1 FOR UPDATE", [b.registerId])).rows[0];
+    if (prev && (prev.tenant_id !== s.tenantId || prev.merchant_id !== s.merchantId || prev.outlet_id !== s.outletId || !prev.workspace_modules)) throw new RegisterError(403, "REGISTER_SCOPE_FORBIDDEN");
+    if (prev) {
+      await authorizedModules(c, s, prev.workspace_modules);
+      if ((await c.query("SELECT id FROM pos.shifts WHERE register_id=$1 AND status='OPEN'", [prev.id])).rows.length) throw new RegisterError(409, "REGISTER_HAS_OPEN_SHIFT");
+    }
+    const row = (await c.query(`INSERT INTO pos.cash_registers(id,tenant_id,merchant_id,outlet_id,name,workspace_modules) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET name=excluded.name,workspace_modules=excluded.workspace_modules RETURNING id,name,workspace_modules`, [b.registerId, s.tenantId, s.merchantId, s.outletId, b.name.trim(), ids])).rows[0];
+    await audit2(c, s, "REGISTER_CONFIGURED", { registerId: row.id, moduleIds: ids, name: row.name });
+    return { register: row };
+  });
+  run("/api/v1/finance/shift/variance", "post", "shift_variance.submit", async (c, s, req) => {
+    const b = req.body;
+    if (!UUID2.test(b.shiftId || "") || !UUID2.test(b.clientCommandId || "") || !["SUBMIT", "APPROVE", "REJECT"].includes(b.action) || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500) throw new RegisterError(400, "INVALID_VARIANCE_REVIEW");
+    const row = (await c.query("SELECT * FROM pos.shifts WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE", [b.shiftId, s.tenantId, s.merchantId, s.outletId])).rows[0];
+    if (!row?.workspace_modules || row.status !== "CLOSED" || Number(row.cash_difference) === 0) throw new RegisterError(409, "VARIANCE_NOT_AVAILABLE");
+    await authorizedModules(c, s, row.workspace_modules);
+    if (b.action === "SUBMIT") {
+      if (s.role === "CASHIER" && row.opened_by_user_id !== s.actorRef) throw new RegisterError(403, "SHIFT_OPERATOR_REQUIRED");
+    } else requireRegisterCapability(s, "shift_variance.approve");
+    const events = (await c.query("SELECT * FROM pos.shift_variance_events WHERE shift_id=$1 ORDER BY created_at,id", [row.id])).rows;
+    const prior = events.find((e) => e.client_command_id === b.clientCommandId);
+    if (prior) {
+      if (prior.action !== b.action || prior.actor_ref !== s.actorRef || prior.reason !== b.reason.trim() || String(prior.submission_id || "") !== String(b.submissionId || "")) throw new RegisterError(409, "VARIANCE_COMMAND_CONFLICT");
+      return { event: prior, replayed: true };
+    }
+    const submission = events.filter((e) => e.action === "SUBMIT").at(-1);
+    const decision = submission && events.find((e) => e.submission_id === submission.id);
+    if (b.action === "SUBMIT" && submission && decision?.action !== "REJECT" || b.action !== "SUBMIT" && (!submission || decision || b.submissionId !== submission.id)) throw new RegisterError(409, "VARIANCE_REVIEW_CONFLICT");
+    const event = (await c.query("INSERT INTO pos.shift_variance_events(tenant_id,merchant_id,outlet_id,shift_id,client_command_id,action,submission_id,actor_ref,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *", [s.tenantId, s.merchantId, s.outletId, row.id, b.clientCommandId, b.action, b.action === "SUBMIT" ? null : submission.id, s.actorRef, b.reason.trim()])).rows[0];
+    await audit2(c, s, "SHIFT_VARIANCE_" + b.action, { shiftId: row.id, eventId: event.id, submissionId: event.submission_id, reason: event.reason, difference: Number(row.cash_difference) });
+    return { event, replayed: false };
+  });
+}
+
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
-var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
+import { createHash as createHash3, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+var scrypt = (pin, salt) => new Promise((resolve2, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve2(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
   constructor(status, code) {
@@ -4757,8 +5123,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -4874,58 +5240,9 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10${s.moduleId ? ",$11" : ""})`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash, ...s.moduleId ? [s.moduleId] : []]);
 }
 
-// services/pos/activity.ts
-var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
-var APP_MODULES2 = [
-  "POS",
-  "TABLES",
-  "INVENTORY",
-  "CUSTOMERS",
-  "REPORTS",
-  "AI",
-  "SETTINGS",
-  "SYNC",
-  "AUTH"
-];
-var SEVERITIES2 = ["INFO", "NOTICE", "WARNING", "CRITICAL"];
-var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function pick2(allowed, v) {
-  return typeof v === "string" && allowed.includes(v) ? v : null;
-}
-async function writeActivity(db, a) {
-  const sector = pick2(SECTORS2, a.businessSector);
-  const mod = pick2(APP_MODULES2, a.appModule);
-  if (!sector || !mod || !UUID_RE2.test(a.merchantId)) return null;
-  const { rows } = await db.query(
-    await hasSchemaFeature(db, "merchantActivityAppend") ? `SELECT internal.append_merchant_activity($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::uuid,$7::text,$8::text,$9::numeric,$10::text,$11::jsonb,$12::timestamptz) AS id` : `INSERT INTO internal.audit_logs
-       (merchant_id, tenant_id, domain,
-        event_type, severity, actor_id, actor_name, actor_role,
-        amount_idr, summary, detail, occurred_at)
-     VALUES ($1::uuid, $2::uuid, $3,
-             $4, $5, $6::uuid, $7, $8,
-             $9, $10, $11::jsonb, COALESCE($12::timestamptz, CURRENT_TIMESTAMP))
-     RETURNING id`,
-    [
-      a.merchantId,
-      a.tenantId && UUID_RE2.test(a.tenantId) ? a.tenantId : a.merchantId,
-      mod,
-      a.eventType.slice(0, 48),
-      pick2(SEVERITIES2, a.severity) ?? "INFO",
-      a.actorUserId && UUID_RE2.test(a.actorUserId) ? a.actorUserId : null,
-      a.actorName ?? null,
-      a.actorRole ?? null,
-      a.amountIdr ?? null,
-      a.summary.slice(0, 240),
-      JSON.stringify({ ...a.detail, businessSector: a.businessSector, businessId: a.businessId, transactionId: a.transactionId }),
-      a.occurredAt ?? null
-    ]
-  );
-  return rows[0]?.id ?? null;
-}
-
 // services/pos/finance.ts
-var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ID2 = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 var FinanceError = class extends Error {
   constructor(status, code) {
@@ -4943,10 +5260,10 @@ async function scopeFor(db, req) {
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
   if (input?.moduleId !== void 0) {
     const scope = await resolveWorkspaceScope(db, principal.subject, input, [req.path.endsWith("/reconciliation") ? "reports" : "pos"]);
-    if (req.method !== "GET" && !req.path.endsWith("/shift/open")) requireWorkspaceRole(scope, ["OWNER", "ADMIN", "MANAGER"]);
+    if (req.method !== "GET" && !req.path.endsWith("/shift/open") && !(req.path.endsWith("/shift/close") && await hasSchemaFeature(db, "cashierRegisters"))) requireWorkspaceRole(scope, ["OWNER", "ADMIN", "MANAGER"]);
     return { ...scope, sector: scope.sector };
   }
-  if (!SECTORS2.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
+  if (!SECTORS2.includes(sector) || !UUID3.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
   const row = (await db.query(`SELECT o.merchant_id,o.is_active FROM internal.outlets o JOIN internal.merchants m
@@ -4966,7 +5283,7 @@ async function scopeFor(db, req) {
 }
 async function applyRefund(db, scope, transactionId, command) {
   if (scope.moduleId && !["OWNER", "ADMIN", "MANAGER"].includes(scope.role || "")) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
-  if (!command || !ID.test(command.clientRefundId || "") || !["CASH", "ORIGINAL_METHOD"].includes(command.refundMethod) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 500 || !Array.isArray(command.items) || !command.items.length || command.items.length > 200)
+  if (!command || !ID2.test(command.clientRefundId || "") || !["CASH", "ORIGINAL_METHOD"].includes(command.refundMethod) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 500 || !Array.isArray(command.items) || !command.items.length || command.items.length > 200)
     throw new FinanceError(400, "INVALID_REFUND");
   const occurredAt = timestamp2(command.occurredAt || (/* @__PURE__ */ new Date()).toISOString());
   const { approvalGrant: unusedGrant, ...refundInput } = command;
@@ -4993,7 +5310,7 @@ async function applyRefund(db, scope, transactionId, command) {
   const seen = /* @__PURE__ */ new Set();
   let subtotal = 0, netItems = 0;
   const lines = normalized.items.map((item) => {
-    if (!ID.test(item.clientItemId || "") || seen.has(item.clientItemId) || !Number.isFinite(item.quantity) || item.quantity <= 0 || Math.abs(item.quantity * 1e3 - Math.round(item.quantity * 1e3)) > 1e-3)
+    if (!ID2.test(item.clientItemId || "") || seen.has(item.clientItemId) || !Number.isFinite(item.quantity) || item.quantity <= 0 || Math.abs(item.quantity * 1e3 - Math.round(item.quantity * 1e3)) > 1e-3)
       throw new FinanceError(400, "INVALID_REFUND_ITEM");
     seen.add(item.clientItemId);
     const line = rows.find((row) => row.client_item_id === item.clientItemId || row.id === item.clientItemId);
@@ -5043,11 +5360,13 @@ async function applyRefund(db, scope, transactionId, command) {
 }
 async function applyCashEvent(c, s, b) {
   if (s.moduleId && !["OWNER", "ADMIN", "MANAGER"].includes(s.role || "")) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
-  if (!ID.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
+  if (!ID2.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
     throw new FinanceError(400, "INVALID_CASH_EVENT");
+  if (s.moduleId && b.registerId && await hasSchemaFeature(c, "cashierRegisters")) await bindRegisterCash(c, s, b.registerId);
+  if (b.category === "KOREKSI_KAS" && !b.description.trim()) throw new FinanceError(400, "CORRECTION_REASON_REQUIRED");
   if (b.type === "CASH_OUT") await consumeFinancialApproval(c, s, "CASH_OUT", b.clientEventId, b, b.approvalGrant);
   const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp2(b.occurredAt);
-  const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
+  const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), ...b.registerId ? { registerId: b.registerId } : {}, recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
   const prev = (await c.query(`SELECT id,command=$2::jsonb AS same,outlet_id,to_jsonb(cash_ledger)->>'module_id' AS module_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3`, [s.tenantId, JSON.stringify(command), b.clientEventId])).rows[0];
   if (prev) {
     if (!prev.same || prev.outlet_id !== s.outletId || s.moduleId && prev.module_id !== s.moduleId) throw new FinanceError(409, "CASH_EVENT_ID_CONFLICT");
@@ -5060,12 +5379,13 @@ async function applyCashEvent(c, s, b) {
 }
 function registerFinanceRoutes(app, db) {
   registerFinancialApprovalRoutes(app, db, scopeFor);
+  registerCashierFinanceRoutes(app, db);
   const route = (path, run) => app.post(path, async (req, res) => {
     try {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
       res.json({ ok: true, ...result });
     } catch (error) {
-      const known2 = error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
+      const known2 = error instanceof RegisterError || error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
       if (!known2 && !(error instanceof FreePlanAccessError)) {
         const diagnostic = error;
         console.error("[finance] write failed", { route: path, code: diagnostic.code, constraint: diagnostic.constraint, column: diagnostic.column });
@@ -5095,22 +5415,24 @@ function registerFinanceRoutes(app, db) {
     try {
       const result = await db.tx(async (c) => {
         const s = await scopeFor(c, req);
+        if (s.moduleId && await hasSchemaFeature(c, "cashierRegisters")) return readRegisterShifts(c, s, req.query.registerId, req.query.historyCursor, req.query.historyLimit);
         const rows = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`, [s.tenantId, s.merchantId, s.outletId])).rows;
         const current = rows.find((r) => r.status === "OPEN");
         return { shift: current ? await calculateShift(c, s, current) : null, history: rows.filter((r) => r.status === "CLOSED").map((r) => r.summary).filter(Boolean) };
       });
       res.json({ ok: true, ...result, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (error) {
-      if (!(error instanceof FinanceError) && !(error instanceof BillingError)) {
+      if (!(error instanceof RegisterError) && !(error instanceof FinanceError) && !(error instanceof BillingError) && !(error instanceof ModuleAccessError)) {
         const diagnostic = error;
         console.error("[finance] shift read failed", { code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
       }
-      res.status(error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.message : "SHIFT_UNAVAILABLE" });
+      res.status(error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.message : "SHIFT_UNAVAILABLE" });
     }
   });
   route("/api/v1/finance/shift/open", async (c, s, req) => {
+    if (s.moduleId && await hasSchemaFeature(c, "cashierRegisters")) return openRegisterShift(c, s, req.body);
     const b = req.body;
-    if (!ID.test(b.clientShiftId || "") || !Number.isFinite(b.initialCash) || b.initialCash < 0 || b.initialCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
+    if (!ID2.test(b.clientShiftId || "") || !Number.isFinite(b.initialCash) || b.initialCash < 0 || b.initialCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
     await c.query("SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE", [s.outletId]);
     const active = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, [s.tenantId, s.outletId])).rows[0];
     if (active) return { shift: await calculateShift(c, s, active), replayed: true };
@@ -5125,8 +5447,9 @@ function registerFinanceRoutes(app, db) {
     return { shift: await calculateShift(c, s, row), replayed: false };
   });
   route("/api/v1/finance/shift/close", async (c, s, req) => {
+    if (s.moduleId && await hasSchemaFeature(c, "cashierRegisters")) return closeRegisterShift(c, s, req.body);
     const b = req.body;
-    if (!ID.test(b.clientShiftId || "") || !Number.isFinite(b.actualCash) || b.actualCash < 0 || b.actualCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
+    if (!ID2.test(b.clientShiftId || "") || !Number.isFinite(b.actualCash) || b.actualCash < 0 || b.actualCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
     const row = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.clientShiftId])).rows[0];
     if (!row) throw new FinanceError(409, "SHIFT_NOT_FOUND");
     if (row.status === "CLOSED") {
@@ -5150,7 +5473,7 @@ function registerFinanceRoutes(app, db) {
   });
   route("/api/v1/finance/cash/reverse", async (c, s, req) => {
     const b = req.body;
-    if (!ID.test(b.clientEventId || "") || !ID.test(b.originalEventId || "") || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500) throw new FinanceError(400, "INVALID_CASH_REVERSAL");
+    if (!ID2.test(b.clientEventId || "") || !ID2.test(b.originalEventId || "") || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500) throw new FinanceError(400, "INVALID_CASH_REVERSAL");
     await consumeFinancialApproval(c, s, "CASH_REVERSE", b.originalEventId, b, b.approvalGrant);
     const original = (await c.query(`SELECT * FROM pos.cash_ledger WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_event_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.originalEventId])).rows[0];
     if (!original || s.moduleId && original.module_id !== s.moduleId || !["CASH_IN", "CASH_OUT", "OPENING"].includes(original.event_type)) throw new FinanceError(409, "CASH_EVENT_NOT_REVERSIBLE");
@@ -5225,8 +5548,8 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
 }
 
 // services/pos/workspaceIdentity.ts
-import { createHash as createHash3 } from "node:crypto";
-var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash3("sha256").update(moduleId + "\0" + recordId).digest("hex");
+import { createHash as createHash4 } from "node:crypto";
+var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash4("sha256").update(moduleId + "\0" + recordId).digest("hex");
 
 // services/pos/workspaceInventory.ts
 async function workspaceProduct(c, s, recordId, lock = false) {
@@ -5267,9 +5590,9 @@ function registerWorkspaceInventoryRoutes(app, db) {
         for (const moduleId of new Set(b.lines.map((l) => l.moduleId || b.moduleId))) await resolveWorkspaceScope(c, principal.subject, { ...b, moduleId }, ["inventory"]);
         if (b.action === "TRANSFER") await resolveWorkspaceScope(c, principal.subject, { ...b, outletId: b.destinationOutletId }, ["inventory"]);
         await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
-        const hash = commandHash(b), prior = (await c.query("SELECT * FROM pos.workspace_commands WHERE tenant_id=$1 AND command_id=$2", [initial.tenantId, b.commandId])).rows[0];
+        const hash2 = commandHash(b), prior = (await c.query("SELECT * FROM pos.workspace_commands WHERE tenant_id=$1 AND command_id=$2", [initial.tenantId, b.commandId])).rows[0];
         if (prior) {
-          if (prior.actor_ref !== principal.subject || prior.request_hash !== hash || prior.merchant_id !== initial.merchantId) throw new ModuleAccessError(409, "STOCK_COMMAND_ID_CONFLICT");
+          if (prior.actor_ref !== principal.subject || prior.request_hash !== hash2 || prior.merchant_id !== initial.merchantId) throw new ModuleAccessError(409, "STOCK_COMMAND_ID_CONFLICT");
           return { ...prior.result, replayed: true };
         }
         if (b.action === "TRANSFER" && (b.lines.some((l) => l.moduleId && l.moduleId !== b.moduleId) || b.destinationOutletId === b.outletId)) throw new ModuleAccessError(400, "INVALID_TRANSFER_SCOPE");
@@ -5308,7 +5631,7 @@ function registerWorkspaceInventoryRoutes(app, db) {
         }
         await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
         const result2 = { commandId: b.commandId, action: b.action, lineCount: b.lines.length, moduleIds: [...scopes.keys()], expenses, financialRecorded: expenses.length > 0, replayed: false };
-        await c.query("INSERT INTO pos.workspace_commands(tenant_id,merchant_id,command_id,actor_ref,request_hash,result) VALUES($1,$2,$3,$4,$5,$6)", [initial.tenantId, initial.merchantId, b.commandId, principal.subject, hash, result2]);
+        await c.query("INSERT INTO pos.workspace_commands(tenant_id,merchant_id,command_id,actor_ref,request_hash,result) VALUES($1,$2,$3,$4,$5,$6)", [initial.tenantId, initial.merchantId, b.commandId, principal.subject, hash2, result2]);
         return result2;
       });
       res.setHeader("Cache-Control", "no-store");
@@ -5959,6 +6282,12 @@ function registerWorkspaceStateRoutes(app, db) {
     FROM(SELECT * FROM(SELECT t.*,sum(quantity_delta) OVER(PARTITION BY inventory_item_id,location_id ORDER BY created_at,id) AS running FROM pos.inventory_transactions t WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4) history ORDER BY created_at DESC,id DESC LIMIT 2000) l LEFT JOIN pos.products p ON p.inventory_item_id=l.inventory_item_id AND p.tenant_id=$1 AND p.merchant_id=$2 AND p.module_id=$4 WHERE 'inventory_logs'=ANY($6::text[])
    ) snapshot WHERE kind||chr(1)||record_id>$7 ORDER BY kind,record_id LIMIT 1001`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, scope.namespace, kinds, cursor, scope.transportRef, scope.sector])).rows;
         const version = (await c.query(`SELECT md5(COALESCE((SELECT string_agg(kind||record_id||revision::text||deleted::text,'|' ORDER BY kind,record_id) FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND kind=ANY($5::text[])),'')||COALESCE((SELECT string_agg(id::text||workspace_revision::text,'|' ORDER BY id) FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$4),'')||COALESCE((SELECT string_agg(id::text||current_stock::text,'|' ORDER BY id) FROM pos.inventory_balances WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4),'')) AS version`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, kinds])).rows[0].version;
+        if (scope.role === "CASHIER") {
+          for (const row of rows) if (row.kind === "products") {
+            row.value = { ...row.value, costPrice: 0 };
+            delete row.value.recipeIngredients;
+          }
+        }
         const more = rows.length > 1e3;
         if (more) rows.pop();
         if (!cursor && kinds.includes("users")) {
@@ -6131,7 +6460,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -6160,7 +6489,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID4.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -6180,12 +6509,12 @@ function registerPrivacyRoutes(app, db) {
 }
 
 // services/pos/reports.ts
-var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
 var money3 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
-var iso = (value) => new Date(String(value)).toISOString();
+var iso2 = (value) => new Date(String(value)).toISOString();
 var ReportRequestError = class extends Error {
   constructor(status, code) {
     super(code);
@@ -6207,11 +6536,11 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID5.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const moduleId = stringQuery(query.moduleId, "MODULE_ID");
   const merchantId = stringQuery(query.merchantId ?? query.businessId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID5.test(merchantId) || tenantId && !UUID5.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -6251,7 +6580,7 @@ async function scopeFor2(db, subject, filter) {
   if (filter.moduleId) {
     const s = await resolveWorkspaceScope(db, subject, { businessId: filter.merchantId, outletId: filter.outletId, moduleId: filter.moduleId }, [filter.operational ? "pos" : "reports"]);
     if (filter.tenantId && filter.tenantId !== s.tenantId) throw new ReportRequestError(403, "REPORT_SCOPE_FORBIDDEN");
-    return { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, sector: s.sector, from: filter.from, to: filter.to, timezone: filter.timezone };
+    return { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, role: s.role, sector: s.sector, from: filter.from, to: filter.to, timezone: filter.timezone };
   }
   const { rows } = await db.query(
     `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector
@@ -6396,7 +6725,7 @@ function cashMovement(row) {
     category: row.category || (row.event_type === "OPENING" ? "MODAL_AWAL" : numeric(row.amount) < 0 ? "PENGELUARAN_LAIN" : "PENDAPATAN_LAIN"),
     amount: Math.abs(numeric(row.amount)),
     description: row.note || row.event_type,
-    timestamp: iso(row.occurred_at),
+    timestamp: iso2(row.occurred_at),
     cashierName: row.actor_name || row.actor_ref || "Kasir",
     shiftId: row.shift_ref || void 0,
     recipientOrSource: row.recipient_or_source || void 0
@@ -6522,7 +6851,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID4.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID5.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -6560,7 +6889,7 @@ async function serverTransactions(db, subject, filter, cursor, limit = 100) {
       invoiceNumber: row.invoice_number,
       orderNumber: 0,
       branchId: row.outlet_id,
-      date: iso(row.created_at),
+      date: iso2(row.created_at),
       orderType: row.order_type,
       subtotal: numeric(row.subtotal),
       discountTotal: numeric(row.discount_amount),
@@ -6571,12 +6900,12 @@ async function serverTransactions(db, subject, filter, cursor, limit = 100) {
       paymentStatus: ["VOIDED", "CANCELLED"].includes(row.order_status) ? "CANCELLED" : row.recognized_revenue !== null ? "PAID" : "PENDING",
       cashierName: row.cashier_name || "Kasir",
       shiftId: row.client_shift_id || row.shift_id || "",
-      ...tenders.some((t) => t.transaction_id === row.id) ? { paymentTenders: tenders.filter((t) => t.transaction_id === row.id).map((t) => ({ clientPaymentId: t.client_payment_id, method: t.payment_method, amount: numeric(t.amount), createdAt: iso(t.created_at) })) } : {},
+      ...tenders.some((t) => t.transaction_id === row.id) ? { paymentTenders: tenders.filter((t) => t.transaction_id === row.id).map((t) => ({ clientPaymentId: t.client_payment_id, method: t.payment_method, amount: numeric(t.amount), createdAt: iso2(t.created_at) })) } : {},
       status: ["VOIDED", "CANCELLED"].includes(row.order_status) ? "VOID" : ["OPEN", "PENDING_PAYMENT", "IN_FULFILLMENT"].includes(row.order_status) ? "HOLD" : "COMPLETED",
       serverOrderStatus: row.order_status,
       refundTotal: numeric(row.refund_total),
       recognizedRevenue: row.recognized_revenue === null ? null : numeric(row.recognized_revenue),
-      recognizedCOGS: row.recognized_cogs === null ? null : numeric(row.recognized_cogs),
+      ...!scope.moduleId || scope.role !== "CASHIER" ? { recognizedCOGS: row.recognized_cogs === null ? null : numeric(row.recognized_cogs) } : {},
       syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
       items: items.filter((i) => i.transaction_id === row.id).map((i) => ({
         id: i.client_item_id || i.id,
@@ -6584,7 +6913,7 @@ async function serverTransactions(db, subject, filter, cursor, limit = 100) {
         productId: i.product_ref || i.product_id,
         name: i.product_name,
         unitPrice: numeric(i.unit_price),
-        unitCost: numeric(i.unit_cost),
+        ...!scope.moduleId || scope.role !== "CASHIER" ? { unitCost: numeric(i.unit_cost) } : {},
         quantity: numeric(i.quantity),
         discountPercent: 0,
         discountAmount: 0,
@@ -6599,7 +6928,7 @@ async function serverTransactions(db, subject, filter, cursor, limit = 100) {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       scope,
       transactions,
-      nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ createdAt: iso(last.created_at), id: last.id })).toString("base64url") : null
+      nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ createdAt: iso2(last.created_at), id: last.id })).toString("base64url") : null
     };
   });
 }
@@ -6672,7 +7001,7 @@ function invalidTransaction(x) {
   return null;
 }
 function perSaleRejection(error) {
-  if (error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
+  if (error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String(error?.code || "");
   if (/^(22|23)/.test(code)) return "REJECTED_BY_DATABASE:" + (error.constraint || code);
   return null;
@@ -7010,7 +7339,13 @@ function registerSyncRoutes(app, db) {
         const syncOne = async (x, clientId) => {
           if (workspace) {
             if (x.branchId && x.branchId !== workspace.outletId || x.workspace && ["tenantId", "merchantId", "outletId", "moduleId", "actorRef"].some((f) => x.workspace[f] !== workspace[f])) throw new FinanceError(403, "IMMUTABLE_WORKSPACE_MISMATCH");
-            if (x.shiftId && !(await c.query("SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)", [tenantId, merchantId, outletId, workspace.moduleId, x.shiftId])).rows.length) throw new FinanceError(403, "SHIFT_WORKSPACE_MISMATCH");
+            if (await hasSchemaFeature(c, "cashierRegisters")) {
+              await clearRegisterBinding(c);
+              const recorded = (await c.query("SELECT id,client_shift_id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4", [tenantId, merchantId, outletId, clientId])).rows[0];
+              if (x.shiftId && !recorded) await bindRegisterSale(c, workspace, x.shiftId);
+              if (!x.shiftId && !recorded) throw new RegisterError(409, "EXPLICIT_REGISTER_SHIFT_REQUIRED");
+              if (recorded && x.shiftId && recorded.client_shift_id !== x.shiftId) throw new FinanceError(409, "TRANSACTION_SHIFT_IMMUTABLE");
+            } else if (x.shiftId && !(await c.query("SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)", [tenantId, merchantId, outletId, workspace.moduleId, x.shiftId])).rows.length) throw new FinanceError(403, "SHIFT_WORKSPACE_MISMATCH");
             if (x.paymentStatus === "CANCELLED" && !["OWNER", "ADMIN", "MANAGER"].includes(workspace.role)) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
             const lineSubtotal = x.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
             if (Math.abs(lineSubtotal - x.subtotal) > 0.011 || Math.abs(x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0) - x.totalAmount) > 0.011) throw new FinanceError(400, "TRANSACTION_TOTAL_MISMATCH");

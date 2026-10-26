@@ -17,7 +17,7 @@ export interface BusinessModuleManifest {
   limitations: readonly string[];
   adapter: 'sector-native';
 }
-export type ModuleGrant = { id: BusinessModuleId; permissions: string[]; features: string[]; tenantOwner?: boolean; workspaceVersion?: number;expiresAt?:string };
+export type ModuleGrant = { id: BusinessModuleId; permissions: string[]; features: string[]; capabilities?: string[]; tenantOwner?: boolean; workspaceVersion?: number;expiresAt?:string };
 export type ModuleAccess = { enabled: boolean; offlineExpiresAt?:number;businessId: string; outletId: string; modules: ModuleGrant[] };
 /** V2 labor and AI workflows remain closed until their canonical acceptance passes. */
 export const acceptedWorkspaceFeatures = (features: string[], version?: number) => version === 2

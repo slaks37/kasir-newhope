@@ -83,7 +83,7 @@ export function parseReportFilter(query: Request['query']): ReportFilter {
 }
 
 async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<ReportScope> {
-  if(filter.moduleId){const s=await resolveWorkspaceScope(db,subject,{businessId:filter.merchantId,outletId:filter.outletId,moduleId:filter.moduleId},[filter.operational?'pos':'reports']);if(filter.tenantId&&filter.tenantId!==s.tenantId)throw new ReportRequestError(403,'REPORT_SCOPE_FORBIDDEN');return {tenantId:s.tenantId,merchantId:s.merchantId,outletId:s.outletId,moduleId:s.moduleId,sector:s.sector,from:filter.from,to:filter.to,timezone:filter.timezone};}
+  if(filter.moduleId){const s=await resolveWorkspaceScope(db,subject,{businessId:filter.merchantId,outletId:filter.outletId,moduleId:filter.moduleId},[filter.operational?'pos':'reports']);if(filter.tenantId&&filter.tenantId!==s.tenantId)throw new ReportRequestError(403,'REPORT_SCOPE_FORBIDDEN');return {tenantId:s.tenantId,merchantId:s.merchantId,outletId:s.outletId,moduleId:s.moduleId,role:s.role,sector:s.sector,from:filter.from,to:filter.to,timezone:filter.timezone};}
   // The browser selects a branch; ownership and both parent IDs are resolved in SQL.
   // Historical reports remain readable after a branch is deactivated.
   const { rows } = await db.query(`SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector
@@ -329,9 +329,9 @@ export async function serverTransactions(db: Db, subject: string, filter: Report
       ...(tenders.some(t=>t.transaction_id===row.id)?{paymentTenders:tenders.filter(t=>t.transaction_id===row.id).map(t=>({clientPaymentId:t.client_payment_id,method:t.payment_method as PaymentMethod,amount:numeric(t.amount),createdAt:iso(t.created_at)}))}:{}),
       status:['VOIDED','CANCELLED'].includes(row.order_status)?'VOID':['OPEN','PENDING_PAYMENT','IN_FULFILLMENT'].includes(row.order_status)?'HOLD':'COMPLETED',
       serverOrderStatus:row.order_status,refundTotal:numeric(row.refund_total),
-      recognizedRevenue:row.recognized_revenue===null?null:numeric(row.recognized_revenue),recognizedCOGS:row.recognized_cogs===null?null:numeric(row.recognized_cogs),syncedAt:new Date().toISOString(),
+      recognizedRevenue:row.recognized_revenue===null?null:numeric(row.recognized_revenue),...(!scope.moduleId||scope.role!=='CASHIER'?{recognizedCOGS:row.recognized_cogs===null?null:numeric(row.recognized_cogs)}:{}),syncedAt:new Date().toISOString(),
       items:items.filter(i=>i.transaction_id===row.id).map(i=>({id:i.client_item_id || i.id,selectedModifiers:[],productId:i.product_ref || i.product_id,
-        name:i.product_name,unitPrice:numeric(i.unit_price),unitCost:numeric(i.unit_cost),quantity:numeric(i.quantity),
+        name:i.product_name,unitPrice:numeric(i.unit_price),...(!scope.moduleId||scope.role!=='CASHIER'?{unitCost:numeric(i.unit_cost)}:{}),quantity:numeric(i.quantity),
         discountPercent:0,discountAmount:0,totalPrice:numeric(i.total_price),refundedQuantity:numeric(i.refunded_quantity)})),
     }));
     const last=page[page.length-1];
