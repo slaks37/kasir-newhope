@@ -225,3 +225,17 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz) TO svc_pos;
+-- PostgreSQL17's existing UUIDv7 compatibility function needs only nextval.
+-- Qualify its sequence so SECURITY DEFINER callers can keep an empty search_path.
+-- Existing UUIDs and sequence state are never rewritten/reset; PostgreSQL18 native UUIDv7 is untouched.
+DO $$ DECLARE definition text;service text; BEGIN
+ IF to_regclass('public.uuidv7_counter') IS NOT NULL AND to_regprocedure('public.uuidv7()') IS NOT NULL THEN
+  SELECT pg_get_functiondef('public.uuidv7()'::regprocedure) INTO definition;
+  definition:=replace(definition,'nextval(''uuidv7_counter'')','nextval(''public.uuidv7_counter'')');
+  EXECUTE definition;
+  ALTER FUNCTION public.uuidv7() SET search_path=pg_catalog;
+  FOREACH service IN ARRAY ARRAY['svc_pos','svc_billing','svc_internal','svc_ai'] LOOP
+   EXECUTE format('GRANT USAGE ON SEQUENCE public.uuidv7_counter TO %I',service);
+  END LOOP;
+ END IF;
+END $$;

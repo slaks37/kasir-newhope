@@ -37,6 +37,8 @@ try{
  await admin.query("INSERT INTO billing.plans(id,name,tier_level,billing_cycle,price_idr,features) VALUES('plan-pro-monthly','Fixture',3,'MONTHLY',299000,'[]')");
  await admin.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end) VALUES($1,$2,'plan-pro-monthly','ACTIVE',now(),now()+interval '30 days')",[randomUUID(),tenant]);
  const internal=await asService('svc_internal'),billing=await asService('svc_billing'),pos=await asService('svc_pos');
+ for(const service of [internal,billing,pos])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
+ assert.equal((await pos.query("SELECT has_sequence_privilege(current_user,'public.uuidv7_counter','USAGE') AS usage,has_sequence_privilege(current_user,'public.uuidv7_counter','UPDATE') AS reset")).rows[0].reset,false,'POS cannot reset the UUID counter');
  const context=async(db:Db,tid:string,mid:string,fn:(c:Db)=>Promise<void>)=>db.tx(async c=>{await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tid,mid]);await fn(c);});
  for(const [tid,mid]of[[tenant,merchant],[otherTenant,otherMerchant]])await context(internal,tid,mid,async c=>{await c.query("INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis) VALUES($1,$2,'fnb',true,true)",[tid,mid]);});
  await context(billing,tenant,merchant,async c=>{await c.query("INSERT INTO billing.module_entitlements(tenant_id,merchant_id,module_id,enabled,features,expires_at,grant_reference) VALUES($1,$2,'fnb',true,ARRAY['overview','pos','tables','reports'],now()+interval '1 day','approved-synthetic-rehearsal')",[tenant,merchant]);});
