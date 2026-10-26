@@ -5004,8 +5004,8 @@ async function readRegisterShifts(db, s, registerId, historyCursor, historyLimit
   }
   const params = [s.tenantId, s.merchantId, s.outletId, s.moduleId, registerId || null];
   const activeRows = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND ($5::uuid IS NULL OR register_id=$5) AND status='OPEN' ORDER BY opened_at DESC,id DESC LIMIT 100", params)).rows;
-  const closedRows = (await db.query("SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND ($5::uuid IS NULL OR register_id=$5) AND status='CLOSED' AND ($6::timestamptz IS NULL OR (opened_at,id)<($6::timestamptz,$7::uuid)) ORDER BY opened_at DESC,id DESC LIMIT $8", [...params, cursor?.[0] || null, cursor?.[1] || null, limit + 1])).rows;
-  const last = closedRows[Math.min(limit - 1, closedRows.length - 1)], nextHistoryCursor = closedRows.length > limit ? Buffer.from(JSON.stringify([iso(last.opened_at), last.id])).toString("base64url") : null;
+  const closedRows = (await db.query("SELECT *,opened_at::text AS cursor_opened_at FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND workspace_modules @> ARRAY[$4]::text[] AND ($5::uuid IS NULL OR register_id=$5) AND status='CLOSED' AND ($6::timestamptz IS NULL OR (opened_at,id)<($6::timestamptz,$7::uuid)) ORDER BY opened_at DESC,id DESC LIMIT $8", [...params, cursor?.[0] || null, cursor?.[1] || null, limit + 1])).rows;
+  const last = closedRows[Math.min(limit - 1, closedRows.length - 1)], nextHistoryCursor = closedRows.length > limit ? Buffer.from(JSON.stringify([last.cursor_opened_at, last.id])).toString("base64url") : null;
   const rows = [...activeRows, ...closedRows.slice(0, limit)];
   const allowed = [];
   for (const r of rows) {

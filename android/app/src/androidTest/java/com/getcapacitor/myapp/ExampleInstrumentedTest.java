@@ -21,6 +21,8 @@ public class ExampleInstrumentedTest {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
-        assertEquals("com.getcapacitor.app", appContext.getPackageName());
+        assertEquals("space.newhope.kasir", appContext.getPackageName());
+        assertEquals(0, appContext.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP);
+        assertFalse(android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted());
     }
 }
