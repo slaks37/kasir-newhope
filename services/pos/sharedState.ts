@@ -58,7 +58,7 @@ class StateConflict extends Error {
 
 type Operation = { kind: string; recordId: string; baseRevision: number; value: unknown; deleted: boolean;owner?:string;sector?:string };
 
-function validOperations(value: unknown): Operation[] | null {
+export function validOperations(value: unknown,workspace=false): Operation[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
   const seen = new Set<string>();
   const operations: Operation[] = [];
@@ -91,7 +91,7 @@ function validOperations(value: unknown): Operation[] | null {
         'logoUrl' in settings || 'registeredTerminalId' in settings) return null;
     }
     if(r.kind==='order_operations'&&!r.deleted){
-      const allowed=new Set<string>(ORDER_OPERATION_FIELDS);
+      const allowed=new Set<string>([...ORDER_OPERATION_FIELDS,...(workspace?['tenantId','businessId','businessSector','moduleId','outletId','branchId']:[])]);
       if(Object.keys(r.value as object).some(key=>!allowed.has(key)))return null;
       if((r.value as Record<string,unknown>).id!==r.recordId)return null;
     }

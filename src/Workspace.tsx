@@ -476,6 +476,6 @@ export function Workspace({userId,onGoToHome,onLogout}:{userId:string;onGoToHome
   return <WorkspaceBusinessProvider key={userId}><ModuleWorkspaceGate><SelectedWorkspace onGoToHome={onGoToHome} onLogout={onLogout}/></ModuleWorkspaceGate></WorkspaceBusinessProvider>;
 }
 function SelectedWorkspace({onGoToHome,onLogout}:{onGoToHome:()=>void;onLogout:()=>void}){
-  const {business,outletId}=useWorkspaceBusiness();
-  return <POSProvider key={business.businessId+':'+(outletId||'')}><Suspense fallback={<TabLoading/>}><POSAppContent onGoToHome={onGoToHome} onLogout={onLogout}/></Suspense></POSProvider>;
+  const {business,outletId}=useWorkspaceBusiness();const runtime=useBusinessModule();
+  return <POSProvider key={business.businessId+':'+(outletId||'')+':'+(runtime?.grant.workspaceVersion===2?runtime.manifest.id:'legacy')}><Suspense fallback={<TabLoading/>}><POSAppContent onGoToHome={onGoToHome} onLogout={onLogout}/></Suspense></POSProvider>;
 }

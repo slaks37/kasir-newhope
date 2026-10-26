@@ -1,5 +1,5 @@
 import type { BusinessSector, CashMovement } from '../../types';
-import type { SyncStatus, SyncTarget } from './queue';
+import {financialWorkspaceKey,type FinancialWorkspace,type SyncStatus,type SyncTarget} from './queue';
 import { legacyFinancialHolds } from './legacyHold';
 
 const PREFIX = 'newhope_cash_outbox_';
@@ -20,7 +20,7 @@ export type CashCommand = (
   | { action: 'reverse'; body: CashReversal }
   | { action: 'refund'; body: { sector:BusinessSector;outletId:string;clientEventId:string;clientTxnId:string;
       refund:{approvalGrant?:string;clientRefundId:string;occurredAt:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>} } }
-) & { legacyMigration?: { sourceKey: string; fingerprint: string; originalBranchRef?: string } };
+) & { workspace?:FinancialWorkspace;legacyMigration?: { sourceKey: string; fingerprint: string; originalBranchRef?: string } };
 
 function fingerprint(command: CashCommand): string {
   const canonical = (v: any): any => Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object'
@@ -60,6 +60,7 @@ export function getCashSyncStatus(businessId: string): SyncStatus {
   catch (error) { return { ...current, pending: 1, inFlight: false, failures: Math.max(1, current.failures), lastError: error instanceof Error ? error.message : 'LOCAL_CASH_QUEUE_READ_FAILED' }; }
 }
 export function enqueueCashCommand(businessId: string, command: CashCommand): void {
+  if(businessId.startsWith('workspace:v2:')&&(!command.workspace||financialWorkspaceKey(command.workspace)!==businessId||command.body.outletId!==command.workspace.outletId))throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
   const rows = read(businessId);
   const existing = rows.find(row => row.body.clientEventId === command.body.clientEventId);
   if (existing && fingerprint(existing) !== fingerprint(command)) throw new Error('CASH_EVENT_ID_CONFLICT');
@@ -92,7 +93,7 @@ export function enqueueLegacyCashCommand(businessId: string, sourceKey: string, 
   } else enqueueCashCommand(businessId, marked);
 }
 export async function flushCashQueue(target: SyncTarget, force = false): Promise<SyncStatus> {
-  const businessId = target.businessId;
+  const businessId = target.queueId||target.businessId;
   if (flushing.has(businessId)) return getCashSyncStatus(businessId);
   let rows: CashCommand[];
   let held:Set<string>;
@@ -109,9 +110,11 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
   try {
     for (const command of rows.filter(command=>!command.legacyMigration||!held.has(command.body.clientEventId)).slice(0, 100)) {
       if (!UUID.test(command.body.outletId)) continue;
+      if(target.workspace&&(!command.workspace||financialWorkspaceKey(command.workspace)!==businessId||command.body.outletId!==target.workspace.outletId))throw Error('WORKSPACE_CASH_QUEUE_MISMATCH');
+      if(!target.workspace&&command.workspace)throw Error('EXPLICIT_WORKSPACE_REQUIRED');
       if (command.body.sector !== target.sector) throw new Error('CASH_SCOPE_MISMATCH');
       const response = await fetch(`/api/v1/finance/${command.action === 'reverse' ? 'cash/reverse' : command.action}`, {
-        method: 'POST', signal:AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command.body),
+        method: 'POST', signal:AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({...command.body,...(command.workspace?{businessId:command.workspace.merchantId,moduleId:command.workspace.moduleId}: {})}),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.ok) throw new Error(data?.error ? `${data.error} (HTTP ${response.status})` : `HTTP ${response.status}`);

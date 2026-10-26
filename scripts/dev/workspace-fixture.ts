@@ -13,6 +13,8 @@ import {ensureSubscription} from '../../services/billing/engine';
 import {pastikanPaket} from '../../services/billing/store';
 import {SAAS_PLANS} from '../../src/config/saasPlans';
 
+const isolated=process.argv.includes('--isolated');if(isolated)process.env.NEW_HOPE_MODULE_WORKSPACES='1';
+const cashier=randomUUID(),outletC=randomUUID();
 const pg=new PGlite(),owner=randomUUID(),tenant=randomUUID(),businessA=randomUUID(),businessB=randomUUID(),outletA=randomUUID(),outletB=randomUUID();
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows||0};},exec:async sql=>{await runner.exec(sql);},tx:async fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
 const db=wrap(pg);
@@ -21,44 +23,63 @@ const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',.
 for(const file of files)await pg.exec(fs.readFileSync(file,'utf8'));
 await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
 for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort())await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+if(isolated)await pg.exec(fs.readFileSync('migrations/0067_workspace_isolation.sql','utf8'));
 await pastikanPaket(db,SAAS_PLANS);
 await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,'fixture@localhost.invalid','Fixture Owner')",[owner]);
 await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref,owner_user_id) VALUES($1,'Browser fixture',$2::text,$2::uuid)",[tenant,owner]);
 await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref) VALUES($1,$3,'Laundry Alpha','LAUNDRY',$4),($2,$3,'Laundry Beta','LAUNDRY',$5)",[businessA,businessB,tenant,owner+'_LAUNDRY',owner+'_business_'+randomUUID()]);
-await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$3,$4,'BSD Alpha'),($2,$3,$5,'Serpong Beta')",[outletA,outletB,tenant,businessA,businessB]);
+await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$3,$4,'BSD Alpha'),($2,$3,$5,'Serpong Beta')",[outletA,outletB,tenant,businessA,isolated?businessA:businessB]);
 await ensureSubscription(db,tenant);
+if(isolated){
+ await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,'cashier@fixture.invalid','Independent Cashier')",[cashier]);
+ await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'Sibling outlet')",[outletC,tenant,businessB]);
+ await db.query("INSERT INTO internal.memberships(user_id,tenant_id,merchant_id,outlet_id,scope_type,role) VALUES($1,$2,$3,$4,'OUTLET','CASHIER')",[cashier,tenant,businessA,outletB]);
+ for(const merchant of [businessA,businessB])for(const moduleId of ['retail','barber']){
+  await db.query('INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis,workspace_version) VALUES($1,$2,$3,true,true,2)',[tenant,merchant,moduleId]);
+  await db.query("INSERT INTO billing.module_entitlements(tenant_id,merchant_id,module_id,enabled,features,expires_at,grant_reference) VALUES($1,$2,$3,true,ARRAY['overview','pos','tables','inventory','reports','settings','customers','labor'],now()+interval '1 day','synthetic-browser-only')",[tenant,merchant,moduleId]);
+ }
+}
 const records=new Map<string,unknown[]>();
 const nativeFetch=globalThis.fetch;
 globalThis.fetch=((input:any,init?:RequestInit)=>{const u=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);if(!['127.0.0.1','localhost'].includes(u.hostname))throw Error('FIXTURE_REMOTE_FETCH_DENIED');return nativeFetch(input,init);}) as typeof fetch;
 const servers:any[]=[];
 for(const device of ['A','B']){
+  const subject=isolated&&device==='B'?cashier:owner,selectedOutlet=isolated&&device==='B'?outletB:outletA;
   const app=express(),metrics:Array<{method:string;path:string;ms:number;bytes:number;status:number}>=[];
   app.use(express.json());
-  app.use((req,res,next)=>{if(req.path.startsWith('/api/')){const start=performance.now();let bytes=0;const write=res.write.bind(res),end=res.end.bind(res);res.write=((chunk:any,...args:any[])=>{if(chunk)bytes+=Buffer.byteLength(chunk);return (write as any)(chunk,...args);}) as any;res.end=((chunk:any,...args:any[])=>{if(chunk)bytes+=Buffer.byteLength(chunk);return (end as any)(chunk,...args);}) as any;res.once('finish',()=>metrics.push({method:req.method,path:req.originalUrl,ms:performance.now()-start,bytes,status:res.statusCode}));}req.headers['x-auth-sub']=owner;next();});
+  app.use((req,res,next)=>{if(req.path.startsWith('/api/')){const start=performance.now();let bytes=0;const write=res.write.bind(res),end=res.end.bind(res);res.write=((chunk:any,...args:any[])=>{if(chunk)bytes+=Buffer.byteLength(chunk);return (write as any)(chunk,...args);}) as any;res.end=((chunk:any,...args:any[])=>{if(chunk)bytes+=Buffer.byteLength(chunk);return (end as any)(chunk,...args);}) as any;res.once('finish',()=>metrics.push({method:req.method,path:req.originalUrl,ms:performance.now()-start,bytes,status:res.statusCode}));}req.headers['x-auth-sub']=subject;next();});
   app.get('/__fixture/metrics',(_req,res)=>res.json({device,requests:metrics,ids:{owner,tenant,businessA,businessB,outletA,outletB}}));
   app.post('/__fixture/reset',(_req,res)=>{metrics.length=0;res.json({ok:true});});
   app.post('/__fixture/browser-metrics',(req,res)=>{records.set(device,req.body);console.log('BROWSER_METRICS',device,JSON.stringify(req.body));res.json({ok:true});});
   registerBillingRoutes(app,db,true,async()=>{throw Error('FIXTURE_PAYMENTS_DISABLED');});
   registerSyncRoutes(app,db);
   app.use('/api',(_req,res)=>res.status(404).json({ok:false,error:'FIXTURE_API_NOT_IMPLEMENTED'}));
-  const session={user:{id:owner,email:'fixture@localhost.invalid',role:'authenticated',created_at:new Date().toISOString(),user_metadata:{full_name:'Fixture Owner',store_name:'Laundry Alpha',business_sector:'LAUNDRY'},app_metadata:{provider:'email'}},session:{access_token:'fixture-only',expires_at:Math.floor(Date.now()/1000)+3600}};
-  const seed=`if(!localStorage.getItem('nhpos_local_session')){localStorage.setItem('nhpos_local_session',${JSON.stringify(JSON.stringify(session))});localStorage.setItem('newhope_workspace_selection_v1_${owner}',${JSON.stringify(JSON.stringify({businessId:businessA,outletId:outletA}))});}`;
-  const vite=await createViteServer({root:process.cwd(),envDir:path.join('/private/tmp','newhope-fixture-no-env'),define:{'import.meta.env.VITE_SUPABASE_URL':JSON.stringify(''),'import.meta.env.VITE_SUPABASE_ANON_KEY':JSON.stringify('')},server:{middlewareMode:true,hmr:false,watch:null},appType:'custom'});
+  const session={user:{id:subject,email:'fixture@localhost.invalid',role:'authenticated',created_at:new Date().toISOString(),user_metadata:{full_name:isolated&&device==='B'?'Independent Cashier':'Fixture Owner',store_name:'Laundry Alpha',business_sector:'LAUNDRY'},app_metadata:{provider:'email'}},session:{access_token:'fixture-only',expires_at:Math.floor(Date.now()/1000)+3600}};
+  const seed=`if(!localStorage.getItem('nhpos_local_session')){localStorage.setItem('nhpos_local_session',${JSON.stringify(JSON.stringify(session))});localStorage.setItem('newhope_workspace_selection_v1_${subject}',${JSON.stringify(JSON.stringify({businessId:businessA,outletId:selectedOutlet}))});}`;
+  const vite=await createViteServer({root:process.cwd(),envDir:path.join('/private/tmp','newhope-fixture-no-env'),define:{'import.meta.env.VITE_MODULE_WORKSPACES':JSON.stringify(isolated?'1':'0'),'import.meta.env.VITE_SUPABASE_URL':JSON.stringify(''),'import.meta.env.VITE_SUPABASE_ANON_KEY':JSON.stringify('')},server:{middlewareMode:true,hmr:false,watch:null},appType:'custom'});
   app.use(vite.middlewares);
   app.use(async(req,res,next)=>{if(req.method!=='GET')return next();try{
     const html=await vite.transformIndexHtml(req.originalUrl,`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS isolated fixture ${device}</title></head><body><div id="root"></div><script>${seed}</script><script type="module" src="/scripts/dev/workspace-fixture-entry.tsx"></script></body></html>`);
     res.type('html').send(html);
   }catch(error){next(error);}});
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));servers.push({server,vite});
-  console.log(`FIXTURE_${device}=http://127.0.0.1:${(server.address() as any).port}/pos`);
+  console.log(`FIXTURE_${device}=http://127.0.0.1:${(server.address() as any).port}${isolated?'/app/'+businessA+'/'+selectedOutlet+'/retail/'+(device==='A'?'inventory':'pos'):'/pos'}`);
 }
 // Same product ID, different merchant projection. Use the actual HTTP sync API.
 const origin='http://127.0.0.1:'+(servers[0].server.address() as any).port;
+if(isolated){
+ for(const moduleId of ['retail','barber']){
+  const response=await fetch(origin+'/api/v1/sync/modules/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId,operations:[{kind:'products',recordId:'same-product',baseRevision:0,deleted:false,value:{id:'same-product',name:moduleId==='retail'?'Retail Shampoo':'Barber Haircut',price:10000,costPrice:3000,stock:0,categoryId:'fixture-category',type:moduleId==='retail'?'PRODUCT':'SERVICE',unit:'pcs',isAvailable:true}},{kind:'categories',recordId:'fixture-category',baseRevision:0,deleted:false,value:{id:'fixture-category',name:moduleId==='retail'?'Retail products':'Barber services'}}]})});if(!response.ok)throw Error(await response.text());
+ }
+ const receive=await fetch(origin+'/api/v1/sync/modules/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId:'retail',action:'RECEIVE',commandId:randomUUID(),lines:[{productRef:'same-product',quantity:20}]})});if(!receive.ok)throw Error(await receive.text());
+ const transfer=await fetch(origin+'/api/v1/sync/modules/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId:'retail',action:'TRANSFER',commandId:randomUUID(),destinationOutletId:outletB,lines:[{productRef:'same-product',quantity:5}]})});if(!transfer.ok)throw Error(await transfer.text());
+}else{
 for(const [businessId,outletId,name] of [[businessA,outletA,'Laundry Alpha Wash'],[businessB,outletB,'Laundry Beta Wash']]){
   const r=await fetch(origin+'/api/v1/sync/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:'LAUNDRY',businessId,outletId,operations:[
     {kind:'categories',recordId:'cat-test',baseRevision:0,deleted:false,value:{id:'cat-test',name:'Layanan'}},
     {kind:'products',recordId:'same-product',baseRevision:0,deleted:false,value:{id:'same-product',name,price:10000,costPrice:3000,stock:100,categoryId:'cat-test',type:'SERVICE',unit:'pcs',isAvailable:true}},
   ]})});if(!r.ok)throw Error(await r.text());
+}
 }
 console.log('FIXTURE_READY — isolated data only; stop with Ctrl-C.');
 const stop=async()=>{for(const {server,vite} of servers){await new Promise<void>(resolve=>server.close(()=>resolve()));await vite.close();}await pg.close();process.exit(0);};

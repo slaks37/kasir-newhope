@@ -23,7 +23,7 @@ const pg = new PGlite();
 const wrap = (runner: any): Db => ({ query: async (sql, params) => { const r = await runner.query(sql, params); return { rows: r.rows, rowCount: r.affectedRows || r.rows.length }; }, exec: async sql => { await runner.exec(sql); }, tx: async fn => pg.transaction(c => fn(wrap(c))), close: () => pg.close() });
 const db = wrap(pg);
 const owner = randomUUID(), outsider = randomUUID(), cashier = randomUUID(), manager = randomUUID(), tenant = randomUUID(), otherTenant = randomUUID();
-const files = ['migrations/0001_compat.sql', 'schema.sql', 'schema_hybrid_pos.sql', ...fs.readdirSync('migrations').filter(f => /^\d{4}_.*\.sql$/.test(f) && !['0001_compat.sql','0063_module_assignments.sql'].includes(f)).sort().map(f => 'migrations/' + f)];
+const files = ['migrations/0001_compat.sql', 'schema.sql', 'schema_hybrid_pos.sql', ...fs.readdirSync('migrations').filter(f => /^\d{4}_.*\.sql$/.test(f) && !['0001_compat.sql','0063_module_assignments.sql','0067_workspace_isolation.sql'].includes(f)).sort().map(f => 'migrations/' + f)];
 await pg.exec('CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;');
 for (const file of files) await pg.exec(fs.readFileSync(file, 'utf8'));
 for (const file of fs.readdirSync('supabase/migrations').filter(f => f.endsWith('_business_scoped_operational_state.sql')).sort()) await pg.exec(fs.readFileSync('supabase/migrations/' + file, 'utf8'));
@@ -73,6 +73,7 @@ try {
   await pg.exec(fs.readFileSync('migrations/0063_module_assignments.sql', 'utf8'));
   await pg.exec(fs.readFileSync('migrations/0063_module_assignments.sql', 'utf8'));
   await pg.exec(fs.readFileSync('migrations/0064_membership_tenant_reference.sql', 'utf8'));
+  await pg.exec(fs.readFileSync('migrations/0067_workspace_isolation.sql','utf8'));
   resetSchemaFeatureCache();
   assert.equal((await get('access', fnb)).data.modules.length, 0, 'No assignment or entitlement is inferred from sector');
   for (const [moduleId, scope] of scopes) {

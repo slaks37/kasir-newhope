@@ -55,7 +55,7 @@ async function main(){
   await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'FNB outlet')",[randomUUID(),client,fnb]);
   for(const id of [retail,carwash,business])await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name,is_active) VALUES($1,$2,$3,'Historical outlet',false)",[randomUUID(),client,id]);
   await db.query("INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,command) VALUES($1,$2,$3,'financial-fixture','CASH_IN',28000,$4::jsonb)",[client,business,outlet,JSON.stringify({eventId:'financial-fixture',amount:28000})]);
-  await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,deleted,recovery_value,quarantine_reason) VALUES($1,$2,'LAUNDRY','products','prod-ld-12',null,true,$3::jsonb,'RECOVERY_FIXTURE')",[client,business,JSON.stringify({id:'prod-ld-12',name:'Preserved recovery',sector:'LAUNDRY'})]);
+  await db.query("INSERT INTO pos.shared_state_records(tenant_id,merchant_id,scope,kind,record_id,value,deleted,recovery_value,quarantine_reason) VALUES($1,$2::uuid,'BUSINESS:'||$2::text,'products','prod-ld-12',null,true,$3::jsonb,'RECOVERY_FIXTURE')",[client,business,JSON.stringify({id:'prod-ld-12',name:'Preserved recovery',sector:'LAUNDRY'})]);
   const before=await financialSnapshot();
   const app=express();app.use(express.json());registerAdminRoutes(app,async()=>db,async req=>principals[String(req.headers.authorization||'').replace('Bearer ','')]||null,provider);
   app.use((err:any,_req:any,res:any,_next:any)=>res.status(500).json({ok:false,error:'BOUNDARY_FAILURE'}));

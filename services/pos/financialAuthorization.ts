@@ -104,9 +104,9 @@ export function registerFinancialApprovalRoutes(app:Express,db:Db,scopeFor:(c:Db
     if(!await verifyFinancialPin(pin,row.pin_hash))return failure(c,s);
     const token=randomBytes(32).toString('base64url');
     await c.query(`INSERT INTO pos.financial_approval_grants
-      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
-      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
-      [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,reason.trim(),commandHash(command)]);
+      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at${s.moduleId?',module_id':''})
+      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds'${s.moduleId?',$10':''})`,
+      [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,reason.trim(),commandHash(command),...(s.moduleId?[s.moduleId]:[])]);
     return {approvalGrant:token,expiresInSeconds:90,approverRef:s.actorRef};
   });
 }
@@ -114,15 +114,16 @@ export function registerFinancialApprovalRoutes(app:Express,db:Db,scopeFor:(c:Db
  * A consumed grant allows only exact idempotent retries; changed commands fail.
  */
 export async function consumeFinancialApproval(c:Db,s:FinancialScope,action:string,reference:string,command:unknown,token:unknown){
+  if(s.moduleId&&!['OWNER','ADMIN','MANAGER'].includes(s.role||''))throw new FinancialApprovalError(403,'WORKSPACE_ROLE_FORBIDDEN');
   if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_REQUIRED');
   const row=(await c.query(`SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
     AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
     AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
     [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,commandHash(command)])).rows[0];
-  if(!row||(!row.consumed_at&&Date.parse(row.expires_at)<=Date.now()))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_INVALID_OR_EXPIRED');
+  if(!row||s.moduleId&&row.module_id!==s.moduleId||(!row.consumed_at&&Date.parse(row.expires_at)<=Date.now()))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_INVALID_OR_EXPIRED');
   if(row.consumed_at)return;
   await c.query('UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1',[row.token_hash]);
   await c.query(`INSERT INTO pos.financial_authorization_audit
-    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[s.tenantId,s.merchantId,s.outletId,s.actorRef,row.approver_ref,action,reference,row.reason,row.command_hash,row.token_hash]);
+    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash${s.moduleId?',module_id':''})
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10${s.moduleId?',$11':''})`,[s.tenantId,s.merchantId,s.outletId,s.actorRef,row.approver_ref,action,reference,row.reason,row.command_hash,row.token_hash,...(s.moduleId?[s.moduleId]:[])]);
 }

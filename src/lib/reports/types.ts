@@ -48,6 +48,7 @@ export interface TodayMetrics {
 }
 
 export interface ReportScope {
+  moduleId?:string;
   tenantId: string;
   merchantId: string;
   outletId: string;

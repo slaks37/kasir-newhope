@@ -17,8 +17,8 @@ export interface BusinessModuleManifest {
   limitations: readonly string[];
   adapter: 'sector-native';
 }
-export type ModuleGrant = { id: BusinessModuleId; permissions: string[]; features: string[]; tenantOwner?: boolean };
-export type ModuleAccess = { enabled: boolean; businessId: string; outletId: string; modules: ModuleGrant[] };
+export type ModuleGrant = { id: BusinessModuleId; permissions: string[]; features: string[]; tenantOwner?: boolean; workspaceVersion?: number;expiresAt?:string };
+export type ModuleAccess = { enabled: boolean; offlineExpiresAt?:number;businessId: string; outletId: string; modules: ModuleGrant[] };
 export function isBusinessModuleId(value: unknown): value is BusinessModuleId {
   return typeof value === 'string' && (MODULE_IDS as readonly string[]).includes(value);
 }

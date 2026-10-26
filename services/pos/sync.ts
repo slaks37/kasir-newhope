@@ -1,3 +1,9 @@
+import {registerWorkspaceInventoryRoutes,workspaceProduct,lockWorkspaceStock} from './workspaceInventory';
+import {resolveWorkspaceScope} from './workspaceScope';
+import {ModuleAccessError} from './modules';
+import {commandHash} from './financialAuthorization';
+import {ensureInventoryLocation} from './inventoryLocation';
+import {registerWorkspaceStateRoutes} from './workspaceState';
 import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 /**
  * Jembatan dari aplikasi kasir (localStorage) ke database.
@@ -40,22 +46,6 @@ const MAX_BATCH = 500;
 class SyncAccessError extends Error {}
 class ProductLimitError extends Error {}
 
-async function ensureInventoryLocation(db: Db, tenantId: string, merchantId: string, outletId: string): Promise<string> {
-  const existing=await db.query(`SELECT id FROM pos.inventory_locations
-    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_primary AND is_active
-    ORDER BY created_at,id LIMIT 1`,[tenantId,merchantId,outletId]);
-  if(existing.rows.length)return existing.rows[0].id;
-  await db.query(`INSERT INTO pos.inventory_locations
-    (id,tenant_id,merchant_id,outlet_id,name,is_primary,is_active)
-    VALUES(uuidv7(),$1,$2,$3,'Gudang Utama',true,true)
-    ON CONFLICT(outlet_id,name) DO NOTHING`,[tenantId,merchantId,outletId]);
-  const created=await db.query(`SELECT id FROM pos.inventory_locations
-    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_active
-    ORDER BY is_primary DESC,created_at,id LIMIT 1`,[tenantId,merchantId,outletId]);
-  if(!created.rows.length)throw new BillingError(409,'INVENTORY_LOCATION_REQUIRED');
-  return created.rows[0].id;
-}
-
 async function assertBusinessCanBeClaimed(db: Db, businessId: string, ownerSubject: string,sector?:string): Promise<{id:string;tenant_id:string}|null> {
   if (ownerSubject === 'local-development') return null;
   const { rows } = await db.query(
@@ -90,6 +80,8 @@ interface SyncItem {
 }
 
 interface SyncTxn {
+  workspace?:{tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string};
+  branchId?:string;
   approvalGrant?:string;
   voidReason?:string;
   tenders?: import('./tenders').TenderCommand[];
@@ -143,16 +135,20 @@ export function invalidTransaction(x: SyncTxn): string | null {
 
 /** Deterministic per-sale failures are quarantined; anything else fails the batch so it is retried. */
 function perSaleRejection(error: unknown): string | null {
-  if (error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
+  if (error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String((error as { code?: string })?.code || '');
   if (/^(22|23)/.test(code)) return 'REJECTED_BY_DATABASE:' + ((error as { constraint?: string }).constraint || code);
   return null;
 }
 
+const workspaceSaleHash=(x:SyncTxn)=>{const {tenders,refunds,paymentStatus,approvalGrant,voidReason,voidedAt,...immutable}=x;return commandHash(immutable);};
+
 const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_invoice_per_tenant']);
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerModuleRoutes(app,db);
+  registerWorkspaceStateRoutes(app,db);
+  registerWorkspaceInventoryRoutes(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -201,7 +197,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       });
       return res.json({ok:true,...result});
     } catch (error) {
-      return res.status(error instanceof BillingError||error instanceof BusinessScopeError ? error.status : 500).json({ok:false,error:error instanceof BillingError||error instanceof BusinessScopeError ? error.message : 'BUSINESS_SETUP_FAILED'});
+      return res.status(error instanceof BillingError || error instanceof ModuleAccessError||error instanceof BusinessScopeError ? error.status : 500).json({ok:false,error:error instanceof BillingError || error instanceof ModuleAccessError||error instanceof BusinessScopeError ? error.message : 'BUSINESS_SETUP_FAILED'});
     }
   });
   // A receipt logo belongs to a business unit, never to the browser or owner account.
@@ -211,6 +207,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const businessId = str(req.query.businessId, 96);
     if (!principal) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
     if (!businessId) return res.status(400).json({ ok: false, error: 'BUSINESS_ID_REQUIRED' });
+    if(req.query.moduleId!==undefined){try{const logo=await db.tx(async c=>{const scope=await resolveWorkspaceScope(c,principal.subject,req.query);return (await c.query('SELECT logo_url FROM internal.merchants WHERE id=$1',[scope.merchantId])).rows[0]?.logo_url||null;});res.setHeader('Cache-Control','no-store');return res.json({ok:true,logoUrl:logo});}catch(e){return res.status(e instanceof ModuleAccessError?e.status:503).json({ok:false,error:e instanceof ModuleAccessError?e.message:'LOGO_UNAVAILABLE'});}}
     if (!(await canAccessBusiness(db, principal, businessId))) return res.status(403).json({ ok: false, error: 'BUSINESS_NOT_OWNED' });
     const { rows } = await db.query('SELECT logo_url FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)', [businessId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'BUSINESS_NOT_FOUND' });
@@ -288,16 +285,22 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
     try {
       const out = await db.tx(async (c) => {
-        const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef,sector);
+        const workspace=body.moduleId!==undefined?await resolveWorkspaceScope(c,ownerRef,body,['pos']):null;
+        if(workspace&&workspace.sector!==sector)throw new ModuleAccessError(400,'WORKSPACE_SECTOR_MISMATCH');
+        const receiptKey=workspace&&idemKey?'workspace:'+commandHash([workspace.tenantId,workspace.merchantId,workspace.outletId,workspace.moduleId,ownerRef,idemKey]):idemKey;
+        const requestHash=workspace?commandHash(body):null;
+        if(workspace&&receiptKey)await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[receiptKey]);
+        const claimedBusiness = workspace?{id:workspace.merchantId,tenant_id:workspace.tenantId}:await assertBusinessCanBeClaimed(c, businessId, ownerRef,sector);
+        if(!workspace&&claimedBusiness)await authorizeNativeModule(c,ownerRef,claimedBusiness.id,requestedOutletId,[['pos']]);
         // Batch yang persis sama pernah diterima? Jawab dengan hasil lama.
         const storesOutcomes = await hasSchemaFeature(c, 'syncReceiptOutcomes');
-        if (idemKey) {
+        if (receiptKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate${storesOutcomes ? ', outcomes' : ''} FROM pos.sync_receipts WHERE idempotency_key = $1`,
-            [idemKey]
+            `SELECT business_id, rows_accepted, rows_duplicate${workspace?',outlet_id,module_id,actor_ref,request_hash':''}${storesOutcomes ? ', outcomes' : ''} FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            [receiptKey]
           );
           if (prev.rows.length) {
-            if (prev.rows[0].business_id !== businessId) throw new BillingError(409, 'IDEMPOTENCY_KEY_CONFLICT');
+            if (prev.rows[0].business_id !== businessId||workspace&&(prev.rows[0].outlet_id!==workspace.outletId||prev.rows[0].module_id!==workspace.moduleId||prev.rows[0].actor_ref!==ownerRef||prev.rows[0].request_hash!==requestHash)) throw new BillingError(409, 'IDEMPOTENCY_KEY_CONFLICT');
             return {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
@@ -310,11 +313,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         }
 
         /* -- MODEL B: TENANT -> MERCHANT -> OUTLET ------------------------- */
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        const freeScope = workspace?null:await resolveFreeSyncScope(c, ownerRef, sector);
         let tenantId: string;
         let merchantId: string;
         let outletId: string;
-        if (freeScope) {
+        if(workspace){tenantId=workspace.tenantId;merchantId=workspace.merchantId;outletId=workspace.outletId;}else if (freeScope) {
           // An older selected Free outlet can have a merchant without a
           // transport alias. Its verified FK is sufficient for legacy delivery,
           // but must not rekey that merchant or choose another same-sector one.
@@ -367,8 +370,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         }
         const defaultInventoryLocationId=await ensureInventoryLocation(c,tenantId,merchantId,outletId);
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tenantId,merchantId]);
-        await authorizeNativeModule(c,ownerRef,merchantId,outletId,[['pos']]);
-        const financialScope={tenantId,merchantId,outletId,sector:sector as Sector,actorRef:ownerRef};
+        if(!workspace)await authorizeNativeModule(c,ownerRef,merchantId,outletId,[['pos']]);
+        const financialScope={tenantId,merchantId,outletId,sector:sector as Sector,actorRef:ownerRef,...(workspace?{moduleId:workspace.moduleId,role:workspace.role}:{})};
 
         /* -- STAF & PRODUK -------------------------------------------------- */
         const cashierCache = new Map<string, string>();
@@ -381,6 +384,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
 
         const resolveCashier = async (ref: string | null, name: string | null, role: string | null) => {
+          if(workspace){
+            if(cashierCache.has(ownerRef))return cashierCache.get(ownerRef)!;
+            await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1 ON CONFLICT(id) DO NOTHING`,[tenantId]);
+            const projection=(await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref) SELECT public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text),$1::uuid,left(u.full_name,100),'ws_'||replace(public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text)::text,'-',''),$3,$4,u.id::text FROM internal.users u WHERE u.id::text=$2 AND is_active ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role RETURNING id`,[tenantId,ownerRef,randomBytes(32).toString('hex'),workspace.role==='OWNER'?'ADMIN':workspace.role])).rows[0];
+            if(!projection)throw new ModuleAccessError(403,'AUTHENTICATED_STAFF_REQUIRED');cashierCache.set(ownerRef,projection.id);return projection.id;
+          }
           const free=await freePlanState(c,tenantId);
           if(free.free) {
             if(ref!==free.ownerId) throw new SyncAccessError('FREE_OWNER_ONLY');
@@ -427,6 +436,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         };
 
         const resolveProduct = async (i: SyncItem) => {
+          if(workspace){const p=await workspaceProduct(c,workspace,i.productRef||'',true);if(!p.is_available)throw new FinanceError(409,'PRODUCT_UNAVAILABLE');productCache.set(i.productRef!,p.id);return p.id;}
           assertFreeScope(await freePlanState(c,tenantId),sector,[i.productRef || '']);
           const key = i.productRef || i.productName;
           if (!key) return null;
@@ -483,6 +493,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
         const syncOne = async (x: SyncTxn, clientId: string) => {
 
+          if(workspace){
+            if(x.branchId&&x.branchId!==workspace.outletId||x.workspace&&(['tenantId','merchantId','outletId','moduleId','actorRef'] as const).some(f=>x.workspace![f]!==workspace[f]))throw new FinanceError(403,'IMMUTABLE_WORKSPACE_MISMATCH');
+            if(x.shiftId&&!(await c.query('SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)',[tenantId,merchantId,outletId,workspace.moduleId,x.shiftId])).rows.length)throw new FinanceError(403,'SHIFT_WORKSPACE_MISMATCH');
+            if(x.paymentStatus==='CANCELLED'&&!['OWNER','ADMIN','MANAGER'].includes(workspace.role))throw new FinanceError(403,'WORKSPACE_ROLE_FORBIDDEN');
+            const lineSubtotal=x.items.reduce((sum,i)=>sum+i.unitPrice*i.quantity,0);if(Math.abs(lineSubtotal-x.subtotal)>0.011||Math.abs((x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0))-x.totalAmount)>0.011)throw new FinanceError(400,'TRANSACTION_TOTAL_MISMATCH');
+          }
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
             str(x.cashierName, 100),
@@ -513,9 +529,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
                 business_sector, business_id, app_module, order_type, invoice_number,
-                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at)
+                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at${workspace?',module_id,module_command_hash':''})
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP))
+                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP)${workspace?',$24,$25':''})
              ON CONFLICT (tenant_id, client_txn_id) WHERE client_txn_id IS NOT NULL
                DO NOTHING
              RETURNING id`,
@@ -543,6 +559,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               x.cancelledAt ?? (isVoid ? x.createdAt : null),
               x.voidedAt ?? null,
               x.createdAt ?? null,
+              ...(workspace?[workspace.moduleId,workspaceSaleHash(x)]:[]),
             ]
           );
           // A receipt number collision (two devices, same short number) must not
@@ -564,6 +581,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           if (!ins.rows.length) {
             duplicates++;
             const original=(await c.query(`SELECT * FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2 FOR UPDATE`,[tenantId,clientId])).rows[0];
+            if(workspace&&original&&(original.module_id!==workspace.moduleId||original.outlet_id!==outletId||paymentStatus!=='CANCELLED'&&original.module_command_hash!==workspaceSaleHash(x)))throw new FinanceError(409,'TRANSACTION_ID_CONFLICT');
             if(!original || original.merchant_id!==merchantId || (paymentStatus!=='CANCELLED'&&original.outlet_id!==outletId) ||
               Number(original.total_amount)!==total || Number(original.subtotal)!==subtotal)
               throw new FinanceError(409,'TRANSACTION_ID_CONFLICT');
@@ -689,12 +707,12 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 [tenantId,merchantId,outletId,'payment:'+payment.rows[0].id,total,txnId,ownerRef,x.createdAt||null]);
           });
 
-          for (const i of x.items) {
+          for (const i of (workspace?[...x.items].sort((a,b)=>(a.productRef||'').localeCompare(b.productRef||'')):x.items)) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
             const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
-            const unitCost = Math.max(0, num(i.unitCost));
+            const unitCost = workspace?Number((await c.query('SELECT cost_price FROM pos.products WHERE id=$1',[productId])).rows[0].cost_price):Math.max(0, num(i.unitCost));
             const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
             await c.query(
               `INSERT INTO pos.transaction_items
@@ -733,6 +751,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
              *    pos.transactions (L280), loop ini tidak dimasuki sama sekali
              */
             if (!isVoid) {
+              if(workspace){const p=await workspaceProduct(c,workspace,i.productRef||'',true);const stock=await lockWorkspaceStock(c,workspace,p);if(stock&&stock.quantity<qty)throw new FinanceError(409,'INSUFFICIENT_STOCK_REQUIRES_REVIEW');}
               await c.query(
                 `INSERT INTO pos.inventory_transactions
                    (id, tenant_id, merchant_id, outlet_id, location_id,
@@ -787,7 +806,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                                         rows_accepted, rows_duplicate, outcomes)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
+            [receiptKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
           );
         } else if (idemKey && !rejected.length && !renumbered.length) {
           // Before migration 0054 a receipt cannot carry per-sale outcomes. Store it only when
@@ -797,9 +816,11 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates]
+            [receiptKey, tenantId, businessId, accepted, duplicates]
           );
         }
+
+        if(workspace&&receiptKey)await c.query('UPDATE pos.sync_receipts SET outlet_id=$2,module_id=$3,actor_ref=$4,request_hash=$5 WHERE idempotency_key=$1',[receiptKey,outletId,workspace.moduleId,ownerRef,requestHash]);
 
         if (accepted > 0) {
           await writeActivity(c, {
@@ -820,7 +841,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
 
       res.json({ ok: true, ...out });
     } catch (err) {
-      if(err instanceof FinanceError) return res.status(err.status).json({ok:false,error:err.message});
+      if(err instanceof ModuleAccessError||err instanceof FinanceError) return res.status(err.status).json({ok:false,error:err.message});
       if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});
       if(err instanceof BillingError) return res.status(err.status).json({ok:false,error:err.message});
       console.error('[sync] gagal:', (err as Error).message);
@@ -914,7 +935,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     if (!rows.length) return { ok: true, synced: false };
     return { ok: true, synced: true, ...rows[0] };
     });res.json(result);
-    }catch(error){res.status(error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof BillingError?error.message:'SYNC_STATUS_UNAVAILABLE'});}
+    }catch(error){res.status(error instanceof BillingError || error instanceof ModuleAccessError?error.status:503).json({ok:false,error:error instanceof BillingError || error instanceof ModuleAccessError?error.message:'SYNC_STATUS_UNAVAILABLE'});}
   });
 
   /**

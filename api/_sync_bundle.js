@@ -202,322 +202,6 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
-// services/pos/financialAuthorization.ts
-import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
-var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
-var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
-var FinancialApprovalError = class extends Error {
-  constructor(status, code) {
-    super(code);
-    this.status = status;
-  }
-};
-var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash("sha256").update(token).digest("hex");
-function validFinancialPin(pin) {
-  return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
-}
-async function hashFinancialPin(pin) {
-  if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-  const salt = randomBytes(16).toString("hex");
-  const value = await scrypt(pin, salt);
-  return "scrypt-v1$" + salt + "$" + value.toString("hex");
-}
-async function verifyFinancialPin(pin, encoded) {
-  if (!validFinancialPin(pin)) return false;
-  const parts = encoded.split("$");
-  if (parts.length !== 3 || parts[0] !== "scrypt-v1" || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
-  const result = await scrypt(pin, parts[1]);
-  return timingSafeEqual(result, Buffer.from(parts[2], "hex"));
-}
-async function rateWindow(c, s) {
-  await c.query("INSERT INTO pos.financial_pin_attempts(tenant_id,actor_ref) VALUES($1,$2) ON CONFLICT DO NOTHING", [s.tenantId, s.actorRef]);
-  await c.query(`UPDATE pos.financial_pin_attempts SET failures=0,attempts=0,window_started_at=now()
-    WHERE tenant_id=$1 AND actor_ref=$2 AND window_started_at<now()-interval '15 minutes'`, [s.tenantId, s.actorRef]);
-  const row = (await c.query("SELECT * FROM pos.financial_pin_attempts WHERE tenant_id=$1 AND actor_ref=$2 FOR UPDATE", [s.tenantId, s.actorRef])).rows[0];
-  if (row.failures >= 5 || row.attempts >= 60) return false;
-  await c.query("UPDATE pos.financial_pin_attempts SET attempts=attempts+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
-  return true;
-}
-async function credential(c, s) {
-  return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
-}
-async function failure(c, s) {
-  await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
-  return { status: 403, error: "INVALID_FINANCIAL_PIN" };
-}
-async function reauthenticateOwner(req, subject) {
-  const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
-  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  let response;
-  try {
-    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
-  } catch {
-    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  }
-  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  if (!response.ok) return false;
-  const data = await response.json();
-  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
-}
-function registerFinancialApprovalRoutes(app, db, scopeFor3) {
-  const route = (path, run) => app.post(path, async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    try {
-      const result = await db.tx(async (c) => run(c, await scopeFor3(c, req), req));
-      if (result.error) {
-        if (result.status === 429) res.setHeader("Retry-After", "900");
-        return res.status(result.status).json({ ok: false, error: result.error });
-      }
-      return res.json({ ok: true, ...result });
-    } catch (e) {
-      const error = e;
-      return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : "FINANCIAL_AUTHORIZATION_UNAVAILABLE" });
-    }
-  });
-  route("/api/v1/finance/pin", async (c, s, req) => {
-    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
-    if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
-    if (!await reauthenticateOwner(req, s.actorRef)) {
-      await failure(c, s);
-      return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
-    }
-    const old = await credential(c, s);
-    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
-    const pinHash = await hashFinancialPin(req.body?.newPin);
-    await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
-      VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
-    await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
-    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest(randomBytes(32).toString("hex"))]);
-    return { enrolled: true };
-  });
-  route("/api/v1/finance/approve", async (c, s, req) => {
-    const { action, reference, reason, command, pin } = req.body || {};
-    if (!ACTIONS.has(action) || typeof reference !== "string" || !reference || reference.length > 128 || typeof reason !== "string" || !reason.trim() || reason.length > 500 || !command || typeof command !== "object" || JSON.stringify(command).length > 1e5)
-      throw new FinancialApprovalError(400, "INVALID_APPROVAL_REQUEST");
-    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
-    const row = await credential(c, s);
-    if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
-    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
-    const token = randomBytes(32).toString("base64url");
-    await c.query(
-      `INSERT INTO pos.financial_approval_grants
-      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
-      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
-      [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, reason.trim(), commandHash(command)]
-    );
-    return { approvalGrant: token, expiresInSeconds: 90, approverRef: s.actorRef };
-  });
-}
-async function consumeFinancialApproval(c, s, action, reference, command, token) {
-  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_REQUIRED");
-  const row = (await c.query(
-    `SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
-    AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
-    AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
-    [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, commandHash(command)]
-  )).rows[0];
-  if (!row || !row.consumed_at && Date.parse(row.expires_at) <= Date.now()) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_INVALID_OR_EXPIRED");
-  if (row.consumed_at) return;
-  await c.query("UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1", [row.token_hash]);
-  await c.query(`INSERT INTO pos.financial_authorization_audit
-    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash]);
-}
-
-// src/config/freePlanPolicy.ts
-var FREE_PLAN_ID = "plan-free-lifetime";
-var FREE_PRODUCT_LIMIT = 10;
-function isFreePlan(sub, now = Date.now()) {
-  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
-  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
-  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
-  const end = Date.parse(sub.currentPeriodEnd);
-  return trial && Number.isFinite(end) && now >= end;
-}
-function validateFreeSelection(value) {
-  const v = value;
-  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
-  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
-  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
-}
-
-// src/config/saasPlans.ts
-var TRIAL_PLAN_ID = "plan-free";
-var TRIAL_DAYS = 45;
-var TRIAL_READ_ONLY_DAYS = 14;
-var DAY_MS = 864e5;
-var SAAS_PLANS = [
-  {
-    id: FREE_PLAN_ID,
-    name: "Free Selamanya",
-    tierLevel: 1,
-    billingCycle: "MONTHLY",
-    priceIdr: 0,
-    currency: "IDR",
-    maxOutlets: 1,
-    isActive: true,
-    productLimit: 10,
-    aiQuotaMonthly: 0,
-    dashboardAccessLevel: "BASIC",
-    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
-  },
-  {
-    id: TRIAL_PLAN_ID,
-    name: "Free Trial 45 Hari",
-    tierLevel: 1,
-    billingCycle: "MONTHLY",
-    priceIdr: 0,
-    currency: "IDR",
-    maxOutlets: 2,
-    isActive: true,
-    isTrial: true,
-    trialDays: TRIAL_DAYS,
-    gracePeriodDays: TRIAL_READ_ONLY_DAYS,
-    productLimit: -1,
-    aiQuotaMonthly: 30,
-    dashboardAccessLevel: "ADVANCED",
-    features: [
-      "Seluruh fitur Tier Pro selama 45 hari",
-      "Hingga 2 outlet",
-      "Produk dan pengguna tidak terbatas",
-      "Kuota AI trial terbatas",
-      "WhatsApp assisted melalui wa.me",
-      "Tanpa kartu kredit (berlaku 1x per akun toko)",
-      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
-    ]
-  },
-  {
-    id: "plan-plus-monthly",
-    name: "Tier Plus",
-    tierLevel: 2,
-    billingCycle: "MONTHLY",
-    priceIdr: 99e3,
-    priceYearlyIdr: 79200,
-    annualDiscountPercent: 20,
-    currency: "IDR",
-    maxOutlets: 2,
-    isActive: true,
-    productLimit: -1,
-    aiQuotaMonthly: 30,
-    dashboardAccessLevel: "FULL",
-    extraOutletPriceIdr: 79200,
-    extraOutletYearlyIdr: 63360,
-    features: [
-      "POS, transaksi, QRIS, dan struk",
-      "2 outlet termasuk dalam paket",
-      "Produk dan kategori tidak terbatas",
-      "Inventori dan workflow sektor dasar",
-      "Pelanggan, shift, kas, dan laporan omzet",
-      "AI Analyst kuota dasar",
-      "Support standar"
-    ]
-  },
-  {
-    id: "plan-pro-monthly",
-    name: "Tier Pro",
-    tierLevel: 3,
-    billingCycle: "MONTHLY",
-    priceIdr: 299e3,
-    priceYearlyIdr: 248170,
-    annualDiscountPercent: 17,
-    currency: "IDR",
-    maxOutlets: 4,
-    isActive: true,
-    productLimit: -1,
-    aiQuotaMonthly: 90,
-    dashboardAccessLevel: "ADVANCED",
-    extraOutletPriceIdr: 79200,
-    extraOutletYearlyIdr: 63360,
-    features: [
-      "Semua fitur Tier Plus",
-      "4 outlet termasuk dalam paket",
-      "Inventori multi-location, transfer stok, dan recursive BOM",
-      "Smart Labor, absensi, komisi, bonus, dan payroll",
-      "Workflow vertikal lengkap untuk tiap sektor",
-      "WhatsApp Lifecycle Center",
-      "Advanced AI Business Analyst dan laporan lintas outlet",
-      "Priority support"
-    ]
-  }
-];
-var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
-
-// src/config/subscriptionPolicy.ts
-function subscriptionAccess(sub, now = Date.now()) {
-  if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
-  const end = Date.parse(sub.currentPeriodEnd);
-  const grace = sub.gracePeriodEnd ? Date.parse(sub.gracePeriodEnd) : end + 14 * DAY_MS;
-  const terminal = ["EXPIRED", "CANCELED", "CANCELLED", "SUSPENDED"].includes(sub.status);
-  const accessMode = terminal || !Number.isFinite(end) || now >= grace ? "RESTRICTED" : now >= end ? "READ_ONLY" : "FULL";
-  return {
-    accessMode,
-    status: accessMode === "RESTRICTED" ? "EXPIRED" : accessMode === "READ_ONLY" ? "PAST_DUE" : sub.status === "TRIALING" ? "TRIAL" : sub.status,
-    daysLeft: Math.max(0, Math.ceil((end - now) / DAY_MS)),
-    graceDaysLeft: Math.max(0, Math.ceil((grace - Math.max(now, end)) / DAY_MS))
-  };
-}
-
-// services/billing/freePlan.ts
-var FreePlanAccessError = class extends Error {
-};
-async function freePlanState(db, tenantId) {
-  const { rows } = await db.query("SELECT * FROM contract.free_plan_entitlements WHERE tenant_id=$1", [tenantId]);
-  const s = rows[0];
-  if (!s || !s.is_active) return { free: false };
-  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() });
-  return { free, ownerId: s.owner_user_ref, selection: free && s.free_selection ? validateFreeSelection(s.free_selection) : void 0 };
-}
-function assertFreeScope(state, sector, productRefs) {
-  if (!state.free) return;
-  if (!state.selection || state.selection.sector !== sector) throw new FreePlanAccessError("FREE_SELECTION_REQUIRED");
-  if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
-}
-async function resolveFreeSyncScope(db, ownerId, sector) {
-  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
-    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
-    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
-  const entitlement = rows[0];
-  if (!entitlement) return void 0;
-  if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
-  if (!isFreePlan({ status: entitlement.status, planId: entitlement.plan_id, currentPeriodEnd: new Date(entitlement.current_period_end).toISOString() })) return void 0;
-  const selection = entitlement.free_selection ? validateFreeSelection(entitlement.free_selection) : void 0;
-  assertFreeScope({ free: true, selection }, sector, []);
-  const result = await db.query(`SELECT o.tenant_id, o.merchant_id, o.id AS outlet_id
-    FROM internal.outlets o JOIN internal.tenants t ON t.id=o.tenant_id
-    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
-    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active
-      AND o.is_active AND m.business_sector=$3`, [selection.branchId, ownerId, sector]);
-  if (!result.rows.length) throw new FreePlanAccessError("FREE_BRANCH_UNAVAILABLE");
-  return result.rows[0];
-}
-
-// services/billing/engine.ts
-var BillingError = class extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-};
-async function assertTenantWritable(db, tenantId) {
-  const free = await freePlanState(db, tenantId);
-  if (free.free) {
-    if (!free.selection) throw new BillingError(403, "FREE_SELECTION_REQUIRED");
-    return;
-  }
-  const { rows } = await db.query(`SELECT t.is_active,t.created_at,s.status,s.current_period_end,s.grace_period_end
-    FROM internal.tenants t LEFT JOIN contract.subscription_operations s ON s.tenant_id=t.id WHERE t.id=$1`, [tenantId]);
-  const s = rows[0];
-  if (!s) throw new BillingError(403, "TENANT_NOT_FOUND");
-  const end = s.current_period_end || new Date(Date.parse(s.created_at) + TRIAL_DAYS * DAY_MS).toISOString();
-  const access = subscriptionAccess({ status: s.status || "TRIAL", currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0 });
-  if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
-}
-
 // src/modules/fnb/manifest.ts
 var manifest = {
   "id": "fnb",
@@ -1078,8 +762,222 @@ function legacyModuleForSector(sector) {
   return Object.values(moduleRegistry).find((m) => m.sector === sector) || null;
 }
 
+// src/config/freePlanPolicy.ts
+var FREE_PLAN_ID = "plan-free-lifetime";
+var FREE_PRODUCT_LIMIT = 10;
+function isFreePlan(sub, now = Date.now()) {
+  if (!sub || sub.isActive === false || ["SUSPENDED", "CANCELED", "CANCELLED"].includes(sub.status)) return false;
+  if (sub.status === "FREE" || sub.planId === FREE_PLAN_ID) return true;
+  const trial = ["TRIAL", "TRIALING"].includes(sub.status) || sub.planId === "plan-free" && ["EXPIRED", "PAST_DUE"].includes(sub.status);
+  const end = Date.parse(sub.currentPeriodEnd);
+  return trial && Number.isFinite(end) && now >= end;
+}
+function validateFreeSelection(value) {
+  const v = value;
+  const validId = (id) => typeof id === "string" && id.length > 0 && id.length <= 160;
+  if (!v || !Array.isArray(v.productIds) || v.productIds.length > FREE_PRODUCT_LIMIT || !v.productIds.every(validId) || new Set(v.productIds).size !== v.productIds.length || !validId(v.branchId) || !["FNB", "RETAIL", "LAUNDRY", "BARBERSHOP", "CARWASH"].includes(v.sector || "")) throw new Error("INVALID_FREE_SELECTION");
+  return { productIds: [...v.productIds], branchId: v.branchId, sector: v.sector };
+}
+
+// src/config/saasPlans.ts
+var TRIAL_PLAN_ID = "plan-free";
+var TRIAL_DAYS = 45;
+var TRIAL_READ_ONLY_DAYS = 14;
+var DAY_MS = 864e5;
+var SAAS_PLANS = [
+  {
+    id: FREE_PLAN_ID,
+    name: "Free Selamanya",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 1,
+    isActive: true,
+    productLimit: 10,
+    aiQuotaMonthly: 0,
+    dashboardAccessLevel: "BASIC",
+    features: ["Otomatis setelah trial 45 hari", "10 produk pilihan owner", "1 cabang pilihan owner", "Hanya akun owner", "Tanpa AI", "Data lainnya tetap disimpan"]
+  },
+  {
+    id: TRIAL_PLAN_ID,
+    name: "Free Trial 45 Hari",
+    tierLevel: 1,
+    billingCycle: "MONTHLY",
+    priceIdr: 0,
+    currency: "IDR",
+    maxOutlets: 2,
+    isActive: true,
+    isTrial: true,
+    trialDays: TRIAL_DAYS,
+    gracePeriodDays: TRIAL_READ_ONLY_DAYS,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "ADVANCED",
+    features: [
+      "Seluruh fitur Tier Pro selama 45 hari",
+      "Hingga 2 outlet",
+      "Produk dan pengguna tidak terbatas",
+      "Kuota AI trial terbatas",
+      "WhatsApp assisted melalui wa.me",
+      "Tanpa kartu kredit (berlaku 1x per akun toko)",
+      "Setelah trial: Free selamanya dengan 10 produk, 1 cabang, owner saja, tanpa AI"
+    ]
+  },
+  {
+    id: "plan-plus-monthly",
+    name: "Tier Plus",
+    tierLevel: 2,
+    billingCycle: "MONTHLY",
+    priceIdr: 99e3,
+    priceYearlyIdr: 79200,
+    annualDiscountPercent: 20,
+    currency: "IDR",
+    maxOutlets: 2,
+    isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 30,
+    dashboardAccessLevel: "FULL",
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+    features: [
+      "POS, transaksi, QRIS, dan struk",
+      "2 outlet termasuk dalam paket",
+      "Produk dan kategori tidak terbatas",
+      "Inventori dan workflow sektor dasar",
+      "Pelanggan, shift, kas, dan laporan omzet",
+      "AI Analyst kuota dasar",
+      "Support standar"
+    ]
+  },
+  {
+    id: "plan-pro-monthly",
+    name: "Tier Pro",
+    tierLevel: 3,
+    billingCycle: "MONTHLY",
+    priceIdr: 299e3,
+    priceYearlyIdr: 248170,
+    annualDiscountPercent: 17,
+    currency: "IDR",
+    maxOutlets: 4,
+    isActive: true,
+    productLimit: -1,
+    aiQuotaMonthly: 90,
+    dashboardAccessLevel: "ADVANCED",
+    extraOutletPriceIdr: 79200,
+    extraOutletYearlyIdr: 63360,
+    features: [
+      "Semua fitur Tier Plus",
+      "4 outlet termasuk dalam paket",
+      "Inventori multi-location, transfer stok, dan recursive BOM",
+      "Smart Labor, absensi, komisi, bonus, dan payroll",
+      "Workflow vertikal lengkap untuk tiap sektor",
+      "WhatsApp Lifecycle Center",
+      "Advanced AI Business Analyst dan laporan lintas outlet",
+      "Priority support"
+    ]
+  }
+];
+var PAID_SAAS_PLANS = SAAS_PLANS.filter((plan) => plan.priceIdr > 0);
+function findSaaSPlan(planId) {
+  return SAAS_PLANS.find((plan) => plan.id === planId) ?? null;
+}
+
+// src/config/subscriptionPolicy.ts
+function subscriptionAccess(sub, now = Date.now()) {
+  if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
+  const end = Date.parse(sub.currentPeriodEnd);
+  const grace = sub.gracePeriodEnd ? Date.parse(sub.gracePeriodEnd) : end + 14 * DAY_MS;
+  const terminal = ["EXPIRED", "CANCELED", "CANCELLED", "SUSPENDED"].includes(sub.status);
+  const accessMode = terminal || !Number.isFinite(end) || now >= grace ? "RESTRICTED" : now >= end ? "READ_ONLY" : "FULL";
+  return {
+    accessMode,
+    status: accessMode === "RESTRICTED" ? "EXPIRED" : accessMode === "READ_ONLY" ? "PAST_DUE" : sub.status === "TRIALING" ? "TRIAL" : sub.status,
+    daysLeft: Math.max(0, Math.ceil((end - now) / DAY_MS)),
+    graceDaysLeft: Math.max(0, Math.ceil((grace - Math.max(now, end)) / DAY_MS))
+  };
+}
+
+// services/billing/freePlan.ts
+var FreePlanAccessError = class extends Error {
+};
+async function freePlanState(db, tenantId) {
+  const { rows } = await db.query("SELECT * FROM contract.free_plan_entitlements WHERE tenant_id=$1", [tenantId]);
+  const s = rows[0];
+  if (!s || !s.is_active) return { free: false };
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: new Date(s.current_period_end).toISOString() });
+  return { free, ownerId: s.owner_user_ref, selection: free && s.free_selection ? validateFreeSelection(s.free_selection) : void 0 };
+}
+function assertFreeScope(state, sector, productRefs) {
+  if (!state.free) return;
+  if (!state.selection || state.selection.sector !== sector) throw new FreePlanAccessError("FREE_SELECTION_REQUIRED");
+  if (productRefs.some((id) => !state.selection.productIds.includes(id))) throw new FreePlanAccessError("FREE_PRODUCT_LOCKED");
+}
+async function resolveFreeSyncScope(db, ownerId, sector) {
+  const { rows } = await db.query(`SELECT e.* FROM contract.free_plan_entitlements e
+    JOIN internal.tenants t ON t.id=e.tenant_id WHERE e.owner_user_ref=$1 AND t.merged_into IS NULL
+    ORDER BY e.tenant_id LIMIT 1`, [ownerId]);
+  const entitlement = rows[0];
+  if (!entitlement) return void 0;
+  if (!entitlement.is_active) throw new FreePlanAccessError("TENANT_INACTIVE");
+  if (!isFreePlan({ status: entitlement.status, planId: entitlement.plan_id, currentPeriodEnd: new Date(entitlement.current_period_end).toISOString() })) return void 0;
+  const selection = entitlement.free_selection ? validateFreeSelection(entitlement.free_selection) : void 0;
+  assertFreeScope({ free: true, selection }, sector, []);
+  const result = await db.query(`SELECT o.tenant_id, o.merchant_id, o.id AS outlet_id
+    FROM internal.outlets o JOIN internal.tenants t ON t.id=o.tenant_id
+    JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
+    WHERE o.id::text=$1 AND t.owner_user_ref=$2 AND t.is_active
+      AND o.is_active AND m.business_sector=$3`, [selection.branchId, ownerId, sector]);
+  if (!result.rows.length) throw new FreePlanAccessError("FREE_BRANCH_UNAVAILABLE");
+  return result.rows[0];
+}
+
+// services/billing/engine.ts
+var BillingError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+function serializeSubscription(s) {
+  const iso2 = (x) => new Date(x).toISOString();
+  const free = isFreePlan({ status: s.status, planId: s.plan_id, currentPeriodEnd: iso2(s.current_period_end) });
+  const planId = free ? FREE_PLAN_ID : s.plan_id;
+  return {
+    id: s.id,
+    tenantId: s.tenant_id,
+    planId,
+    status: free ? "FREE" : s.status,
+    plan: findSaaSPlan(planId),
+    freeSelection: free ? s.free_selection : void 0,
+    currentPeriodStart: iso2(s.current_period_start),
+    currentPeriodEnd: iso2(s.current_period_end),
+    gracePeriodEnd: s.grace_period_end ? iso2(s.grace_period_end) : void 0,
+    billingCycle: s.billing_cycle,
+    extraOutlets: free ? 0 : s.extra_outlets,
+    trialStartedAt: s.trial_started_at ? iso2(s.trial_started_at) : null,
+    trialEndsAt: s.trial_ends_at ? iso2(s.trial_ends_at) : null,
+    hasUsedTrial: Boolean(s.has_used_trial)
+  };
+}
+async function assertTenantWritable(db, tenantId) {
+  const free = await freePlanState(db, tenantId);
+  if (free.free) {
+    if (!free.selection) throw new BillingError(403, "FREE_SELECTION_REQUIRED");
+    return;
+  }
+  const { rows } = await db.query(`SELECT t.is_active,t.created_at,s.status,s.current_period_end,s.grace_period_end
+    FROM internal.tenants t LEFT JOIN contract.subscription_operations s ON s.tenant_id=t.id WHERE t.id=$1`, [tenantId]);
+  const s = rows[0];
+  if (!s) throw new BillingError(403, "TENANT_NOT_FOUND");
+  const end = s.current_period_end || new Date(Date.parse(s.created_at) + TRIAL_DAYS * DAY_MS).toISOString();
+  const access = subscriptionAccess({ status: s.status || "TRIAL", currentPeriodEnd: new Date(end).toISOString(), gracePeriodEnd: s.grace_period_end ? new Date(s.grace_period_end).toISOString() : void 0 });
+  if (!s.is_active || access.accessMode !== "FULL") throw new BillingError(403, "SUBSCRIPTION_READ_ONLY");
+}
+
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AS ok`,
   moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
   /** migration 0054 / 20261004090200 */
   syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
@@ -1135,7 +1033,7 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
       ORDER BY CASE ms.role WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
     ) membership ON true
     WHERE m.id=$1 AND o.id=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active AND o.is_active
-      AND (t.owner_user_ref=$3 OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
+      AND (t.owner_user_ref=$3 AND EXISTS(SELECT 1 FROM internal.users owner_identity WHERE owner_identity.id::text=$3 AND owner_identity.is_active) OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
   if (rows.length !== 1) throw new ModuleAccessError(403, "MODULE_SCOPE_FORBIDDEN");
   const scope = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenant_id, businessId]);
@@ -1143,7 +1041,8 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
     return { enabled: false, businessId, outletId, modules: [] };
   await assertTenantWritable(db, scope.tenant_id);
   if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, "MODULE_PILOT_REQUIRES_PAID_OR_TRIAL");
-  const assignments = await db.query(`SELECT mm.module_id, e.features FROM internal.merchant_modules mm
+  const isolated = await hasSchemaFeature(db, "workspaceIsolation");
+  const assignments = await db.query(`SELECT mm.module_id, e.features,e.expires_at,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm
     JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
     LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
       AND om.module_id=mm.module_id AND om.outlet_id=$3
@@ -1153,8 +1052,11 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
   const modules = [];
   for (const row of assignments.rows) {
     const manifest6 = moduleManifest(row.module_id);
-    if (!manifest6 || manifest6.sector !== scope.business_sector || scope.outlet_count !== 1) continue;
-    modules.push({ id: manifest6.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner) });
+    const operationalModule = { BARISTA: "fnb", CHEF: "fnb", WASHER: "carwash", KAPSTER: "barber" };
+    if (operationalModule[scope.role] && operationalModule[scope.role] !== row.module_id) continue;
+    if (Number(row.workspace_version) === 2 && (!isolated || !["retail", "barber"].includes(row.module_id))) continue;
+    if (!manifest6 || Number(row.workspace_version) !== 2 && (manifest6.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
+    modules.push({ id: manifest6.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -1171,6 +1073,7 @@ async function authorizeNativeModule(db, subject, merchantId, outletId, requirem
   try {
     const access = await resolveModuleAccess(db, subject, merchantId, target);
     const grant = manifest6 && access.modules.find((module) => module.id === manifest6.id);
+    if (grant?.workspaceVersion === 2) throw new ModuleAccessError(403, "EXPLICIT_WORKSPACE_REQUIRED");
     if (!access.enabled || !grant || requirements.some((options) => !options.some((permission) => grant.permissions.includes(permission) && grant.features.includes(permission))))
       throw new ModuleAccessError(403, "MODULE_COMMAND_FORBIDDEN");
   } catch (error) {
@@ -1225,6 +1128,7 @@ async function authorizeModulePage(db, subject, query) {
   const grant = access.modules.find((m) => m.id === manifest6.id);
   if (!page || !grant || page.ownerOnly && !grant.tenantOwner || !grant.permissions.includes(page.permission) || !grant.features.includes(page.permission))
     throw new ModuleAccessError(403, "MODULE_PAGE_FORBIDDEN");
+  if (grant.workspaceVersion === 2) await db.query("SELECT set_config('app.outlet_id',$1,true),set_config('app.module_id',$2,true)", [access.outletId, manifest6.id]);
   return { access, manifest: manifest6, page };
 }
 function respondError(res, error) {
@@ -1249,20 +1153,20 @@ function registerModuleRoutes(app, db) {
           AND owner_user_ref=$1 AND is_active AND merged_into IS NULL`, [principal.subject]);
         if (owner.rows.length !== 1) throw new ModuleAccessError(403, "GROUP_REPORT_OWNER_REQUIRED");
         const groups = await c.query(`WITH grouped AS (
-          SELECT r.merchant_id,r.outlet_id,r.business_sector,count(*)::int AS transactions,
+          SELECT r.merchant_id,r.outlet_id,r.business_sector,to_jsonb(r)->>'module_id' AS module_id,count(*)::int AS transactions,
             sum(r.total_amount) AS net_revenue,sum(r.refund_amount) AS refunds,sum(r.cogs_amount) AS cogs
           FROM contract.merchant_revenue r WHERE r.tenant_id=$1
             AND r.created_at>=($2::date::timestamp AT TIME ZONE 'Asia/Jakarta')
             AND r.created_at<(($3::date+1)::timestamp AT TIME ZONE 'Asia/Jakarta')
-          GROUP BY r.merchant_id,r.outlet_id,r.business_sector
+          GROUP BY r.merchant_id,r.outlet_id,r.business_sector,to_jsonb(r)->>'module_id'
         ) SELECT *,count(*) OVER()::int AS total_groups,sum(net_revenue) OVER() AS total_net_revenue,
           sum(transactions) OVER() AS total_transactions FROM grouped
-          ORDER BY merchant_id,outlet_id NULLS FIRST,business_sector LIMIT 50 OFFSET $4`, [owner.rows[0].id, from, to, offset]);
+          ORDER BY merchant_id,outlet_id NULLS FIRST,business_sector,module_id NULLS FIRST LIMIT 50 OFFSET $4`, [owner.rows[0].id, from, to, offset]);
         return {
           businessId: access.businessId,
-          rows: groups.rows.map((row) => ({ ...row, moduleId: null, attribution: "historical_sector" })),
+          rows: groups.rows.map((row) => ({ ...row, moduleId: row.module_id || null, attribution: row.module_id ? "verified_module" : "historical_sector" })),
           nextOffset: groups.rows.length === 50 && offset + 50 < groups.rows[0].total_groups ? offset + 50 : null,
-          attribution: "historical_sector",
+          attribution: groups.rows.some((r) => r.module_id) ? groups.rows.every((r) => r.module_id) ? "verified_module" : "mixed" : "historical_sector",
           from,
           to,
           timezone: "Asia/Jakarta"
@@ -1289,6 +1193,11 @@ function registerModuleRoutes(app, db) {
           barber: { kind: "bookings", field: "status" }
         };
         const definition = definitions[manifest6.id];
+        const isolated = access.modules.find((m) => m.id === manifest6.id)?.workspaceVersion === 2;
+        if (isolated && manifest6.id === "retail") {
+          const stock = await c.query(`SELECT CASE WHEN COALESCE(b.stock,0)<=0 THEN 'OUT_OF_STOCK' ELSE 'AVAILABLE' END AS status,count(*)::int count FROM pos.products p LEFT JOIN LATERAL(SELECT sum(current_stock) stock FROM pos.inventory_balances WHERE inventory_item_id=p.inventory_item_id AND outlet_id=$2) b ON true WHERE p.merchant_id=$1 AND p.module_id=$3 AND p.is_available GROUP BY 1 ORDER BY 1`, [access.businessId, access.outletId, manifest6.id]);
+          return { buckets: stock.rows, total: stock.rows.reduce((n, r) => n + r.count, 0), generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        }
         const rows = await c.query(`SELECT
           CASE WHEN $4='products' THEN CASE WHEN value->>'stock' ~ '^-?[0-9]+([.][0-9]+)?$' THEN CASE
             WHEN (value->>'stock')::numeric<=0 THEN 'OUT_OF_STOCK'
@@ -1301,7 +1210,7 @@ function registerModuleRoutes(app, db) {
               AND scope=ANY($2::text[]) AND kind=$4
             ORDER BY record_id,updated_at DESC,revision DESC,(scope LIKE 'BUSINESS:%') DESC
           ) records WHERE NOT deleted AND COALESCE(value->>'branchId',value->>'outletId',$3)=$3
-          GROUP BY 1 ORDER BY 1`, [access.businessId, [manifest6.sector, "BUSINESS:" + access.businessId], access.outletId, definition.kind, definition.field]);
+          GROUP BY 1 ORDER BY 1`, [access.businessId, isolated ? [`WORKSPACE:${access.businessId}:${access.outletId}:${manifest6.id}`] : [manifest6.sector, "BUSINESS:" + access.businessId], access.outletId, definition.kind, definition.field]);
         return { buckets: rows.rows, total: rows.rows.reduce((sum, row) => sum + row.count, 0), generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
       });
       res.setHeader("Cache-Control", "no-store");
@@ -1323,93 +1232,154 @@ function registerModuleRoutes(app, db) {
   });
 }
 
-// services/pos/businessDirectory.ts
-function registerBusinessDirectory(app, db) {
-  app.get("/api/v1/sync/business", async (req, res) => {
-    const principal = trustedPrincipal(req);
-    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
-    try {
-      const tenantId = await tenantForPrincipal(db, principal);
-      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
-      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
-        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
-        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
-        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
-        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
-      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
-      const businesses = /* @__PURE__ */ new Map();
-      for (const row of result.rows) {
-        let business = businesses.get(row.id);
-        if (!business) {
-          business = {
-            businessId: row.id,
-            tenantId: row.tenant_id,
-            name: row.name,
-            sector: row.business_sector,
-            status: row.is_active ? "ACTIVE" : "INACTIVE",
-            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
-            transportRef: row.external_ref || row.id,
-            outlets: []
-          };
-          businesses.set(row.id, business);
-        }
-        if (row.outlet_id) business.outlets.push({
-          outletId: row.outlet_id,
-          businessId: row.id,
-          name: row.outlet_name,
-          address: row.address || "",
-          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
-          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
-        });
-      }
-      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
-    } catch {
-      return res.status(503).json({ ok: false, error: "BUSINESS_DIRECTORY_UNAVAILABLE" });
-    }
-  });
+// services/pos/workspaceScope.ts
+async function resolveWorkspaceScope(db, subject, input, required = []) {
+  if (!isBusinessModuleId(input.moduleId)) throw new ModuleAccessError(400, "EXPLICIT_MODULE_REQUIRED");
+  const access = await resolveModuleAccess(db, subject, input.businessId, input.outletId);
+  const grant = access.modules.find((m) => m.id === input.moduleId);
+  if (!access.enabled || !grant || grant.workspaceVersion !== 2) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
+  if (required.some((permission) => !grant.permissions.includes(permission) || !grant.features.includes(permission))) throw new ModuleAccessError(403, "WORKSPACE_PERMISSION_DENIED");
+  const row = (await db.query(`SELECT m.tenant_id,m.external_ref,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END AS role,CASE WHEN t.owner_user_ref=$2 THEN 'TENANT' ELSE ms.scope_type END AS membership_scope
+ FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id LEFT JOIN LATERAL(
+ SELECT role,scope_type FROM internal.memberships WHERE user_id::text=$2 AND tenant_id=m.tenant_id AND is_active AND
+ (scope_type='TENANT' OR merchant_id=m.id AND (scope_type='MERCHANT' OR outlet_id=$3))
+ ORDER BY CASE role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
+ ) ms ON true WHERE m.id=$1`, [access.businessId, subject, access.outletId])).rows[0];
+  if (!row?.role) throw new ModuleAccessError(403, "WORKSPACE_MEMBERSHIP_REQUIRED");
+  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject]);
+  return { tenantId: row.tenant_id, merchantId: access.businessId, outletId: access.outletId, moduleId: input.moduleId, sector: moduleManifest(input.moduleId).sector, actorRef: subject, role: row.role, membershipScope: row.membership_scope, transportRef: row.external_ref || access.businessId, namespace: `WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`, permissions: grant.permissions, features: grant.features };
+}
+function requireWorkspaceRole(scope, roles) {
+  if (!roles.includes(scope.role)) throw new ModuleAccessError(403, "WORKSPACE_ROLE_FORBIDDEN");
 }
 
-// services/pos/businessScope.ts
-var BusinessScopeError = class extends Error {
-  constructor(status, message) {
-    super(message);
+// services/pos/financialAuthorization.ts
+import { createHash, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+var scrypt = (pin, salt) => new Promise((resolve, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));
+var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
+var FinancialApprovalError = class extends Error {
+  constructor(status, code) {
+    super(code);
     this.status = status;
   }
 };
-async function resolveBusinessScope(db, subject, sector, businessId) {
-  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
-    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
-  if (!tenantId) {
-    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-    return null;
-  }
-  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
-    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
-    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
-      AND m.business_sector=$3 AND m.is_active
-      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
-  const rows = result.rows;
-  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
-  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
-  if (!selected) {
-    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
-    return null;
-  }
-  return {
-    tenantId,
-    merchantId: selected.merchant_id,
-    businessName: selected.business_name,
-    transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
-  };
+var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
+var commandHash = (command) => createHash("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash("sha256").update(token).digest("hex");
+function validFinancialPin(pin) {
+  return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
-
-// services/pos/sync.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+async function hashFinancialPin(pin) {
+  if (!validFinancialPin(pin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+  const salt = randomBytes(16).toString("hex");
+  const value = await scrypt(pin, salt);
+  return "scrypt-v1$" + salt + "$" + value.toString("hex");
+}
+async function verifyFinancialPin(pin, encoded) {
+  if (!validFinancialPin(pin)) return false;
+  const parts = encoded.split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt-v1" || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{128}$/.test(parts[2])) return false;
+  const result = await scrypt(pin, parts[1]);
+  return timingSafeEqual(result, Buffer.from(parts[2], "hex"));
+}
+async function rateWindow(c, s) {
+  await c.query("INSERT INTO pos.financial_pin_attempts(tenant_id,actor_ref) VALUES($1,$2) ON CONFLICT DO NOTHING", [s.tenantId, s.actorRef]);
+  await c.query(`UPDATE pos.financial_pin_attempts SET failures=0,attempts=0,window_started_at=now()
+    WHERE tenant_id=$1 AND actor_ref=$2 AND window_started_at<now()-interval '15 minutes'`, [s.tenantId, s.actorRef]);
+  const row = (await c.query("SELECT * FROM pos.financial_pin_attempts WHERE tenant_id=$1 AND actor_ref=$2 FOR UPDATE", [s.tenantId, s.actorRef])).rows[0];
+  if (row.failures >= 5 || row.attempts >= 60) return false;
+  await c.query("UPDATE pos.financial_pin_attempts SET attempts=attempts+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return true;
+}
+async function credential(c, s) {
+  return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
+}
+async function failure(c, s) {
+  await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
+  return { status: 403, error: "INVALID_FINANCIAL_PIN" };
+}
+async function reauthenticateOwner(req, subject) {
+  const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
+  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  let response;
+  try {
+    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
+  } catch {
+    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  }
+  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+  if (!response.ok) return false;
+  const data = await response.json();
+  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
+}
+function registerFinancialApprovalRoutes(app, db, scopeFor3) {
+  const route = (path, run) => app.post(path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const result = await db.tx(async (c) => run(c, await scopeFor3(c, req), req));
+      if (result.error) {
+        if (result.status === 429) res.setHeader("Retry-After", "900");
+        return res.status(result.status).json({ ok: false, error: result.error });
+      }
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      const error = e;
+      return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : "FINANCIAL_AUTHORIZATION_UNAVAILABLE" });
+    }
+  });
+  route("/api/v1/finance/pin", async (c, s, req) => {
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
+    if (!await reauthenticateOwner(req, s.actorRef)) {
+      await failure(c, s);
+      return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
+    }
+    const old = await credential(c, s);
+    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
+    const pinHash = await hashFinancialPin(req.body?.newPin);
+    await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
+      VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
+    await c.query("DELETE FROM pos.financial_approval_grants WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef]);
+    await c.query(`INSERT INTO pos.financial_authorization_audit(tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash) VALUES($1,$2,$3,$4,$4,$5,$4,'Owner financial PIN setup/change',$6,$7)`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, old ? "PIN_ROTATED" : "PIN_ENROLLED", commandHash({ operation: "pin-setup" }), digest(randomBytes(32).toString("hex"))]);
+    return { enrolled: true };
+  });
+  route("/api/v1/finance/approve", async (c, s, req) => {
+    const { action, reference, reason, command, pin } = req.body || {};
+    if (!ACTIONS.has(action) || typeof reference !== "string" || !reference || reference.length > 128 || typeof reason !== "string" || !reason.trim() || reason.length > 500 || !command || typeof command !== "object" || JSON.stringify(command).length > 1e5)
+      throw new FinancialApprovalError(400, "INVALID_APPROVAL_REQUEST");
+    if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
+    const row = await credential(c, s);
+    if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
+    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
+    const token = randomBytes(32).toString("base64url");
+    await c.query(
+      `INSERT INTO pos.financial_approval_grants
+      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at${s.moduleId ? ",module_id" : ""})
+      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds'${s.moduleId ? ",$10" : ""})`,
+      [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, reason.trim(), commandHash(command), ...s.moduleId ? [s.moduleId] : []]
+    );
+    return { approvalGrant: token, expiresInSeconds: 90, approverRef: s.actorRef };
+  });
+}
+async function consumeFinancialApproval(c, s, action, reference, command, token) {
+  if (s.moduleId && !["OWNER", "ADMIN", "MANAGER"].includes(s.role || "")) throw new FinancialApprovalError(403, "WORKSPACE_ROLE_FORBIDDEN");
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_REQUIRED");
+  const row = (await c.query(
+    `SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
+    AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
+    AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
+    [digest(token), s.tenantId, s.merchantId, s.outletId, s.actorRef, action, reference, commandHash(command)]
+  )).rows[0];
+  if (!row || s.moduleId && row.module_id !== s.moduleId || !row.consumed_at && Date.parse(row.expires_at) <= Date.now()) throw new FinancialApprovalError(403, "FINANCIAL_APPROVAL_INVALID_OR_EXPIRED");
+  if (row.consumed_at) return;
+  await c.query("UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1", [row.token_hash]);
+  await c.query(`INSERT INTO pos.financial_authorization_audit
+    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash${s.moduleId ? ",module_id" : ""})
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10${s.moduleId ? ",$11" : ""})`, [s.tenantId, s.merchantId, s.outletId, s.actorRef, row.approver_ref, action, reference, row.reason, row.command_hash, row.token_hash, ...s.moduleId ? [s.moduleId] : []]);
+}
 
 // services/pos/activity.ts
 var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
@@ -1478,6 +1448,11 @@ async function scopeFor(db, req) {
   const input = req.method === "GET" ? req.query : req.body;
   const principal = trustedPrincipal(req), sector = input?.sector, outletId = input?.outletId;
   if (!principal || principal.subject === "local-development") throw new FinanceError(401, "UNAUTHENTICATED");
+  if (input?.moduleId !== void 0) {
+    const scope = await resolveWorkspaceScope(db, principal.subject, input, [req.path.endsWith("/reconciliation") ? "reports" : "pos"]);
+    if (req.method !== "GET" && !req.path.endsWith("/shift/open")) requireWorkspaceRole(scope, ["OWNER", "ADMIN", "MANAGER"]);
+    return { ...scope, sector: scope.sector };
+  }
   if (!SECTORS.includes(sector) || !UUID2.test(String(outletId))) throw new FinanceError(400, "INVALID_FINANCIAL_SCOPE");
   const tenantId = await tenantForPrincipal(db, principal);
   if (!tenantId) throw new FinanceError(409, "TENANT_NOT_PROVISIONED");
@@ -1497,6 +1472,7 @@ async function scopeFor(db, req) {
   return { tenantId, merchantId: row.merchant_id, outletId, sector, actorRef: principal.subject };
 }
 async function applyRefund(db, scope, transactionId, command) {
+  if (scope.moduleId && !["OWNER", "ADMIN", "MANAGER"].includes(scope.role || "")) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
   if (!command || !ID.test(command.clientRefundId || "") || !["CASH", "ORIGINAL_METHOD"].includes(command.refundMethod) || typeof command.reason !== "string" || !command.reason.trim() || command.reason.length > 500 || !Array.isArray(command.items) || !command.items.length || command.items.length > 200)
     throw new FinanceError(400, "INVALID_REFUND");
   const occurredAt = timestamp(command.occurredAt || (/* @__PURE__ */ new Date()).toISOString());
@@ -1506,7 +1482,7 @@ async function applyRefund(db, scope, transactionId, command) {
     `SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE`,
     [transactionId, scope.tenantId, scope.merchantId, scope.outletId]
   )).rows[0];
-  if (!txn) throw new FinanceError(404, "TRANSACTION_NOT_FOUND");
+  if (!txn || scope.moduleId && txn.module_id !== scope.moduleId) throw new FinanceError(404, "TRANSACTION_NOT_FOUND");
   await consumeFinancialApproval(db, scope, "REFUND", txn.client_txn_id, command, command.approvalGrant);
   const previous = (await db.query("SELECT * FROM pos.transaction_refunds WHERE tenant_id=$1 AND client_refund_id=$2", [scope.tenantId, command.clientRefundId])).rows[0];
   if (previous) {
@@ -1572,6 +1548,23 @@ async function applyRefund(db, scope, transactionId, command) {
   await writeActivity(db, { tenantId: scope.tenantId, merchantId: scope.merchantId, businessSector: scope.sector, appModule: "POS", eventType: "TRANSACTION_REFUND", transactionId, amountIdr: amount, severity: "WARNING", summary: "Retur transaksi dicatat", detail: { clientRefundId: command.clientRefundId } });
   return { id: refund.id, clientRefundId: command.clientRefundId, amount, subtotal, discount, tax, service, replayed: false };
 }
+async function applyCashEvent(c, s, b) {
+  if (s.moduleId && !["OWNER", "ADMIN", "MANAGER"].includes(s.role || "")) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
+  if (!ID.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
+    throw new FinanceError(400, "INVALID_CASH_EVENT");
+  if (b.type === "CASH_OUT") await consumeFinancialApproval(c, s, "CASH_OUT", b.clientEventId, b, b.approvalGrant);
+  const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp(b.occurredAt);
+  const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
+  const prev = (await c.query(`SELECT id,command=$2::jsonb AS same,outlet_id,to_jsonb(cash_ledger)->>'module_id' AS module_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3`, [s.tenantId, JSON.stringify(command), b.clientEventId])).rows[0];
+  if (prev) {
+    if (!prev.same || prev.outlet_id !== s.outletId || s.moduleId && prev.module_id !== s.moduleId) throw new FinanceError(409, "CASH_EVENT_ID_CONFLICT");
+    return { id: prev.id, replayed: true };
+  }
+  const row = (await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,actor_ref,actor_name,shift_ref,recipient_or_source,occurred_at,command)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`, [s.tenantId, s.merchantId, s.outletId, b.clientEventId, b.type, amount, command.description, b.category, s.actorRef, String(b.actorName || "").slice(0, 100), command.shiftId, command.recipientOrSource, occurredAt, JSON.stringify(command)])).rows[0];
+  await writeActivity(c, { tenantId: s.tenantId, merchantId: s.merchantId, businessSector: s.sector, appModule: "POS", eventType: b.type, severity: "INFO", amountIdr: amount, summary: command.description || "Mutasi kas", detail: { clientEventId: b.clientEventId } });
+  return { id: row.id, replayed: false };
+}
 function registerFinanceRoutes(app, db) {
   registerFinancialApprovalRoutes(app, db, scopeFor);
   const route = (path, run) => app.post(path, async (req, res) => {
@@ -1579,7 +1572,7 @@ function registerFinanceRoutes(app, db) {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
       res.json({ ok: true, ...result });
     } catch (error) {
-      const known2 = error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
+      const known2 = error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
       if (!known2 && !(error instanceof FreePlanAccessError)) {
         const diagnostic = error;
         console.error("[finance] write failed", { route: path, code: diagnostic.code, constraint: diagnostic.constraint, column: diagnostic.column });
@@ -1601,7 +1594,7 @@ function registerFinanceRoutes(app, db) {
       });
       res.json({ ok: true, ...data });
     } catch (e) {
-      res.status(e instanceof FinanceError || e instanceof BillingError ? e.status : 503).json({ ok: false, error: e instanceof FinanceError || e instanceof BillingError ? e.message : "RECONCILIATION_UNAVAILABLE" });
+      res.status(e instanceof ModuleAccessError || e instanceof FinanceError || e instanceof BillingError ? e.status : 503).json({ ok: false, error: e instanceof ModuleAccessError || e instanceof FinanceError || e instanceof BillingError ? e.message : "RECONCILIATION_UNAVAILABLE" });
     }
   });
   app.get("/api/v1/finance/shift", async (req, res) => {
@@ -1609,7 +1602,7 @@ function registerFinanceRoutes(app, db) {
     try {
       const result = await db.tx(async (c) => {
         const s = await scopeFor(c, req);
-        const rows = (await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        const rows = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`, [s.tenantId, s.merchantId, s.outletId])).rows;
         const current = rows.find((r) => r.status === "OPEN");
         return { shift: current ? await calculateShift(c, s, current) : null, history: rows.filter((r) => r.status === "CLOSED").map((r) => r.summary).filter(Boolean) };
       });
@@ -1619,18 +1612,18 @@ function registerFinanceRoutes(app, db) {
         const diagnostic = error;
         console.error("[finance] shift read failed", { code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
       }
-      res.status(error instanceof FinanceError || error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof FinanceError || error instanceof BillingError ? error.message : "SHIFT_UNAVAILABLE" });
+      res.status(error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError ? error.message : "SHIFT_UNAVAILABLE" });
     }
   });
   route("/api/v1/finance/shift/open", async (c, s, req) => {
     const b = req.body;
     if (!ID.test(b.clientShiftId || "") || !Number.isFinite(b.initialCash) || b.initialCash < 0 || b.initialCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
     await c.query("SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE", [s.outletId]);
-    const active = (await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, [s.tenantId, s.outletId])).rows[0];
+    const active = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, [s.tenantId, s.outletId])).rows[0];
     if (active) return { shift: await calculateShift(c, s, active), replayed: true };
-    const previous = (await c.query("SELECT id FROM pos.shifts WHERE tenant_id=$1 AND client_shift_id=$2", [s.tenantId, b.clientShiftId])).rows[0];
+    const previous = (await c.query(`SELECT id FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND client_shift_id=$2`, [s.tenantId, b.clientShiftId])).rows[0];
     if (previous) throw new FinanceError(409, "SHIFT_ALREADY_CLOSED");
-    let register = (await c.query("SELECT id FROM pos.cash_registers WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND status='ACTIVE' ORDER BY created_at LIMIT 1", [s.tenantId, s.merchantId, s.outletId])).rows[0];
+    let register = (await c.query("SELECT id FROM pos.cash_registers WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(cash_registers)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND status='ACTIVE' ORDER BY created_at LIMIT 1", [s.tenantId, s.merchantId, s.outletId])).rows[0];
     if (!register) register = (await c.query("INSERT INTO pos.cash_registers(tenant_id,merchant_id,outlet_id,name) VALUES($1,$2,$3,'Kas bersama outlet') RETURNING id", [s.tenantId, s.merchantId, s.outletId])).rows[0];
     const row = (await c.query(`INSERT INTO pos.shifts(tenant_id,merchant_id,outlet_id,client_shift_id,actor_name,opening_cash,business_date,status,register_id)
       VALUES($1,$2,$3,$4,$5,$6,(now() AT TIME ZONE 'Asia/Jakarta')::date,'OPEN',$7) RETURNING *`, [s.tenantId, s.merchantId, s.outletId, b.clientShiftId, String(b.cashierName || "Kasir").slice(0, 100), money(b.initialCash), register.id])).rows[0];
@@ -1641,7 +1634,7 @@ function registerFinanceRoutes(app, db) {
   route("/api/v1/finance/shift/close", async (c, s, req) => {
     const b = req.body;
     if (!ID.test(b.clientShiftId || "") || !Number.isFinite(b.actualCash) || b.actualCash < 0 || b.actualCash > 9999999999) throw new FinanceError(400, "INVALID_SHIFT");
-    const row = (await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.clientShiftId])).rows[0];
+    const row = (await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.clientShiftId])).rows[0];
     if (!row) throw new FinanceError(409, "SHIFT_NOT_FOUND");
     if (row.status === "CLOSED") {
       if (Number(row.closing_cash) !== money(b.actualCash)) throw new FinanceError(409, "SHIFT_CLOSE_CONFLICT");
@@ -1660,28 +1653,14 @@ function registerFinanceRoutes(app, db) {
     return { refund: await applyRefund(c, s, txn.id, req.body.refund) };
   });
   route("/api/v1/finance/cash", async (c, s, req) => {
-    const b = req.body;
-    if (!ID.test(b.clientEventId || "") || !["CASH_IN", "CASH_OUT", "OPENING"].includes(b.type) || typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0 || b.amount > 9999999999 || typeof b.description !== "string" || b.description.length > 500 || typeof b.category !== "string" || b.category.length > 64)
-      throw new FinanceError(400, "INVALID_CASH_EVENT");
-    if (b.type === "CASH_OUT") await consumeFinancialApproval(c, s, "CASH_OUT", b.clientEventId, b, b.approvalGrant);
-    const amount = money(b.amount) * (b.type === "CASH_OUT" ? -1 : 1), occurredAt = timestamp(b.occurredAt);
-    const command = { clientEventId: b.clientEventId, type: b.type, amount, occurredAt, category: b.category, description: b.description.trim(), shiftId: String(b.shiftId || ""), recipientOrSource: String(b.recipientOrSource || "").slice(0, 200) };
-    const prev = (await c.query("SELECT id,command=$2::jsonb AS same,outlet_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3", [s.tenantId, JSON.stringify(command), b.clientEventId])).rows[0];
-    if (prev) {
-      if (!prev.same || prev.outlet_id !== s.outletId) throw new FinanceError(409, "CASH_EVENT_ID_CONFLICT");
-      return { id: prev.id, replayed: true };
-    }
-    const row = (await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,actor_ref,actor_name,shift_ref,recipient_or_source,occurred_at,command)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`, [s.tenantId, s.merchantId, s.outletId, b.clientEventId, b.type, amount, command.description, b.category, s.actorRef, String(b.actorName || "").slice(0, 100), command.shiftId, command.recipientOrSource, occurredAt, JSON.stringify(command)])).rows[0];
-    await writeActivity(c, { tenantId: s.tenantId, merchantId: s.merchantId, businessSector: s.sector, appModule: "POS", eventType: b.type, severity: "INFO", amountIdr: amount, summary: command.description || "Mutasi kas", detail: { clientEventId: b.clientEventId } });
-    return { id: row.id, replayed: false };
+    return applyCashEvent(c, s, req.body);
   });
   route("/api/v1/finance/cash/reverse", async (c, s, req) => {
     const b = req.body;
     if (!ID.test(b.clientEventId || "") || !ID.test(b.originalEventId || "") || typeof b.reason !== "string" || !b.reason.trim() || b.reason.length > 500) throw new FinanceError(400, "INVALID_CASH_REVERSAL");
     await consumeFinancialApproval(c, s, "CASH_REVERSE", b.originalEventId, b, b.approvalGrant);
     const original = (await c.query(`SELECT * FROM pos.cash_ledger WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_event_id=$4 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, b.originalEventId])).rows[0];
-    if (!original || !["CASH_IN", "CASH_OUT", "OPENING"].includes(original.event_type)) throw new FinanceError(409, "CASH_EVENT_NOT_REVERSIBLE");
+    if (!original || s.moduleId && original.module_id !== s.moduleId || !["CASH_IN", "CASH_OUT", "OPENING"].includes(original.event_type)) throw new FinanceError(409, "CASH_EVENT_NOT_REVERSIBLE");
     const reused = (await c.query("SELECT reference_id,event_type FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$2", [s.tenantId, b.clientEventId])).rows[0];
     if (reused && (reused.event_type !== "REVERSAL" || reused.reference_id !== original.id)) throw new FinanceError(409, "CASH_EVENT_ID_CONFLICT");
     const existing = (await c.query(`SELECT id FROM pos.cash_ledger WHERE tenant_id=$1 AND event_type='REVERSAL' AND reference_id=$2`, [s.tenantId, original.id])).rows[0];
@@ -1695,7 +1674,7 @@ function registerFinanceRoutes(app, db) {
 async function calculateShift(db, scope, row) {
   const params = [scope.tenantId, scope.merchantId, scope.outletId, row.opened_at, row.closed_at || (/* @__PURE__ */ new Date()).toISOString()];
   const revenue = (await db.query(`WITH revenue AS (
-    SELECT * FROM contract.merchant_revenue WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3
+    SELECT * FROM contract.merchant_revenue WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(merchant_revenue)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3
     AND created_at >=$4 AND ($5::timestamptz IS NULL OR created_at<$5)
   ), tenders AS (
     SELECT r.id,r.total_amount,p.payment_method,p.amount,SUM(p.amount) OVER(PARTITION BY r.id) AS paid
@@ -1711,7 +1690,7 @@ async function calculateShift(db, scope, row) {
     COALESCE(-SUM(c.amount) FILTER(WHERE COALESCE(original.event_type,c.event_type)='CASH_OUT'),0) AS cash_out
     FROM pos.cash_ledger c LEFT JOIN pos.cash_ledger original ON c.event_type='REVERSAL'
       AND c.reference_id=original.id::text AND c.tenant_id=original.tenant_id
-    WHERE c.tenant_id=$1 AND c.merchant_id=$2 AND c.outlet_id=$3 AND c.occurred_at >=$4 AND ($5::timestamptz IS NULL OR c.occurred_at<$5)`, params)).rows[0];
+    WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(c)->>'module_id'=current_setting('app.module_id',true)) AND c.tenant_id=$1 AND c.merchant_id=$2 AND c.outlet_id=$3 AND c.occurred_at >=$4 AND ($5::timestamptz IS NULL OR c.occurred_at<$5)`, params)).rows[0];
   return {
     id: row.client_shift_id || row.id,
     cashierName: row.actor_name || "Kasir",
@@ -1730,80 +1709,160 @@ async function calculateShift(db, scope, row) {
   };
 }
 
-// services/pos/tenders.ts
-async function applyTenders(db, scope, transactionId, tenders) {
-  if (!Array.isArray(tenders) || !tenders.length || tenders.length > 100) throw new FinanceError(400, "INVALID_TENDERS");
-  const txn = (await db.query("SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE", [transactionId, scope.tenantId, scope.merchantId, scope.outletId])).rows[0];
-  if (!txn || ["VOIDED", "CANCELLED", "REFUNDED"].includes(txn.order_status)) throw new FinanceError(409, "TRANSACTION_NOT_PAYABLE");
-  const seen = /* @__PURE__ */ new Set();
-  for (const tender of tenders) {
-    if (typeof tender.clientPaymentId !== "string" || !/^[-a-zA-Z0-9_:]{1,128}$/.test(tender.clientPaymentId) || seen.has(tender.clientPaymentId) || !["CASH", "QRIS", "DEBIT", "CREDIT", "TRANSFER", "E_WALLET", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "QRIS_STATIC", "QRIS_DYNAMIC"].includes(tender.method) || !Number.isFinite(tender.amount) || tender.amount <= 0 || Math.abs(tender.amount * 100 - Math.round(tender.amount * 100)) > 1e-3 || !Number.isFinite(Date.parse(tender.createdAt))) throw new FinanceError(400, "INVALID_TENDER");
-    seen.add(tender.clientPaymentId);
-    const previous = (await db.query("SELECT * FROM pos.payments WHERE transaction_id=$1 AND client_payment_id=$2", [transactionId, tender.clientPaymentId])).rows[0];
-    if (previous) {
-      if (Number(previous.amount) !== tender.amount || previous.payment_method !== tender.method || new Date(previous.created_at).toISOString() !== new Date(tender.createdAt).toISOString()) throw new FinanceError(409, "TENDER_ID_CONFLICT");
-      continue;
-    }
-    const paid = Number((await db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM pos.payments WHERE transaction_id=$1 AND payment_status IN('PAID','SETTLED')", [transactionId])).rows[0].amount);
-    if (Math.round((paid + tender.amount) * 100) > Math.round(Number(txn.total_amount) * 100)) throw new FinanceError(409, "TENDER_EXCEEDS_BALANCE");
-    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,verification_origin,paid_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH','CASHIER_RECORDED',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
-    if (tender.method === "CASH") await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,actor_ref,note,occurred_at)
-      VALUES($1,$2,$3,$4,'SALE',$5,$6,$7,'Pembayaran tunai split',$8)`, [scope.tenantId, scope.merchantId, scope.outletId, "payment:" + row.id, tender.amount, transactionId, scope.actorRef, tender.createdAt]);
-  }
+// src/lib/pos/workspacePurchase.ts
+function sharedPurchaseCashCommand(commandId, moduleId, outletId, sector, amount, occurredAt, description) {
+  return { sector, outletId, clientEventId: `purchase:${commandId}:${moduleId}`, type: "CASH_OUT", amount, occurredAt, description, category: "BELANJA_BAHAN", recipientOrSource: "Shared purchase " + commandId };
 }
 
-// src/config/legalNotices.ts
-var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
+// services/pos/inventoryLocation.ts
+async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
+  const existing = await db.query(`SELECT id FROM pos.inventory_locations
+    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_primary AND is_active
+    ORDER BY created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
+  if (existing.rows.length) return existing.rows[0].id;
+  await db.query(`INSERT INTO pos.inventory_locations
+    (id,tenant_id,merchant_id,outlet_id,name,is_primary,is_active)
+    VALUES(uuidv7(),$1,$2,$3,'Gudang Utama',true,true)
+    ON CONFLICT(outlet_id,name) DO NOTHING`, [tenantId, merchantId, outletId]);
+  const created = await db.query(`SELECT id FROM pos.inventory_locations
+    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_active
+    ORDER BY is_primary DESC,created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
+  if (!created.rows.length) throw new BillingError(409, "INVENTORY_LOCATION_REQUIRED");
+  return created.rows[0].id;
+}
 
-// services/pos/privacy.ts
-var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var PrivacyError = class extends Error {
+// services/pos/workspaceIdentity.ts
+import { createHash as createHash2 } from "node:crypto";
+var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash2("sha256").update(moduleId + "\0" + recordId).digest("hex");
+
+// services/pos/workspaceInventory.ts
+async function workspaceProduct(c, s, recordId, lock = false) {
+  const row = (await c.query(`SELECT * FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND external_ref=$4 AND NOT sync_quarantined ${lock ? "FOR UPDATE" : ""}`, [s.tenantId, s.merchantId, s.moduleId, workspaceProductRef(s.moduleId, recordId)])).rows[0];
+  if (!row) throw new ModuleAccessError(404, "WORKSPACE_PRODUCT_NOT_FOUND");
+  return row;
+}
+async function attachWorkspaceInventory(c, s, productId, stockable) {
+  if (!stockable) return;
+  const p = (await c.query("SELECT * FROM pos.products WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND module_id=$4 FOR UPDATE", [productId, s.tenantId, s.merchantId, s.moduleId])).rows[0];
+  if (!p) throw new ModuleAccessError(404, "WORKSPACE_PRODUCT_NOT_FOUND");
+  if (!p.inventory_item_id) {
+    const i = (await c.query(`INSERT INTO pos.inventory_items(tenant_id,merchant_id,module_id,item_name,sku,base_unit,item_type,cost_per_unit,is_stockable) VALUES($1,$2,$3,$4,$5,$6,'RETAIL_FINISHED',$7,true) RETURNING id`, [s.tenantId, s.merchantId, s.moduleId, p.name, s.moduleId + ":" + p.sku, p.unit || "pcs", p.cost_price])).rows[0];
+    await c.query("UPDATE pos.products SET inventory_item_id=$2,offering_type='PHYSICAL' WHERE id=$1", [p.id, i.id]);
+  }
+}
+async function lockWorkspaceStock(c, s, p) {
+  if (!p.inventory_item_id) return null;
+  const location = await ensureInventoryLocation(c, s.tenantId, s.merchantId, s.outletId);
+  await c.query(`INSERT INTO pos.inventory_balances(tenant_id,merchant_id,outlet_id,location_id,inventory_item_id,current_stock) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT(outlet_id,location_id,inventory_item_id) DO NOTHING`, [s.tenantId, s.merchantId, s.outletId, location, p.inventory_item_id]);
+  const row = (await c.query(`SELECT current_stock FROM pos.inventory_balances WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND location_id=$5 AND inventory_item_id=$6 FOR UPDATE`, [s.tenantId, s.merchantId, s.outletId, s.moduleId, location, p.inventory_item_id])).rows[0];
+  if (!row) throw new ModuleAccessError(409, "STOCK_WORKSPACE_MISMATCH");
+  return { location, quantity: Number(row.current_stock) };
+}
+async function movement(c, s, item, location, qty, type, ref) {
+  await c.query(`INSERT INTO pos.inventory_transactions(tenant_id,merchant_id,outlet_id,module_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'Explicit workspace inventory command')`, [s.tenantId, s.merchantId, s.outletId, s.moduleId, location, item, qty, type, ref]);
+}
+function registerWorkspaceInventoryRoutes(app, db) {
+  app.post("/api/v1/sync/modules/inventory", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const b = req.body;
+    if (!b || !["RECEIVE", "TRANSFER", "ADJUST"].includes(b.action) || typeof b.commandId !== "string" || !/^[^\x00-\x1f\x7f]{1,128}$/.test(b.commandId) || !Array.isArray(b.lines) || !b.lines.length || b.lines.length > 100 || b.lines.some((l) => !l || typeof l.productRef !== "string" || !l.productRef || !Number.isFinite(l.quantity) || (b.action === "ADJUST" ? l.quantity < 0 : l.quantity <= 0) || l.quantity > 999999 || Math.abs(l.quantity * 1e3 - Math.round(l.quantity * 1e3)) > 1e-3)) return res.status(400).json({ ok: false, error: "INVALID_STOCK_COMMAND" });
+    try {
+      const result = await db.tx(async (c) => {
+        const initial = await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [initial.tenantId + ":" + b.commandId]);
+        for (const moduleId of new Set(b.lines.map((l) => l.moduleId || b.moduleId))) await resolveWorkspaceScope(c, principal.subject, { ...b, moduleId }, ["inventory"]);
+        if (b.action === "TRANSFER") await resolveWorkspaceScope(c, principal.subject, { ...b, outletId: b.destinationOutletId }, ["inventory"]);
+        await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
+        const hash = commandHash(b), prior = (await c.query("SELECT * FROM pos.workspace_commands WHERE tenant_id=$1 AND command_id=$2", [initial.tenantId, b.commandId])).rows[0];
+        if (prior) {
+          if (prior.actor_ref !== principal.subject || prior.request_hash !== hash || prior.merchant_id !== initial.merchantId) throw new ModuleAccessError(409, "STOCK_COMMAND_ID_CONFLICT");
+          return { ...prior.result, replayed: true };
+        }
+        if (b.action === "TRANSFER" && (b.lines.some((l) => l.moduleId && l.moduleId !== b.moduleId) || b.destinationOutletId === b.outletId)) throw new ModuleAccessError(400, "INVALID_TRANSFER_SCOPE");
+        const scopes = /* @__PURE__ */ new Map();
+        const sorted = [...b.lines].sort((a, z) => String(a.moduleId || b.moduleId).localeCompare(String(z.moduleId || b.moduleId)) || a.productRef.localeCompare(z.productRef));
+        for (const line of sorted) {
+          const scope = await resolveWorkspaceScope(c, principal.subject, { ...b, moduleId: line.moduleId || b.moduleId }, ["inventory"]);
+          scopes.set(scope.moduleId, scope);
+          const p = await workspaceProduct(c, scope, line.productRef, true);
+          if (!p.inventory_item_id) throw new ModuleAccessError(409, "PRODUCT_NOT_STOCKABLE");
+          const stock = await lockWorkspaceStock(c, scope, p);
+          if (!stock) throw new ModuleAccessError(409, "PRODUCT_NOT_STOCKABLE");
+          if (b.action === "ADJUST") {
+            if (!Number.isFinite(line.expectedQuantity) || stock.quantity !== line.expectedQuantity) throw new ModuleAccessError(409, "STOCK_CHANGED_REVIEW_REQUIRED");
+            await movement(c, scope, p.inventory_item_id, stock.location, line.quantity - stock.quantity, "ADJUSTMENT", b.commandId);
+          } else if (b.action === "TRANSFER") {
+            if (stock.quantity < line.quantity) throw new ModuleAccessError(409, "INSUFFICIENT_STOCK");
+            const destination = await resolveWorkspaceScope(c, principal.subject, { ...b, outletId: b.destinationOutletId }, ["inventory"]);
+            const destLocation = await ensureInventoryLocation(c, destination.tenantId, destination.merchantId, destination.outletId);
+            await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
+            await movement(c, scope, p.inventory_item_id, stock.location, -line.quantity, "TRANSFER_OUT", b.commandId);
+            await resolveWorkspaceScope(c, principal.subject, { ...b, outletId: b.destinationOutletId }, ["inventory"]);
+            await movement(c, destination, p.inventory_item_id, destLocation, line.quantity, "TRANSFER_IN", b.commandId);
+          } else await movement(c, scope, p.inventory_item_id, stock.location, line.quantity, "PURCHASE", b.commandId);
+        }
+        const expenses = [];
+        if (b.purchase) {
+          const p = b.purchase, allocations = p.allocations;
+          if (b.action !== "RECEIVE" || b.commandId.length > 80 || !Number.isFinite(p.totalAmount) || p.totalAmount <= 0 || !Array.isArray(allocations) || allocations.length !== scopes.size || new Set(allocations.map((a) => a.moduleId)).size !== scopes.size || allocations.some((a) => !scopes.has(a.moduleId) || !Number.isFinite(a.amount) || a.amount <= 0 || Math.abs(a.amount * 100 - Math.round(a.amount * 100)) > 1e-3) || Math.round(allocations.reduce((n, a) => n + a.amount, 0) * 100) !== Math.round(p.totalAmount * 100) || typeof p.occurredAt !== "string" || !Number.isFinite(Date.parse(p.occurredAt)) || typeof p.description !== "string" || !p.description.trim() || p.description.length > 500) throw new ModuleAccessError(400, "EXACT_PURCHASE_ALLOCATION_REQUIRED");
+          for (const allocation of allocations) {
+            const s = await resolveWorkspaceScope(c, principal.subject, { ...b, moduleId: allocation.moduleId }, ["inventory", "pos"]);
+            const command = sharedPurchaseCashCommand(b.commandId, s.moduleId, s.outletId, s.sector, allocation.amount, p.occurredAt, p.description);
+            const expense = await applyCashEvent(c, { ...s, sector: s.sector }, { ...command, approvalGrant: allocation.approvalGrant });
+            expenses.push({ moduleId: s.moduleId, amount: allocation.amount, cashEventId: expense.id });
+          }
+        }
+        await resolveWorkspaceScope(c, principal.subject, b, ["inventory"]);
+        const result2 = { commandId: b.commandId, action: b.action, lineCount: b.lines.length, moduleIds: [...scopes.keys()], expenses, financialRecorded: expenses.length > 0, replayed: false };
+        await c.query("INSERT INTO pos.workspace_commands(tenant_id,merchant_id,command_id,actor_ref,request_hash,result) VALUES($1,$2,$3,$4,$5,$6)", [initial.tenantId, initial.merchantId, b.commandId, principal.subject, hash, result2]);
+        return result2;
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      const known2 = e instanceof ModuleAccessError || e instanceof BillingError || e instanceof FinanceError || e instanceof FinancialApprovalError;
+      return res.status(known2 ? e.status : 503).json({ ok: false, error: known2 ? e.message : "WORKSPACE_INVENTORY_UNAVAILABLE" });
+    }
+  });
+}
+
+// services/pos/businessScope.ts
+var BusinessScopeError = class extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
   }
 };
-async function ownerScope(db, req) {
-  const p = trustedPrincipal(req);
-  if (!p || p.subject === "local-development") throw new PrivacyError(401, "UNAUTHENTICATED");
-  const t = (await db.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND is_active AND merged_into IS NULL ORDER BY created_at,id LIMIT 1", [p.subject])).rows[0];
-  if (!t) throw new PrivacyError(403, "OWNER_REQUIRED");
-  await db.query("SELECT set_config('app.tenant_id',$1,true)", [t.id]);
-  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["privacy:" + t.id]);
-  return { tenantId: t.id, actor: p.subject };
-}
-function registerPrivacyRoutes(app, db) {
-  const route = (method, path, run) => app[method](path, async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    try {
-      const data = await db.tx(async (c) => run(c, await ownerScope(c, req), req));
-      res.json({ ok: true, ...data });
-    } catch (e) {
-      res.status(e instanceof PrivacyError ? e.status : 503).json({ ok: false, error: e instanceof PrivacyError ? e.message : "PRIVACY_WORKFLOW_UNAVAILABLE" });
-    }
-  });
-  route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
-  route("post", "/api/v1/privacy/requests", async (c, s, req) => {
-    const { clientRequestId, type, message } = req.body || {};
-    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
-    const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
-    if (previous) {
-      if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
-      return { requestId: previous.id, status: previous.status, replayed: true };
-    }
-    const count = (await c.query("SELECT count(*)::int n FROM internal.privacy_requests WHERE tenant_id=$1 AND created_at>now()-interval '24 hours'", [s.tenantId])).rows[0].n;
-    if (count >= 10) throw new PrivacyError(429, "PRIVACY_REQUEST_RATE_LIMITED");
-    const record = (await c.query("INSERT INTO internal.privacy_requests(tenant_id,actor_ref,client_request_id,request_type,message) VALUES($1,$2,$3,$4,$5) RETURNING id,status", [s.tenantId, s.actor, clientRequestId, type, message.trim()])).rows[0];
-    await c.query("INSERT INTO internal.privacy_request_events(request_id,tenant_id,actor_ref,event,reason) VALUES($1,$2,$3,'RECEIVED','Owner submitted request; identity and retention review required')", [record.id, s.tenantId, s.actor]);
-    return { requestId: record.id, status: record.status };
-  });
-  route("post", "/api/v1/privacy/notices", async (c, s, req) => {
-    if (req.body?.termsVersion !== LEGAL_NOTICE_VERSION || req.body?.privacyVersion !== LEGAL_NOTICE_VERSION) throw new PrivacyError(400, "NOTICE_VERSION_REQUIRED");
-    await c.query("INSERT INTO internal.legal_notice_acknowledgements(tenant_id,actor_ref,terms_version,privacy_version) VALUES($1,$2,$3,$3) ON CONFLICT DO NOTHING", [s.tenantId, s.actor, LEGAL_NOTICE_VERSION]);
-    return { version: LEGAL_NOTICE_VERSION };
-  });
+async function resolveBusinessScope(db, subject, sector, businessId) {
+  if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
+    throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
+  const tenantId = await tenantForPrincipal(db, { subject });
+  if (!tenantId) {
+    if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+    return null;
+  }
+  const result = await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
+    FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+    WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+      AND m.business_sector=$3 AND m.is_active
+      AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
+    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+  const rows = result.rows;
+  if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
+  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
+  if (!selected) {
+    if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
+    return null;
+  }
+  return {
+    tenantId,
+    merchantId: selected.merchant_id,
+    businessName: selected.business_name,
+    transportRef: selected.external_ref || selected.merchant_id,
+    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+  };
 }
 
 // src/lib/sync/orderOperations.ts
@@ -2068,7 +2127,7 @@ var StateConflict = class extends Error {
     this.recordId = recordId;
   }
 };
-function validOperations(value) {
+function validOperations(value, workspace = false) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
   const seen = /* @__PURE__ */ new Set();
   const operations = [];
@@ -2093,7 +2152,7 @@ function validOperations(value) {
       if ("subscription" in settings || "branches" in settings || "activeBranchId" in settings || "logoUrl" in settings || "registeredTerminalId" in settings) return null;
     }
     if (r.kind === "order_operations" && !r.deleted) {
-      const allowed = new Set(ORDER_OPERATION_FIELDS);
+      const allowed = /* @__PURE__ */ new Set([...ORDER_OPERATION_FIELDS, ...workspace ? ["tenantId", "businessId", "businessSector", "moduleId", "outletId", "branchId"] : []]);
       if (Object.keys(r.value).some((key2) => !allowed.has(key2))) return null;
       if (r.value.id !== r.recordId) return null;
     }
@@ -2405,6 +2464,264 @@ function registerSharedStateRoutes(app, db) {
   });
 }
 
+// services/pos/workspaceState.ts
+var exclusive = { kds_tickets: "fnb", carwash_queue: "carwash", bookings: "barber" };
+function assertWorkspaceKinds(scope, kinds, write = false) {
+  const requirements = moduleStateRequirements(kinds, write);
+  if (requirements.some((choices) => !choices.some((p) => scope.permissions.includes(p) && scope.features.includes(p)))) throw new ModuleAccessError(403, "WORKSPACE_PERMISSION_DENIED");
+  if (kinds.some((kind) => exclusive[kind] && exclusive[kind] !== scope.moduleId)) throw new ModuleAccessError(403, "OPERATIONAL_MODULE_MISMATCH");
+  if (write && kinds.some((kind) => ["stock_items", "bundles", "inventory_logs"].includes(kind))) throw new ModuleAccessError(403, "CANONICAL_WORKSPACE_COMMAND_REQUIRED");
+  if (write && kinds.some((kind) => kind === "users" || kind === "staff_members")) throw new ModuleAccessError(403, "IDENTITY_RECORDS_ARE_SERVER_OWNED");
+}
+function errorResponse(res, e) {
+  if (!(e instanceof ModuleAccessError)) {
+    const d = e;
+    console.error("[workspace-state]", { message: d.message, code: d.code, constraint: d.constraint });
+  }
+  return res.status(e instanceof ModuleAccessError ? e.status : 503).json({ ok: false, error: e instanceof ModuleAccessError ? e.message : "WORKSPACE_STATE_UNAVAILABLE" });
+}
+function registerWorkspaceStateRoutes(app, db) {
+  app.get("/api/v1/sync/modules/state", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const result = await db.tx(async (c) => {
+        await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        const scope = await resolveWorkspaceScope(c, principal.subject, req.query);
+        const kinds = typeof req.query.kinds === "string" ? [...new Set(req.query.kinds.split(","))] : [];
+        if (!kinds.length || kinds.length > 25) throw new ModuleAccessError(400, "EXPLICIT_STATE_KINDS_REQUIRED");
+        assertWorkspaceKinds(scope, kinds);
+        const cursor = typeof req.query.cursor === "string" ? req.query.cursor : "";
+        if (cursor.length > 300) throw new ModuleAccessError(400, "INVALID_STATE_CURSOR");
+        const window = Object.entries(HISTORY_WINDOWS).filter(([, w]) => w.days).map(([kind, w]) => `(kind<>'${kind}' OR updated_at>now()-interval '${w.days} days')`).join(" AND ");
+        const rows = (await c.query(`SELECT * FROM(
+    SELECT scope,kind,record_id,value,revision,deleted FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND scope=$5 AND kind=ANY($6::text[]) AND kind NOT IN('products','inventory_logs') AND ${window} AND(kind<>'inventory_logs' OR record_id IN(SELECT record_id FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND kind='inventory_logs' ORDER BY updated_at DESC LIMIT 2000))
+    UNION ALL
+    SELECT $5::text,'products'::text,p.workspace_payload->>'id',p.workspace_payload||jsonb_build_object('tenantId',$1::text,'businessId',$8::text,'moduleId',$4::text,'outletId',$3::text,'branchId',$3::text,'businessSector',$9::text,'name',p.name,'price',p.price,'costPrice',p.cost_price,'sku',p.sku,'isAvailable',p.is_available,'catalogRevision',p.workspace_revision,'stock',COALESCE((SELECT sum(current_stock) FROM pos.inventory_balances WHERE inventory_item_id=p.inventory_item_id AND outlet_id=$3),0),'inventoryTracked',p.inventory_item_id IS NOT NULL),p.workspace_revision,false
+    FROM pos.products p WHERE p.tenant_id=$1 AND p.merchant_id=$2 AND p.module_id=$4 AND p.workspace_payload IS NOT NULL AND 'products'=ANY($6::text[])
+    UNION ALL
+    SELECT $5::text,'inventory_logs'::text,l.id::text,jsonb_build_object('id',l.id,'productId',COALESCE(p.workspace_payload->>'id',l.inventory_item_id::text),'productName',COALESCE(p.name,'Inventory'),'type',CASE WHEN l.quantity_delta<0 THEN 'OUT' ELSE 'IN' END,'quantity',abs(l.quantity_delta),'previousStock',l.running-l.quantity_delta,'newStock',l.running,'reason',COALESCE(l.reason,l.reference_type),'timestamp',l.created_at,'user',l.actor_ref,'businessSector',$9::text,'moduleId',$4::text,'outletId',$3::text,'branchId',$3::text,'businessId',$8::text),1::bigint,false
+    FROM(SELECT * FROM(SELECT t.*,sum(quantity_delta) OVER(PARTITION BY inventory_item_id,location_id ORDER BY created_at,id) AS running FROM pos.inventory_transactions t WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4) history ORDER BY created_at DESC,id DESC LIMIT 2000) l LEFT JOIN pos.products p ON p.inventory_item_id=l.inventory_item_id AND p.tenant_id=$1 AND p.merchant_id=$2 AND p.module_id=$4 WHERE 'inventory_logs'=ANY($6::text[])
+   ) snapshot WHERE kind||chr(1)||record_id>$7 ORDER BY kind,record_id LIMIT 1001`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, scope.namespace, kinds, cursor, scope.transportRef, scope.sector])).rows;
+        const version = (await c.query(`SELECT md5(COALESCE((SELECT string_agg(kind||record_id||revision::text||deleted::text,'|' ORDER BY kind,record_id) FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND kind=ANY($5::text[])),'')||COALESCE((SELECT string_agg(id::text||workspace_revision::text,'|' ORDER BY id) FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$4),'')||COALESCE((SELECT string_agg(id::text||current_stock::text,'|' ORDER BY id) FROM pos.inventory_balances WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4),'')) AS version`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, kinds])).rows[0].version;
+        const more = rows.length > 1e3;
+        if (more) rows.pop();
+        if (!cursor && kinds.includes("users")) {
+          const user = (await c.query("SELECT id,full_name FROM internal.users WHERE id::text=$1 AND is_active", [principal.subject])).rows[0];
+          if (user) rows.push({ scope: scope.namespace, kind: "users", record_id: user.id, value: { id: user.id, name: user.full_name, role: ["OWNER", "ADMIN"].includes(scope.role) ? "ADMIN" : scope.role, pin: "", status: "ACTIVE" }, revision: 1, deleted: false });
+        }
+        if (!cursor && kinds.includes("staff_members")) {
+          const roster = (await c.query(`SELECT DISTINCT u.id,u.full_name,ms.role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=$1 AND ms.is_active AND u.is_active AND (ms.scope_type='TENANT' OR ms.merchant_id=$2 AND(ms.scope_type='MERCHANT' OR ms.outlet_id=$3)) ORDER BY u.full_name,u.id`, [scope.tenantId, scope.merchantId, scope.outletId])).rows;
+          for (const user of roster) rows.push({ scope: scope.namespace, kind: "staff_members", record_id: user.id, value: { id: user.id, name: user.full_name, role: user.role, businessId: scope.transportRef, status: "ACTIVE" }, revision: 1, deleted: false });
+        }
+        return { ok: true, ready: true, scopeProof: true, kinds, business: { businessId: scope.merchantId, tenantId: scope.tenantId, sector: scope.sector }, workspace: { outletId: scope.outletId, moduleId: scope.moduleId }, records: rows.map((r) => ({ scope: r.scope, kind: r.kind, recordId: r.record_id, value: r.value, revision: Number(r.revision), deleted: r.deleted })), version, nextCursor: more ? rows[Math.min(999, rows.length - 1)].kind + "" + rows[Math.min(999, rows.length - 1)].record_id : null };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json(result);
+    } catch (e) {
+      return errorResponse(res, e);
+    }
+  });
+  app.post("/api/v1/sync/modules/state", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const operations = validOperations(req.body?.operations, true);
+    if (!operations) return res.status(400).json({ ok: false, error: "INVALID_STATE_REQUEST" });
+    try {
+      const result = await db.tx(async (c) => {
+        const scope = await resolveWorkspaceScope(c, principal.subject, req.body);
+        assertWorkspaceKinds(scope, operations.map((op) => op.kind), true);
+        if (operations.some((op) => op.kind === "products") && !["TENANT", "MERCHANT"].includes(scope.membershipScope)) throw new ModuleAccessError(403, "MODULE_CATALOG_MANAGER_REQUIRED");
+        const versions = [], conflicts = [];
+        for (const op of operations) {
+          if (op.kind === "products" && op.baseRevision > 0 && !(await c.query("SELECT id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND external_ref=$4 FOR UPDATE", [scope.tenantId, scope.merchantId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId)])).rows.length) {
+            conflicts.push({ kind: op.kind, recordId: op.recordId, error: "STATE_CONFLICT" });
+            continue;
+          }
+          const rawValue = op.value;
+          if (op.kind === "products" && !op.deleted && (rawValue?.linkedStockItemId || Array.isArray(rawValue?.recipeIngredients) && rawValue.recipeIngredients.length)) throw new ModuleAccessError(409, "WORKSPACE_RECIPE_NOT_VALIDATED");
+          const value = op.deleted ? null : { ...rawValue, tenantId: scope.tenantId, moduleId: scope.moduleId, outletId: scope.outletId, branchId: scope.outletId, businessId: scope.transportRef, businessSector: scope.sector };
+          if (!op.deleted && ["moduleId", "outletId", "branchId", "businessId", "tenantId"].some((field) => rawValue?.[field] !== void 0 && rawValue[field] !== value[field])) throw new ModuleAccessError(403, "WORKSPACE_PAYLOAD_MISMATCH");
+          const saved = await c.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,outlet_id,module_id,scope,kind,record_id,value,revision,deleted) SELECT $1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::jsonb,1,$9::boolean WHERE $10::bigint=0 OR $6='products' OR EXISTS(SELECT 1 FROM pos.shared_state_records WHERE tenant_id=$1 AND scope=$5 AND kind=$6 AND record_id=$7 AND revision=$10) ON CONFLICT(tenant_id,scope,kind,record_id) DO UPDATE SET value=excluded.value,deleted=excluded.deleted,revision=CASE WHEN(pos.shared_state_records.value,pos.shared_state_records.deleted) IS DISTINCT FROM(excluded.value,excluded.deleted) THEN pos.shared_state_records.revision+1 ELSE pos.shared_state_records.revision END,updated_at=CASE WHEN(pos.shared_state_records.value,pos.shared_state_records.deleted) IS DISTINCT FROM(excluded.value,excluded.deleted) THEN now() ELSE pos.shared_state_records.updated_at END WHERE pos.shared_state_records.revision=$10 OR excluded.kind='products' RETURNING revision`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, scope.namespace, op.kind, op.recordId, value, op.deleted, op.baseRevision]);
+          let revision = saved.rows[0]?.revision;
+          if (!revision) {
+            revision = (await c.query(`SELECT revision FROM pos.shared_state_records WHERE tenant_id=$1 AND scope=$2 AND kind=$3 AND record_id=$4 AND value IS NOT DISTINCT FROM $5::jsonb AND deleted=$6`, [scope.tenantId, scope.namespace, op.kind, op.recordId, value, op.deleted])).rows[0]?.revision;
+          }
+          if (!revision) {
+            conflicts.push({ kind: op.kind, recordId: op.recordId, error: "STATE_CONFLICT" });
+            continue;
+          }
+          if (op.kind === "products") {
+            if (op.deleted) await c.query("UPDATE pos.products SET is_available=false WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND external_ref=$4", [scope.tenantId, scope.merchantId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId)]);
+            else {
+              const p = rawValue;
+              const projection = await c.query(`INSERT INTO pos.products(id,tenant_id,merchant_id,outlet_id,module_id,external_ref,name,sku,price,cost_price,is_available,business_sector,business_id,unit,workspace_payload) VALUES(uuidv7(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15::jsonb) ON CONFLICT(tenant_id,merchant_id,external_ref) WHERE external_ref IS NOT NULL AND NOT sync_quarantined DO UPDATE SET name=excluded.name,sku=excluded.sku,price=excluded.price,cost_price=excluded.cost_price,is_available=excluded.is_available,workspace_payload=excluded.workspace_payload,workspace_revision=CASE WHEN(pos.products.name,pos.products.sku,pos.products.price,pos.products.cost_price,pos.products.is_available) IS DISTINCT FROM(excluded.name,excluded.sku,excluded.price,excluded.cost_price,excluded.is_available) THEN pos.products.workspace_revision+1 ELSE pos.products.workspace_revision END WHERE pos.products.module_id=excluded.module_id AND(pos.products.workspace_revision=$14::bigint OR (pos.products.name,pos.products.sku,pos.products.price,pos.products.cost_price,pos.products.is_available) IS NOT DISTINCT FROM(excluded.name,excluded.sku,excluded.price,excluded.cost_price,excluded.is_available)) RETURNING id,workspace_revision`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId), p.name, String(p.sku || op.recordId).slice(0, 50), p.price, p.costPrice, p.isAvailable !== false, scope.sector, scope.transportRef, String(p.unit || "pcs").slice(0, 20), Number.isSafeInteger(p.catalogRevision) ? p.catalogRevision : null, JSON.stringify(p)]);
+              if (!projection.rows.length) throw new ModuleAccessError(409, "CATALOG_REVISION_CONFLICT");
+              revision = projection.rows[0].workspace_revision;
+              await attachWorkspaceInventory(c, scope, projection.rows[0].id, p.inventoryTracked === true || scope.moduleId === "retail");
+            }
+          }
+          versions.push({ kind: op.kind, recordId: op.recordId, revision: Number(revision) });
+        }
+        return { ok: true, versions, conflicts, rejected: [] };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json(result);
+    } catch (e) {
+      return errorResponse(res, e);
+    }
+  });
+}
+
+// services/pos/workspaceDirectory.ts
+async function workspaceDirectory(db, subject, requestedTenant) {
+  if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "workspaceIsolation")) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
+  const tenants = (await db.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject])).rows;
+  const tenantId = typeof requestedTenant === "string" ? tenants.find((t) => t.id === requestedTenant)?.id : tenants.length === 1 ? tenants[0].id : null;
+  if (requestedTenant && !tenantId) throw new ModuleAccessError(403, "TENANT_MEMBERSHIP_REQUIRED");
+  if (!tenantId) return { ok: true, tenantId: null, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [], workspaceAuth: true };
+  const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR ms.role IS NOT NULL) ORDER BY m.id,o.id`, [tenantId, subject]);
+  const businesses = /* @__PURE__ */ new Map();
+  for (const r of result.rows) {
+    let b = businesses.get(r.id);
+    if (!b) {
+      b = { businessId: r.id, tenantId, name: r.name, sector: r.business_sector, status: r.is_active ? "ACTIVE" : "INACTIVE", legacyAlias: r.external_ref === subject + "_" + r.business_sector ? r.external_ref : null, transportRef: r.external_ref || r.id, outlets: [] };
+      businesses.set(r.id, b);
+    }
+    b.outlets.push({ outletId: r.outlet_id, businessId: r.id, name: r.outlet_name, address: r.address || "", status: r.outlet_active ? "ACTIVE" : "INACTIVE", role: r.role });
+  }
+  const subscription = (await db.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
+  return { ok: true, tenantId, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [...businesses.values()], workspaceAuth: true, capabilities: { multiBusiness: true }, subscription: subscription ? serializeSubscription(subscription) : null };
+}
+
+// services/pos/businessDirectory.ts
+function registerBusinessDirectory(app, db) {
+  app.get("/api/v1/sync/business", async (req, res) => {
+    const principal = trustedPrincipal(req);
+    if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      if (req.query.workspace === "2") return res.json(await workspaceDirectory(db, principal.subject, req.query.tenantId));
+      const tenantId = await tenantForPrincipal(db, principal);
+      if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
+      const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
+        o.id AS outlet_id,o.name AS outlet_name,o.address,o.is_active AS outlet_active,o.latitude,o.longitude,o.radius_meters
+        FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
+        LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id
+        WHERE m.tenant_id=$1 AND t.owner_user_ref=$2 AND t.merged_into IS NULL AND t.is_active
+        ORDER BY m.created_at,m.id,o.created_at,o.id`, [tenantId, principal.subject]);
+      const capabilities = (await db.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'")).rows.length > 0;
+      const businesses = /* @__PURE__ */ new Map();
+      for (const row of result.rows) {
+        let business = businesses.get(row.id);
+        if (!business) {
+          business = {
+            businessId: row.id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            sector: row.business_sector,
+            status: row.is_active ? "ACTIVE" : "INACTIVE",
+            legacyAlias: row.external_ref === `${principal.subject}_${row.business_sector}` ? row.external_ref : null,
+            transportRef: row.external_ref || row.id,
+            outlets: []
+          };
+          businesses.set(row.id, business);
+        }
+        if (row.outlet_id) business.outlets.push({
+          outletId: row.outlet_id,
+          businessId: row.id,
+          name: row.outlet_name,
+          address: row.address || "",
+          status: row.outlet_active ? "ACTIVE" : "INACTIVE",
+          ...{ latitude: row.latitude === null ? null : Number(row.latitude), longitude: row.longitude === null ? null : Number(row.longitude), radiusMeters: row.radius_meters === null ? null : Number(row.radius_meters) }
+        });
+      }
+      return res.json({ ok: true, tenantId, capabilities: { multiBusiness: capabilities }, businesses: [...businesses.values()] });
+    } catch (e) {
+      return res.status(e instanceof ModuleAccessError ? e.status : 503).json({ ok: false, error: e instanceof ModuleAccessError ? e.message : "BUSINESS_DIRECTORY_UNAVAILABLE" });
+    }
+  });
+}
+
+// services/pos/sync.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+
+// services/pos/tenders.ts
+async function applyTenders(db, scope, transactionId, tenders) {
+  if (!Array.isArray(tenders) || !tenders.length || tenders.length > 100) throw new FinanceError(400, "INVALID_TENDERS");
+  const txn = (await db.query("SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE", [transactionId, scope.tenantId, scope.merchantId, scope.outletId])).rows[0];
+  if (!txn || ["VOIDED", "CANCELLED", "REFUNDED"].includes(txn.order_status)) throw new FinanceError(409, "TRANSACTION_NOT_PAYABLE");
+  const seen = /* @__PURE__ */ new Set();
+  for (const tender of tenders) {
+    if (typeof tender.clientPaymentId !== "string" || !/^[-a-zA-Z0-9_:]{1,128}$/.test(tender.clientPaymentId) || seen.has(tender.clientPaymentId) || !["CASH", "QRIS", "DEBIT", "CREDIT", "TRANSFER", "E_WALLET", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "QRIS_STATIC", "QRIS_DYNAMIC"].includes(tender.method) || !Number.isFinite(tender.amount) || tender.amount <= 0 || Math.abs(tender.amount * 100 - Math.round(tender.amount * 100)) > 1e-3 || !Number.isFinite(Date.parse(tender.createdAt))) throw new FinanceError(400, "INVALID_TENDER");
+    seen.add(tender.clientPaymentId);
+    const previous = (await db.query("SELECT * FROM pos.payments WHERE transaction_id=$1 AND client_payment_id=$2", [transactionId, tender.clientPaymentId])).rows[0];
+    if (previous) {
+      if (Number(previous.amount) !== tender.amount || previous.payment_method !== tender.method || new Date(previous.created_at).toISOString() !== new Date(tender.createdAt).toISOString()) throw new FinanceError(409, "TENDER_ID_CONFLICT");
+      continue;
+    }
+    const paid = Number((await db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM pos.payments WHERE transaction_id=$1 AND payment_status IN('PAID','SETTLED')", [transactionId])).rows[0].amount);
+    if (Math.round((paid + tender.amount) * 100) > Math.round(Number(txn.total_amount) * 100)) throw new FinanceError(409, "TENDER_EXCEEDS_BALANCE");
+    const row = (await db.query(`INSERT INTO pos.payments(tenant_id,merchant_id,outlet_id,transaction_id,client_payment_id,payment_method,payment_status,amount,gateway_provider,verification_origin,paid_at,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,'PAID',$7,'MANUAL_CASH','CASHIER_RECORDED',$8,$8) RETURNING id`, [scope.tenantId, scope.merchantId, scope.outletId, transactionId, tender.clientPaymentId, tender.method, tender.amount, tender.createdAt])).rows[0];
+    if (tender.method === "CASH") await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,actor_ref,note,occurred_at)
+      VALUES($1,$2,$3,$4,'SALE',$5,$6,$7,'Pembayaran tunai split',$8)`, [scope.tenantId, scope.merchantId, scope.outletId, "payment:" + row.id, tender.amount, transactionId, scope.actorRef, tender.createdAt]);
+  }
+}
+
+// src/config/legalNotices.ts
+var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
+
+// services/pos/privacy.ts
+var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var PrivacyError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+async function ownerScope(db, req) {
+  const p = trustedPrincipal(req);
+  if (!p || p.subject === "local-development") throw new PrivacyError(401, "UNAUTHENTICATED");
+  const t = (await db.query("SELECT id FROM internal.tenants WHERE owner_user_ref=$1 AND is_active AND merged_into IS NULL ORDER BY created_at,id LIMIT 1", [p.subject])).rows[0];
+  if (!t) throw new PrivacyError(403, "OWNER_REQUIRED");
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [t.id]);
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["privacy:" + t.id]);
+  return { tenantId: t.id, actor: p.subject };
+}
+function registerPrivacyRoutes(app, db) {
+  const route = (method, path, run) => app[method](path, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const data = await db.tx(async (c) => run(c, await ownerScope(c, req), req));
+      res.json({ ok: true, ...data });
+    } catch (e) {
+      res.status(e instanceof PrivacyError ? e.status : 503).json({ ok: false, error: e instanceof PrivacyError ? e.message : "PRIVACY_WORKFLOW_UNAVAILABLE" });
+    }
+  });
+  route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
+  route("post", "/api/v1/privacy/requests", async (c, s, req) => {
+    const { clientRequestId, type, message } = req.body || {};
+    if (!UUID3.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
+    if (previous) {
+      if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
+      return { requestId: previous.id, status: previous.status, replayed: true };
+    }
+    const count = (await c.query("SELECT count(*)::int n FROM internal.privacy_requests WHERE tenant_id=$1 AND created_at>now()-interval '24 hours'", [s.tenantId])).rows[0].n;
+    if (count >= 10) throw new PrivacyError(429, "PRIVACY_REQUEST_RATE_LIMITED");
+    const record = (await c.query("INSERT INTO internal.privacy_requests(tenant_id,actor_ref,client_request_id,request_type,message) VALUES($1,$2,$3,$4,$5) RETURNING id,status", [s.tenantId, s.actor, clientRequestId, type, message.trim()])).rows[0];
+    await c.query("INSERT INTO internal.privacy_request_events(request_id,tenant_id,actor_ref,event,reason) VALUES($1,$2,$3,'RECEIVED','Owner submitted request; identity and retention review required')", [record.id, s.tenantId, s.actor]);
+    return { requestId: record.id, status: record.status };
+  });
+  route("post", "/api/v1/privacy/notices", async (c, s, req) => {
+    if (req.body?.termsVersion !== LEGAL_NOTICE_VERSION || req.body?.privacyVersion !== LEGAL_NOTICE_VERSION) throw new PrivacyError(400, "NOTICE_VERSION_REQUIRED");
+    await c.query("INSERT INTO internal.legal_notice_acknowledgements(tenant_id,actor_ref,terms_version,privacy_version) VALUES($1,$2,$3,$3) ON CONFLICT DO NOTHING", [s.tenantId, s.actor, LEGAL_NOTICE_VERSION]);
+    return { version: LEGAL_NOTICE_VERSION };
+  });
+}
+
 // services/pos/reports.ts
 var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -2434,7 +2751,8 @@ function dateQuery(value, name) {
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
   if (!outletId || !UUID4.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
-  const merchantId = stringQuery(query.merchantId, "MERCHANT_ID");
+  const moduleId = stringQuery(query.moduleId, "MODULE_ID");
+  const merchantId = stringQuery(query.merchantId ?? query.businessId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
   if (merchantId && !UUID4.test(merchantId) || tenantId && !UUID4.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
@@ -2458,6 +2776,7 @@ function parseReportFilter(query) {
   const trendDays = trendRaw === null ? null : Number(trendRaw);
   if (trendDays !== null && (!Number.isInteger(trendDays) || trendDays < 2 || trendDays > 31)) throw new ReportRequestError(400, "INVALID_TREND");
   return {
+    moduleId,
     outletId,
     merchantId,
     tenantId,
@@ -2472,6 +2791,11 @@ function parseReportFilter(query) {
   };
 }
 async function scopeFor2(db, subject, filter) {
+  if (filter.moduleId) {
+    const s = await resolveWorkspaceScope(db, subject, { businessId: filter.merchantId, outletId: filter.outletId, moduleId: filter.moduleId }, [filter.operational ? "pos" : "reports"]);
+    if (filter.tenantId && filter.tenantId !== s.tenantId) throw new ReportRequestError(403, "REPORT_SCOPE_FORBIDDEN");
+    return { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, sector: s.sector, from: filter.from, to: filter.to, timezone: filter.timezone };
+  }
   const { rows } = await db.query(
     `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
     FROM internal.outlets o
@@ -2516,6 +2840,7 @@ function parameters(scope, filter) {
 }
 var inPeriod = (alias, column = "created_at") => `
   ${alias}.tenant_id=$1 AND ${alias}.merchant_id=$2 AND ${alias}.outlet_id=$3
+  AND (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(${alias})->>'module_id'=current_setting('app.module_id',true))
   AND ($4::date IS NULL OR ${alias}.${column} >= ($4::date::timestamp AT TIME ZONE $6))
   AND ($5::date IS NULL OR ${alias}.${column} < (($5::date + 1)::timestamp AT TIME ZONE $6))`;
 var transactionFilters = (alias) => `
@@ -2762,7 +3087,7 @@ async function serverTransactions(db, subject, filter, cursor, limit = 100) {
         AND ($9::timestamptz IS NULL OR (x.created_at,x.id)<($9::timestamptz,$10::uuid))
       ORDER BY x.created_at DESC,x.id DESC LIMIT $11`, params);
     const page = rows.slice(0, limit);
-    const items = page.length ? (await c.query(`SELECT i.*,COALESCE(i.quantity_exact,i.quantity) AS quantity,p.external_ref AS product_ref,
+    const items = page.length ? (await c.query(`SELECT i.*,COALESCE(i.quantity_exact,i.quantity) AS quantity,COALESCE(to_jsonb(p)->'workspace_payload'->>'id',p.external_ref) AS product_ref,
       COALESCE(ri.quantity,0) AS refunded_quantity FROM pos.transaction_items i
       LEFT JOIN pos.products p ON p.id=i.product_id AND p.tenant_id=i.tenant_id
       LEFT JOIN LATERAL (SELECT sum(ri.quantity) AS quantity FROM pos.transaction_refund_items ri
@@ -2828,19 +3153,20 @@ function registerReportRoutes(app, db) {
     if (!principal || principal.subject === "local-development") return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
     try {
       const filter = parseReportFilter(req.query);
+      if (route === "transactions" && req.query.purpose === "pos") filter.operational = true;
       if (route === "summary") return res.json(await serverReportSummary(db, principal.subject, filter));
       const rawLimit = stringQuery(req.query.limit, "LIMIT");
       const limit = rawLimit === null ? 100 : Number(rawLimit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ReportRequestError(400, "INVALID_LIMIT");
       return res.json(await serverTransactions(db, principal.subject, filter, cursorFor(req.query.cursor), limit));
     } catch (error) {
-      if (!(error instanceof ReportRequestError)) {
+      if (!(error instanceof ModuleAccessError || error instanceof ReportRequestError)) {
         const diagnostic = error;
         console.error("[reports] read failed", { route, code: diagnostic.code, constraint: diagnostic.constraint, table: diagnostic.table, column: diagnostic.column });
       }
-      return res.status(error instanceof ReportRequestError ? error.status : 503).json({
+      return res.status(error instanceof ModuleAccessError || error instanceof ReportRequestError ? error.status : 503).json({
         ok: false,
-        error: error instanceof ReportRequestError ? error.message : "REPORT_UNAVAILABLE"
+        error: error instanceof ModuleAccessError || error instanceof ReportRequestError ? error.message : "REPORT_UNAVAILABLE"
       });
     }
   });
@@ -2853,21 +3179,6 @@ var SyncAccessError = class extends Error {
 };
 var ProductLimitError = class extends Error {
 };
-async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
-  const existing = await db.query(`SELECT id FROM pos.inventory_locations
-    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_primary AND is_active
-    ORDER BY created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
-  if (existing.rows.length) return existing.rows[0].id;
-  await db.query(`INSERT INTO pos.inventory_locations
-    (id,tenant_id,merchant_id,outlet_id,name,is_primary,is_active)
-    VALUES(uuidv7(),$1,$2,$3,'Gudang Utama',true,true)
-    ON CONFLICT(outlet_id,name) DO NOTHING`, [tenantId, merchantId, outletId]);
-  const created = await db.query(`SELECT id FROM pos.inventory_locations
-    WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND is_active
-    ORDER BY is_primary DESC,created_at,id LIMIT 1`, [tenantId, merchantId, outletId]);
-  if (!created.rows.length) throw new BillingError(409, "INVENTORY_LOCATION_REQUIRED");
-  return created.rows[0].id;
-}
 async function assertBusinessCanBeClaimed(db, businessId, ownerSubject, sector) {
   if (ownerSubject === "local-development") return null;
   const { rows } = await db.query(
@@ -2904,14 +3215,20 @@ function invalidTransaction(x) {
   return null;
 }
 function perSaleRejection(error) {
-  if (error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
+  if (error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof FinancialApprovalError) return error.message;
   const code = String(error?.code || "");
   if (/^(22|23)/.test(code)) return "REJECTED_BY_DATABASE:" + (error.constraint || code);
   return null;
 }
+var workspaceSaleHash = (x) => {
+  const { tenders, refunds, paymentStatus, approvalGrant, voidReason, voidedAt, ...immutable } = x;
+  return commandHash(immutable);
+};
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
   registerModuleRoutes(app, db);
+  registerWorkspaceStateRoutes(app, db);
+  registerWorkspaceInventoryRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -2961,7 +3278,7 @@ function registerSyncRoutes(app, db) {
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
-      return res.status(error instanceof BillingError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
+      return res.status(error instanceof BillingError || error instanceof ModuleAccessError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof ModuleAccessError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
     }
   });
   app.get("/api/v1/sync/receipt-logo", async (req, res) => {
@@ -2969,6 +3286,18 @@ function registerSyncRoutes(app, db) {
     const businessId = str(req.query.businessId, 96);
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     if (!businessId) return res.status(400).json({ ok: false, error: "BUSINESS_ID_REQUIRED" });
+    if (req.query.moduleId !== void 0) {
+      try {
+        const logo = await db.tx(async (c) => {
+          const scope = await resolveWorkspaceScope(c, principal.subject, req.query);
+          return (await c.query("SELECT logo_url FROM internal.merchants WHERE id=$1", [scope.merchantId])).rows[0]?.logo_url || null;
+        });
+        res.setHeader("Cache-Control", "no-store");
+        return res.json({ ok: true, logoUrl: logo });
+      } catch (e) {
+        return res.status(e instanceof ModuleAccessError ? e.status : 503).json({ ok: false, error: e instanceof ModuleAccessError ? e.message : "LOGO_UNAVAILABLE" });
+      }
+    }
     if (!await canAccessBusiness(db, principal, businessId)) return res.status(403).json({ ok: false, error: "BUSINESS_NOT_OWNED" });
     const { rows } = await db.query("SELECT logo_url FROM internal.merchants WHERE (external_ref = $1 OR id::text = $1)", [businessId]);
     if (!rows.length) return res.status(404).json({ ok: false, error: "BUSINESS_NOT_FOUND" });
@@ -3028,15 +3357,21 @@ function registerSyncRoutes(app, db) {
       return res.status(400).json({ ok: false, error: "INVALID_TRANSACTIONS" });
     try {
       const out = await db.tx(async (c) => {
-        const claimedBusiness = await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
+        const workspace = body.moduleId !== void 0 ? await resolveWorkspaceScope(c, ownerRef, body, ["pos"]) : null;
+        if (workspace && workspace.sector !== sector) throw new ModuleAccessError(400, "WORKSPACE_SECTOR_MISMATCH");
+        const receiptKey = workspace && idemKey ? "workspace:" + commandHash([workspace.tenantId, workspace.merchantId, workspace.outletId, workspace.moduleId, ownerRef, idemKey]) : idemKey;
+        const requestHash = workspace ? commandHash(body) : null;
+        if (workspace && receiptKey) await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [receiptKey]);
+        const claimedBusiness = workspace ? { id: workspace.merchantId, tenant_id: workspace.tenantId } : await assertBusinessCanBeClaimed(c, businessId, ownerRef, sector);
+        if (!workspace && claimedBusiness) await authorizeNativeModule(c, ownerRef, claimedBusiness.id, requestedOutletId, [["pos"]]);
         const storesOutcomes = await hasSchemaFeature(c, "syncReceiptOutcomes");
-        if (idemKey) {
+        if (receiptKey) {
           const prev = await c.query(
-            `SELECT business_id, rows_accepted, rows_duplicate${storesOutcomes ? ", outcomes" : ""} FROM pos.sync_receipts WHERE idempotency_key = $1`,
-            [idemKey]
+            `SELECT business_id, rows_accepted, rows_duplicate${workspace ? ",outlet_id,module_id,actor_ref,request_hash" : ""}${storesOutcomes ? ", outcomes" : ""} FROM pos.sync_receipts WHERE idempotency_key = $1`,
+            [receiptKey]
           );
           if (prev.rows.length) {
-            if (prev.rows[0].business_id !== businessId) throw new BillingError(409, "IDEMPOTENCY_KEY_CONFLICT");
+            if (prev.rows[0].business_id !== businessId || workspace && (prev.rows[0].outlet_id !== workspace.outletId || prev.rows[0].module_id !== workspace.moduleId || prev.rows[0].actor_ref !== ownerRef || prev.rows[0].request_hash !== requestHash)) throw new BillingError(409, "IDEMPOTENCY_KEY_CONFLICT");
             return {
               replayed: true,
               accepted: prev.rows[0].rows_accepted,
@@ -3047,11 +3382,15 @@ function registerSyncRoutes(app, db) {
             };
           }
         }
-        const freeScope = await resolveFreeSyncScope(c, ownerRef, sector);
+        const freeScope = workspace ? null : await resolveFreeSyncScope(c, ownerRef, sector);
         let tenantId;
         let merchantId;
         let outletId;
-        if (freeScope) {
+        if (workspace) {
+          tenantId = workspace.tenantId;
+          merchantId = workspace.merchantId;
+          outletId = workspace.outletId;
+        } else if (freeScope) {
           if (!(await c.query(
             `SELECT 1 FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
             WHERE m.id=$1 AND m.tenant_id=$3 AND t.owner_user_ref=$4 AND m.business_sector=$5
@@ -3098,8 +3437,8 @@ function registerSyncRoutes(app, db) {
         }
         const defaultInventoryLocationId = await ensureInventoryLocation(c, tenantId, merchantId, outletId);
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [tenantId, merchantId]);
-        await authorizeNativeModule(c, ownerRef, merchantId, outletId, [["pos"]]);
-        const financialScope = { tenantId, merchantId, outletId, sector, actorRef: ownerRef };
+        if (!workspace) await authorizeNativeModule(c, ownerRef, merchantId, outletId, [["pos"]]);
+        const financialScope = { tenantId, merchantId, outletId, sector, actorRef: ownerRef, ...workspace ? { moduleId: workspace.moduleId, role: workspace.role } : {} };
         const cashierCache = /* @__PURE__ */ new Map();
         const productCache = /* @__PURE__ */ new Map();
         const productLimit = await productLimitForTenant(c, tenantId);
@@ -3109,6 +3448,14 @@ function registerSyncRoutes(app, db) {
         );
         let productCount = Number(existingProductCount.rows[0]?.count ?? 0);
         const resolveCashier = async (ref, name, role) => {
+          if (workspace) {
+            if (cashierCache.has(ownerRef)) return cashierCache.get(ownerRef);
+            await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1 ON CONFLICT(id) DO NOTHING`, [tenantId]);
+            const projection = (await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref) SELECT public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text),$1::uuid,left(u.full_name,100),'ws_'||replace(public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text)::text,'-',''),$3,$4,u.id::text FROM internal.users u WHERE u.id::text=$2 AND is_active ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role RETURNING id`, [tenantId, ownerRef, randomBytes2(32).toString("hex"), workspace.role === "OWNER" ? "ADMIN" : workspace.role])).rows[0];
+            if (!projection) throw new ModuleAccessError(403, "AUTHENTICATED_STAFF_REQUIRED");
+            cashierCache.set(ownerRef, projection.id);
+            return projection.id;
+          }
           const free = await freePlanState(c, tenantId);
           if (free.free) {
             if (ref !== free.ownerId) throw new SyncAccessError("FREE_OWNER_ONLY");
@@ -3147,6 +3494,12 @@ function registerSyncRoutes(app, db) {
           return userId;
         };
         const resolveProduct = async (i) => {
+          if (workspace) {
+            const p = await workspaceProduct(c, workspace, i.productRef || "", true);
+            if (!p.is_available) throw new FinanceError(409, "PRODUCT_UNAVAILABLE");
+            productCache.set(i.productRef, p.id);
+            return p.id;
+          }
           assertFreeScope(await freePlanState(c, tenantId), sector, [i.productRef || ""]);
           const key = i.productRef || i.productName;
           if (!key) return null;
@@ -3198,6 +3551,13 @@ function registerSyncRoutes(app, db) {
         const rejected = [];
         const renumbered = [];
         const syncOne = async (x, clientId) => {
+          if (workspace) {
+            if (x.branchId && x.branchId !== workspace.outletId || x.workspace && ["tenantId", "merchantId", "outletId", "moduleId", "actorRef"].some((f) => x.workspace[f] !== workspace[f])) throw new FinanceError(403, "IMMUTABLE_WORKSPACE_MISMATCH");
+            if (x.shiftId && !(await c.query("SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)", [tenantId, merchantId, outletId, workspace.moduleId, x.shiftId])).rows.length) throw new FinanceError(403, "SHIFT_WORKSPACE_MISMATCH");
+            if (x.paymentStatus === "CANCELLED" && !["OWNER", "ADMIN", "MANAGER"].includes(workspace.role)) throw new FinanceError(403, "WORKSPACE_ROLE_FORBIDDEN");
+            const lineSubtotal = x.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+            if (Math.abs(lineSubtotal - x.subtotal) > 0.011 || Math.abs(x.subtotal - (x.discountAmount || 0) + (x.taxAmount || 0) + (x.serviceChargeAmount || 0) - x.totalAmount) > 0.011) throw new FinanceError(400, "TRANSACTION_TOTAL_MISMATCH");
+          }
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
             str(x.cashierName, 100),
@@ -3223,9 +3583,9 @@ function registerSyncRoutes(app, db) {
                (id, tenant_id, merchant_id, outlet_id, cashier_user_id, subtotal, discount_amount, tax_amount,
                 service_charge_amount, total_amount, payment_method, order_status,
                 business_sector, business_id, app_module, order_type, invoice_number,
-                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at)
+                client_txn_id, shift_id, business_date, completed_at, cancelled_at, voided_at, created_at${workspace ? ",module_id,module_command_hash" : ""})
              VALUES (uuidv7(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP))
+                     $18::uuid, $19::date, $20::timestamptz, $21::timestamptz, $22::timestamptz, COALESCE($23::timestamptz, CURRENT_TIMESTAMP)${workspace ? ",$24,$25" : ""})
              ON CONFLICT (tenant_id, client_txn_id) WHERE client_txn_id IS NOT NULL
                DO NOTHING
              RETURNING id`,
@@ -3252,7 +3612,8 @@ function registerSyncRoutes(app, db) {
               x.completedAt ?? (orderStatus === "COMPLETED" ? x.createdAt : null),
               x.cancelledAt ?? (isVoid ? x.createdAt : null),
               x.voidedAt ?? null,
-              x.createdAt ?? null
+              x.createdAt ?? null,
+              ...workspace ? [workspace.moduleId, workspaceSaleHash(x)] : []
             ]
           );
           let ins;
@@ -3272,6 +3633,7 @@ function registerSyncRoutes(app, db) {
           if (!ins.rows.length) {
             duplicates++;
             const original = (await c.query(`SELECT * FROM pos.transactions WHERE tenant_id=$1 AND client_txn_id=$2 FOR UPDATE`, [tenantId, clientId])).rows[0];
+            if (workspace && original && (original.module_id !== workspace.moduleId || original.outlet_id !== outletId || paymentStatus !== "CANCELLED" && original.module_command_hash !== workspaceSaleHash(x))) throw new FinanceError(409, "TRANSACTION_ID_CONFLICT");
             if (!original || original.merchant_id !== merchantId || paymentStatus !== "CANCELLED" && original.outlet_id !== outletId || Number(original.total_amount) !== total || Number(original.subtotal) !== subtotal)
               throw new FinanceError(409, "TRANSACTION_ID_CONFLICT");
             const status = str(x.paymentStatus, 20);
@@ -3368,12 +3730,12 @@ function registerSyncRoutes(app, db) {
                   [tenantId, merchantId, outletId, "payment:" + payment.rows[0].id, total, txnId, ownerRef, x.createdAt || null]
                 );
             });
-          for (const i of x.items) {
+          for (const i of workspace ? [...x.items].sort((a, b) => (a.productRef || "").localeCompare(b.productRef || "")) : x.items) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
             const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
-            const unitCost = Math.max(0, num(i.unitCost));
+            const unitCost = workspace ? Number((await c.query("SELECT cost_price FROM pos.products WHERE id=$1", [productId])).rows[0].cost_price) : Math.max(0, num(i.unitCost));
             const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
             await c.query(
               `INSERT INTO pos.transaction_items
@@ -3397,6 +3759,11 @@ function registerSyncRoutes(app, db) {
               ]
             );
             if (!isVoid) {
+              if (workspace) {
+                const p = await workspaceProduct(c, workspace, i.productRef || "", true);
+                const stock = await lockWorkspaceStock(c, workspace, p);
+                if (stock && stock.quantity < qty) throw new FinanceError(409, "INSUFFICIENT_STOCK_REQUIRES_REVIEW");
+              }
               await c.query(
                 `INSERT INTO pos.inventory_transactions
                    (id, tenant_id, merchant_id, outlet_id, location_id,
@@ -3459,16 +3826,17 @@ function registerSyncRoutes(app, db) {
                                         rows_accepted, rows_duplicate, outcomes)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
+            [receiptKey, tenantId, businessId, accepted, duplicates, JSON.stringify({ rejected, renumbered })]
           );
         } else if (idemKey && !rejected.length && !renumbered.length) {
           await c.query(
             `INSERT INTO pos.sync_receipts (idempotency_key, tenant_id, business_id, rows_accepted, rows_duplicate)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (idempotency_key) DO NOTHING`,
-            [idemKey, tenantId, businessId, accepted, duplicates]
+            [receiptKey, tenantId, businessId, accepted, duplicates]
           );
         }
+        if (workspace && receiptKey) await c.query("UPDATE pos.sync_receipts SET outlet_id=$2,module_id=$3,actor_ref=$4,request_hash=$5 WHERE idempotency_key=$1", [receiptKey, outletId, workspace.moduleId, ownerRef, requestHash]);
         if (accepted > 0) {
           await writeActivity(c, {
             merchantId,
@@ -3486,7 +3854,7 @@ function registerSyncRoutes(app, db) {
       });
       res.json({ ok: true, ...out });
     } catch (err) {
-      if (err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });
+      if (err instanceof ModuleAccessError || err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });
       if (err instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: err.message });
       if (err instanceof BillingError) return res.status(err.status).json({ ok: false, error: err.message });
       console.error("[sync] gagal:", err.message);
@@ -3560,7 +3928,7 @@ function registerSyncRoutes(app, db) {
       });
       res.json(result);
     } catch (error) {
-      res.status(error instanceof BillingError ? error.status : 503).json({ ok: false, error: error instanceof BillingError ? error.message : "SYNC_STATUS_UNAVAILABLE" });
+      res.status(error instanceof BillingError || error instanceof ModuleAccessError ? error.status : 503).json({ ok: false, error: error instanceof BillingError || error instanceof ModuleAccessError ? error.message : "SYNC_STATUS_UNAVAILABLE" });
     }
   });
   app.post("/api/v1/sync/customers", async (req, res) => {
@@ -3777,6 +4145,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
 // src/server/syncHandler.ts
 var allowedMethods = {
   "/api/v1/sync/modules/access": ["GET"],
+  "/api/v1/sync/modules/inventory": ["POST"],
+  "/api/v1/sync/modules/state": ["GET", "POST"],
   "/api/v1/sync/modules/dashboard": ["GET"],
   "/api/v1/sync/modules/revenue": ["GET"],
   "/api/v1/privacy/requests": ["GET", "POST"],

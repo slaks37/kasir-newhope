@@ -26,6 +26,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
   const [subscription,setSubscription]=useState<SaaSSubscription|null>(offlineBootstrap?.subscription||null),[accountError,setAccountError]=useState('');
   const [subscriptionVerified,setSubscriptionVerified]=useState(false);
   useEffect(()=>{
+    if(import.meta.env.VITE_MODULE_WORKSPACES==='1')return;
     const controller=new AbortController();
     const run=async()=>{try{
       const data=await coalescedRead('subscription:'+owner,async()=>{const response=await fetch('/api/v1/subscription/status',{cache:'no-store',signal:AbortSignal.timeout(15000)});if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');const result=await response.json();if(!response.ok||!result.ok||!result.subscription)throw Error('SUBSCRIPTION_UNAVAILABLE');return result;},controller.signal);
@@ -34,6 +35,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     const unsubscribe=refreshCoordinator.register('subscription:'+owner,{run,interval:120000,events:['subscription-updated']});
     return()=>{controller.abort();unsubscribe();};
   },[owner]);
+  useEffect(()=>{if(directoryVerified&&directory?.workspaceAuth){setSubscription(directory.subscription||null);setSubscriptionVerified(true);setAccountError('');}},[directory,directoryVerified]);
   useEffect(()=>{
     if(directoryVerified&&subscriptionVerified&&directory&&subscription&&!error&&!accountError){
       try{saveVerifiedBootstrap(owner,directory,subscription);}catch{console.warn('[workspace] Offline metadata cache unavailable; cloud data unchanged');}
@@ -72,6 +74,8 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     setHint({businessId:data.merchantId});window.dispatchEvent(new Event('outlets-updated'));
   }catch(error){setSetupError(error instanceof Error?error.message:'BUSINESS_SETUP_FAILED');}finally{setBusy(false);}};
   if(error==='WORKSPACE_ACCESS_REVOKED'||accountError==='WORKSPACE_ACCESS_REVOKED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akses bisnis perlu diverifikasi kembali. Cache dan antrean tetap disimpan; data tidak dikirim sampai akses diizinkan server.</p></main>;
+  if(directory?.workspaceAuth&&!directory.tenantId&&directory.tenants?.length)return <main className="p-8 space-y-3"><h1>Pilih organisasi</h1>{directory.tenants.map(t=><button key={t.tenantId} className="block border rounded p-3" onClick={()=>{localStorage.setItem('newhope_directory_tenant_'+owner,t.tenantId);window.dispatchEvent(new Event('outlets-updated'));}}>{t.name}</button>)}</main>;
+  if(directory?.workspaceAuth&&directory.tenantId&&!subscription)return <main role="alert" className="p-8">Paket organisasi belum tersedia. Minta pemilik memeriksa langganan.</main>;
   if(!directory||!subscription)return <main className="min-h-screen bg-slate-50 p-8"><p role={error||accountError?'alert':'status'}>{error||accountError?'Cloud belum dapat dihubungi. Sistem mencoba kembali otomatis; data perangkat tetap tersimpan.':'Memverifikasi bisnis dan paket di cloud…'}</p></main>;
   if(!business||!selected)return <main className="min-h-screen bg-slate-50 p-8"><section className="mx-auto max-w-lg rounded-2xl border bg-white p-6 space-y-4"><h1 className="text-xl font-bold">Pilih bisnis</h1>
     {directory.businesses.filter(b=>b.status==='ACTIVE'&&b.transportRef).map(b=><button key={b.businessId} disabled={!b.legacyAlias&&!directory.capabilities?.multiBusiness} className="block w-full rounded-xl border p-4 text-left disabled:opacity-50" onClick={()=>{try{select(b.businessId);}catch{setSetupError('Pilihan belum dapat disimpan. Coba kembali setelah penyimpanan perangkat tersedia.');}}}>{b.name} · {b.sector}{!b.legacyAlias&&!directory.capabilities?.multiBusiness?' · menunggu migrasi server':''}</button>)}

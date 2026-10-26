@@ -1,3 +1,5 @@
+import {resolveWorkspaceScope,requireWorkspaceRole} from './workspaceScope';
+import {ModuleAccessError} from './modules';
 import { authorizeNativeModule } from './modules';
 import {registerFinancialApprovalRoutes,consumeFinancialApproval,FinancialApprovalError} from './financialAuthorization';
 import type { Express, Request } from 'express';
@@ -12,7 +14,7 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID=/^[^\x00-\x1f\x7f]{1,128}$/;
 const money=(n:number)=>Math.round((n+Number.EPSILON)*100)/100;
 export class FinanceError extends Error { constructor(readonly status:number,code:string){super(code);} }
-export interface FinancialScope { tenantId:string; merchantId:string; outletId:string; sector:Sector; actorRef:string }
+export interface FinancialScope { tenantId:string; merchantId:string; outletId:string; sector:Sector; actorRef:string;moduleId?:string;role?:string }
 export interface RefundCommand {clientRefundId:string;occurredAt?:string;refundMethod:'CASH'|'ORIGINAL_METHOD';reason:string;items:Array<{clientItemId:string;quantity:number}>;approvalGrant?:string}
 function timestamp(value:unknown):string {
   if(typeof value!=='string'||!Number.isFinite(Date.parse(value)))throw new FinanceError(400,'INVALID_EVENT_DATE');
@@ -22,6 +24,11 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
   const input=req.method==='GET'?req.query:req.body;
   const principal=trustedPrincipal(req), sector=input?.sector,outletId=input?.outletId;
   if(!principal||principal.subject==='local-development')throw new FinanceError(401,'UNAUTHENTICATED');
+  if(input?.moduleId!==undefined){
+    const scope=await resolveWorkspaceScope(db,principal.subject,input,[req.path.endsWith('/reconciliation')?'reports':'pos']);
+    if(req.method!=='GET'&&!req.path.endsWith('/shift/open'))requireWorkspaceRole(scope,['OWNER','ADMIN','MANAGER']);
+    return {...scope,sector:scope.sector as Sector};
+  }
   if(!(SECTORS as readonly string[]).includes(sector)||!UUID.test(String(outletId)))throw new FinanceError(400,'INVALID_FINANCIAL_SCOPE');
   const tenantId=await tenantForPrincipal(db,principal);
   if(!tenantId)throw new FinanceError(409,'TENANT_NOT_PROVISIONED');
@@ -42,6 +49,7 @@ async function scopeFor(db:Db,req:Request):Promise<FinancialScope>{
 
 /** Caller must use a database transaction. Locks serialize refund/void/retry. */
 export async function applyRefund(db:Db,scope:FinancialScope,transactionId:string,command:RefundCommand){
+  if(scope.moduleId&&!['OWNER','ADMIN','MANAGER'].includes(scope.role||''))throw new FinanceError(403,'WORKSPACE_ROLE_FORBIDDEN');
   if(!command || !ID.test(command.clientRefundId||'')||!['CASH','ORIGINAL_METHOD'].includes(command.refundMethod)||
     typeof command.reason!=='string'||!command.reason.trim()||command.reason.length>500||
     !Array.isArray(command.items)||!command.items.length||command.items.length>200)
@@ -51,7 +59,7 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
   const normalized={...refundInput,occurredAt,reason:command.reason.trim(),items:[...command.items].sort((a,b)=>a.clientItemId.localeCompare(b.clientItemId))};
   const txn=(await db.query(`SELECT * FROM pos.transactions WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 FOR UPDATE`,
     [transactionId,scope.tenantId,scope.merchantId,scope.outletId])).rows[0];
-  if(!txn)throw new FinanceError(404,'TRANSACTION_NOT_FOUND');
+  if(!txn||scope.moduleId&&txn.module_id!==scope.moduleId)throw new FinanceError(404,'TRANSACTION_NOT_FOUND');
   await consumeFinancialApproval(db,scope,'REFUND',txn.client_txn_id,command,command.approvalGrant);
   const previous=(await db.query('SELECT * FROM pos.transaction_refunds WHERE tenant_id=$1 AND client_refund_id=$2',[scope.tenantId,command.clientRefundId])).rows[0];
   if(previous){
@@ -119,11 +127,28 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
   return {id:refund.id,clientRefundId:command.clientRefundId,amount,subtotal,discount,tax,service,replayed:false};
 }
 
+export async function applyCashEvent(c:Db,s:FinancialScope,b:any){
+  if(s.moduleId&&!['OWNER','ADMIN','MANAGER'].includes(s.role||''))throw new FinanceError(403,'WORKSPACE_ROLE_FORBIDDEN');
+    if(!ID.test(b.clientEventId||'')||!['CASH_IN','CASH_OUT','OPENING'].includes(b.type)||
+      typeof b.amount!=='number'||!Number.isFinite(b.amount)||b.amount<0||b.amount>9999999999||
+      typeof b.description!=='string'||b.description.length>500||typeof b.category!=='string'||b.category.length>64)
+      throw new FinanceError(400,'INVALID_CASH_EVENT');
+    if(b.type==='CASH_OUT')await consumeFinancialApproval(c,s,'CASH_OUT',b.clientEventId,b,b.approvalGrant);
+    const amount=money(b.amount)*(b.type==='CASH_OUT'?-1:1),occurredAt=timestamp(b.occurredAt);
+    const command={clientEventId:b.clientEventId,type:b.type,amount,occurredAt,category:b.category,description:b.description.trim(),shiftId:String(b.shiftId||''),recipientOrSource:String(b.recipientOrSource||'').slice(0,200)};
+    const prev=(await c.query(`SELECT id,command=$2::jsonb AS same,outlet_id,to_jsonb(cash_ledger)->>'module_id' AS module_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3`,[s.tenantId,JSON.stringify(command),b.clientEventId])).rows[0];
+    if(prev){if(!prev.same||prev.outlet_id!==s.outletId||s.moduleId&&prev.module_id!==s.moduleId)throw new FinanceError(409,'CASH_EVENT_ID_CONFLICT');return{id:prev.id,replayed:true};}
+    const row=(await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,actor_ref,actor_name,shift_ref,recipient_or_source,occurred_at,command)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`,[s.tenantId,s.merchantId,s.outletId,b.clientEventId,b.type,amount,command.description,b.category,s.actorRef,String(b.actorName||'').slice(0,100),command.shiftId,command.recipientOrSource,occurredAt,JSON.stringify(command)])).rows[0];
+    await writeActivity(c,{tenantId:s.tenantId,merchantId:s.merchantId,businessSector:s.sector,appModule:'POS',eventType:b.type,severity:'INFO',amountIdr:amount,summary:command.description||'Mutasi kas',detail:{clientEventId:b.clientEventId}});
+    return {id:row.id,replayed:false};
+}
+
 export function registerFinanceRoutes(app:Express,db:Db){
   registerFinancialApprovalRoutes(app,db,scopeFor);
   const route=(path:string,run:(c:Db,s:FinancialScope,req:Request)=>Promise<unknown>)=>app.post(path,async(req,res)=>{
     try{const result=await db.tx(async c=>run(c,await scopeFor(c,req),req));res.json({ok:true,...result as object});}
-    catch(error){const known=error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
+    catch(error){const known=error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
       if(!known&&!(error instanceof FreePlanAccessError)){
         const diagnostic=error as {code?:string;constraint?:string;column?:string};
         console.error('[finance] write failed',{route:path,code:diagnostic.code,constraint:diagnostic.constraint,column:diagnostic.column});
@@ -140,13 +165,13 @@ export function registerFinanceRoutes(app:Express,db:Db){
         LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
         AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`,[s.tenantId,s.merchantId,s.outletId])).rows;
       return {totals,exceptions};
-    });res.json({ok:true,...data});}catch(e){res.status(e instanceof FinanceError||e instanceof BillingError?e.status:503).json({ok:false,error:e instanceof FinanceError||e instanceof BillingError?e.message:'RECONCILIATION_UNAVAILABLE'});}
+    });res.json({ok:true,...data});}catch(e){res.status(e instanceof ModuleAccessError||e instanceof FinanceError||e instanceof BillingError?e.status:503).json({ok:false,error:e instanceof ModuleAccessError||e instanceof FinanceError||e instanceof BillingError?e.message:'RECONCILIATION_UNAVAILABLE'});}
   });
   app.get('/api/v1/finance/shift',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
     try{const result=await db.tx(async c=>{
       const s=await scopeFor(c,req);
-      const rows=(await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`,[s.tenantId,s.merchantId,s.outletId])).rows;
+      const rows=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 ORDER BY opened_at DESC LIMIT 100`,[s.tenantId,s.merchantId,s.outletId])).rows;
       const current=rows.find(r=>r.status==='OPEN');
       return {shift:current?await calculateShift(c,s,current):null,history:rows.filter(r=>r.status==='CLOSED').map(r=>r.summary).filter(Boolean)};
     });res.json({ok:true,...result,generatedAt:new Date().toISOString()});}catch(error){
@@ -154,16 +179,16 @@ export function registerFinanceRoutes(app:Express,db:Db){
         const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[finance] shift read failed',{code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
       }
-      res.status(error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
+      res.status(error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.status:503).json({ok:false,error:error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError?error.message:'SHIFT_UNAVAILABLE'});}
   });
   route('/api/v1/finance/shift/open',async(c,s,req)=>{
     const b=req.body;if(!ID.test(b.clientShiftId||'')||!Number.isFinite(b.initialCash)||b.initialCash<0||b.initialCash>9999999999)throw new FinanceError(400,'INVALID_SHIFT');
     await c.query('SELECT id FROM internal.outlets WHERE id=$1 FOR UPDATE',[s.outletId]);
-    const active=(await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`,[s.tenantId,s.outletId])).rows[0];
+    const active=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND outlet_id=$2 AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`,[s.tenantId,s.outletId])).rows[0];
     if(active)return {shift:await calculateShift(c,s,active),replayed:true};
-    const previous=(await c.query('SELECT id FROM pos.shifts WHERE tenant_id=$1 AND client_shift_id=$2',[s.tenantId,b.clientShiftId])).rows[0];
+    const previous=(await c.query(`SELECT id FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND client_shift_id=$2`,[s.tenantId,b.clientShiftId])).rows[0];
     if(previous)throw new FinanceError(409,'SHIFT_ALREADY_CLOSED');
-    let register=(await c.query("SELECT id FROM pos.cash_registers WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND status='ACTIVE' ORDER BY created_at LIMIT 1",[s.tenantId,s.merchantId,s.outletId])).rows[0];
+    let register=(await c.query("SELECT id FROM pos.cash_registers WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(cash_registers)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND status='ACTIVE' ORDER BY created_at LIMIT 1",[s.tenantId,s.merchantId,s.outletId])).rows[0];
     if(!register)register=(await c.query("INSERT INTO pos.cash_registers(tenant_id,merchant_id,outlet_id,name) VALUES($1,$2,$3,'Kas bersama outlet') RETURNING id",[s.tenantId,s.merchantId,s.outletId])).rows[0];
     const row=(await c.query(`INSERT INTO pos.shifts(tenant_id,merchant_id,outlet_id,client_shift_id,actor_name,opening_cash,business_date,status,register_id)
       VALUES($1,$2,$3,$4,$5,$6,(now() AT TIME ZONE 'Asia/Jakarta')::date,'OPEN',$7) RETURNING *`,[s.tenantId,s.merchantId,s.outletId,b.clientShiftId,String(b.cashierName||'Kasir').slice(0,100),money(b.initialCash),register.id])).rows[0];
@@ -173,7 +198,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
   });
   route('/api/v1/finance/shift/close',async(c,s,req)=>{
     const b=req.body;if(!ID.test(b.clientShiftId||'')||!Number.isFinite(b.actualCash)||b.actualCash<0||b.actualCash>9999999999)throw new FinanceError(400,'INVALID_SHIFT');
-    const row=(await c.query(`SELECT * FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`,[s.tenantId,s.merchantId,s.outletId,b.clientShiftId])).rows[0];
+    const row=(await c.query(`SELECT * FROM pos.shifts WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(shifts)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_shift_id=$4 FOR UPDATE`,[s.tenantId,s.merchantId,s.outletId,b.clientShiftId])).rows[0];
     if(!row)throw new FinanceError(409,'SHIFT_NOT_FOUND');
     if(row.status==='CLOSED'){
       if(Number(row.closing_cash)!==money(b.actualCash))throw new FinanceError(409,'SHIFT_CLOSE_CONFLICT');
@@ -192,25 +217,13 @@ export function registerFinanceRoutes(app:Express,db:Db){
     return {refund:await applyRefund(c,s,txn.id,req.body.refund)};
   });
   route('/api/v1/finance/cash',async(c,s,req)=>{
-    const b=req.body;if(!ID.test(b.clientEventId||'')||!['CASH_IN','CASH_OUT','OPENING'].includes(b.type)||
-      typeof b.amount!=='number'||!Number.isFinite(b.amount)||b.amount<0||b.amount>9999999999||
-      typeof b.description!=='string'||b.description.length>500||typeof b.category!=='string'||b.category.length>64)
-      throw new FinanceError(400,'INVALID_CASH_EVENT');
-    if(b.type==='CASH_OUT')await consumeFinancialApproval(c,s,'CASH_OUT',b.clientEventId,b,b.approvalGrant);
-    const amount=money(b.amount)*(b.type==='CASH_OUT'?-1:1),occurredAt=timestamp(b.occurredAt);
-    const command={clientEventId:b.clientEventId,type:b.type,amount,occurredAt,category:b.category,description:b.description.trim(),shiftId:String(b.shiftId||''),recipientOrSource:String(b.recipientOrSource||'').slice(0,200)};
-    const prev=(await c.query('SELECT id,command=$2::jsonb AS same,outlet_id FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$3',[s.tenantId,JSON.stringify(command),b.clientEventId])).rows[0];
-    if(prev){if(!prev.same||prev.outlet_id!==s.outletId)throw new FinanceError(409,'CASH_EVENT_ID_CONFLICT');return{id:prev.id,replayed:true};}
-    const row=(await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,note,category,actor_ref,actor_name,shift_ref,recipient_or_source,occurred_at,command)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`,[s.tenantId,s.merchantId,s.outletId,b.clientEventId,b.type,amount,command.description,b.category,s.actorRef,String(b.actorName||'').slice(0,100),command.shiftId,command.recipientOrSource,occurredAt,JSON.stringify(command)])).rows[0];
-    await writeActivity(c,{tenantId:s.tenantId,merchantId:s.merchantId,businessSector:s.sector,appModule:'POS',eventType:b.type,severity:'INFO',amountIdr:amount,summary:command.description||'Mutasi kas',detail:{clientEventId:b.clientEventId}});
-    return {id:row.id,replayed:false};
+    return applyCashEvent(c,s,req.body);
   });
   route('/api/v1/finance/cash/reverse',async(c,s,req)=>{
     const b=req.body;if(!ID.test(b.clientEventId||'')||!ID.test(b.originalEventId||'')||typeof b.reason!=='string'||!b.reason.trim()||b.reason.length>500)throw new FinanceError(400,'INVALID_CASH_REVERSAL');
     await consumeFinancialApproval(c,s,'CASH_REVERSE',b.originalEventId,b,b.approvalGrant);
     const original=(await c.query(`SELECT * FROM pos.cash_ledger WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_event_id=$4 FOR UPDATE`,[s.tenantId,s.merchantId,s.outletId,b.originalEventId])).rows[0];
-    if(!original||!['CASH_IN','CASH_OUT','OPENING'].includes(original.event_type))throw new FinanceError(409,'CASH_EVENT_NOT_REVERSIBLE');
+    if(!original||s.moduleId&&original.module_id!==s.moduleId||!['CASH_IN','CASH_OUT','OPENING'].includes(original.event_type))throw new FinanceError(409,'CASH_EVENT_NOT_REVERSIBLE');
     const reused=(await c.query('SELECT reference_id,event_type FROM pos.cash_ledger WHERE tenant_id=$1 AND client_event_id=$2',[s.tenantId,b.clientEventId])).rows[0];
     if(reused&&(reused.event_type!=='REVERSAL'||reused.reference_id!==original.id))throw new FinanceError(409,'CASH_EVENT_ID_CONFLICT');
     const existing=(await c.query(`SELECT id FROM pos.cash_ledger WHERE tenant_id=$1 AND event_type='REVERSAL' AND reference_id=$2`,[s.tenantId,original.id])).rows[0];
@@ -225,7 +238,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
 async function calculateShift(db:Db,scope:FinancialScope,row:any):Promise<Shift>{
   const params=[scope.tenantId,scope.merchantId,scope.outletId,row.opened_at,row.closed_at||new Date().toISOString()];
   const revenue=(await db.query(`WITH revenue AS (
-    SELECT * FROM contract.merchant_revenue WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3
+    SELECT * FROM contract.merchant_revenue WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(merchant_revenue)->>'module_id'=current_setting('app.module_id',true)) AND tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3
     AND created_at >=$4 AND ($5::timestamptz IS NULL OR created_at<$5)
   ), tenders AS (
     SELECT r.id,r.total_amount,p.payment_method,p.amount,SUM(p.amount) OVER(PARTITION BY r.id) AS paid
@@ -241,7 +254,7 @@ async function calculateShift(db:Db,scope:FinancialScope,row:any):Promise<Shift>
     COALESCE(-SUM(c.amount) FILTER(WHERE COALESCE(original.event_type,c.event_type)='CASH_OUT'),0) AS cash_out
     FROM pos.cash_ledger c LEFT JOIN pos.cash_ledger original ON c.event_type='REVERSAL'
       AND c.reference_id=original.id::text AND c.tenant_id=original.tenant_id
-    WHERE c.tenant_id=$1 AND c.merchant_id=$2 AND c.outlet_id=$3 AND c.occurred_at >=$4 AND ($5::timestamptz IS NULL OR c.occurred_at<$5)`,params)).rows[0];
+    WHERE (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(c)->>'module_id'=current_setting('app.module_id',true)) AND c.tenant_id=$1 AND c.merchant_id=$2 AND c.outlet_id=$3 AND c.occurred_at >=$4 AND ($5::timestamptz IS NULL OR c.occurred_at<$5)`,params)).rows[0];
   return{id:row.client_shift_id||row.id,cashierName:row.actor_name||'Kasir',startTime:new Date(row.opened_at).toISOString(),
     initialCash:Number(cash.opening),cashSales:money(Number(revenue.cash)),qrisSales:money(Number(revenue.qris)),cardSales:money(Number(revenue.card)),
     eWalletSales:money(Number(revenue.total)-Number(revenue.cash)-Number(revenue.qris)-Number(revenue.card)),totalSales:Number(revenue.total),

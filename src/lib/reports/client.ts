@@ -1,9 +1,10 @@
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ServerReportSummary, ServerTransactionsResponse, ServerTransaction } from './types';
 import { coalescedRead, refreshCoordinator } from '../sync/refreshCoordinator';
 import type {Shift} from '../../types';
 
-export interface ReportQuery {outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
+export interface ReportQuery {businessId?:string;moduleId?:string;purpose?:string;outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
 export function reportParams(query:ReportQuery):URLSearchParams{
   return new URLSearchParams(Object.entries(query).filter(([,value])=>value!==undefined&&value!=='').sort(([a],[b])=>a.localeCompare(b)) as [string,string][]);
 }
@@ -53,7 +54,8 @@ export function calendarDate(zone='Asia/Jakarta',offsetDays=0,now=new Date()):st
 }
 type ReportState={key:string;summary:ServerReportSummary|null;transactions:ServerTransaction[];nextCursor:string|null;loading:boolean;loadingMore:boolean;error:string|null};
 const empty=(key:string):ReportState=>({key,summary:null,transactions:[],nextCursor:null,loading:true,loadingMore:false,error:null});
-export function useServerReport(query:ReportQuery,includeTransactions=true){
+export function useServerReport(input:ReportQuery,includeTransactions=true){
+  const runtime=useBusinessModule();const query=runtime?.grant.workspaceVersion===2?{...input,businessId:runtime.access.businessId,moduleId:runtime.manifest.id}:input;
   const key=reportParams(query).toString()+':'+includeTransactions;
   const cache=useRef(new Map<string,ReportState>());
   const [state,setState]=useState<ReportState>(()=>empty(key));

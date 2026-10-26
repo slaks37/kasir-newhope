@@ -1,16 +1,18 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import {useAuth} from '../../context/AuthContext';
+import {saveModuleLease,readModuleLease,revokeModuleLease} from '../../lib/workspace/moduleLease';
+import React, { useEffect, useState } from 'react';
 import { useWorkspaceBusiness } from '../../context/WorkspaceBusinessContext';
 import { useWorkspaceRoute, navigate } from '../../lib/navigation/workspaceRouter';
 import { coalescedRead, refreshCoordinator } from '../../lib/sync/refreshCoordinator';
 import { legacyModuleForSector, moduleManifest } from './registry';
 import { isModulePath, parseModuleRoute } from './routing';
 import type { BusinessModuleManifest, ModuleAccess, ModuleGrant } from './contracts';
-type Runtime = { manifest: BusinessModuleManifest; grant: ModuleGrant; access: ModuleAccess };
-const Context = createContext<Runtime | null>(null);
-export const useBusinessModule = () => useContext(Context);
+import {ModuleContext as Context} from './ModuleContext';
+export {useBusinessModule} from './ModuleContext';
 /** No operational store mounts for a foreign route or unverified module grant. */
 export function ModuleWorkspaceGate({ children }: { children: React.ReactNode }) {
-  const { business, outletId, directory, select } = useWorkspaceBusiness();
+  const { business, outletId, directory, select,offlineExpiresAt } = useWorkspaceBusiness();
+  const actor=useAuth().user!.id;
   const path = useWorkspaceRoute();
   const route = parseModuleRoute(path);
   const scoped = isModulePath(path);
@@ -27,23 +29,31 @@ export function ModuleWorkspaceGate({ children }: { children: React.ReactNode })
     const params = new URLSearchParams({ businessId: business.businessId, outletId });
     if (scoped) { params.set('moduleId', target); params.set('page', page!); }
     const url = '/api/v1/sync/modules/access?' + params;
+    let expiry:ReturnType<typeof setTimeout>|undefined;
     const run = async () => {
       try {
-        const access = await coalescedRead(url, async () => {
+        const offline=!navigator.onLine?readModuleLease(actor,business.businessId,outletId,offlineExpiresAt):null;
+        if(!navigator.onLine&&!offline)throw Error('OFFLINE_MODULE_NOT_VERIFIED');
+        const access = offline||await coalescedRead(url, async () => {
           const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
           const result = await response.json();
+          if(response.status===401||response.status===403)revokeModuleLease(actor,business.businessId,outletId);
           if (!response.ok || !result.ok) throw Error(result.error || 'MODULE_ACCESS_UNAVAILABLE');
           if (result.businessId !== business.businessId || result.outletId !== outletId || !Array.isArray(result.modules)) throw Error('MODULE_SCOPE_MISMATCH');
           return result as ModuleAccess;
         }, controller.signal);
+        clearTimeout(expiry);if(offline?.offlineExpiresAt)expiry=setTimeout(()=>setState({key,error:'OFFLINE_VERIFICATION_EXPIRED'}),Math.max(0,offline.offlineExpiresAt-Date.now()));
+        if(!offline)try{saveModuleLease(actor,access);}catch{console.warn('[modules] Offline lease storage unavailable');}
         if (!controller.signal.aborted) setState(previous => previous.key === key && !previous.error && JSON.stringify(previous.access) === JSON.stringify(access) ? previous : { key, access });
       } catch (error) {
         if (!controller.signal.aborted) setState({ key, error: error instanceof Error ? error.message : 'MODULE_ACCESS_UNAVAILABLE' });
       }
     };
+    if(!navigator.onLine)void run();
     const off = refreshCoordinator.register('module-access:' + key, { run, interval: 120000, events: ['subscription-updated','outlets-updated'] });
-    return () => { controller.abort(); off(); };
-  }, [requested, foreign, key, scoped]);
+
+    return () => { controller.abort(); off(); clearTimeout(expiry); };
+  }, [requested, foreign, key, scoped,offlineExpiresAt,actor]);
   if (!requested) return <Context.Provider value={null}>{children}</Context.Provider>;
   if (scoped && (!route || foreign)) {
     const own = route && directory.businesses.find(b => b.businessId === route.businessId && b.status === 'ACTIVE' && b.outlets.some(o => o.outletId === route.outletId && o.status === 'ACTIVE'));
@@ -59,5 +69,7 @@ export function ModuleWorkspaceGate({ children }: { children: React.ReactNode })
     if (!scoped) return <Context.Provider value={null}>{children}</Context.Provider>;
     return <main role="alert" className="p-8">Modul belum diaktifkan untuk bisnis dan outlet ini.</main>;
   }
+  const requestedPage=route&&manifest.pages.find(p=>p.id===route.page.id);
+  if(route&&(!requestedPage||!grant.permissions.includes(requestedPage.permission)||!grant.features.includes(requestedPage.permission)||requestedPage.ownerOnly&&!grant.tenantOwner))return <main role="alert" className="p-8">Halaman ini tidak diizinkan untuk staf ini.</main>;
   return <Context.Provider value={{ manifest, grant, access: state.access }}>{children}</Context.Provider>;
 }

@@ -39,7 +39,7 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
       ORDER BY CASE ms.role WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
     ) membership ON true
     WHERE m.id=$1 AND o.id=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active AND o.is_active
-      AND (t.owner_user_ref=$3 OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
+      AND (t.owner_user_ref=$3 AND EXISTS(SELECT 1 FROM internal.users owner_identity WHERE owner_identity.id::text=$3 AND owner_identity.is_active) OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
   if (rows.length !== 1) throw new ModuleAccessError(403, 'MODULE_SCOPE_FORBIDDEN');
   const scope = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenant_id, businessId]);
@@ -48,7 +48,8 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
   await assertTenantWritable(db, scope.tenant_id);
   // Existing Free behavior remains on legacy routes; no paid feature is implicitly granted.
   if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, 'MODULE_PILOT_REQUIRES_PAID_OR_TRIAL');
-  const assignments = await db.query(`SELECT mm.module_id, e.features FROM internal.merchant_modules mm
+  const isolated=await hasSchemaFeature(db,'workspaceIsolation');
+  const assignments = await db.query(`SELECT mm.module_id, e.features,e.expires_at,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm
     JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
     LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
       AND om.module_id=mm.module_id AND om.outlet_id=$3
@@ -58,9 +59,11 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
   const modules: ModuleGrant[] = [];
   for (const row of assignments.rows) {
     const manifest = moduleManifest(row.module_id);
+    const operationalModule:Record<string,string>={BARISTA:'fnb',CHEF:'fnb',WASHER:'carwash',KAPSTER:'barber'};if(operationalModule[scope.role]&&operationalModule[scope.role]!==row.module_id)continue;
+    if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)))continue;
     // Until sector adapters and legacy outlet caches are disentangled, fail closed.
-    if (!manifest || manifest.sector !== scope.business_sector || scope.outlet_count !== 1) continue;
-    modules.push({ id: manifest.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner) });
+    if (!manifest || Number(row.workspace_version)!==2 && (manifest.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
+    modules.push({ id: manifest.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -81,6 +84,7 @@ export async function authorizeNativeModule(db: Db, subject: string, merchantId:
   try {
     const access = await resolveModuleAccess(db, subject, merchantId, target);
     const grant = manifest && access.modules.find(module => module.id === manifest.id);
+    if(grant?.workspaceVersion===2)throw new ModuleAccessError(403,'EXPLICIT_WORKSPACE_REQUIRED');
     if (!access.enabled || !grant || requirements.some(options => !options.some(permission => grant.permissions.includes(permission) && grant.features.includes(permission))))
       throw new ModuleAccessError(403, 'MODULE_COMMAND_FORBIDDEN');
   } catch (error) {
@@ -114,6 +118,7 @@ export async function authorizeModulePage(db: Db, subject: string, query: Record
   const grant = access.modules.find(m => m.id === manifest.id);
   if (!page || !grant || page.ownerOnly && !grant.tenantOwner || !grant.permissions.includes(page.permission) || !grant.features.includes(page.permission))
     throw new ModuleAccessError(403, 'MODULE_PAGE_FORBIDDEN');
+  if(grant.workspaceVersion===2)await db.query("SELECT set_config('app.outlet_id',$1,true),set_config('app.module_id',$2,true)",[access.outletId,manifest.id]);
   return { access, manifest, page };
 }
 function respondError(res: any, error: unknown) {
@@ -139,18 +144,18 @@ export function registerModuleRoutes(app: Express, db: Db) {
           AND owner_user_ref=$1 AND is_active AND merged_into IS NULL`, [principal.subject]);
         if (owner.rows.length !== 1) throw new ModuleAccessError(403, 'GROUP_REPORT_OWNER_REQUIRED');
         const groups = await c.query(`WITH grouped AS (
-          SELECT r.merchant_id,r.outlet_id,r.business_sector,count(*)::int AS transactions,
+          SELECT r.merchant_id,r.outlet_id,r.business_sector,to_jsonb(r)->>'module_id' AS module_id,count(*)::int AS transactions,
             sum(r.total_amount) AS net_revenue,sum(r.refund_amount) AS refunds,sum(r.cogs_amount) AS cogs
           FROM contract.merchant_revenue r WHERE r.tenant_id=$1
             AND r.created_at>=($2::date::timestamp AT TIME ZONE 'Asia/Jakarta')
             AND r.created_at<(($3::date+1)::timestamp AT TIME ZONE 'Asia/Jakarta')
-          GROUP BY r.merchant_id,r.outlet_id,r.business_sector
+          GROUP BY r.merchant_id,r.outlet_id,r.business_sector,to_jsonb(r)->>'module_id'
         ) SELECT *,count(*) OVER()::int AS total_groups,sum(net_revenue) OVER() AS total_net_revenue,
           sum(transactions) OVER() AS total_transactions FROM grouped
-          ORDER BY merchant_id,outlet_id NULLS FIRST,business_sector LIMIT 50 OFFSET $4`, [owner.rows[0].id, from, to, offset]);
-        return { businessId: access.businessId, rows: groups.rows.map(row => ({ ...row, moduleId: null, attribution: 'historical_sector' })),
+          ORDER BY merchant_id,outlet_id NULLS FIRST,business_sector,module_id NULLS FIRST LIMIT 50 OFFSET $4`, [owner.rows[0].id, from, to, offset]);
+        return { businessId: access.businessId, rows: groups.rows.map(row => ({ ...row, moduleId:row.module_id||null, attribution:row.module_id?'verified_module':'historical_sector' })),
           nextOffset: groups.rows.length === 50 && offset + 50 < groups.rows[0].total_groups ? offset + 50 : null,
-          attribution: 'historical_sector', from, to, timezone: 'Asia/Jakarta' };
+          attribution:groups.rows.some(r=>r.module_id)?groups.rows.every(r=>r.module_id)?'verified_module':'mixed':'historical_sector', from, to, timezone: 'Asia/Jakarta' };
       });
       res.setHeader('Cache-Control', 'no-store');
       return res.json({ ok: true, ...result });
@@ -171,6 +176,8 @@ export function registerModuleRoutes(app: Express, db: Db) {
           barber: { kind: 'bookings', field: 'status' },
         };
         const definition = definitions[manifest.id];
+        const isolated=access.modules.find(m=>m.id===manifest.id)?.workspaceVersion===2;
+        if(isolated&&manifest.id==='retail'){const stock=await c.query(`SELECT CASE WHEN COALESCE(b.stock,0)<=0 THEN 'OUT_OF_STOCK' ELSE 'AVAILABLE' END AS status,count(*)::int count FROM pos.products p LEFT JOIN LATERAL(SELECT sum(current_stock) stock FROM pos.inventory_balances WHERE inventory_item_id=p.inventory_item_id AND outlet_id=$2) b ON true WHERE p.merchant_id=$1 AND p.module_id=$3 AND p.is_available GROUP BY 1 ORDER BY 1`,[access.businessId,access.outletId,manifest.id]);return {buckets:stock.rows,total:stock.rows.reduce((n,r)=>n+r.count,0),generatedAt:new Date().toISOString()};}
         // Aggregate in PostgreSQL, never download a merchant's complete history.
         // Singleton-outlet adapter only; unknown outlet ownership cannot be guessed.
         const rows = await c.query(`SELECT
@@ -185,7 +192,7 @@ export function registerModuleRoutes(app: Express, db: Db) {
               AND scope=ANY($2::text[]) AND kind=$4
             ORDER BY record_id,updated_at DESC,revision DESC,(scope LIKE 'BUSINESS:%') DESC
           ) records WHERE NOT deleted AND COALESCE(value->>'branchId',value->>'outletId',$3)=$3
-          GROUP BY 1 ORDER BY 1`, [access.businessId, [manifest.sector, 'BUSINESS:' + access.businessId], access.outletId, definition.kind, definition.field]);
+          GROUP BY 1 ORDER BY 1`, [access.businessId, isolated?[`WORKSPACE:${access.businessId}:${access.outletId}:${manifest.id}`]:[manifest.sector, 'BUSINESS:' + access.businessId], access.outletId, definition.kind, definition.field]);
         return { buckets: rows.rows, total: rows.rows.reduce((sum, row) => sum + row.count, 0), generatedAt: new Date().toISOString() };
       });
       res.setHeader('Cache-Control', 'no-store');

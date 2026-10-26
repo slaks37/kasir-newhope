@@ -1,3 +1,4 @@
+import {workspaceAcceptance} from './workspace-acceptance';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
@@ -29,7 +30,7 @@ try{
  await admin.query("INSERT INTO internal.memberships(user_id,tenant_id,merchant_id,outlet_id,scope_type,role) VALUES($1,$2,$3,$4,'OUTLET','CASHIER')",[staff,tenant,merchant,outlet]);
  const fingerprint=async()=>digest((await admin.query("SELECT id,user_id,tenant_id,merchant_id,outlet_id,scope_type,role FROM internal.memberships ORDER BY id")).rows);
  const before=await fingerprint();
- for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql'])await apply('migrations/'+file);
+ for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
@@ -52,6 +53,8 @@ try{
  for(let replay=0;replay<2;replay++){await admin.query(fs.readFileSync('scripts/db/verification-fixture.sql','utf8'));await admin.query(fs.readFileSync('scripts/db/verification-health.sql','utf8'));}
  assert.equal((await admin.query("SELECT count(*)::int n FROM contract.merchant_revenue WHERE business_id LIKE 'verify:merchant:%'")).rows[0].n,312);
  const cards=fs.readFileSync('scripts/db/metabase-cards.sql','utf8').split(';').map(s=>s.replace(/^\s*--.*$/gm,'').trim()).filter(s=>/^select/i.test(s));assert.equal(cards.length,8);for(const sql of cards)await admin.query(sql);
+ const workflows=await workspaceAcceptance(wrap(admin),pos);
+ evidence.workspaceWorkflows=workflows;
  evidence.checks={postgres17:'PASS',migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log('PASS: PostgreSQL17 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards');
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}
 finally{delete process.env.NEW_HOPE_MODULE_WORKSPACES;fs.mkdirSync('build/module-rehearsal',{recursive:true});fs.writeFileSync('build/module-rehearsal/postgres17.json',JSON.stringify(evidence,null,2)+'\n');await Promise.all(connections.map(c=>c.end()));await admin.end();}

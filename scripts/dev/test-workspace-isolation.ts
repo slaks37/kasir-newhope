@@ -1,0 +1,6 @@
+import fs from 'node:fs';
+import {PGlite} from '@electric-sql/pglite';
+import type {Db} from '../../services/shared/db';
+import {workspaceAcceptance} from './workspace-acceptance';
+const pg=new PGlite();const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};},exec:async sql=>{await runner.exec(sql);},tx:async fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
+try{await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');for(const file of ['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)])await pg.exec(fs.readFileSync(file,'utf8'));await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));await pg.exec("INSERT INTO billing.plans(id,name,tier_level,billing_cycle,price_idr,features) VALUES('plan-pro-monthly','Synthetic',3,'MONTHLY',299000,'[]')");console.log('PASS isolated workspace HTTP workflows',await workspaceAcceptance(wrap(pg),wrap(pg)));}finally{await pg.close();}

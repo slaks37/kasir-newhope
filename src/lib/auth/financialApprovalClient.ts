@@ -1,5 +1,5 @@
 import type {BusinessSector} from '../../types';
-export type ApprovalRequest={sector:BusinessSector;outletId:string;action:'VOID'|'REFUND'|'CASH_OUT'|'CASH_REVERSE';reference:string;reason:string;command:unknown};
+export type ApprovalRequest={businessId?:string;moduleId?:string;sector:BusinessSector;outletId:string;action:'VOID'|'REFUND'|'CASH_OUT'|'CASH_REVERSE';reference:string;reason:string;command:unknown};
 export async function financeRequest(path:string,body:unknown){
   const response=await fetch('/api/v1/finance/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
   const data=await response.json().catch(()=>null);

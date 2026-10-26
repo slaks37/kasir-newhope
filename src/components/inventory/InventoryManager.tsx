@@ -1,3 +1,5 @@
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
+import {WorkspaceInventoryCommands} from '../../platform/modules/WorkspaceInventoryCommands';
 import React, { useState,useRef,useEffect } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
@@ -52,6 +54,7 @@ const CATEGORY_COLORS = [
 ];
 
 export const InventoryManager: React.FC = () => {
+  const isolated=useBusinessModule()?.grant.workspaceVersion===2;
   const {
     products,
     categories,
@@ -380,11 +383,10 @@ export const InventoryManager: React.FC = () => {
     setShowBatchSkuModal(false);
   };
 
-  const handleConfirmStockAdjust = (e: React.FormEvent) => {
+  const handleConfirmStockAdjust = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stockAdjustProduct) return;
-    adjustStock(stockAdjustProduct.id, stockQty, stockType, stockReason);
-    setStockAdjustProduct(null);
+    try{await adjustStock(stockAdjustProduct.id, stockQty, stockType, stockReason);setStockAdjustProduct(null);}catch(error){window.alert(error instanceof Error?error.message:'Stok belum dikonfirmasi server.');}
   };
 
   /* -------------------------------------------------------------------------- */
@@ -632,6 +634,7 @@ export const InventoryManager: React.FC = () => {
 
   return (
     <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
+      <WorkspaceInventoryCommands/>
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -714,7 +717,7 @@ export const InventoryManager: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveSubTab('bundles')}
+          disabled={isolated} onClick={() => setActiveSubTab('bundles')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer ${
             activeSubTab === 'bundles'
               ? 'bg-slate-900 text-white shadow-xs'
@@ -726,7 +729,7 @@ export const InventoryManager: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveSubTab('recipes')}
+          disabled={isolated} onClick={() => setActiveSubTab('recipes')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer ${
             activeSubTab === 'recipes'
               ? 'bg-slate-900 text-white shadow-xs'
@@ -738,7 +741,7 @@ export const InventoryManager: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveSubTab('stock')}
+          disabled={isolated} onClick={() => setActiveSubTab('stock')}
           className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-2 cursor-pointer ${
             activeSubTab === 'stock'
               ? 'bg-slate-900 text-white shadow-xs'
