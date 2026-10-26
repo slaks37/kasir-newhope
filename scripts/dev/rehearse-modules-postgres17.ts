@@ -7,6 +7,7 @@ import {rehearsalTarget} from './rehearsal-target.mjs';
 import type {Db} from '../../services/shared/db';
 import {resolveModuleAccess} from '../../services/pos/modules';
 import {resetSchemaFeatureCache} from '../../services/shared/schemaFeatures';
+import {loadMerchantSnapshot} from '../../services/ai/snapshotData';
 const target=rehearsalTarget(process.env),admin=new pg.Client({connectionString:target,ssl:false});
 const evidence:any={revision:process.env.GITHUB_SHA||'local',status:'RUNNING',scope:'Disposable PostgreSQL17, actual NOBYPASSRLS service logins, synthetic fixture only',checks:{}};
 const connections:pg.Client[]=[];
@@ -36,8 +37,9 @@ try{
  await apply('docs/security/free-plan-selection.sql');
  await admin.query("INSERT INTO billing.plans(id,name,tier_level,billing_cycle,price_idr,features) VALUES('plan-pro-monthly','Fixture',3,'MONTHLY',299000,'[]')");
  await admin.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end) VALUES($1,$2,'plan-pro-monthly','ACTIVE',now(),now()+interval '30 days')",[randomUUID(),tenant]);
- const internal=await asService('svc_internal'),billing=await asService('svc_billing'),pos=await asService('svc_pos');
- for(const service of [internal,billing,pos])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
+ const internal=await asService('svc_internal'),billing=await asService('svc_billing'),pos=await asService('svc_pos'),ai=await asService('svc_ai');
+ for(const service of [internal,billing,pos,ai])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
+ await assert.rejects(()=>ai.query('SELECT * FROM internal.merchant_modules'),(e:any)=>e.code==='42501','AI receives only the narrow scope guard');
  assert.equal((await pos.query("SELECT has_sequence_privilege(current_user,'public.uuidv7_counter','USAGE') AS usage,has_sequence_privilege(current_user,'public.uuidv7_counter','UPDATE') AS reset")).rows[0].reset,false,'POS cannot reset the UUID counter');
  const context=async(db:Db,tid:string,mid:string,fn:(c:Db)=>Promise<void>)=>db.tx(async c=>{await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tid,mid]);await fn(c);});
  for(const [tid,mid]of[[tenant,merchant],[otherTenant,otherMerchant]])await context(internal,tid,mid,async c=>{await c.query("INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis) VALUES($1,$2,'fnb',true,true)",[tid,mid]);});
@@ -56,6 +58,8 @@ try{
  assert.equal((await admin.query("SELECT count(*)::int n FROM contract.merchant_revenue WHERE business_id LIKE 'verify:merchant:%'")).rows[0].n,312);
  const cards=fs.readFileSync('scripts/db/metabase-cards.sql','utf8').split(';').map(s=>s.replace(/^\s*--.*$/gm,'').trim()).filter(s=>/^select/i.test(s));assert.equal(cards.length,8);for(const sql of cards)await admin.query(sql);
  const workflows=await workspaceAcceptance(wrap(admin),pos);
+ const isolatedMerchant=(await admin.query('SELECT m.id,t.owner_user_ref FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE EXISTS(SELECT 1 FROM internal.merchant_modules mm WHERE mm.merchant_id=m.id AND mm.workspace_version=2) LIMIT 1')).rows[0];
+ await assert.rejects(()=>loadMerchantSnapshot(ai,{subject:isolatedMerchant.owner_user_ref},isolatedMerchant.id),/EXPLICIT_WORKSPACE_REQUIRED/,'Actual AI service cannot use legacy snapshots for mixed modules');
  evidence.workspaceWorkflows=workflows;
  evidence.checks={postgres17:'PASS',migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log('PASS: PostgreSQL17 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards');
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}

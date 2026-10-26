@@ -86,11 +86,10 @@ async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<
   if(filter.moduleId){const s=await resolveWorkspaceScope(db,subject,{businessId:filter.merchantId,outletId:filter.outletId,moduleId:filter.moduleId},[filter.operational?'pos':'reports']);if(filter.tenantId&&filter.tenantId!==s.tenantId)throw new ReportRequestError(403,'REPORT_SCOPE_FORBIDDEN');return {tenantId:s.tenantId,merchantId:s.merchantId,outletId:s.outletId,moduleId:s.moduleId,sector:s.sector,from:filter.from,to:filter.to,timezone:filter.timezone};}
   // The browser selects a branch; ownership and both parent IDs are resolved in SQL.
   // Historical reports remain readable after a branch is deactivated.
-  const { rows } = await db.query(`SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
+  const { rows } = await db.query(`SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector
     FROM internal.outlets o
     JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=o.tenant_id
-    LEFT JOIN internal.merchant_settings ms ON ms.merchant_id=m.id
     WHERE o.id=$1 AND t.owner_user_ref=$2
       AND ($3::uuid IS NULL OR m.id=$3) AND ($4::uuid IS NULL OR t.id=$4)
       AND ($5::text IS NULL OR m.business_sector=$5)`,
@@ -100,8 +99,9 @@ async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [row.tenant_id, row.merchant_id]);
   try { await authorizeNativeModule(db,subject,row.merchant_id,row.outlet_id,[['reports']]); }
   catch(error) { if(error instanceof BillingError)throw new ReportRequestError(error.status,error.message);throw error; }
+  const timezone=filter.timezoneExplicit?filter.timezone:(await db.query('SELECT timezone FROM internal.merchant_settings WHERE merchant_id=$1',[row.merchant_id])).rows[0]?.timezone||'Asia/Jakarta';
   return { tenantId: row.tenant_id, merchantId: row.merchant_id, outletId: row.outlet_id,
-    sector: row.business_sector, from: filter.from, to: filter.to, timezone: filter.timezoneExplicit?filter.timezone:row.timezone||'Asia/Jakarta' };
+    sector: row.business_sector, from: filter.from, to: filter.to, timezone };
 }
 
 function parameters(scope: ReportScope, filter: ReportFilter) {

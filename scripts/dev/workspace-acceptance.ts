@@ -35,6 +35,8 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
  const receive={...scope(),action:'RECEIVE',commandId:randomUUID(),lines:[{moduleId:'retail',productRef:'same-id',quantity:10},{moduleId:'barber',productRef:'same-id',quantity:4}]};
  try{
   process.env.NEW_HOPE_MODULE_WORKSPACES='1';resetSchemaFeatureCache();
+  const allowed=await request('/api/v1/sync/modules/access?'+new URLSearchParams({businessId:ids.merchant,outletId:ids.a}));assert.equal(allowed.status,200,JSON.stringify(allowed));assert(allowed.data.modules.every((m:any)=>!m.features.includes('labor')&&!m.features.includes('ai')),'Unaccepted v2 labor and AI features remain closed');
+  assert.equal((await state(scope(),'payroll_slips')).status,403);
   await assert.rejects(()=>pos.tx(c=>c.query('SELECT * FROM billing.subscriptions')),(e:any)=>e.code==='42501');
   await assert.rejects(()=>pos.tx(c=>c.query('SELECT * FROM internal.audit_logs')),(e:any)=>e.code==='42501');
   await assert.rejects(()=>pos.tx(c=>c.query("SELECT internal.append_merchant_activity($1::uuid,$2::uuid,'SYNC','REJECTED','INFO',NULL,NULL,NULL,NULL,'No scope','{}',NULL)",[ids.merchant,ids.tenant])),/ACTIVITY_SCOPE_MISMATCH/);
@@ -82,6 +84,10 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
   const retailReport=await report();assert.equal(retailReport.status,200,JSON.stringify(retailReport));assert.equal(retailReport.data.financialSummary.totalNetRevenue,100,JSON.stringify(retailReport.data));
   assert.equal((await report(scope('barber'))).data.financialSummary.totalNetRevenue,100);assert.equal((await report(scope())).data.financialSummary.totalNetRevenue,0);
   assert.equal((await report(scope(),'cashierA')).status,403);
+  const provenance=(s:ReturnType<typeof scope>,token='manager')=>request('/api/v1/finance/reconciliation?'+new URLSearchParams(s),undefined,token);
+  assert.equal((await provenance(scope(),'cashierA')).status,403,'Cashier cannot read reconciliation reports');
+  const retailProvenance=await provenance(scope('retail',ids.b));assert.equal(retailProvenance.status,200,JSON.stringify(retailProvenance));assert.equal(retailProvenance.data.totals.reduce((n:number,r:any)=>n+Number(r.amount),0),100);
+  assert.equal((await provenance(scope())).data.totals.length,0,'Payment provenance never mixes another outlet or module');
   const refund={clientRefundId:randomUUID(),occurredAt:new Date().toISOString(),refundMethod:'CASH',reason:'Synthetic return',items:[{clientItemId:'line',quantity:1}]};
   assert.equal((await request('/api/v1/finance/approve',{...scope('retail',ids.b),action:'REFUND',reference:delivery.transactions[0].clientTxnId,reason:refund.reason,command:refund,pin:'5926'},'cashierB')).status,403);
   const approved=await request('/api/v1/finance/approve',{...scope('retail',ids.b),action:'REFUND',reference:delivery.transactions[0].clientTxnId,reason:refund.reason,command:refund,pin:'5926'},'manager');assert.equal(approved.status,200,JSON.stringify(approved));
@@ -123,6 +129,8 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
   await admin.query("UPDATE billing.module_entitlements SET expires_at=now()-interval '1 second' WHERE merchant_id=$1 AND module_id='barber'",[ids.merchant]);assert.equal((await state(scope('barber'))).status,403);
   await admin.exec('ALTER TABLE pos.products RENAME COLUMN workspace_payload TO workspace_payload_not_ready');resetSchemaFeatureCache();assert.equal((await state()).status,403,'Partially applied workspace schema cannot fall back to a legacy adapter');await admin.exec('ALTER TABLE pos.products RENAME COLUMN workspace_payload_not_ready TO workspace_payload');resetSchemaFeatureCache();
   process.env.NEW_HOPE_MODULE_WORKSPACES='0';assert.equal((await state()).status,403,'Disabled rollout denies v2 writes and reads');
+  for(const path of ['/api/v1/sync/state','/api/v1/reports/summary'])assert.equal((await request(path+'?'+new URLSearchParams({businessId:ids.merchant,outletId:ids.a,sector:'BARBERSHOP',kinds:'products'}))).status,403,'Flag rollback cannot restore a sector-wide legacy path');
+  assert.equal((await request('/api/v1/sync/transactions',{...sale(scope('barber')),moduleId:undefined})).status,403,'Flag rollback cannot accept an unscoped legacy checkout');
   return {twoModules:true,twoMerchants:true,twoTenants:true,multipleOutlets:true,independentStaff:true,serverRbac:true,stockReceiveTransfer:true,checkoutRefundReports:true,sharedPurchaseFinancialAttribution:true,lostAckReplay:true,networkInterruptionRecovery:true,immutableOfflineQueue:true,revocation:true};
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));delete process.env.NEW_HOPE_MODULE_WORKSPACES;}
 }

@@ -1,5 +1,7 @@
 # Multi-module architecture — 26 October 2026
 
+This is the original foundation audit. The implemented continuation, current workflow evidence and remaining rollout gates are tracked in [multi-module-acceptance.md](multi-module-acceptance.md); the unchecked items below describe the foundation snapshot, not a claim that no subsequent implementation exists.
+
 Base: `a427fb83fda6509bb7b18fb8c0b7155ecc3f2e49` on GitHub main. Work is isolated from SONRI in a separate clone/branch. No production mutations authorized or executed.
 
 ## Observed architecture

@@ -19,6 +19,9 @@ export interface BusinessModuleManifest {
 }
 export type ModuleGrant = { id: BusinessModuleId; permissions: string[]; features: string[]; tenantOwner?: boolean; workspaceVersion?: number;expiresAt?:string };
 export type ModuleAccess = { enabled: boolean; offlineExpiresAt?:number;businessId: string; outletId: string; modules: ModuleGrant[] };
+/** V2 labor and AI workflows remain closed until their canonical acceptance passes. */
+export const acceptedWorkspaceFeatures = (features: string[], version?: number) => version === 2
+  ? features.filter(feature => !['labor', 'ai'].includes(feature)) : features;
 export function isBusinessModuleId(value: unknown): value is BusinessModuleId {
   return typeof value === 'string' && (MODULE_IDS as readonly string[]).includes(value);
 }

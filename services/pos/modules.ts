@@ -4,7 +4,7 @@ import { trustedPrincipal } from '../shared/auth';
 import { assertTenantWritable, BillingError } from '../billing/engine';
 import { freePlanState } from '../billing/freePlan';
 import { legacyModuleForSector, moduleManifest } from '../../src/platform/modules/registry';
-import { isBusinessModuleId, type ModuleGrant } from '../../src/platform/modules/contracts';
+import { acceptedWorkspaceFeatures, isBusinessModuleId, type ModuleGrant } from '../../src/platform/modules/contracts';
 import { hasSchemaFeature } from '../shared/schemaFeatures';
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 export class ModuleAccessError extends Error {
@@ -63,7 +63,7 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
     if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)))continue;
     // Until sector adapters and legacy outlet caches are disentangled, fail closed.
     if (!manifest || Number(row.workspace_version)!==2 && (manifest.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest.id, permissions, features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -72,12 +72,15 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
  * Caller owns a transaction and has already verified the canonical merchant.
  */
 export async function authorizeNativeModule(db: Db, subject: string, merchantId: string, outletId: unknown, requirements: readonly (readonly string[])[]) {
-  if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, 'moduleAssignments')) return;
+  if (!await hasSchemaFeature(db, 'moduleAssignments')) return;
   const merchant = (await db.query('SELECT tenant_id,business_sector FROM internal.merchants WHERE id=$1', [merchantId])).rows[0];
   if (!merchant) throw new BillingError(403, 'MODULE_SCOPE_FORBIDDEN');
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [merchant.tenant_id, merchantId]);
-  const enrolled = await db.query('SELECT module_id FROM internal.merchant_modules WHERE tenant_id=$1 AND merchant_id=$2 AND guard_legacy_apis', [merchant.tenant_id, merchantId]);
-  if (!enrolled.rows.length) return;
+  const enrolled = await db.query("SELECT module_id,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm WHERE tenant_id=$1 AND merchant_id=$2 AND (guard_legacy_apis OR COALESCE((to_jsonb(mm)->>'workspace_version')::int,1)=2)", [merchant.tenant_id, merchantId]);
+  // Turning the rollout off must never merge an explicitly isolated merchant
+  // back into its old sector-wide read/write paths.
+  if (enrolled.rows.some(row => Number(row.workspace_version) === 2)) throw new BillingError(403, 'EXPLICIT_WORKSPACE_REQUIRED');
+  if (!moduleWorkspacesEnabled() || !enrolled.rows.length) return;
   const outlets = await db.query('SELECT id FROM internal.outlets WHERE merchant_id=$1', [merchantId]);
   const target = outletId ?? (outlets.rows.length === 1 ? outlets.rows[0].id : null);
   const manifest = legacyModuleForSector(merchant.business_sector);

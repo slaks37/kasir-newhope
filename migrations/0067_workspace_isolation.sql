@@ -198,6 +198,7 @@ REVOKE ALL ON FUNCTION pos.workspace_module_immutable() FROM PUBLIC,anon,authent
 ALTER TABLE pos.products ADD COLUMN IF NOT EXISTS workspace_payload jsonb;
 
 GRANT SELECT(logo_url) ON internal.merchants TO svc_pos;
+GRANT SELECT(merchant_id,timezone) ON internal.merchant_settings TO svc_pos;
 ALTER TABLE pos.inventory_transactions ADD COLUMN IF NOT EXISTS actor_ref text;
 -- Read-only staff bootstrap contract; no raw billing-table or invoice grant.
 CREATE OR REPLACE VIEW contract.workspace_subscription_metadata WITH(security_barrier=true) AS
@@ -206,6 +207,14 @@ CREATE OR REPLACE VIEW contract.workspace_subscription_metadata WITH(security_ba
  FROM billing.subscriptions s WHERE s.tenant_id::text=current_setting('app.tenant_id',true);
 REVOKE ALL ON contract.workspace_subscription_metadata FROM PUBLIC,anon,authenticated;
 GRANT SELECT ON contract.workspace_subscription_metadata TO svc_pos;
+-- A narrow guard lets legacy analytics fail closed without granting svc_ai
+-- direct access to assignments or entitlements. No operational data is returned.
+CREATE OR REPLACE FUNCTION internal.requires_module_scope(p_merchant uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
+ SELECT EXISTS(SELECT 1 FROM internal.merchant_modules WHERE merchant_id=p_merchant AND workspace_version=2)
+$$;
+REVOKE ALL ON FUNCTION internal.requires_module_scope(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION internal.requires_module_scope(uuid) TO svc_ai,svc_pos;
 -- POS may append a validated merchant event, never read or rewrite the audit table.
 CREATE OR REPLACE FUNCTION internal.append_merchant_activity(p_merchant uuid,p_tenant uuid,p_domain text,p_event text,p_severity text,p_actor uuid,p_actor_name text,p_actor_role text,p_amount numeric,p_summary text,p_detail jsonb,p_at timestamptz) RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$

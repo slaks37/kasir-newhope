@@ -1,3 +1,4 @@
+import {SharedPurchaseForm} from '../../platform/modules/SharedPurchaseForm';
 import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import {WorkspaceInventoryCommands} from '../../platform/modules/WorkspaceInventoryCommands';
 import React, { useState,useRef,useEffect } from 'react';
@@ -54,7 +55,7 @@ const CATEGORY_COLORS = [
 ];
 
 export const InventoryManager: React.FC = () => {
-  const isolated=useBusinessModule()?.grant.workspaceVersion===2;
+  const moduleRuntime=useBusinessModule();const isolated=moduleRuntime?.grant.workspaceVersion===2;const alwaysTrackStock=moduleRuntime?.manifest.id==='retail';
   const {
     products,
     categories,
@@ -119,6 +120,7 @@ export const InventoryManager: React.FC = () => {
   const [formCategoryId, setFormCategoryId] = useState(categories[0]?.id || '');
   const [formPrice, setFormPrice] = useState(25000);
   const [formCostPrice, setFormCostPrice] = useState(12000);
+  const [formInventoryTracked,setFormInventoryTracked]=useState(false);
   const [formStock, setFormStock] = useState(50);
   const [formMinStock, setFormMinStock] = useState(10);
   const [formUnit, setFormUnit] = useState('porsi');
@@ -290,7 +292,7 @@ export const InventoryManager: React.FC = () => {
     setFormCategoryId(categories[0]?.id || '');
     setFormPrice(0);
     setFormCostPrice(0);
-    setFormStock(0);
+    setFormStock(0);setFormInventoryTracked(alwaysTrackStock);
     setFormMinStock(10);
     setFormUnit('pcs');
     setFormImage('');
@@ -311,7 +313,7 @@ export const InventoryManager: React.FC = () => {
     setFormCategoryId(p.categoryId);
     setFormPrice(p.price);
     setFormCostPrice(p.costPrice);
-    setFormStock(p.stock);
+    setFormStock(p.stock);setFormInventoryTracked(p.inventoryTracked!==false);
     setFormMinStock(p.minStockAlert);
     setFormUnit(p.unit);
     setFormImage(p.image || '');
@@ -335,6 +337,7 @@ export const InventoryManager: React.FC = () => {
       price: formPrice,
       costPrice: formCostPrice,
       stock: formStock,
+      ...(isolated?{catalogRevision:editingProduct?.catalogRevision,inventoryTracked:alwaysTrackStock||formInventoryTracked}:{}),
       minStockAlert: formMinStock,
       unit: formUnit,
       image: formImage,
@@ -453,6 +456,7 @@ export const InventoryManager: React.FC = () => {
   /* -------------------------------------------------------------------------- */
 
   const handleOpenRecipeModal = (p: Product) => {
+    if(isolated)return;
     setRecipeProduct(p);
     setRecipeIngredientsList(p.recipeIngredients || []);
     setShowRecipeModal(true);
@@ -634,7 +638,7 @@ export const InventoryManager: React.FC = () => {
 
   return (
     <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
-      <WorkspaceInventoryCommands/>
+      <WorkspaceInventoryCommands/><SharedPurchaseForm/>
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -962,6 +966,7 @@ export const InventoryManager: React.FC = () => {
                       <td className="p-4 text-center">
                         {hasIngredients ? (
                           <button
+                            disabled={isolated}
                             onClick={() => handleOpenRecipeModal(p)}
                             className="px-2.5 py-1 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-black text-[11px] border border-emerald-300 transition-colors cursor-pointer"
                           >
@@ -969,6 +974,7 @@ export const InventoryManager: React.FC = () => {
                           </button>
                         ) : (
                           <button
+                            disabled={isolated}
                             onClick={() => handleOpenRecipeModal(p)}
                             className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-amber-100 text-slate-700 font-bold text-[11px] border border-slate-200 transition-colors cursor-pointer"
                           >
@@ -1203,6 +1209,7 @@ export const InventoryManager: React.FC = () => {
                         </td>
                         <td className="p-4 text-center">
                           <button
+                            disabled={isolated}
                             onClick={() => handleOpenRecipeModal(p)}
                             className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-white font-black text-xs transition-colors cursor-pointer"
                           >
@@ -1556,11 +1563,12 @@ export const InventoryManager: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
+                {isolated&&<label className="col-span-full flex gap-2 items-center"><input type="checkbox" checked={alwaysTrackStock||formInventoryTracked} disabled={alwaysTrackStock||editingProduct?.inventoryTracked===true} onChange={e=>setFormInventoryTracked(e.target.checked)}/>Barang dengan stok per outlet. Saldo awal dicatat melalui penerimaan barang; layanan dapat dijual tanpa saldo stok.</label>}
+                  <div>
                   <label className="font-black text-slate-700 block mb-1">Stok Awal</label>
                   <input
                     type="number"
-                    value={formStock}
+                    disabled={isolated} value={formStock}
                     onChange={(e) => setFormStock(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono font-bold text-slate-950 focus:border-amber-500 outline-none"
                   />

@@ -1324,10 +1324,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const saveBranch = async (branchToSave: StoreBranch) => {
     if (isFreePlan(settings.subscription) && branchToSave.id !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LIMIT');
     const originalId = branchToSave.id;
-    const business=await prepareOutletBusiness(branchToSave.businessSector || activeSector, settings.storeName,branchToSave.businessId||selectedBusiness.businessId);
+    const identitySector=isolated?workspaceBusiness.business.sector:branchToSave.businessSector||activeSector;
+    const business=await prepareOutletBusiness(identitySector, isolated?workspaceBusiness.business.name:settings.storeName,branchToSave.businessId||selectedBusiness.businessId);
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branchToSave,businessId:business.merchantId, businessSector: branchToSave.businessSector || activeSector }),
+      body: JSON.stringify({ ...branchToSave,businessId:business.merchantId, businessSector: identitySector }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || 'Outlet gagal disimpan');
@@ -1353,7 +1354,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!branch) return;
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: branch.businessSector || activeSector, isActive: false }),
+      body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: isolated?workspaceBusiness.business.sector:branch.businessSector||activeSector, isActive: false }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) { notify(result.error || 'Outlet gagal dinonaktifkan'); return; }

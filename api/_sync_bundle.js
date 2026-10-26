@@ -749,6 +749,7 @@ var manifest5 = {
 
 // src/platform/modules/contracts.ts
 var MODULE_IDS = ["fnb", "retail", "laundry", "carwash", "barber"];
+var acceptedWorkspaceFeatures = (features, version) => version === 2 ? features.filter((feature) => !["labor", "ai"].includes(feature)) : features;
 function isBusinessModuleId(value) {
   return typeof value === "string" && MODULE_IDS.includes(value);
 }
@@ -977,6 +978,7 @@ async function assertTenantWritable(db, tenantId) {
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
   merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
   workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
   moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
@@ -1057,17 +1059,18 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
     if (operationalModule[scope.role] && operationalModule[scope.role] !== row.module_id) continue;
     if (Number(row.workspace_version) === 2 && (!isolated || !["retail", "barber"].includes(row.module_id))) continue;
     if (!manifest6 || Number(row.workspace_version) !== 2 && (manifest6.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest6.id, permissions, features: row.features, tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest6.id, permissions, features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
   }
   return { enabled: true, businessId, outletId, modules };
 }
 async function authorizeNativeModule(db, subject, merchantId, outletId, requirements) {
-  if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "moduleAssignments")) return;
+  if (!await hasSchemaFeature(db, "moduleAssignments")) return;
   const merchant = (await db.query("SELECT tenant_id,business_sector FROM internal.merchants WHERE id=$1", [merchantId])).rows[0];
   if (!merchant) throw new BillingError(403, "MODULE_SCOPE_FORBIDDEN");
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [merchant.tenant_id, merchantId]);
-  const enrolled = await db.query("SELECT module_id FROM internal.merchant_modules WHERE tenant_id=$1 AND merchant_id=$2 AND guard_legacy_apis", [merchant.tenant_id, merchantId]);
-  if (!enrolled.rows.length) return;
+  const enrolled = await db.query("SELECT module_id,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm WHERE tenant_id=$1 AND merchant_id=$2 AND (guard_legacy_apis OR COALESCE((to_jsonb(mm)->>'workspace_version')::int,1)=2)", [merchant.tenant_id, merchantId]);
+  if (enrolled.rows.some((row) => Number(row.workspace_version) === 2)) throw new BillingError(403, "EXPLICIT_WORKSPACE_REQUIRED");
+  if (!moduleWorkspacesEnabled() || !enrolled.rows.length) return;
   const outlets = await db.query("SELECT id FROM internal.outlets WHERE merchant_id=$1", [merchantId]);
   const target = outletId ?? (outlets.rows.length === 1 ? outlets.rows[0].id : null);
   const manifest6 = legacyModuleForSector(merchant.business_sector);
@@ -1587,10 +1590,10 @@ function registerFinanceRoutes(app, db) {
       const data = await db.tx(async (c) => {
         const s = await scopeFor(c, req);
         const totals = (await c.query(`SELECT verification_origin,count(*)::int count,COALESCE(sum(amount),0) amount
-        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND ($4::text IS NULL OR to_jsonb(payments)->>'module_id'=$4) AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`, [s.tenantId, s.merchantId, s.outletId, s.moduleId || null])).rows;
         const exceptions = (await c.query(`SELECT e.provider_event_ref,e.reason,e.received_at FROM pos.payment_reconciliation_events e
         LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
-        AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`, [s.tenantId, s.merchantId, s.outletId])).rows;
+        AND (e.payment_id IS NULL OR p.outlet_id=$3) AND ($4::text IS NULL OR p.outlet_id=$3 AND to_jsonb(p)->>'module_id'=$4) ORDER BY e.received_at DESC LIMIT 50`, [s.tenantId, s.merchantId, s.outletId, s.moduleId || null])).rows;
         return { totals, exceptions };
       });
       res.json({ ok: true, ...data });
@@ -2556,7 +2559,8 @@ function registerWorkspaceStateRoutes(app, db) {
             if (op.deleted) await c.query("UPDATE pos.products SET is_available=false WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND external_ref=$4", [scope.tenantId, scope.merchantId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId)]);
             else {
               const p = rawValue;
-              const projection = await c.query(`INSERT INTO pos.products(id,tenant_id,merchant_id,outlet_id,module_id,external_ref,name,sku,price,cost_price,is_available,business_sector,business_id,unit,workspace_payload) VALUES(uuidv7(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15::jsonb) ON CONFLICT(tenant_id,merchant_id,external_ref) WHERE external_ref IS NOT NULL AND NOT sync_quarantined DO UPDATE SET name=excluded.name,sku=excluded.sku,price=excluded.price,cost_price=excluded.cost_price,is_available=excluded.is_available,workspace_payload=excluded.workspace_payload,workspace_revision=CASE WHEN(pos.products.name,pos.products.sku,pos.products.price,pos.products.cost_price,pos.products.is_available) IS DISTINCT FROM(excluded.name,excluded.sku,excluded.price,excluded.cost_price,excluded.is_available) THEN pos.products.workspace_revision+1 ELSE pos.products.workspace_revision END WHERE pos.products.module_id=excluded.module_id AND(pos.products.workspace_revision=$14::bigint OR (pos.products.name,pos.products.sku,pos.products.price,pos.products.cost_price,pos.products.is_available) IS NOT DISTINCT FROM(excluded.name,excluded.sku,excluded.price,excluded.cost_price,excluded.is_available)) RETURNING id,workspace_revision`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId), p.name, String(p.sku || op.recordId).slice(0, 50), p.price, p.costPrice, p.isAvailable !== false, scope.sector, scope.transportRef, String(p.unit || "pcs").slice(0, 20), Number.isSafeInteger(p.catalogRevision) ? p.catalogRevision : null, JSON.stringify(p)]);
+              const catalogPayload = Object.fromEntries(Object.entries(p).filter(([key]) => !["stock", "catalogRevision", "tenantId", "businessId", "businessSector", "sector", "moduleId", "outletId", "branchId"].includes(key)));
+              const projection = await c.query(`INSERT INTO pos.products(id,tenant_id,merchant_id,outlet_id,module_id,external_ref,name,sku,price,cost_price,is_available,business_sector,business_id,unit,workspace_payload) VALUES(uuidv7(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15::jsonb) ON CONFLICT(tenant_id,merchant_id,external_ref) WHERE external_ref IS NOT NULL AND NOT sync_quarantined DO UPDATE SET name=excluded.name,sku=excluded.sku,price=excluded.price,cost_price=excluded.cost_price,is_available=excluded.is_available,workspace_payload=excluded.workspace_payload,workspace_revision=CASE WHEN pos.products.workspace_payload IS DISTINCT FROM excluded.workspace_payload THEN pos.products.workspace_revision+1 ELSE pos.products.workspace_revision END WHERE pos.products.module_id=excluded.module_id AND(pos.products.workspace_revision=$14::bigint OR pos.products.workspace_payload IS NOT DISTINCT FROM excluded.workspace_payload) RETURNING id,workspace_revision`, [scope.tenantId, scope.merchantId, scope.outletId, scope.moduleId, workspaceProductRef(scope.moduleId, op.recordId), p.name, String(p.sku || op.recordId).slice(0, 50), p.price, p.costPrice, p.isAvailable !== false, scope.sector, scope.transportRef, String(p.unit || "pcs").slice(0, 20), Number.isSafeInteger(p.catalogRevision) ? p.catalogRevision : null, JSON.stringify(catalogPayload)]);
               if (!projection.rows.length) throw new ModuleAccessError(409, "CATALOG_REVISION_CONFLICT");
               revision = projection.rows[0].workspace_revision;
               await attachWorkspaceInventory(c, scope, projection.rows[0].id, p.inventoryTracked === true || scope.moduleId === "retail");
@@ -2799,11 +2803,10 @@ async function scopeFor2(db, subject, filter) {
     return { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, sector: s.sector, from: filter.from, to: filter.to, timezone: filter.timezone };
   }
   const { rows } = await db.query(
-    `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
+    `SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector
     FROM internal.outlets o
     JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=o.tenant_id
-    LEFT JOIN internal.merchant_settings ms ON ms.merchant_id=m.id
     WHERE o.id=$1 AND t.owner_user_ref=$2
       AND ($3::uuid IS NULL OR m.id=$3) AND ($4::uuid IS NULL OR t.id=$4)
       AND ($5::text IS NULL OR m.business_sector=$5)`,
@@ -2818,6 +2821,7 @@ async function scopeFor2(db, subject, filter) {
     if (error instanceof BillingError) throw new ReportRequestError(error.status, error.message);
     throw error;
   }
+  const timezone = filter.timezoneExplicit ? filter.timezone : (await db.query("SELECT timezone FROM internal.merchant_settings WHERE merchant_id=$1", [row.merchant_id])).rows[0]?.timezone || "Asia/Jakarta";
   return {
     tenantId: row.tenant_id,
     merchantId: row.merchant_id,
@@ -2825,7 +2829,7 @@ async function scopeFor2(db, subject, filter) {
     sector: row.business_sector,
     from: filter.from,
     to: filter.to,
-    timezone: filter.timezoneExplicit ? filter.timezone : row.timezone || "Asia/Jakarta"
+    timezone
   };
 }
 function parameters(scope, filter) {

@@ -160,10 +160,10 @@ export function registerFinanceRoutes(app:Express,db:Db){
     try{const data=await db.tx(async c=>{
       const s=await scopeFor(c,req);
       const totals=(await c.query(`SELECT verification_origin,count(*)::int count,COALESCE(sum(amount),0) amount
-        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`,[s.tenantId,s.merchantId,s.outletId])).rows;
+        FROM pos.payments WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND ($4::text IS NULL OR to_jsonb(payments)->>'module_id'=$4) AND payment_status IN('PAID','SETTLED') GROUP BY verification_origin`,[s.tenantId,s.merchantId,s.outletId,s.moduleId||null])).rows;
       const exceptions=(await c.query(`SELECT e.provider_event_ref,e.reason,e.received_at FROM pos.payment_reconciliation_events e
         LEFT JOIN pos.payments p ON p.id=e.payment_id WHERE e.tenant_id=$1 AND e.merchant_id=$2 AND e.outcome='EXCEPTION'
-        AND (e.payment_id IS NULL OR p.outlet_id=$3) ORDER BY e.received_at DESC LIMIT 50`,[s.tenantId,s.merchantId,s.outletId])).rows;
+        AND (e.payment_id IS NULL OR p.outlet_id=$3) AND ($4::text IS NULL OR p.outlet_id=$3 AND to_jsonb(p)->>'module_id'=$4) ORDER BY e.received_at DESC LIMIT 50`,[s.tenantId,s.merchantId,s.outletId,s.moduleId||null])).rows;
       return {totals,exceptions};
     });res.json({ok:true,...data});}catch(e){res.status(e instanceof ModuleAccessError||e instanceof FinanceError||e instanceof BillingError?e.status:503).json({ok:false,error:e instanceof ModuleAccessError||e instanceof FinanceError||e instanceof BillingError?e.message:'RECONCILIATION_UNAVAILABLE'});}
   });

@@ -1,3 +1,4 @@
+import {hashFinancialPin} from '../../services/pos/financialAuthorization';
 /** Loopback-only browser acceptance fixture. Fresh in-memory PostgreSQL;
  * no env loading, remote calls, real credentials or payment providers. */
 import fs from 'node:fs';
@@ -31,6 +32,7 @@ await db.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector
 await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$3,$4,'BSD Alpha'),($2,$3,$5,'Serpong Beta')",[outletA,outletB,tenant,businessA,isolated?businessA:businessB]);
 await ensureSubscription(db,tenant);
 if(isolated){
+ await db.query('INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash) VALUES($1,$2,$3)',[tenant,owner,await hashFinancialPin('5829')]);
  await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,'cashier@fixture.invalid','Independent Cashier')",[cashier]);
  await db.query("INSERT INTO internal.outlets(id,tenant_id,merchant_id,name) VALUES($1,$2,$3,'Sibling outlet')",[outletC,tenant,businessB]);
  await db.query("INSERT INTO internal.memberships(user_id,tenant_id,merchant_id,outlet_id,scope_type,role) VALUES($1,$2,$3,$4,'OUTLET','CASHIER')",[cashier,tenant,businessA,outletB]);
@@ -52,7 +54,7 @@ for(const device of ['A','B']){
   app.post('/__fixture/reset',(_req,res)=>{metrics.length=0;res.json({ok:true});});
   app.post('/__fixture/browser-metrics',(req,res)=>{records.set(device,req.body);console.log('BROWSER_METRICS',device,JSON.stringify(req.body));res.json({ok:true});});
   registerBillingRoutes(app,db,true,async()=>{throw Error('FIXTURE_PAYMENTS_DISABLED');});
-  registerSyncRoutes(app,db);
+  registerSyncRoutes(app,isolated?{...db,tx:fn=>db.tx(async c=>{await c.exec('SET LOCAL ROLE svc_pos');return fn(c);})}:db);
   app.use('/api',(_req,res)=>res.status(404).json({ok:false,error:'FIXTURE_API_NOT_IMPLEMENTED'}));
   const session={user:{id:subject,email:'fixture@localhost.invalid',role:'authenticated',created_at:new Date().toISOString(),user_metadata:{full_name:isolated&&device==='B'?'Independent Cashier':'Fixture Owner',store_name:'Laundry Alpha',business_sector:'LAUNDRY'},app_metadata:{provider:'email'}},session:{access_token:'fixture-only',expires_at:Math.floor(Date.now()/1000)+3600}};
   const seed=`if(!localStorage.getItem('nhpos_local_session')){localStorage.setItem('nhpos_local_session',${JSON.stringify(JSON.stringify(session))});localStorage.setItem('newhope_workspace_selection_v1_${subject}',${JSON.stringify(JSON.stringify({businessId:businessA,outletId:selectedOutlet}))});}`;
@@ -71,6 +73,7 @@ if(isolated){
  for(const moduleId of ['retail','barber']){
   const response=await fetch(origin+'/api/v1/sync/modules/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId,operations:[{kind:'products',recordId:'same-product',baseRevision:0,deleted:false,value:{id:'same-product',name:moduleId==='retail'?'Retail Shampoo':'Barber Haircut',price:10000,costPrice:3000,stock:0,categoryId:'fixture-category',type:moduleId==='retail'?'PRODUCT':'SERVICE',unit:'pcs',isAvailable:true}},{kind:'categories',recordId:'fixture-category',baseRevision:0,deleted:false,value:{id:'fixture-category',name:moduleId==='retail'?'Retail products':'Barber services'}}]})});if(!response.ok)throw Error(await response.text());
  }
+ const razor=await fetch(origin+'/api/v1/sync/modules/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId:'barber',operations:[{kind:'products',recordId:'barber-razor',baseRevision:0,deleted:false,value:{id:'barber-razor',name:'Barber Razor',sku:'razor',price:5000,costPrice:2000,stock:0,inventoryTracked:true,unit:'pcs',isAvailable:true}}]})});if(!razor.ok)throw Error(await razor.text());
  const receive=await fetch(origin+'/api/v1/sync/modules/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId:'retail',action:'RECEIVE',commandId:randomUUID(),lines:[{productRef:'same-product',quantity:20}]})});if(!receive.ok)throw Error(await receive.text());
  const transfer=await fetch(origin+'/api/v1/sync/modules/inventory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({businessId:businessA,outletId:outletA,moduleId:'retail',action:'TRANSFER',commandId:randomUUID(),destinationOutletId:outletB,lines:[{productRef:'same-product',quantity:5}]})});if(!transfer.ok)throw Error(await transfer.text());
 }else{

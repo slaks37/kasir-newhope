@@ -177,6 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="nh-sidebar-foot">
         <p className="nh-sidebar-caption">{t('header.toolsMenu')}</p>
         <button
+          disabled={runtime?.grant.workspaceVersion===2&&!hasPermission('labor')}
           onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenClockIn())}
           className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
           title={isPaymentRequired ? "Payment required" : undefined}
