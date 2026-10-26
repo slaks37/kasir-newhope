@@ -977,7 +977,8 @@ async function assertTenantWritable(db, tenantId) {
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
-  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AS ok`,
+  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
   moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
   /** migration 0054 / 20261004090200 */
   syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
@@ -1246,7 +1247,7 @@ async function resolveWorkspaceScope(db, subject, input, required = []) {
  ORDER BY CASE role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
  ) ms ON true WHERE m.id=$1`, [access.businessId, subject, access.outletId])).rows[0];
   if (!row?.role) throw new ModuleAccessError(403, "WORKSPACE_MEMBERSHIP_REQUIRED");
-  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject]);
+  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true),set_config('app.actor_role',$6,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject, row.role]);
   return { tenantId: row.tenant_id, merchantId: access.businessId, outletId: access.outletId, moduleId: input.moduleId, sector: moduleManifest(input.moduleId).sector, actorRef: subject, role: row.role, membershipScope: row.membership_scope, transportRef: row.external_ref || access.businessId, namespace: `WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`, permissions: grant.permissions, features: grant.features };
 }
 function requireWorkspaceRole(scope, roles) {
@@ -1404,7 +1405,7 @@ async function writeActivity(db, a) {
   const mod = pick(APP_MODULES, a.appModule);
   if (!sector || !mod || !UUID_RE.test(a.merchantId)) return null;
   const { rows } = await db.query(
-    `INSERT INTO internal.audit_logs
+    await hasSchemaFeature(db, "merchantActivityAppend") ? `SELECT internal.append_merchant_activity($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::uuid,$7::text,$8::text,$9::numeric,$10::text,$11::jsonb,$12::timestamptz) AS id` : `INSERT INTO internal.audit_logs
        (merchant_id, tenant_id, domain,
         event_type, severity, actor_id, actor_name, actor_role,
         amount_idr, summary, detail, occurred_at)
@@ -2590,7 +2591,8 @@ async function workspaceDirectory(db, subject, requestedTenant) {
     }
     b.outlets.push({ outletId: r.outlet_id, businessId: r.id, name: r.outlet_name, address: r.address || "", status: r.outlet_active ? "ACTIVE" : "INACTIVE", role: r.role });
   }
-  const subscription = (await db.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId])).rows[0];
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
+  const subscription = (await db.query("SELECT * FROM contract.workspace_subscription_metadata WHERE tenant_id=$1", [tenantId])).rows[0];
   return { ok: true, tenantId, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [...businesses.values()], workspaceAuth: true, capabilities: { multiBusiness: true }, subscription: subscription ? serializeSubscription(subscription) : null };
 }
 
@@ -2601,7 +2603,7 @@ function registerBusinessDirectory(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     try {
       res.setHeader("Cache-Control", "no-store");
-      if (req.query.workspace === "2") return res.json(await workspaceDirectory(db, principal.subject, req.query.tenantId));
+      if (req.query.workspace === "2") return res.json(await db.tx((c) => workspaceDirectory(c, principal.subject, req.query.tenantId)));
       const tenantId = await tenantForPrincipal(db, principal);
       if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
       const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
@@ -3880,20 +3882,24 @@ function registerSyncRoutes(app, db) {
       businessId
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: "MERCHANT_NOT_SYNCED" });
-    const id = await writeActivity(db, {
-      merchantId: t.rows[0].id,
-      tenantId: t.rows[0].tenant_id,
-      businessSector: t.rows[0].business_sector,
-      businessId,
-      appModule: String(b.appModule ?? "POS"),
-      eventType: String(b.eventType ?? "UNKNOWN"),
-      severity: String(b.severity ?? "INFO"),
-      actorName: str(b.actorName, 100),
-      actorRole: str(b.actorRole, 24),
-      amountIdr: b.amountIdr == null ? null : num(b.amountIdr),
-      summary: String(b.summary ?? "Kejadian tanpa keterangan"),
-      detail: typeof b.detail === "object" && b.detail ? b.detail : {},
-      occurredAt: str(b.occurredAt, 40)
+    const id = await db.tx(async (c) => {
+      await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [t.rows[0].tenant_id, t.rows[0].id]);
+      await authorizeNativeModule(c, principal.subject, t.rows[0].id, b.outletId, [["overview", "pos", "tables", "inventory"]]);
+      return writeActivity(c, {
+        merchantId: t.rows[0].id,
+        tenantId: t.rows[0].tenant_id,
+        businessSector: t.rows[0].business_sector,
+        businessId,
+        appModule: String(b.appModule ?? "POS"),
+        eventType: String(b.eventType ?? "UNKNOWN"),
+        severity: String(b.severity ?? "INFO"),
+        actorName: str(b.actorName, 100),
+        actorRole: str(b.actorRole, 24),
+        amountIdr: b.amountIdr == null ? null : num(b.amountIdr),
+        summary: String(b.summary ?? "Kejadian tanpa keterangan"),
+        detail: typeof b.detail === "object" && b.detail ? b.detail : {},
+        occurredAt: str(b.occurredAt, 40)
+      });
     });
     if (!id) return res.status(400).json({ ok: false, error: "INVALID_ACTIVITY" });
     res.json({ ok: true, id });

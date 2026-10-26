@@ -199,3 +199,29 @@ ALTER TABLE pos.products ADD COLUMN IF NOT EXISTS workspace_payload jsonb;
 
 GRANT SELECT(logo_url) ON internal.merchants TO svc_pos;
 ALTER TABLE pos.inventory_transactions ADD COLUMN IF NOT EXISTS actor_ref text;
+-- Read-only staff bootstrap contract; no raw billing-table or invoice grant.
+CREATE OR REPLACE VIEW contract.workspace_subscription_metadata WITH(security_barrier=true) AS
+ SELECT s.id,s.tenant_id,s.plan_id,s.status,s.current_period_start,s.current_period_end,s.grace_period_end,
+ s.billing_cycle,s.extra_outlets,s.trial_started_at,s.trial_ends_at,s.has_used_trial,to_jsonb(s)->'free_selection' AS free_selection
+ FROM billing.subscriptions s WHERE s.tenant_id::text=current_setting('app.tenant_id',true);
+REVOKE ALL ON contract.workspace_subscription_metadata FROM PUBLIC,anon,authenticated;
+GRANT SELECT ON contract.workspace_subscription_metadata TO svc_pos;
+-- POS may append a validated merchant event, never read or rewrite the audit table.
+CREATE OR REPLACE FUNCTION internal.append_merchant_activity(p_merchant uuid,p_tenant uuid,p_domain text,p_event text,p_severity text,p_actor uuid,p_actor_name text,p_actor_role text,p_amount numeric,p_summary text,p_detail jsonb,p_at timestamptz) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE result uuid;ctx_module text:=NULLIF(current_setting('app.module_id',true),'');ctx_actor text:=NULLIF(current_setting('app.actor_ref',true),'');
+BEGIN
+ IF p_tenant::text IS DISTINCT FROM current_setting('app.tenant_id',true) OR p_merchant::text IS DISTINCT FROM current_setting('app.merchant_id',true) OR NOT EXISTS(SELECT 1 FROM internal.merchants WHERE id=p_merchant AND tenant_id=p_tenant) THEN RAISE EXCEPTION 'ACTIVITY_SCOPE_MISMATCH' USING ERRCODE='42501';END IF;
+ IF ctx_module IS NOT NULL THEN
+  IF NOT EXISTS(SELECT 1 FROM internal.outlets WHERE id::text=current_setting('app.outlet_id',true) AND merchant_id=p_merchant AND tenant_id=p_tenant) THEN RAISE EXCEPTION 'ACTIVITY_OUTLET_MISMATCH' USING ERRCODE='42501';END IF;
+  SELECT id,full_name INTO p_actor,p_actor_name FROM internal.users WHERE id::text=ctx_actor AND is_active;
+  IF p_actor IS NULL THEN RAISE EXCEPTION 'ACTIVITY_ACTOR_REQUIRED' USING ERRCODE='42501';END IF;
+  p_actor_role:=current_setting('app.actor_role',true);
+  p_detail:=COALESCE(p_detail,'{}'::jsonb)||jsonb_build_object('moduleId',ctx_module,'outletId',current_setting('app.outlet_id',true),'actorRef',ctx_actor);
+ END IF;
+ INSERT INTO internal.audit_logs(merchant_id,tenant_id,domain,event_type,severity,actor_id,actor_name,actor_role,amount_idr,summary,detail,occurred_at)
+ VALUES(p_merchant,p_tenant,p_domain,p_event,p_severity,p_actor,p_actor_name,p_actor_role,p_amount,p_summary,p_detail,COALESCE(p_at,now())) RETURNING id INTO result;
+ RETURN result;
+END $$;
+REVOKE ALL ON FUNCTION internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz) TO svc_pos;

@@ -11,7 +11,7 @@ export function registerBusinessDirectory(app:Express,db:Db){
     if(!principal)return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
     try{
       res.setHeader('Cache-Control','no-store');
-      if(req.query.workspace==='2')return res.json(await workspaceDirectory(db,principal.subject,req.query.tenantId));
+      if(req.query.workspace==='2')return res.json(await db.tx(c=>workspaceDirectory(c,principal.subject,req.query.tenantId)));
       const tenantId=await tenantForPrincipal(db,principal);
       if(!tenantId)return res.json({ok:true,tenantId:null,businesses:[]});
       const result=await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,

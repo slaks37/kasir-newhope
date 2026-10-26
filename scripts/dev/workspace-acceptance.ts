@@ -35,6 +35,10 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
  const receive={...scope(),action:'RECEIVE',commandId:randomUUID(),lines:[{moduleId:'retail',productRef:'same-id',quantity:10},{moduleId:'barber',productRef:'same-id',quantity:4}]};
  try{
   process.env.NEW_HOPE_MODULE_WORKSPACES='1';resetSchemaFeatureCache();
+  await assert.rejects(()=>pos.tx(c=>c.query('SELECT * FROM billing.subscriptions')),(e:any)=>e.code==='42501');
+  await assert.rejects(()=>pos.tx(c=>c.query('SELECT * FROM internal.audit_logs')),(e:any)=>e.code==='42501');
+  await assert.rejects(()=>pos.tx(c=>c.query("SELECT internal.append_merchant_activity($1::uuid,$2::uuid,'SYNC','REJECTED','INFO',NULL,NULL,NULL,NULL,'No scope','{}',NULL)",[ids.merchant,ids.tenant])),/ACTIVITY_SCOPE_MISMATCH/);
+  assert.equal((await pos.tx(c=>c.query('SELECT * FROM contract.workspace_subscription_metadata'))).rows.length,0,'No tenant context exposes no subscription metadata');
   const directory=await request('/api/v1/sync/business?workspace=2',undefined,'cashierA');assert.equal(directory.status,200,JSON.stringify(directory));assert.equal(directory.data.businesses.length,1);assert.deepEqual(directory.data.businesses[0].outlets.map((o:any)=>o.outletId),[ids.a]);assert(directory.data.subscription);assert.equal(directory.data.invoices,undefined,'Staff bootstrap cannot expose billing invoices');
   for(const s of [scope(),scope('barber'),scope('retail',ids.c,ids.sibling),scope('retail',ids.d,ids.foreign)]){const r=await save(s,'products','same-id',product,s.businessId===ids.foreign?'other':'owner');assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.versions.length,1,JSON.stringify(r));}
   assert.equal(await stock(),0,'Untrusted JSON stock cannot create a balance');
@@ -97,6 +101,7 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
   assert.equal((await report(scope())).data.cashSummary.expenseBahan,600);assert.equal((await report(scope('barber'))).data.cashSummary.expenseBahan,400);
   const inventoryHistory=await state(scope(),'inventory_logs');assert.equal(inventoryHistory.status,200,JSON.stringify(inventoryHistory));assert(inventoryHistory.data.records.some((l:any)=>l.value.user===ids.manager));assert(inventoryHistory.data.records.every((l:any)=>l.value.moduleId==='retail'&&l.value.outletId===ids.a));
   const actor=(await admin.query('SELECT u.external_ref FROM pos.transactions t JOIN pos.users u ON u.id=t.cashier_user_id WHERE t.client_txn_id=$1',[delivery.transactions[0].clientTxnId])).rows[0];assert.equal(actor.external_ref,ids.cashierB,'Server derives actor from the authenticated session');
+  const audit=(await admin.query("SELECT actor_id,actor_name,actor_role,detail FROM internal.audit_logs WHERE tenant_id=$1 AND merchant_id=$2 AND detail->>'moduleId'='retail'",[ids.tenant,ids.merchant])).rows;assert(audit.some(a=>a.actor_id===ids.cashierB&&a.actor_role==='CASHIER'));assert(audit.every(a=>a.actor_name!=='Spoofed owner'),'Audit identity comes from the verified session');
   const attribution=(await admin.query('SELECT module_id FROM pos.payments WHERE transaction_id=(SELECT id FROM pos.transactions WHERE client_txn_id=$1)',[delivery.transactions[0].clientTxnId])).rows;assert(attribution.every(r=>r.module_id==='retail'));
   const disk=new Map<string,string>(),storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nativeFetch=globalThis.fetch;
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>disk.get(k)??null,setItem:(k:string,v:string)=>disk.set(k,String(v)),removeItem:(k:string)=>disk.delete(k)}});

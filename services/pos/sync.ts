@@ -885,7 +885,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     ]);
     if (!t.rows.length) return res.status(404).json({ ok: false, error: 'MERCHANT_NOT_SYNCED' });
 
-    const id = await writeActivity(db, {
+    const id = await db.tx(async c=>{await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[t.rows[0].tenant_id,t.rows[0].id]);await authorizeNativeModule(c,principal.subject,t.rows[0].id,b.outletId,[['overview','pos','tables','inventory']]);return writeActivity(c, {
       merchantId: t.rows[0].id,
       tenantId: t.rows[0].tenant_id,
       businessSector: t.rows[0].business_sector,
@@ -899,7 +899,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       summary: String(b.summary ?? 'Kejadian tanpa keterangan'),
       detail: typeof b.detail === 'object' && b.detail ? b.detail : {},
       occurredAt: str(b.occurredAt, 40),
-    });
+    });});
 
     if (!id) return res.status(400).json({ ok: false, error: 'INVALID_ACTIVITY' });
     res.json({ ok: true, id });
