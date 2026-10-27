@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {initializeFinancialStorage,readFinancialValue,writeFinancialValue,financialDeviceId,type FinancialDisk} from '../../src/platform/runtime/financialStorage';
-import {enqueueDurable,enqueue,financialWorkspaceKey,getPendingTransactions,flush,type SyncPayloadTxn} from '../../src/lib/sync/queue';
+import {enqueueDurable,enqueue,financialWorkspaceKey,getPendingTransactions,readQuarantine,requeueQuarantinedDurable,flush,type SyncPayloadTxn} from '../../src/lib/sync/queue';
 import {enqueueCashCommandDurable,flushCashQueue,getCashSyncStatus,type CashCommand} from '../../src/lib/sync/financialQueue';
 import {enqueueRegisterCloseDurable,pendingRegisterClose,flushRegisterClose} from '../../src/lib/sync/registerCloseQueue';
 import {submitWorkspaceInventory,pendingWorkspaceInventory,flushWorkspaceInventory} from '../../src/lib/sync/workspaceInventoryQueue';
@@ -11,9 +11,10 @@ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getIte
 Object.defineProperty(globalThis,'window',{configurable:true,value:{dispatchEvent:()=>true}});
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:{onLine:true}});
 let failBeforeCommit=false,loseCommitReply=false;
+let beforeCommit:((key:string)=>Promise<void>)|undefined;
 // Synthetic bridge model. Physical SQLite/process-death acceptance is separate.
 const adapter:FinancialDisk={load:async()=>({deviceId,entries:[...disk].map(([key,value])=>({key,value}))}),compareAndSet:async({key,expected,value})=>{
- await Promise.resolve();
+ await Promise.resolve();if(beforeCommit)await beforeCommit(key);
  if(failBeforeCommit)throw Error('DISK_FULL');
  if((disk.get(key)??null)!==expected)throw Error('FINANCIAL_STORAGE_CONFLICT');
  if(value===null)disk.delete(key);else disk.set(key,value);
@@ -39,6 +40,13 @@ let responseMode='lost';const sent:string[]=[];
 Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{sent.push(init.body);if(responseMode==='lost')throw Error('NETWORK_ACK_LOST');const body=JSON.parse(init.body);return {ok:responseMode!=='revoked',status:responseMode==='revoked'?403:200,json:async()=>responseMode==='revoked'?{ok:false,error:'WORKSPACE_ROLE_FORBIDDEN'}:responseMode==='bad'?{ok:true}:{ok:true,idempotencyKey:body.idempotencyKey,accepted:1,rejected:[]}};}});
 for(const mode of ['lost','bad','revoked']){responseMode=mode;const status=await flush(target,true);assert.equal(status.pending,1,mode);assert(status.lastError);await initializeFinancialStorage(adapter);assert.deepEqual(getPendingTransactions(id),[txn]);}
 responseMode='ok';assert.equal((await flush(target,true)).pending,0);assert(sent.every(s=>s===sent[0]),'Retry sends exactly the same event and batch identity');
+// A sale queued while quarantine is committing must survive batch pruning.
+await enqueueDurable(id,txn);const concurrent={...txn,clientTxnId:randomUUID()};
+beforeCommit=async key=>{if(key.startsWith('newhope_sync_quarantine_')){beforeCommit=undefined;await enqueueDurable(id,concurrent);}};
+let attempts=0;
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{if(attempts++)throw Error('NEXT_BATCH_OFFLINE');const body=JSON.parse(init.body);return {ok:true,json:async()=>({ok:true,idempotencyKey:body.idempotencyKey,rejected:[{clientTxnId:txn.clientTxnId,error:'INVALID_ITEM'}]})};}});
+await flush(target,true);assert.deepEqual(getPendingTransactions(id),[concurrent]);assert.equal(readQuarantine(id).length,1);
+await requeueQuarantinedDurable(id,txn.clientTxnId);assert.equal(getPendingTransactions(id).length,2);assert.equal(readQuarantine(id).length,0);
 const cash:CashCommand={workspace:w,action:'cash',body:{sector:'RETAIL',outletId:w.outletId,clientEventId:randomUUID(),type:'CASH_IN',amount:10,category:'OTHER',description:'Synthetic',occurredAt:new Date().toISOString()}};
 await enqueueCashCommandDurable(id,cash);
 Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:'wrong'})})});assert.equal((await flushCashQueue(target,true)).pending,1);

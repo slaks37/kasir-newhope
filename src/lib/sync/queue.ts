@@ -102,8 +102,8 @@ export interface SyncStatus {
 export interface QuarantinedSale { txn: SyncPayloadTxn; error: string; at: string }
 
 export function readQuarantine(businessId: string): QuarantinedSale[] {
-  try { const rows = JSON.parse(readFinancialValue(QUARANTINE_PREFIX + businessId) || '[]'); return Array.isArray(rows) ? rows : []; }
-  catch { return []; }
+  try { const rows = JSON.parse(readFinancialValue(QUARANTINE_PREFIX + businessId) || '[]'); if(Array.isArray(rows))return rows;throw Error('LOCAL_QUARANTINE_CORRUPT'); }
+  catch(error) { if(isNative())throw error;return []; }
 }
 
 function writeQuarantine(businessId: string, rows: QuarantinedSale[]) {
@@ -593,7 +593,6 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     // Baru sekarang aman memangkas — dan hanya baris yang benar-benar dikirim.
     // Transaksi yang masuk antrian SELAMA pengiriman berlangsung harus tetap
     // tinggal, jadi antrian dibaca ulang, bukan memakai `all` yang sudah basi.
-    const current = readQueue(businessId);
     // Penjualan yang ditolak server dipindah ke karantina — tetap tersimpan utuh
     // dan terlihat di Sync Center — agar tidak menahan penjualan berikutnya.
     const rejected = new Map<string, string>((Array.isArray(data.rejected) ? data.rejected : [])
@@ -605,7 +604,7 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     }
     acknowledgeLegacyTransactions(businessId, batch.filter(t => !rejected.has(t.clientTxnId)));
     const sent = new Map(batch.map((t) => [t.clientTxnId, financialPayloadFingerprint(t)]));
-    await writeFinancialValue(queueKey(businessId),JSON.stringify(current.filter((t) => sent.get(t.clientTxnId) !== financialPayloadFingerprint(t))));
+    await writeFinancialValue(queueKey(businessId),JSON.stringify(readQueue(businessId).filter((t) => sent.get(t.clientTxnId) !== financialPayloadFingerprint(t))));
 
     writeMeta(businessId, {
       lastSyncedAt: new Date().toISOString(),
@@ -640,4 +639,13 @@ export async function enqueueDurable(businessId:string,txn:SyncPayloadTxn):Promi
  const rows=readQueue(businessId),prior=rows.find(t=>t.clientTxnId===txn.clientTxnId);
  if(prior){if(financialPayloadFingerprint(prior)!==financialPayloadFingerprint(txn))throw Error('NATIVE_PENDING_TRANSACTION_IMMUTABLE');return;}
  await writeFinancialValue(queueKey(businessId),JSON.stringify([...rows,txn]));
+}
+
+/** Keep the quarantine copy until the queued copy is durably committed. */
+export async function requeueQuarantinedDurable(businessId:string,clientTxnId:string):Promise<boolean>{
+ if(!isNative())return requeueQuarantined(businessId,clientTxnId);
+ const row=readQuarantine(businessId).find(entry=>entry.txn.clientTxnId===clientTxnId);if(!row)return false;
+ await enqueueDurable(businessId,row.txn);
+ await writeFinancialValue(QUARANTINE_PREFIX+businessId,JSON.stringify(readQuarantine(businessId).filter(entry=>entry.txn.clientTxnId!==clientTxnId)));
+ return true;
 }

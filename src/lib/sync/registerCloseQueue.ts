@@ -44,5 +44,6 @@ export async function archiveRecountRequiredCloseDurable(w:FinancialWorkspace,re
  const prior=pendingRegisterClose(w,registerId);if(!prior?.recountRequired)throw Error('SHIFT_CLOSE_UNCONFIRMED_CANNOT_REPLACE');
  const archiveKey=key(w,registerId)+'_review_archive',rows=JSON.parse(readFinancialValue(archiveKey)||'[]');
  if(!rows.some((r:Stored)=>r.command.clientCloseId===prior.command.clientCloseId))rows.push(prior);
- await writeFinancialValue(archiveKey,JSON.stringify(rows));await writeFinancialValue(key(w,registerId),null);
+ await writeFinancialValue(archiveKey,JSON.stringify(rows));
+ if(pendingRegisterClose(w,registerId)?.command.clientCloseId===prior.command.clientCloseId)await writeFinancialValue(key(w,registerId),null);
 }
