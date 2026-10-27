@@ -52,13 +52,28 @@
     "dev:auth": "tsx services/dev-auth/index.ts",
     "test:pos": "node --import tsx scripts/dev/test-auth-client.ts && node --import tsx scripts/dev/test-pos-stock.ts && node --import tsx scripts/dev/test-receipt-logo.ts && node --import tsx scripts/dev/test-cloud-signup.ts && node --import tsx scripts/dev/test-browser-rls.ts && node --import tsx scripts/dev/test-free-plan.ts && node --import tsx scripts/dev/test-service-worker.ts && node --import tsx scripts/dev/test-notify.ts && npm run -s test:security-database",
     "test:agentic": "node --import tsx scripts/dev/test-agentic-discoverability.ts",
-    "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic && npm run -s test:modules && npm run -s test:cashier",
+    "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic && npm run -s test:modules && npm run -s test:cashier && npm run -s test:platform",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
     "test:cashier": "node --import tsx scripts/dev/test-cashier-operations.ts && node --import tsx scripts/dev/test-register-close-queue.ts",
-    "test:modules": "node --import tsx scripts/dev/test-modules.ts && node --import tsx scripts/dev/test-workspace-isolation.ts && node --import tsx scripts/dev/test-workspace-client-isolation.ts"
+    "test:modules": "node --import tsx scripts/dev/test-modules.ts && node --import tsx scripts/dev/test-workspace-isolation.ts && node --import tsx scripts/dev/test-workspace-client-isolation.ts",
+    "build:mobile": "vite build --config vite.mobile.config.ts && node scripts/mobile/check-bundle.mjs",
+    "native:sync": "npm run build:mobile && cap sync",
+    "native:android:debug": "npm run native:sync && cd android && ./gradlew assembleDebug",
+    "native:android:bundle": "npm run native:sync && cd android && ./gradlew bundleRelease",
+    "native:ios:simulator": "npm run native:sync && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build",
+    "test:platform": "node --import tsx scripts/dev/test-platform.ts && node --import tsx scripts/dev/test-native-financial-storage.ts"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/camera": "8.2.6",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/network": "8.0.1",
+    "@capacitor/share": "8.0.3",
     "@electric-sql/pglite-socket": "^0.2.8",
     "@supabase/auth-js": "^2.112.3",
     "@supabase/supabase-js": "^2.112.3",
@@ -79,6 +94,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.3",
     "@electric-sql/pglite": "^0.5.4",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
@@ -87,8 +103,14 @@
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "fake-indexeddb": "6.2.6",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"
+  },
+  "overrides": {
+    "xcode": {
+      "uuid": "11.1.1"
+    }
   }
 }

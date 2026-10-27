@@ -5219,6 +5219,33 @@ function registerAssistantRoutes(app, database) {
   );
 }
 
+// services/shared/nativeCors.ts
+function nativeCors(req, res, methods2) {
+  const origin = String(req.headers.origin || "");
+  const native = ["capacitor://localhost", "https://localhost"].includes(origin);
+  if (!native) return false;
+  const enabled = (process.env.NEW_HOPE_NATIVE_ORIGINS || "").split(",").map((v) => v.trim()).includes(origin);
+  if (!enabled) {
+    res.status(403).json({ ok: false, error: "NATIVE_ORIGIN_DISABLED" });
+    return true;
+  }
+  const requested = String(req.headers["access-control-request-method"] || req.method).toUpperCase();
+  const requestedHeaders = String(req.headers["access-control-request-headers"] || "").toLowerCase().split(",").map((v) => v.trim()).filter(Boolean);
+  if (!methods2.includes(requested) || requestedHeaders.some((h) => !["authorization", "content-type"].includes(h))) {
+    res.status(403).json({ ok: false, error: "NATIVE_CORS_DENIED" });
+    return true;
+  }
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", methods2.join(", "));
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return true;
+  }
+  return false;
+}
+
 // src/server/serverlessBoundary.ts
 import express from "express";
 
@@ -5308,6 +5335,7 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
     if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if ((options.name === "sync" || options.name === "billing" && path.startsWith("/api/v1/subscription/")) && nativeCors(req, res, options.routes[path])) return;
     if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
     if (publicRoutes.has(path)) {
       stripIdentityHeaders(req);
