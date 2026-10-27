@@ -62,7 +62,7 @@
     "native:android:debug": "npm run native:sync && cd android && ./gradlew assembleDebug",
     "native:android:bundle": "npm run native:sync && cd android && ./gradlew bundleRelease",
     "native:ios:simulator": "npm run native:sync && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build",
-    "test:platform": "node --import tsx scripts/dev/test-platform.ts"
+    "test:platform": "node --import tsx scripts/dev/test-platform.ts && node --import tsx scripts/dev/test-native-financial-storage.ts"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

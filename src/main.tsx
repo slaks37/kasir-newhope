@@ -51,7 +51,8 @@ function POSSession() {
   return <App />;
 }
 
-createRoot(document.getElementById('root')!).render(
+const root=createRoot(document.getElementById('root')!);
+const renderApplication=()=>root.render(
   <StrictMode>
     <LanguageProvider>
       {isNative()&&<Suspense fallback={null}><NativeStatus/></Suspense>}
@@ -66,3 +67,8 @@ createRoot(document.getElementById('root')!).render(
     </Suspense>
   </StrictMode>,
 );
+
+if(isNative()){
+ root.render(<p role="status">Memulihkan antrean transaksi perangkat…</p>);
+ void import('./platform/runtime/financialStorage').then(m=>m.initializeFinancialStorage()).then(renderApplication).catch(()=>root.render(<div role="alert">Penyimpanan transaksi perangkat tidak dapat dibuka. Tutup lalu buka kembali aplikasi. Jangan hapus data aplikasi atau memasang ulang sebelum antrean dipulihkan.</div>));
+}else renderApplication();

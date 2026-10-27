@@ -1,5 +1,5 @@
 import {assertNativeFinancialReady} from '../platform/runtime/platform';
-import {readRegisterPreference,enqueueRegisterClose,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
+import {readRegisterPreference,enqueueRegisterCloseDurable,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
 import {moduleManifest} from '../platform/modules/registry';
 import {pendingWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
 import {submitWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
@@ -62,7 +62,7 @@ import {
 } from './TenantContext';
 import { posthogTelemetry } from '../utils/posthog';
 import {
-  enqueue as enqueueSync,
+  enqueueDurable as enqueueSync,
   flush as flushSync,
   getStatus as getSyncStatus,
   orderToPayload,
@@ -121,7 +121,7 @@ import { generateInvoiceNumber, playPOSSound } from '../utils/formatters';
 import { remainingQuantityByProduct, stockAfterSale } from '../lib/pos/stock';
 import { newId } from '../lib/ids';
 import { migrateLegacyFinancialData, type LegacyMigrationResult } from '../lib/sync/legacyMigration';
-import { enqueueCashCommand, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
+import { enqueueCashCommandDurable, cashMovementToCommand, flushCashQueue, getCashSyncStatus, combineFinancialSyncStatus, pendingRefund, refundAcknowledgment } from '../lib/sync/financialQueue';
 import { fetchFinancialWorkspace } from '../lib/reports/client';
 import { useWorkspaceRoute, navigateModule } from '../lib/navigation/workspaceRouter';
 import { moduleForPath } from '../lib/navigation/routes';
@@ -293,7 +293,7 @@ export interface POSContextType {
       splitItems?: CartItem[];
       skipClearCart?: boolean;
     }
-  ) => Order | null;
+  ) => Promise<Order | null>;
   voidOrder: (orderId: string, reason?: string) => void;
   refundOrderItems: (
     orderId: string,
@@ -332,7 +332,7 @@ export interface POSContextType {
     paymentMethod: PaymentMethod,
     cashReceived?: number,
     qrisRef?: string
-  ) => Order | null;
+  ) => Promise<Order | null>;
   updateOrderLaundryStatus: (orderId: string, status: 'PROSES_CUCI' | 'SELESAI_SIAP_AMBIL' | 'SUDAH_DIAMBIL') => void;
   updateLaundryStage: (orderId: string, stage: 'ANTRIAN' | 'CUCI' | 'KERING' | 'SETRIKA' | 'PACKING' | 'SIAP_AMBIL' | 'SELESAI', storageRack?: string) => void;
   sendLaundryWaNotification: (order: Order) => string;
@@ -470,7 +470,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const financialId=workspace?financialWorkspaceKey(workspace):selectedBusiness.transportRef!;
   const workspaceApi=workspace?{businessId:workspace.merchantId,outletId:workspace.outletId,moduleId:workspace.moduleId}:{};
   const workspaceOrderPayload=(order:Order,role:UserRole)=>({...orderToPayload(order,role),...(workspace?{workspace}:{})});
-  const enqueueWorkspaceCash=(command:Parameters<typeof enqueueCashCommand>[1])=>enqueueCashCommand(financialId,{...command,...(workspace?{workspace}:{})});
+  const enqueueWorkspaceCash=(command:Parameters<typeof enqueueCashCommandDurable>[1])=>enqueueCashCommandDurable(financialId,{...command,...(workspace?{workspace}:{})});
   const storageId=selectedBusiness.transportRef!;
   const operationalNamespace=isolated?financialId:selectedBusiness.legacyAlias?undefined:selectedBusiness.businessId;
   const cache=React.useRef<WorkspaceCache|null>(null);
@@ -1650,7 +1650,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Cart state/actions belong to the isolated cart domain.
 
   // Process Payment & Create Order
-  const processPayment = (
+  const processPayment = async (
     paymentMethod: PaymentMethod,
     cashReceived?: number,
     notes?: string,
@@ -1671,7 +1671,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       splitItems?: CartItem[];
       skipClearCart?: boolean;
     }
-  ): Order | null => {
+  ): Promise<Order | null> => {
     if(isolated&&(shift.status!=='OPEN'||shift.canClose===false))throw Error('OWN_OPEN_REGISTER_SHIFT_REQUIRED');
     if (cart.length === 0) return null;
     const priorSplit=extraOptions?.paymentTender&&extraOptions.parentOrderId?orders.find(order=>order.id===extraOptions.parentOrderId):null;
@@ -1682,7 +1682,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const collected=paymentTenders.reduce((sum,payment)=>sum+payment.amount,0);
       if(collected>priorSplit.total+0.01)throw new Error('TENDER_EXCEEDS_BALANCE');
       const updated:Order={...priorSplit,paymentTenders,paymentStatus:collected>=priorSplit.total-0.01?'PAID':'PENDING'};
-      enqueueSync(financialId,workspaceOrderPayload(updated,currentUser.role));
+      await enqueueSync(financialId,workspaceOrderPayload(updated,currentUser.role));
       setOrders(previous=>previous.map(order=>order.id===updated.id?updated:order));
       setSyncStatus(financialStatus(financialId));void runSync(syncTarget);
       if(!extraOptions.skipClearCart)clearCart();
@@ -1770,7 +1770,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Persist the financial event before changing any visible POS state. If
     // the browser cannot store the outbox, do not present a completed sale.
-    try { enqueueSync(financialId, workspaceOrderPayload(newOrder, currentUser.role)); }
+    try { await enqueueSync(financialId, workspaceOrderPayload(newOrder, currentUser.role)); }
     catch (error) {
       setSyncStatus({...getSyncStatus(financialId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
       notify('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah; jangan tutup halaman dan hubungi admin.');
@@ -2198,7 +2198,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       items:orderRefundItems.map(item=>({clientItemId:item.cartItemId,quantity:item.quantity}))};
     if(!online)throw new Error('Refund memerlukan persetujuan server saat online.');
     const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:targetOrder.branchId||'',action:'REFUND',reference:targetOrder.id,reason:command.reason,command});
-    enqueueWorkspaceCash({action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
+    await enqueueWorkspaceCash({action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
       clientEventId:refundId,clientTxnId:targetOrder.id,refund:{...command,approvalGrant}}});
     await runSync(syncTarget,true);
     const acknowledged=refundAcknowledgment(financialId,refundId);
@@ -2534,12 +2534,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Selesaikan pembayaran transaksi yang sebelumnya disimpan (Bayar Nanti / Belum Lunas)
-  const payPendingOrder = (
+  const payPendingOrder = async (
     orderId: string,
     paymentMethod: PaymentMethod,
     cashReceived?: number,
     qrisRef?: string
-  ): Order | null => {
+  ): Promise<Order | null> => {
     const targetOrder = orders.find((o) => o.id === orderId) || heldOrders.find((o) => o.id === orderId);
     if (!targetOrder) return null;
 
@@ -2561,7 +2561,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       qrisRef: paymentMethod === 'QRIS' ? (qrisRef || `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}`) : undefined,
     };
 
-    try { enqueueSync(financialId,workspaceOrderPayload(updatedOrder,currentUser.role)); }
+    try { await enqueueSync(financialId,workspaceOrderPayload(updatedOrder,currentUser.role)); }
     catch (error) {
       setSyncStatus({...getSyncStatus(financialId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
       notify('Pembayaran belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
@@ -2688,7 +2688,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if(!target.registerId||!target.version||!Number.isFinite(actualCash)||actualCash<0)throw Error('REGISTER_SHIFT_SNAPSHOT_REQUIRED');
       let pending=pendingRegisterClose(workspace,target.registerId);
       if(pending&&(pending.command.actualCash!==actualCash||pending.command.notes!==String(notes||'').trim()))throw Error('SHIFT_CLOSE_PENDING_RETRY_REQUIRED');
-      if(!pending){enqueueRegisterClose(workspace,{...workspaceApi,businessId:workspace.merchantId,moduleId:workspace.moduleId,outletId:workspace.outletId,registerId:target.registerId,clientShiftId:target.id,clientCloseId:crypto.randomUUID(),expectedVersion:target.version,actualCash,notes:String(notes||'').trim()});pending=pendingRegisterClose(workspace,target.registerId);}
+      if(!pending){await enqueueRegisterCloseDurable(workspace,{...workspaceApi,businessId:workspace.merchantId,moduleId:workspace.moduleId,outletId:workspace.outletId,registerId:target.registerId,clientShiftId:target.id,clientCloseId:crypto.randomUUID(),expectedVersion:target.version,actualCash,notes:String(notes||'').trim()});pending=pendingRegisterClose(workspace,target.registerId);}
       for(const moduleId of target.moduleIds||[workspace.moduleId]){
         const module=moduleManifest(moduleId);if(!module)throw Error('WORKSPACE_MODULE_REQUIRED');
         const moduleWorkspace={...workspace,moduleId},id=financialWorkspaceKey(moduleWorkspace);
@@ -2718,7 +2718,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if(type==='CASH_OUT'){
       const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_OUT',reference:movement.id,reason:description,command:command.body});
       await financeRequest('cash',{...command.body,approvalGrant});
-    }else enqueueWorkspaceCash(command);
+    }else await enqueueWorkspaceCash(command);
     setCashMovements(previous=>[movement,...previous]);setSyncStatus(financialStatus(financialId));
     void runSync(syncTarget);return movement;
   };

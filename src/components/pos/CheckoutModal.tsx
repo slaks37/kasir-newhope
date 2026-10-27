@@ -136,17 +136,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const processingRef = useRef(false);
 
   /**
-   * Sale recording is synchronous and local-first; there is nothing to wait for.
+   * Wait for durable storage before presenting the receipt.
    * Runs once (double-click safe), never after the dialog was dismissed, and
    * shows any failure to the cashier instead of leaving a spinning button.
    */
-  const settle = <T,>(record: () => T | null | undefined, onRecorded: (result: T) => void) => {
+  const settle = async <T,>(record: () => T | null | undefined | Promise<T | null | undefined>, onRecorded: (result: T) => void) => {
     if (processingRef.current) return;
     processingRef.current = true;
     setIsProcessing(true);
     setCheckoutError('');
     try {
-      const result = record();
+      const result = await record();
       if (result) onRecorded(result);
     } catch (error) {
       setCheckoutError(checkoutErrorMessage(error));

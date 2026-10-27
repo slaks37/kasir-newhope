@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { useTranslation } from '../../i18n/LanguageContext';
 import { formatRupiah } from '../../utils/formatters';
@@ -54,6 +54,10 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
   const [isAllCompleted, setIsAllCompleted] = useState(false);
 
+  const recording = useRef(false);
+  const [recordError,setRecordError]=useState('');
+  const [recordingNow,setRecordingNow]=useState(false);
+  const recordOnce=async(action:()=>Promise<void>)=>{if(recording.current)return;recording.current=true;setRecordingNow(true);setRecordError('');try{await action();}catch(error){setRecordError(error instanceof Error?error.message:'Pembayaran belum disimpan');}finally{recording.current=false;setRecordingNow(false);}};
   if (!isOpen) return null;
 
   const totalAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -79,7 +83,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
     return sub + tax + srv;
   };
 
-  const handlePayEqualPax = (paxIndex: number) => {
+  const handlePayEqualPax = (paxIndex: number) => recordOnce(async () => {
     if(paidPax.includes(paxIndex))return;
     const nextPaid = [...paidPax, paxIndex];
     const isFinished = nextPaid.length >= paxCount;
@@ -95,7 +99,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       skipClearCart: !isFinished,
     };
 
-    const createdOrder = processPayment(
+    const createdOrder = await processPayment(
       paymentMethod,
       perPaxAmount,
       undefined,
@@ -123,9 +127,10 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       clearCart();
       if (onPaymentSuccess) onPaymentSuccess();
     }
-  };
+  });
 
-  const handlePayPerson = (personIdx: number) => {
+  const handlePayPerson = (personIdx: number) => recordOnce(async () => {
+    if(paidPersons.includes(personIdx))return;
     const personTotal = getPersonSubtotal(personIdx);
     if (personTotal <= 0) return;
 
@@ -149,7 +154,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       skipClearCart: !allPaid,
     };
 
-    const createdOrder = processPayment(
+    const createdOrder = await processPayment(
       paymentMethod,
       personTotal,
       undefined,
@@ -174,11 +179,14 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
       clearCart();
       if (onPaymentSuccess) onPaymentSuccess();
     }
-  };
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
       <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6 space-y-6">
+        <fieldset disabled={recordingNow} className="contents">
+        {recordingNow&&<p role="status">Menyimpan pembayaran…</p>}
+        {recordError&&<p role="alert">{recordError}</p>}
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div className="flex items-center space-x-3">
@@ -639,6 +647,7 @@ export const SplitBillModal: React.FC<SplitBillModalProps> = ({
             </div>
           </div>
         )}
+        </fieldset>
       </div>
 
       {/* Receipt Modal Preview */}

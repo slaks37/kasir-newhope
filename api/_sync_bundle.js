@@ -1894,7 +1894,7 @@ function registerFinanceRoutes(app, db) {
   const route = (path, run) => app.post(path, async (req, res) => {
     try {
       const result = await db.tx(async (c) => run(c, await scopeFor(c, req), req));
-      res.json({ ok: true, ...result });
+      res.json({ ok: true, ...result, clientEventId: req.body.clientEventId });
     } catch (error) {
       const known2 = error instanceof RegisterError || error instanceof RegisterError || error instanceof ModuleAccessError || error instanceof FinanceError || error instanceof BillingError || error instanceof FinancialApprovalError;
       if (!known2 && !(error instanceof FreePlanAccessError)) {
@@ -4193,7 +4193,7 @@ function registerSyncRoutes(app, db) {
         }
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
-      res.json({ ok: true, ...out });
+      res.json({ ok: true, ...out, idempotencyKey: req.body.idempotencyKey });
     } catch (err) {
       if (err instanceof ModuleAccessError || err instanceof FinanceError) return res.status(err.status).json({ ok: false, error: err.message });
       if (err instanceof FreePlanAccessError) return res.status(403).json({ ok: false, error: err.message });

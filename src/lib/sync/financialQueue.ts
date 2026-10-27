@@ -1,3 +1,5 @@
+import {isNative} from '../../platform/runtime/platform';
+import {readFinancialValue,writeFinancialValue,assertBrowserFinancialWrite} from '../../platform/runtime/financialStorage';
 import type { BusinessSector, CashMovement } from '../../types';
 import {financialWorkspaceKey,type FinancialWorkspace,type SyncStatus,type SyncTarget} from './queue';
 import { legacyFinancialHolds } from './legacyHold';
@@ -28,7 +30,7 @@ function fingerprint(command: CashCommand): string {
   return JSON.stringify(canonical({ action: command.action, body: command.body }));
 }
 function read(businessId: string): CashCommand[] {
-  const raw = localStorage.getItem(`${PREFIX}${businessId}`);
+  const raw = readFinancialValue(`${PREFIX}${businessId}`);
   if (!raw) return [];
   try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) return parsed; } catch { /* Preserve corrupt bytes. */ }
   throw new Error('LOCAL_CASH_QUEUE_CORRUPT');
@@ -51,7 +53,7 @@ export function pendingRefund(businessId:string,transactionId:string):boolean {
   return read(businessId).some(command=>command.action==='refund'&&command.body.clientTxnId===transactionId);
 }
 export function refundAcknowledgment(businessId:string,eventId:string):any {
-  const raw=localStorage.getItem(`newhope_refund_ack_${businessId}_${eventId}`);
+  const raw=readFinancialValue(`newhope_refund_ack_${businessId}_${eventId}`);
   return raw?JSON.parse(raw):null;
 }
 export function getCashSyncStatus(businessId: string): SyncStatus {
@@ -60,6 +62,7 @@ export function getCashSyncStatus(businessId: string): SyncStatus {
   catch (error) { return { ...current, pending: 1, inFlight: false, failures: Math.max(1, current.failures), lastError: error instanceof Error ? error.message : 'LOCAL_CASH_QUEUE_READ_FAILED' }; }
 }
 export function enqueueCashCommand(businessId: string, command: CashCommand): void {
+  assertBrowserFinancialWrite();
   if(businessId.startsWith('workspace:v2:')&&(!command.workspace||financialWorkspaceKey(command.workspace)!==businessId||command.body.outletId!==command.workspace.outletId))throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
   const rows = read(businessId);
   const existing = rows.find(row => row.body.clientEventId === command.body.clientEventId);
@@ -82,6 +85,7 @@ export function legacyCashAcknowledged(businessId: string, sourceKey: string, co
   catch { return false; }
 }
 export function enqueueLegacyCashCommand(businessId: string, sourceKey: string, command: CashCommand, originalBranchRef: string): void {
+  assertBrowserFinancialWrite();
   const rows = read(businessId);
   const existing = rows.find(row => row.body.clientEventId === command.body.clientEventId);
   const marked = { ...command, legacyMigration: { sourceKey, fingerprint: fingerprint(command), originalBranchRef } };
@@ -118,7 +122,8 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.ok) throw new Error(data?.error ? `${data.error} (HTTP ${response.status})` : `HTTP ${response.status}`);
-      if(command.action==='refund')localStorage.setItem(`newhope_refund_ack_${businessId}_${command.body.clientEventId}`,JSON.stringify(data.refund));
+      if(isNative()&&(data.clientEventId!==command.body.clientEventId||command.action==='refund'&&!data.refund))throw Error('CASH_ACK_MISMATCH');
+      if(command.action==='refund')await writeFinancialValue(`newhope_refund_ack_${businessId}_${command.body.clientEventId}`,JSON.stringify(data.refund));
       if (command.legacyMigration) {
         const key = `${ACK}${businessId}`;
         const ack = JSON.parse(localStorage.getItem(key) || '{}');
@@ -127,7 +132,7 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
         localStorage.setItem(key, JSON.stringify(ack));
       }
       const sent = fingerprint(command);
-      write(businessId, read(businessId).filter(current => current.body.clientEventId !== command.body.clientEventId || fingerprint(current) !== sent));
+      await writeFinancialValue(PREFIX+businessId,JSON.stringify(read(businessId).filter(current => current.body.clientEventId !== command.body.clientEventId || fingerprint(current) !== sent)));
       writeMeta(businessId, { lastSyncedAt: new Date().toISOString(), lastError: null, lastErrorAt: null, failures: 0 });
     }
     const pending = read(businessId);
@@ -148,4 +153,12 @@ export function combineFinancialSyncStatus(transactions: SyncStatus, cash: SyncS
   const failed = transactions.lastError ? transactions : cash;
   return { pending: transactions.pending + cash.pending, inFlight: transactions.inFlight || cash.inFlight,
     lastSyncedAt, failures: Math.max(transactions.failures, cash.failures), lastError: failed.lastError, lastErrorAt: failed.lastErrorAt };
+}
+
+export async function enqueueCashCommandDurable(businessId:string,command:CashCommand){
+ if(!isNative()){enqueueCashCommand(businessId,command);return;}
+ if(!command.workspace||financialWorkspaceKey(command.workspace)!==businessId||command.body.outletId!==command.workspace.outletId)throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
+ const rows=read(businessId),prior=rows.find(r=>r.body.clientEventId===command.body.clientEventId);
+ if(prior){if(fingerprint(prior)!==fingerprint(command))throw Error('CASH_EVENT_ID_CONFLICT');return;}
+ await writeFinancialValue(PREFIX+businessId,JSON.stringify([...rows,command]));
 }
