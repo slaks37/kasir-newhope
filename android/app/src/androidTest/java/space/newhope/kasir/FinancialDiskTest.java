@@ -38,4 +38,14 @@ public class FinancialDiskTest {
   assertEquals("FINANCIAL_STORAGE_CONFLICT",write(reopened,"wrong acknowledgement",null).error);assertEquals(1,load(reopened).getJSONArray("entries").length());
   assertTrue(write(reopened,VALUE,null).resolved);reopened.handleOnDestroy();assertEquals(0,load(plugin()).getJSONArray("entries").length());
  }
+ @Test public void corruptionPreservesOriginalFile() throws Exception {
+  Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();context.deleteDatabase("newhope-financial-v1.db");
+  java.io.File file=context.getDatabasePath("newhope-financial-v1.db");file.getParentFile().mkdirs();
+  byte[] evidence="CORRUPT_SYNTHETIC_FINANCIAL_BYTES_MUST_NOT_BE_DELETED".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+  try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(evidence);out.getFD().sync();}
+  FinancialDiskPlugin broken=plugin();Call call=new Call(new JSObject());broken.load(call);assertFalse(call.resolved);assertEquals("NATIVE_FINANCIAL_STORAGE_UNAVAILABLE",call.error);
+  assertTrue("Corruption handler must not delete journal",file.exists());
+  try(java.io.FileInputStream input=new java.io.FileInputStream(file)){byte[] actual=new byte[evidence.length];assertEquals(evidence.length,input.read(actual));assertArrayEquals(evidence,actual);assertEquals(-1,input.read());}
+ }
+
 }

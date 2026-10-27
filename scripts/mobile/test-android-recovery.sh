@@ -4,7 +4,7 @@ cd android
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-for phase in prepareForProcessDeath recoverAfterProcessDeath; do
+for phase in prepareForProcessDeath recoverAfterProcessDeath corruptionPreservesOriginalFile; do
   adb shell am instrument -w -r -e class "space.newhope.kasir.FinancialDiskTest#$phase" space.newhope.kasir.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/$phase.txt"
   cat "$RUNNER_TEMP/$phase.txt"
   python3 - "$RUNNER_TEMP/$phase.txt" <<'CHECK'

@@ -1,6 +1,7 @@
 package space.newhope.kasir;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteDatabaseCorruptException;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.UUID;
@@ -12,7 +13,10 @@ public class FinancialDiskPlugin extends Plugin {
  private SQLiteDatabase db;
  private synchronized SQLiteDatabase database(){
   if(db==null){
-   SQLiteDatabase candidate=getContext().openOrCreateDatabase("newhope-financial-v1.db",0,null);
+   SQLiteDatabase candidate=getContext().openOrCreateDatabase("newhope-financial-v1.db",0,null,corrupt -> {
+    // Android defaults to deleting corrupt databases. Preserve financial evidence.
+    throw new SQLiteDatabaseCorruptException("NATIVE_FINANCIAL_DATABASE_CORRUPT");
+   });
    try {candidate.enableWriteAheadLogging();candidate.execSQL("PRAGMA synchronous=FULL");candidate.execSQL("CREATE TABLE IF NOT EXISTS journal (key TEXT PRIMARY KEY,value TEXT NOT NULL)");candidate.execSQL("CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1),device_id TEXT NOT NULL)");candidate.execSQL("INSERT OR IGNORE INTO identity(id,device_id) VALUES(1,?)",new Object[]{UUID.randomUUID().toString()});db=candidate;}
    catch(RuntimeException error){candidate.close();throw error;}
   }return db;
