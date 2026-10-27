@@ -7,6 +7,7 @@
  */
 import type { NextFunction, Request, Response } from 'express';
 import type { Db } from './db';
+import {authProvider} from './betterAuthConfig';
 
 export interface AuthPrincipal {
   subject: string;
@@ -39,6 +40,10 @@ export class AuthUnavailableError extends Error {
 
 /** Verifikasi token ke Auth API; payload JWT yang belum diverifikasi tidak dipakai. */
 export async function authenticateBearer(req: Request): Promise<AuthPrincipal | null> {
+  if(authProvider()==='neon'){
+    try{return await (await import('./betterAuthPrincipal')).authenticateNeonRequest(req);}
+    catch{throw new AuthUnavailableError();}
+  }
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
 

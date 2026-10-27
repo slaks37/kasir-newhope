@@ -45,6 +45,8 @@ const StaffCommissions=lazy(()=>import('./pages/StaffCommissions'));
 const Integrations=lazy(()=>import('./pages/Integrations'));
 const BlogConnections=lazy(()=>import('./pages/BlogConnections'));
 import AdminMfa from './AdminMfa';
+import {SecondFactorChallenge} from '../components/auth/SecondFactorChallenge';
+import {authRuntime,isNeonAuth} from '../lib/authRuntime';
 
 type PageId =
   | "overview"
@@ -143,6 +145,8 @@ function LoginScreen({
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaChallenge,setMfaChallenge]=useState(false);
+  useEffect(()=>{if(!isNeonAuth)return;let active=true;void authRuntime.auth.getSession().then(({error})=>{if(active&&error?.code==='MFA_REQUIRED')setMfaChallenge(true);});return()=>{active=false;};},[]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -157,9 +161,10 @@ function LoginScreen({
 
     setLoading(true);
     try {
-      const sess = await api.login(email.trim(), password.trim());
+      const sess = await api.login(email.trim(), password);
       onLoginSuccess(sess);
     } catch (e: any) {
+      if(e.code==='MFA_REQUIRED'){setMfaChallenge(true);setPassword('');}
       setErr(
         e.message || "Login gagal. Periksa kembali kredensial admin Anda.",
       );
@@ -168,6 +173,7 @@ function LoginScreen({
     }
   };
 
+  if(mfaChallenge)return <AuthLayout admin><SecondFactorChallenge onVerified={async()=>{const session=await api.me();setIdentity(email);onLoginSuccess(session);}} onCancel={async()=>{await api.logout();setMfaChallenge(false);}}/></AuthLayout>;
   return (
     <AuthLayout admin>
       <div className="nh-form-heading">

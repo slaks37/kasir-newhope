@@ -10,6 +10,8 @@
 
 import React, { useState } from "react";
 import "../../styles/app-theme.css";
+import {SecondFactorChallenge} from './SecondFactorChallenge';
+import {authRuntime} from '../../lib/authRuntime';
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {readCheckoutIntent} from '../../lib/workspace/checkoutIntent';
@@ -41,7 +43,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   initialMode = "login",
 }) => {
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail, signUpWithEmail,mfaRequired,signOut } = useAuth();
 
   // URL owns the mode. A mirrored state/effect pair can overwrite navigation
   // while the next lazy route is still loading.
@@ -202,6 +204,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setError(null);
     setIsNotRegistered(false);
   };
+
+  if(mfaRequired)return <AuthLayout><SecondFactorChallenge onVerified={async()=>{const restored=await authRuntime.auth.getSession();if(restored.error)throw restored.error;}} onCancel={signOut}/></AuthLayout>;
 
   return (
     <AuthLayout register={mode === "register"} onBack={onBackToLanding}>

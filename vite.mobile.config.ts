@@ -9,7 +9,7 @@ export default defineConfig(({mode})=>{
  const key=env.VITE_SUPABASE_ANON_KEY||'';
  if(key.startsWith('sb_secret_'))throw Error('PRIVILEGED_AUTH_KEY_FORBIDDEN');
  if(key.split('.').length===3){const claims=JSON.parse(Buffer.from(key.split('.')[1],'base64url').toString());if(claims.role!=='anon')throw Error('PRIVILEGED_AUTH_KEY_FORBIDDEN');}
- return {root:resolve('mobile'),publicDir:false,envDir:process.cwd(),envPrefix:['VITE_NATIVE_','VITE_SUPABASE_'],plugins:[react(),tailwindcss()],
-  resolve:{alias:[{find:'/src',replacement:resolve('src')},{find:'@',replacement:process.cwd()},{find:/.*components\/home\/HomePage$/,replacement:resolve('mobile/MerchantHome.tsx')},{find:/.*\/(SubscriptionBillingTab|SubscriptionPaymentPage|SubscriptionLockScreen)$/,replacement:resolve('mobile/SubscriptionUnavailable.tsx')}]},define:{'import.meta.env.VITE_NATIVE_API_ORIGIN':JSON.stringify(origin),'import.meta.env.VITE_MODULE_WORKSPACES':'"0"'},
+ return {root:resolve('mobile'),publicDir:false,envDir:process.cwd(),envPrefix:['VITE_NATIVE_','VITE_SUPABASE_','VITE_AUTH_PROVIDER','VITE_NEWHOPE_AUTH_URL'],plugins:[react(),tailwindcss()],
+  resolve:{alias:[...(env.VITE_AUTH_PROVIDER==='neon'?[{find:/^(?:\.{1,2}\/)+(?:(?:lib\/)?supabase|legacyNativeAuth)$/,replacement:resolve('src/lib/auth/legacyDisabled.ts')}]:[]),{find:'/src',replacement:resolve('src')},{find:'@',replacement:process.cwd()},{find:/.*components\/home\/HomePage$/,replacement:resolve('mobile/MerchantHome.tsx')},{find:/.*\/(SubscriptionBillingTab|SubscriptionPaymentPage|SubscriptionLockScreen)$/,replacement:resolve('mobile/SubscriptionUnavailable.tsx')}]},define:{'import.meta.env.VITE_NATIVE_API_ORIGIN':JSON.stringify(origin),'import.meta.env.VITE_MODULE_WORKSPACES':'"0"'},
   build:{outDir:resolve('dist-mobile'),emptyOutDir:true,manifest:true,rollupOptions:{input:{main:resolve('mobile/index.html')}}}};
 });

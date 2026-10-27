@@ -1,4 +1,585 @@
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// services/shared/betterAuthConfig.ts
+function authProvider(env = process.env) {
+  const value = env.AUTH_PROVIDER || "supabase";
+  if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+  return value;
+}
+function getAuthConfig(env = process.env) {
+  const production = env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging";
+  if (production || env.NEWHOPE_NEON_AUTH_STAGING !== "1") throw Error("NEON_AUTH_PRODUCTION_CUTOVER_DISABLED");
+  const base = new URL(env.NEWHOPE_AUTH_URL || "");
+  if (base.username || base.password || base.pathname !== "/" || base.search || base.hash || base.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(base.hostname))) throw Error("AUTH_HTTPS_ORIGIN_REQUIRED");
+  const databaseUrl = env.BETTER_AUTH_DATABASE_URL || "", db = new URL(databaseUrl), app = new URL(env.DATABASE_URL || databaseUrl);
+  const host = db.hostname.replace("-pooler", ""), expected = env.NEWHOPE_AUTH_NEON_HOST;
+  const testLocal = env.NODE_ENV === "test" && local(db.hostname);
+  if (!["postgres:", "postgresql:"].includes(db.protocol) || db.hash || db.port && db.port !== "5432" && !testLocal || [...db.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("AUTH_DATABASE_TARGET_REJECTED");
+  if (!testLocal && (!expected || host !== expected || !/^br-/.test(env.NEWHOPE_AUTH_NEON_BRANCH_ID || "") || !host.endsWith(".neon.tech"))) throw Error("AUTH_STAGING_BRANCH_REQUIRED");
+  if (app.hostname.replace("-pooler", "") !== host || app.pathname !== db.pathname) throw Error("AUTH_APPLICATION_BRANCH_MISMATCH");
+  if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 48) throw Error("AUTH_SECRET_REQUIRED");
+  const allowedOrigins = [.../* @__PURE__ */ new Set([base.origin, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").filter(Boolean)])];
+  for (const origin of allowedOrigins) {
+    const u = new URL(origin);
+    if (u.origin !== origin || u.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(u.hostname))) throw Error("AUTH_ORIGIN_REJECTED");
+  }
+  const nativeOrigins = (env.NEW_HOPE_NATIVE_ORIGINS || "").split(",").filter(Boolean);
+  if (nativeOrigins.some((o) => !["capacitor://localhost", "https://localhost"].includes(o))) throw Error("AUTH_NATIVE_ORIGIN_REJECTED");
+  const google = env.NEWHOPE_GOOGLE_CLIENT_ID && env.NEWHOPE_GOOGLE_CLIENT_SECRET ? { clientId: env.NEWHOPE_GOOGLE_CLIENT_ID, clientSecret: env.NEWHOPE_GOOGLE_CLIENT_SECRET } : void 0;
+  return { databaseUrl, baseUrl: base.origin, secret: env.BETTER_AUTH_SECRET, allowedOrigins, nativeOrigins, google };
+}
+function authDatabaseOptions(value) {
+  const u = new URL(value);
+  u.searchParams.delete("sslmode");
+  u.searchParams.delete("channel_binding");
+  return { connectionString: u.href, ssl: local(u.hostname) ? false : { rejectUnauthorized: true } };
+}
+var local;
+var init_betterAuthConfig = __esm({
+  "services/shared/betterAuthConfig.ts"() {
+    "use strict";
+    local = (host) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  }
+});
+
+// services/shared/poolConfig.ts
+function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (vercel !== "1") return connectionString;
+  try {
+    const url = new URL(connectionString);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
+    url.port = "6543";
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  return {
+    // Each warm function owns a pool; keep the per-instance budget small.
+    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
+    connectionTimeoutMillis: 1e4
+  };
+}
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+var init_poolConfig = __esm({
+  "services/shared/poolConfig.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/authReturnUrl.ts
+function authReturnUrl(kind, value, baseUrl, allowedOrigins = [baseUrl]) {
+  const path = kind === "RESET" ? "/reset-password" : "/login";
+  if (value === void 0 || value === null || value === "") return baseUrl + path;
+  if (typeof value !== "string") throw Error("AUTH_CALLBACK_REJECTED");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw Error("AUTH_CALLBACK_REJECTED");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== path || !allowedOrigins.includes(url.origin) || url.href !== url.origin + path) throw Error("AUTH_CALLBACK_REJECTED");
+  return url.href;
+}
+var init_authReturnUrl = __esm({
+  "services/shared/authReturnUrl.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/betterAuthEmail.ts
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+function authEmailPayload(mail, env = process.env) {
+  const origin = new URL(mail.baseUrl), link = new URL(mail.url);
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
+  const callbacks = link.searchParams.getAll("callbackURL");
+  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
+  if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
+    throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
+  const sender = env.AUTH_EMAIL_FROM.match(/^(?:[^<>\r\n]+<)?([^<>\s@,;]+@[^<>\s@,;]+)(?:>)?$/)?.[1];
+  if (!sender || sender.split("@")[1].toLowerCase() !== env.AUTH_EMAIL_VERIFIED_DOMAIN.toLowerCase()) throw Error("AUTH_EMAIL_SENDER_REJECTED");
+  if (env.VERCEL_ENV === "preview" || env.APP_ENV === "staging") {
+    const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
+  }
+  const text2 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const safeUrl = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
+  return { payload: {
+    from: env.AUTH_EMAIL_FROM,
+    to: mail.email,
+    replyTo: "stefen@newsystem.space",
+    subject: text2,
+    text: text2 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text2 + "</title></head><body><h1>" + text2 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+  }, idempotencyKey: "newhope-auth-" + key };
+}
+async function sendBetterAuthEmail(mail) {
+  const { payload, idempotencyKey } = authEmailPayload(mail);
+  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(payload, { idempotencyKey });
+  if (response.error || !response.data?.id) throw Error("AUTH_EMAIL_DELIVERY_FAILED");
+}
+var init_betterAuthEmail = __esm({
+  "services/shared/betterAuthEmail.ts"() {
+    "use strict";
+    init_authReturnUrl();
+  }
+});
+
+// services/shared/betterAuth.ts
+var betterAuth_exports = {};
+__export(betterAuth_exports, {
+  createBetterAuthRuntime: () => createBetterAuthRuntime,
+  getBetterAuthRuntime: () => getBetterAuthRuntime
+});
+import { betterAuth } from "better-auth";
+import { bearer, twoFactor } from "better-auth/plugins";
+import { createAuthMiddleware, APIError } from "better-auth/api";
+import { PostgresDialect } from "kysely";
+import pg from "pg";
+import { randomUUID } from "node:crypto";
+function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBetterAuthEmail) {
+  const pool = new pg.Pool({ ...authDatabaseOptions(config.databaseUrl), ...databasePoolLimits(2) });
+  const auth = betterAuth({
+    appName: "New Hope POS",
+    baseURL: config.baseUrl,
+    basePath: "/api/auth",
+    secret: config.secret,
+    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    trustedOrigins: config.allowedOrigins || [config.baseUrl],
+    telemetry: { enabled: false },
+    logger: { disabled: true },
+    advanced: { database: { generateId: () => randomUUID() }, useSecureCookies: config.baseUrl.startsWith("https://") },
+    user: { additionalFields: { isActive: { type: "boolean", defaultValue: true, required: true, input: false }, onboarding: { type: "json", required: false, input: true } } },
+    socialProviders: config.google ? { google: config.google } : {},
+    account: { accountLinking: { enabled: false } },
+    databaseHooks: { user: { create: { after: async (user) => {
+      await pool.query("INSERT INTO newhope_auth.registration_intents(user_id) VALUES($1) ON CONFLICT DO NOTHING", [user.id]);
+    } } } },
+    session: { expiresIn: 3600, updateAge: 900, cookieCache: { enabled: false }, freshAge: 300 },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      resetPasswordTokenExpiresIn: 900,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => sendEmail({ kind: "RESET", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      expiresIn: 900,
+      sendVerificationEmail: async ({ user, url }) => sendEmail({ kind: "VERIFY", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    rateLimit: {
+      enabled: true,
+      storage: "database",
+      window: 60,
+      max: 100,
+      customRules: {
+        "/sign-in/email": { window: 60, max: 5 },
+        "/two-factor/verify-totp": { window: 60, max: 5 },
+        "/two-factor/verify-backup-code": { window: 60, max: 5 },
+        "/request-password-reset": { window: 3600, max: 3 },
+        "/send-verification-email": { window: 3600, max: 3 }
+      }
+    },
+    plugins: [bearer({ requireSignature: true }), twoFactor({
+      issuer: "New Hope POS",
+      skipVerificationOnEnable: false,
+      allowPasswordless: true,
+      accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 }
+    })],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (["/request-password-reset", "/sign-up/email", "/send-verification-email"].includes(ctx.path) && ctx.body) {
+          const reset = ctx.path === "/request-password-reset", field = reset ? "redirectTo" : "callbackURL";
+          try {
+            ctx.body[field] = authReturnUrl(reset ? "RESET" : "VERIFY", ctx.body[field], config.baseUrl, config.allowedOrigins);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Tautan kembali autentikasi tidak valid.", code: "AUTH_CALLBACK_REJECTED" });
+          }
+        }
+        if (ctx.path === "/sign-up/email" && ctx.body) {
+          const raw = ctx.body.onboarding || {};
+          ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+        }
+        if (ctx.path === "/sign-in/social" && ctx.body) {
+          let target;
+          try {
+            target = new URL(ctx.body.callbackURL || config.baseUrl + "/overview");
+          } catch {
+            throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          }
+          if (target.origin !== config.baseUrl || target.hash || target.username || target.password || !(["/overview", "/login"].includes(target.pathname) && !target.search || target.pathname === "/api/auth/native/complete" && target.searchParams.size === 1 && /^[-_A-Za-z0-9]{43}$/.test(target.searchParams.get("transaction") || ""))) throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          ctx.body.callbackURL = target.href;
+        }
+        if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
+        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
+          const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
+          if (current?.user && !current.user.twoFactorEnabled && Date.now() - new Date(current.session.createdAt).getTime() > 3e5) throw new APIError("FORBIDDEN", { message: "Masuk kembali sebelum menyiapkan autentikator.", code: "REAUTH_REQUIRED" });
+          if (current?.user.twoFactorEnabled) {
+            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+              WHERE session_id=$1 AND user_id=$2 AND method='totp' AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
+            if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
+          }
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (!["/two-factor/verify-totp", "/two-factor/verify-backup-code"].includes(ctx.path) || ctx.context.returned instanceof APIError) return;
+        const result = ctx.context.returned;
+        if (!result?.token || !result.user?.id) return;
+        const fresh = ctx.context.newSession;
+        const sessionToken = fresh?.session.token || result.token;
+        const userId = fresh?.user.id || result.user.id;
+        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,method,verified_at)
+          SELECT id,"userId",$3,now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
+          ON CONFLICT(session_id) DO UPDATE SET method=EXCLUDED.method,verified_at=EXCLUDED.verified_at`, [sessionToken, userId, ctx.path === "/two-factor/verify-totp" ? "totp" : "recovery"]);
+      })
+    }
+  });
+  const ready = process.env.NODE_ENV === "test" ? Promise.resolve() : pool.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_has_role(current_user,'svc_auth','MEMBER') AS auth_role,EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pos' AND c.relname='transactions' AND has_table_privilege(current_user,c.oid,'SELECT')) AS ledger_access,has_table_privilege(current_user,'internal.auth_identity_bindings','INSERT') AS mapping_write FROM pg_roles r WHERE r.rolname=current_user`).then((result) => {
+    const role = result.rows[0];
+    if (!role || role.rolsuper || role.rolbypassrls || role.rolcreaterole || role.rolcreatedb || !role.auth_role || role.ledger_access || role.mapping_write) throw Error("AUTH_DATABASE_ROLE_REJECTED");
+  });
+  void ready.catch(() => {
+  });
+  return { auth, pool, ready, close: () => pool.end() };
+}
+function getBetterAuthRuntime() {
+  return runtime ??= createBetterAuthRuntime();
+}
+var runtime;
+var init_betterAuth = __esm({
+  "services/shared/betterAuth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    init_poolConfig();
+    init_betterAuthEmail();
+    init_authReturnUrl();
+  }
+});
+
+// services/shared/authIdentity.ts
+function issuer(value) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    return fail("AUTH_IDENTITY_ISSUER_INVALID");
+  }
+  if (u.protocol !== "https:" || u.origin !== value || u.username || u.password) fail("AUTH_IDENTITY_ISSUER_INVALID");
+  return value;
+}
+function subject(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 255 || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value)) fail("AUTH_IDENTITY_SUBJECT_INVALID");
+  return value;
+}
+function verified(input) {
+  if (input.provider !== "better-auth" || input.isEmailVerified !== true || typeof input.email !== "string" || input.email.length > 320 || !/^\S+@\S+\.\S+$/.test(input.email)) return false;
+  try {
+    issuer(input.issuer);
+    subject(input.subject);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function resolveAuthIdentity(db, input) {
+  if (!verified(input)) return null;
+  const rows = (await db.query(`SELECT b.canonical_user_id FROM internal.auth_identity_bindings b
+  JOIN internal.users u ON u.id=b.canonical_user_id AND u.is_active
+  WHERE b.provider=$1 AND b.issuer=$2 AND b.provider_subject=$3 AND b.is_active`, [input.provider, input.issuer, input.subject])).rows;
+  return rows.length === 1 ? rows[0].canonical_user_id : null;
+}
+async function reverseAuthIdentity(db, input) {
+  if (input.provider !== "better-auth" || !uuid.test(input.canonicalSubject)) return null;
+  try {
+    issuer(input.issuer);
+  } catch {
+    return null;
+  }
+  const rows = (await db.query(`SELECT b.provider_subject FROM internal.auth_identity_bindings b
+  JOIN internal.users u ON u.id=b.canonical_user_id AND u.is_active
+  WHERE b.provider=$1 AND b.issuer=$2 AND b.canonical_user_id=$3 AND b.is_active`, [input.provider, input.issuer, input.canonicalSubject])).rows;
+  return rows.length === 1 ? rows[0].provider_subject : null;
+}
+var uuid, fail, resolveProviderIdentity;
+var init_authIdentity = __esm({
+  "services/shared/authIdentity.ts"() {
+    "use strict";
+    uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+    fail = (code) => {
+      throw Error(code);
+    };
+    resolveProviderIdentity = reverseAuthIdentity;
+  }
+});
+
+// services/shared/betterAuthPrincipal.ts
+var betterAuthPrincipal_exports = {};
+__export(betterAuthPrincipal_exports, {
+  NeonIdentityError: () => NeonIdentityError,
+  authenticateNeonRequest: () => authenticateNeonRequest,
+  neonSession: () => neonSession,
+  resolveNeonSession: () => resolveNeonSession
+});
+async function neonSession(headers, runtime2 = getBetterAuthRuntime(), capture) {
+  await runtime2.ready;
+  const checked = new Headers(headers);
+  if (checked.has("authorization")) checked.delete("cookie");
+  const result = await runtime2.auth.api.getSession({ headers: checked, query: { disableCookieCache: true }, returnHeaders: true });
+  capture?.(result.headers);
+  return result.response;
+}
+async function resolveNeonSession(headers, options = {}, runtime2 = getBetterAuthRuntime()) {
+  let refreshHeaders = new Headers();
+  const config = getAuthConfig(), session = await neonSession(headers, runtime2, (h) => {
+    refreshHeaders = h;
+  });
+  if (!session?.user.emailVerified || !session.user.isActive) return null;
+  const db = runtime2.pool;
+  let subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  if (!subject2 && options.enroll) {
+    await db.query("SELECT newhope_auth.enroll_new_identity($1,$2)", [session.user.id, config.baseUrl]);
+    subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  }
+  if (!subject2) throw new NeonIdentityError("IDENTITY_MAPPING_REQUIRED");
+  const proof = (await db.query(`SELECT method,verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2 AND method IN ('totp','recovery') AND verified_at<=now()+interval '30 seconds'`, [session.session.id, session.user.id])).rows[0];
+  if (session.user.twoFactorEnabled && !proof && options.requireMfa !== false) throw new NeonIdentityError("MFA_REQUIRED");
+  const principal = { subject: subject2, email: session.user.email, isEmailVerified: true, aal: proof?.method === "totp" ? "aal2" : "aal1", ...proof?.method === "totp" ? { mfaVerifiedAt: new Date(proof.verified_at).getTime() / 1e3 } : {} };
+  return { session, principal, refreshHeaders };
+}
+async function authenticateNeonRequest(req) {
+  const config = getAuthConfig(), headers = new Headers();
+  for (const name of ["authorization", "cookie"]) if (typeof req.headers[name] === "string") headers.set(name, req.headers[name]);
+  if (!headers.has("authorization") && !headers.has("cookie")) return null;
+  if (!headers.has("authorization") && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET") && !config.allowedOrigins.includes(String(req.headers.origin || ""))) return null;
+  try {
+    return (await resolveNeonSession(headers))?.principal || null;
+  } catch (error) {
+    if (error instanceof NeonIdentityError) return null;
+    throw error;
+  }
+}
+var NeonIdentityError;
+var init_betterAuthPrincipal = __esm({
+  "services/shared/betterAuthPrincipal.ts"() {
+    "use strict";
+    init_betterAuth();
+    init_betterAuthConfig();
+    init_authIdentity();
+    NeonIdentityError = class extends Error {
+      constructor(code) {
+        super(code);
+        this.code = code;
+      }
+    };
+  }
+});
+
+// services/shared/legacyAuthOperations.ts
+var legacyAuthOperations_exports = {};
+__export(legacyAuthOperations_exports, {
+  createLegacyAuthOperations: () => createLegacyAuthOperations
+});
+function createLegacyAuthOperations() {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  let opening;
+  const client = async () => {
+    if (!url || !serviceKey) throw new AuthOperationError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
+    return opening ??= import("@supabase/supabase-js").then(({ createClient }) => createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) } }));
+  };
+  const identity = async (subject2) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(subject2)) return null;
+    const auth = await client(), { data, error } = await auth.auth.admin.getUserById(subject2);
+    if (error) {
+      if (error.status === 404) return null;
+      throw new AuthOperationError(502, "OWNER_LOOKUP_FAILED");
+    }
+    const u = data.user;
+    return u?.id === subject2 && !u.deleted_at && (!u.banned_until || Date.parse(u.banned_until) <= Date.now()) && u.email ? { email: u.email, verified: !!u.email_confirmed_at } : null;
+  };
+  const destination = (path) => {
+    let target;
+    try {
+      target = new URL(path, process.env.APP_URL || "https://kasir.newhope.space");
+    } catch {
+      throw new AuthOperationError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
+    }
+    if (target.protocol !== "https:" || target.username || target.password) throw new AuthOperationError(503, "SUPPORT_REDIRECT_NOT_CONFIGURED");
+    return target.href;
+  };
+  return {
+    provider: "supabase",
+    configured: !!url && !!serviceKey,
+    ownerIdentity: identity,
+    async sendConfirmation(email) {
+      const auth = await client();
+      const { error } = await auth.auth.resend({ type: "signup", email, options: { emailRedirectTo: destination("/login") } });
+      if (error) throw new AuthOperationError(error.status === 429 ? 429 : 502, "EMAIL_CONFIRMATION_PROVIDER_REJECTED");
+    },
+    async sendReset(email) {
+      const auth = await client();
+      const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: destination("/reset-password") });
+      if (error) throw new AuthOperationError(error.status === 429 ? 429 : 502, "PASSWORD_RESET_PROVIDER_REJECTED");
+    },
+    async reauthenticate(_req, subject2, password, verifiedEmail) {
+      if (!verifiedEmail || !password || password.length > 1024) return false;
+      if (!url.startsWith("https://") || !anonKey) throw new AuthOperationError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+      let response;
+      try {
+        response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: anonKey, "content-type": "application/json" }, body: JSON.stringify({ email: verifiedEmail, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
+      } catch {
+        throw new AuthOperationError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+      }
+      if (response.status >= 500 || response.status === 429) throw new AuthOperationError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+      if (!response.ok) return false;
+      const data = await response.json();
+      return data.user?.id === subject2 && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
+    }
+  };
+}
+var init_legacyAuthOperations = __esm({
+  "services/shared/legacyAuthOperations.ts"() {
+    "use strict";
+    init_authProviderOperations();
+  }
+});
+
+// services/shared/authProviderOperations.ts
+function createAuthProviderOperations(deps = {}) {
+  const provider = deps.provider || authProvider();
+  if (provider === "supabase") {
+    let operation;
+    const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
+    return {
+      provider,
+      configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
+      ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
+      sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
+      sendReset: async (e) => (await legacy()).sendReset(e),
+      reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
+    };
+  }
+  const config = deps.config || getAuthConfig;
+  const runtime2 = deps.runtime || (async () => {
+    const m = await Promise.resolve().then(() => (init_betterAuth(), betterAuth_exports)), runtime3 = m.getBetterAuthRuntime();
+    await runtime3.ready;
+    return runtime3;
+  });
+  const reverse = deps.reverse || ((db, issuer2, canonical2) => resolveProviderIdentity(db, { provider: "better-auth", issuer: issuer2, canonicalSubject: canonical2 }));
+  const resolve2 = deps.resolve || ((db, issuer2, subject2, email) => resolveAuthIdentity(db, { provider: "better-auth", issuer: issuer2, subject: subject2, email, isEmailVerified: true }));
+  let configured = false;
+  try {
+    configured = !!config().baseUrl;
+  } catch {
+  }
+  return {
+    provider,
+    configured: deps.configured ?? configured,
+    async ownerIdentity(canonical2) {
+      if (!canonicalUuid.test(canonical2)) return null;
+      try {
+        const { pool } = await runtime2(), subject2 = await reverse(pool, config().baseUrl, canonical2);
+        if (!subject2) return null;
+        const row = (await pool.query('SELECT id,email,"emailVerified","isActive" FROM newhope_auth."user" WHERE id=$1', [subject2])).rows[0];
+        return row?.id === subject2 && row.isActive === true && typeof row.email === "string" ? { email: row.email, verified: row.emailVerified === true } : null;
+      } catch {
+        throw new AuthOperationError(502, "OWNER_LOOKUP_FAILED");
+      }
+    },
+    async sendConfirmation(email) {
+      try {
+        const { auth } = await runtime2();
+        await auth.api.sendVerificationEmail({ body: { email, callbackURL: new URL("/login", config().baseUrl).href } });
+      } catch (error) {
+        throw failure(error, "EMAIL_CONFIRMATION_PROVIDER_REJECTED");
+      }
+    },
+    async sendReset(email) {
+      try {
+        const { auth } = await runtime2();
+        await auth.api.requestPasswordReset({ body: { email, redirectTo: new URL("/reset-password", config().baseUrl).href } });
+      } catch (error) {
+        throw failure(error, "PASSWORD_RESET_PROVIDER_REJECTED");
+      }
+    },
+    async reauthenticate(req, canonical2, password) {
+      if (!canonicalUuid.test(canonical2) || password !== void 0 && (typeof password !== "string" || password.length > 1024)) return false;
+      try {
+        const { auth, pool } = await runtime2(), headers = headersFor(req), session = await auth.api.getSession({ headers, query: { disableCookieCache: true } });
+        if (!session?.user?.id || session.user.emailVerified !== true || session.user.isActive !== true) return false;
+        const mapped = await resolve2(pool, config().baseUrl, session.user.id, session.user.email);
+        if (mapped !== canonical2) return false;
+        const account = (await pool.query(`SELECT
+      EXISTS(SELECT 1 FROM newhope_auth.account WHERE "userId"=$1 AND "providerId"='credential' AND password IS NOT NULL AND length(password)>0) AS has_password,
+      EXISTS(SELECT 1 FROM newhope_auth.account WHERE "userId"=$1 AND "providerId"='google') AS google_account`, [session.user.id])).rows[0];
+        if (account?.has_password === true) {
+          if (!password) return false;
+          return (await auth.api.verifyPassword({ headers, body: { password } }))?.status === true;
+        }
+        if (account?.google_account !== true || session.user.twoFactorEnabled !== true || !session.session?.id) return false;
+        return (await pool.query(`SELECT 1 AS fresh FROM newhope_auth.mfa_session_proofs
+      WHERE session_id=$1 AND user_id=$2 AND method='totp'
+        AND verified_at>now()-interval '5 minutes' AND verified_at<=now()+interval '30 seconds'`, [session.session.id, session.user.id])).rows.length === 1;
+      } catch (error) {
+        if (["BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN"].includes(error?.status || "")) return false;
+        throw new AuthOperationError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+      }
+    }
+  };
+}
+var AuthOperationError, canonicalUuid, failure, headersFor;
+var init_authProviderOperations = __esm({
+  "services/shared/authProviderOperations.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    init_authIdentity();
+    AuthOperationError = class extends Error {
+      constructor(status, code) {
+        super(code);
+        this.status = status;
+      }
+    };
+    canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    failure = (error, code) => {
+      const e = error;
+      return new AuthOperationError(e?.status === 429 || e?.statusCode === 429 || e?.status === "TOO_MANY_REQUESTS" ? 429 : 502, code);
+    };
+    headersFor = (req) => {
+      const headers = new Headers();
+      for (const key of ["authorization", "cookie"]) {
+        const value = req.headers[key];
+        if (typeof value === "string") headers.set(key, value);
+      }
+      return headers;
+    };
+  }
+});
+
 // services/shared/auth.ts
+init_betterAuthConfig();
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
@@ -14,6 +595,13 @@ var AuthUnavailableError = class extends Error {
   }
 };
 async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
@@ -53,9 +641,9 @@ async function authenticateBearer(req) {
   }
 }
 function trustedPrincipal(req) {
-  const subject = firstHeader(req.headers["x-auth-sub"]);
+  const subject2 = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject2) return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -90,33 +678,9 @@ async function tenantForPrincipal(db, principal) {
 }
 
 // services/shared/db.ts
+init_poolConfig();
 import fs from "node:fs";
-import pg from "pg";
-
-// services/shared/poolConfig.ts
-function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
-  if (vercel !== "1") return connectionString;
-  try {
-    const url = new URL(connectionString);
-    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
-    url.port = "6543";
-    return url.toString();
-  } catch {
-    return connectionString;
-  }
-}
-function databasePoolLimits(max, vercel = process.env.VERCEL) {
-  return {
-    // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
-    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
-    connectionTimeoutMillis: 1e4
-  };
-}
-function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
-  const value = Number(raw);
-  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
-}
+import pg2 from "pg";
 
 // services/shared/databaseStartup.ts
 async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))) {
@@ -135,8 +699,8 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
 }
 
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
@@ -150,7 +714,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool = new pg.Pool({
+  const pool = new pg2.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -203,7 +767,7 @@ async function connectDb(opts) {
 }
 
 // services/pos/registerOperations.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
@@ -1034,7 +1598,7 @@ var permissionsForModuleRole = (role) => {
   };
   return roles[role] || [];
 };
-async function resolveModuleAccess(db, subject, businessId, outletId) {
+async function resolveModuleAccess(db, subject2, businessId, outletId) {
   if (typeof businessId !== "string" || !UUID.test(businessId) || typeof outletId !== "string" || !UUID.test(outletId))
     throw new ModuleAccessError(400, "INVALID_MODULE_SCOPE");
   const { rows } = await db.query(`SELECT t.id AS tenant_id,m.business_sector,t.owner_user_ref=$3 AS tenant_owner,
@@ -1049,7 +1613,7 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
       ORDER BY CASE ms.role WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
     ) membership ON true
     WHERE m.id=$1 AND o.id=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active AND o.is_active
-      AND (t.owner_user_ref=$3 AND EXISTS(SELECT 1 FROM internal.users owner_identity WHERE owner_identity.id::text=$3 AND owner_identity.is_active) OR membership.role IS NOT NULL)`, [businessId, outletId, subject]);
+      AND (t.owner_user_ref=$3 AND EXISTS(SELECT 1 FROM internal.users owner_identity WHERE owner_identity.id::text=$3 AND owner_identity.is_active) OR membership.role IS NOT NULL)`, [businessId, outletId, subject2]);
   if (rows.length !== 1) throw new ModuleAccessError(403, "MODULE_SCOPE_FORBIDDEN");
   const scope = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [scope.tenant_id, businessId]);
@@ -1076,7 +1640,7 @@ async function resolveModuleAccess(db, subject, businessId, outletId) {
   }
   return { enabled: true, businessId, outletId, modules };
 }
-async function authorizeNativeModule(db, subject, merchantId, outletId, requirements) {
+async function authorizeNativeModule(db, subject2, merchantId, outletId, requirements) {
   if (!await hasSchemaFeature(db, "moduleAssignments")) return;
   const merchant = (await db.query("SELECT tenant_id,business_sector FROM internal.merchants WHERE id=$1", [merchantId])).rows[0];
   if (!merchant) throw new BillingError(403, "MODULE_SCOPE_FORBIDDEN");
@@ -1088,7 +1652,7 @@ async function authorizeNativeModule(db, subject, merchantId, outletId, requirem
   const target = outletId ?? (outlets.rows.length === 1 ? outlets.rows[0].id : null);
   const manifest6 = legacyModuleForSector(merchant.business_sector);
   try {
-    const access = await resolveModuleAccess(db, subject, merchantId, target);
+    const access = await resolveModuleAccess(db, subject2, merchantId, target);
     const grant = manifest6 && access.modules.find((module) => module.id === manifest6.id);
     if (grant?.workspaceVersion === 2) throw new ModuleAccessError(403, "EXPLICIT_WORKSPACE_REQUIRED");
     if (!access.enabled || !grant || requirements.some((options) => !options.some((permission) => grant.permissions.includes(permission) && grant.features.includes(permission))))
@@ -1137,8 +1701,8 @@ var moduleStateRequirements = (kinds, write = false) => {
   const map = write ? stateWritePermissions : stateReadPermissions;
   return (kinds || Object.keys(map)).map((kind) => map[kind] || []);
 };
-async function authorizeModulePage(db, subject, query) {
-  const access = await resolveModuleAccess(db, subject, query.businessId, query.outletId);
+async function authorizeModulePage(db, subject2, query) {
+  const access = await resolveModuleAccess(db, subject2, query.businessId, query.outletId);
   if (!access.enabled || !isBusinessModuleId(query.moduleId)) throw new ModuleAccessError(403, "MODULE_NOT_ENABLED");
   const manifest6 = moduleManifest(query.moduleId);
   const page = manifest6.pages.find((p) => p.id === query.page);
@@ -1250,9 +1814,9 @@ function registerModuleRoutes(app, db) {
 }
 
 // services/pos/workspaceScope.ts
-async function resolveWorkspaceScope(db, subject, input, required = []) {
+async function resolveWorkspaceScope(db, subject2, input, required = []) {
   if (!isBusinessModuleId(input.moduleId)) throw new ModuleAccessError(400, "EXPLICIT_MODULE_REQUIRED");
-  const access = await resolveModuleAccess(db, subject, input.businessId, input.outletId);
+  const access = await resolveModuleAccess(db, subject2, input.businessId, input.outletId);
   const grant = access.modules.find((m) => m.id === input.moduleId);
   if (!access.enabled || !grant || grant.workspaceVersion !== 2) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
   if (required.some((permission) => !grant.permissions.includes(permission) || !grant.features.includes(permission))) throw new ModuleAccessError(403, "WORKSPACE_PERMISSION_DENIED");
@@ -1261,10 +1825,10 @@ async function resolveWorkspaceScope(db, subject, input, required = []) {
  SELECT role,scope_type FROM internal.memberships WHERE user_id::text=$2 AND tenant_id=m.tenant_id AND is_active AND
  (scope_type='TENANT' OR merchant_id=m.id AND (scope_type='MERCHANT' OR outlet_id=$3))
  ORDER BY CASE role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
- ) ms ON true WHERE m.id=$1`, [access.businessId, subject, access.outletId])).rows[0];
+ ) ms ON true WHERE m.id=$1`, [access.businessId, subject2, access.outletId])).rows[0];
   if (!row?.role) throw new ModuleAccessError(403, "WORKSPACE_MEMBERSHIP_REQUIRED");
-  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true),set_config('app.actor_role',$6,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject, row.role]);
-  return { tenantId: row.tenant_id, merchantId: access.businessId, outletId: access.outletId, moduleId: input.moduleId, sector: moduleManifest(input.moduleId).sector, actorRef: subject, role: row.role, membershipScope: row.membership_scope, transportRef: row.external_ref || access.businessId, namespace: `WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`, permissions: grant.permissions, features: grant.features };
+  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true),set_config('app.actor_role',$6,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject2, row.role]);
+  return { tenantId: row.tenant_id, merchantId: access.businessId, outletId: access.outletId, moduleId: input.moduleId, sector: moduleManifest(input.moduleId).sector, actorRef: subject2, role: row.role, membershipScope: row.membership_scope, transportRef: row.external_ref || access.businessId, namespace: `WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`, permissions: grant.permissions, features: grant.features };
 }
 function requireWorkspaceRole(scope, roles) {
   if (!roles.includes(scope.role)) throw new ModuleAccessError(403, "WORKSPACE_ROLE_FORBIDDEN");
@@ -1323,7 +1887,7 @@ async function writeActivity(db, a) {
 var UUID2 = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var round = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
-var hash = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+var hash = (v) => createHash2("sha256").update(JSON.stringify(v)).digest("hex");
 var iso = (v) => new Date(String(v)).toISOString();
 var RegisterError = class extends Error {
   constructor(status, code) {
@@ -1624,7 +2188,8 @@ function registerCashierFinanceRoutes(app, db) {
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash2, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+import { createHash as createHash3, randomBytes, scrypt as derive, timingSafeEqual } from "node:crypto";
+init_authProviderOperations();
 var scrypt = (pin, salt) => new Promise((resolve2, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve2(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -1634,8 +2199,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash2("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest = (token) => createHash2("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash3("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest = (token) => createHash3("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -1664,26 +2229,19 @@ async function rateWindow(c, s) {
 async function credential(c, s) {
   return (await c.query("SELECT pin_hash FROM pos.financial_pin_credentials WHERE tenant_id=$1 AND approver_ref=$2", [s.tenantId, s.actorRef])).rows[0];
 }
-async function failure(c, s) {
+async function failure2(c, s) {
   await c.query("UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2", [s.tenantId, s.actorRef]);
   return { status: 403, error: "INVALID_FINANCIAL_PIN" };
 }
-async function reauthenticateOwner(req, subject) {
+async function reauthenticateOwner(req, subject2) {
   const principal = trustedPrincipal(req), password = req.body?.ownerPassword;
-  if (!principal?.email || typeof password !== "string" || !password || password.length > 1024) return false;
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url.startsWith("https://") || !key) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  let response;
+  if (!principal?.email || password !== void 0 && (typeof password !== "string" || password.length > 1024)) return false;
   try {
-    response = await fetch(url + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: key, "content-type": "application/json" }, body: JSON.stringify({ email: principal.email, password }), redirect: "error", signal: AbortSignal.timeout(5e3) });
-  } catch {
-    throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+    return await createAuthProviderOperations().reauthenticate(req, subject2, password, principal.email);
+  } catch (error) {
+    if (error instanceof AuthOperationError) throw new FinancialApprovalError(error.status, "OWNER_REAUTHENTICATION_UNAVAILABLE");
+    throw error;
   }
-  if (response.status >= 500 || response.status === 429) throw new FinancialApprovalError(503, "OWNER_REAUTHENTICATION_UNAVAILABLE");
-  if (!response.ok) return false;
-  const data = await response.json();
-  return data.user?.id === subject && Boolean(data.user?.email_confirmed_at || data.user?.confirmed_at);
 }
 function registerFinancialApprovalRoutes(app, db, scopeFor3) {
   const route = (path, run) => app.post(path, async (req, res) => {
@@ -1704,11 +2262,11 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
     if (!validFinancialPin(req.body?.newPin)) throw new FinancialApprovalError(400, "WEAK_FINANCIAL_PIN");
     if (!await reauthenticateOwner(req, s.actorRef)) {
-      await failure(c, s);
+      await failure2(c, s);
       return { status: 403, error: "OWNER_REAUTHENTICATION_REQUIRED" };
     }
     const old = await credential(c, s);
-    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure(c, s);
+    if (old && !await verifyFinancialPin(req.body?.currentPin, old.pin_hash)) return failure2(c, s);
     const pinHash = await hashFinancialPin(req.body?.newPin);
     await c.query(`INSERT INTO pos.financial_pin_credentials(tenant_id,approver_ref,pin_hash)
       VALUES($1,$2,$3) ON CONFLICT(tenant_id,approver_ref) DO UPDATE SET pin_hash=EXCLUDED.pin_hash,updated_at=now()`, [s.tenantId, s.actorRef, pinHash]);
@@ -1723,7 +2281,7 @@ function registerFinancialApprovalRoutes(app, db, scopeFor3) {
     if (!await rateWindow(c, s)) return { status: 429, error: "FINANCIAL_PIN_RATE_LIMITED" };
     const row = await credential(c, s);
     if (!row) return { status: 409, error: "FINANCIAL_PIN_SETUP_REQUIRED" };
-    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure(c, s);
+    if (!await verifyFinancialPin(pin, row.pin_hash)) return failure2(c, s);
     const token = randomBytes(32).toString("base64url");
     await c.query(
       `INSERT INTO pos.financial_approval_grants
@@ -2059,8 +2617,8 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
 }
 
 // services/pos/workspaceIdentity.ts
-import { createHash as createHash3 } from "node:crypto";
-var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash3("sha256").update(moduleId + "\0" + recordId).digest("hex");
+import { createHash as createHash4 } from "node:crypto";
+var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash4("sha256").update(moduleId + "\0" + recordId).digest("hex");
 
 // services/pos/workspaceInventory.ts
 async function workspaceProduct(c, s, recordId, lock = false) {
@@ -2161,10 +2719,10 @@ var BusinessScopeError = class extends Error {
     this.status = status;
   }
 };
-async function resolveBusinessScope(db, subject, sector, businessId) {
+async function resolveBusinessScope(db, subject2, sector, businessId) {
   if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
     throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
+  const tenantId = await tenantForPrincipal(db, { subject: subject2 });
   if (!tenantId) {
     if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
     return null;
@@ -2174,10 +2732,10 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
     WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
       AND m.business_sector=$3 AND m.is_active
       AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+    ORDER BY m.id`, [tenantId, subject2, sector, businessId ?? null]);
   const rows = result.rows;
   if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const aliases = rows.filter((row) => row.external_ref === `${subject2}_${sector}`);
   const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
   if (!selected) {
     if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
@@ -2188,7 +2746,7 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
     merchantId: selected.merchant_id,
     businessName: selected.business_name,
     transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+    legacyAlias: selected.external_ref === `${subject2}_${sector}` ? selected.external_ref : null
   };
 }
 
@@ -2908,18 +3466,18 @@ function registerWorkspaceStateRoutes(app, db) {
 }
 
 // services/pos/workspaceDirectory.ts
-async function workspaceDirectory(db, subject, requestedTenant) {
+async function workspaceDirectory(db, subject2, requestedTenant) {
   if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "workspaceIsolation")) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
-  const tenants = (await db.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject])).rows;
+  const tenants = (await db.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject2])).rows;
   const tenantId = typeof requestedTenant === "string" ? tenants.find((t) => t.id === requestedTenant)?.id : tenants.length === 1 ? tenants[0].id : null;
   if (requestedTenant && !tenantId) throw new ModuleAccessError(403, "TENANT_MEMBERSHIP_REQUIRED");
   if (!tenantId) return { ok: true, tenantId: null, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [], workspaceAuth: true };
-  const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR ms.role IS NOT NULL) ORDER BY m.id,o.id`, [tenantId, subject]);
+  const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR ms.role IS NOT NULL) ORDER BY m.id,o.id`, [tenantId, subject2]);
   const businesses = /* @__PURE__ */ new Map();
   for (const r of result.rows) {
     let b = businesses.get(r.id);
     if (!b) {
-      b = { businessId: r.id, tenantId, name: r.name, sector: r.business_sector, status: r.is_active ? "ACTIVE" : "INACTIVE", legacyAlias: r.external_ref === subject + "_" + r.business_sector ? r.external_ref : null, transportRef: r.external_ref || r.id, outlets: [] };
+      b = { businessId: r.id, tenantId, name: r.name, sector: r.business_sector, status: r.is_active ? "ACTIVE" : "INACTIVE", legacyAlias: r.external_ref === subject2 + "_" + r.business_sector ? r.external_ref : null, transportRef: r.external_ref || r.id, outlets: [] };
       businesses.set(r.id, b);
     }
     b.outlets.push({ outletId: r.outlet_id, businessId: r.id, name: r.outlet_name, address: r.address || "", status: r.outlet_active ? "ACTIVE" : "INACTIVE", role: r.role });
@@ -3125,9 +3683,9 @@ function parseReportFilter(query) {
     trendDays
   };
 }
-async function scopeFor2(db, subject, filter) {
+async function scopeFor2(db, subject2, filter) {
   if (filter.moduleId) {
-    const s = await resolveWorkspaceScope(db, subject, { businessId: filter.merchantId, outletId: filter.outletId, moduleId: filter.moduleId }, [filter.operational ? "pos" : "reports"]);
+    const s = await resolveWorkspaceScope(db, subject2, { businessId: filter.merchantId, outletId: filter.outletId, moduleId: filter.moduleId }, [filter.operational ? "pos" : "reports"]);
     if (filter.tenantId && filter.tenantId !== s.tenantId) throw new ReportRequestError(403, "REPORT_SCOPE_FORBIDDEN");
     return { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, role: s.role, sector: s.sector, from: filter.from, to: filter.to, timezone: filter.timezone };
   }
@@ -3139,13 +3697,13 @@ async function scopeFor2(db, subject, filter) {
     WHERE o.id=$1 AND t.owner_user_ref=$2
       AND ($3::uuid IS NULL OR m.id=$3) AND ($4::uuid IS NULL OR t.id=$4)
       AND ($5::text IS NULL OR m.business_sector=$5)`,
-    [filter.outletId, subject, filter.merchantId, filter.tenantId, filter.sector]
+    [filter.outletId, subject2, filter.merchantId, filter.tenantId, filter.sector]
   );
   if (!rows.length) throw new ReportRequestError(403, "REPORT_SCOPE_FORBIDDEN");
   const row = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [row.tenant_id, row.merchant_id]);
   try {
-    await authorizeNativeModule(db, subject, row.merchant_id, row.outlet_id, [["reports"]]);
+    await authorizeNativeModule(db, subject2, row.merchant_id, row.outlet_id, [["reports"]]);
   } catch (error) {
     if (error instanceof BillingError) throw new ReportRequestError(error.status, error.message);
     throw error;
@@ -3280,10 +3838,10 @@ function cashMovement(row) {
     recipientOrSource: row.recipient_or_source || void 0
   };
 }
-async function serverReportSummary(db, subject, filter) {
+async function serverReportSummary(db, subject2, filter) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor2(c, subject, filter);
+    const scope = await scopeFor2(c, subject2, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = parameters(scope, filter);
     const today = localDate(filter.timezone);
@@ -3406,10 +3964,10 @@ function cursorFor(value) {
     throw new ReportRequestError(400, "INVALID_CURSOR");
   }
 }
-async function serverTransactions(db, subject, filter, cursor, limit = 100) {
+async function serverTransactions(db, subject2, filter, cursor, limit = 100) {
   return db.tx(async (c) => {
     await c.exec("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const scope = await scopeFor2(c, subject, filter);
+    const scope = await scopeFor2(c, subject2, filter);
     filter = { ...filter, timezone: scope.timezone };
     const params = [...parameters(scope, filter), cursor?.createdAt || null, cursor?.id || null, limit + 1];
     const { rows } = await c.query(`SELECT x.*,u.name AS cashier_name,r.total_amount AS recognized_revenue,r.cogs_amount AS recognized_cogs,
@@ -3822,9 +4380,9 @@ function registerSyncRoutes(app, db) {
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
               ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes2(32).toString("hex")]);
           }
-          const verified = await c.query(`SELECT id FROM pos.users
+          const verified2 = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
-          const userId = verified.rows[0]?.id ?? null;
+          const userId = verified2.rows[0]?.id ?? null;
           cashierCache.set(key, userId);
           return userId;
         };
@@ -4458,7 +5016,7 @@ function setParsedBody(req, raw) {
 function createServerlessBoundary(options, authenticate = authenticateBearer, connect) {
   const publicRoutes = new Set(options.publicRoutes ?? []);
   const rawBodyRoutes = new Set(options.rawBodyRoutes ?? []);
-  let runtime;
+  let runtime2;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
@@ -4494,7 +5052,7 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
       }
     }
     try {
-      runtime ??= connect().then((db) => {
+      runtime2 ??= connect().then((db) => {
         const app = express();
         const parse = express.json({ limit: options.bodyLimit });
         app.use((request, response, next) => request.body !== void 0 ? next() : parse(request, response, next));
@@ -4503,10 +5061,10 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
         app.use((error, _request, response, _next) => response.status(error?.type === "entity.too.large" ? 413 : 400).json({ ok: false, error: options.invalidRequestError }));
         return app;
       }).catch((error) => {
-        runtime = void 0;
+        runtime2 = void 0;
         throw error;
       });
-      (await runtime)(req, res);
+      (await runtime2)(req, res);
     } catch (error) {
       const diagnostic = error;
       console.error(`[${options.name}] runtime unavailable`, { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });

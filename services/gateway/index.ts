@@ -38,6 +38,7 @@ import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
 import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
 import mcpHandler from '../../src/server/mcpHandler';
+import neonAuthHandler from '../../src/server/neonAuthHandler';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -74,6 +75,7 @@ const breakers: Record<string, Breaker> = {
 };
 
 const app = express();
+app.use((req,res,next)=>{if(req.path.startsWith('/api/auth/'))return void neonAuthHandler(req,res);next();});
 app.use((req, res, next) => {
   if (req.path === '/api/mcp' || req.path.startsWith('/api/mcp/') || req.path.startsWith('/.well-known/oauth-')) return void mcpHandler(req, res);
   next();

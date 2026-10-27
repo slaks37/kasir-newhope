@@ -1,4 +1,4 @@
-import {createClient} from '@supabase/supabase-js';
+import {createAuthProviderOperations,AuthOperationError} from '../../services/shared/authProviderOperations';
 import type {Express} from 'express';
 import type {Db} from '../../services/shared/db';
 import type {AuthPrincipal} from '../../services/shared/auth';
@@ -15,36 +15,14 @@ export interface ClientSupportProvider {
 class SupportError extends Error {constructor(readonly status:number,code:string){super(code);}}
 
 export function createClientSupportProvider():ClientSupportProvider {
-  const url=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL;
-  const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
-  // Server-only Auth client. No sessions, passwords or recovery links are
-  // returned to an operator or recorded in support history.
-  const auth=url&&key?createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false},
-    global:{fetch:(input,init)=>fetch(input,{...init,signal:AbortSignal.timeout(5000)})}}):null;
-  const identity=async(subject:string)=>{
-      if(!auth)throw new SupportError(503,'SUPPORT_AUTH_NOT_CONFIGURED');
-      if(!uuid.test(subject))return null;
-      const {data,error}=await auth.auth.admin.getUserById(subject);
-      if(error){if(error.status===404)return null;throw new SupportError(502,'OWNER_LOOKUP_FAILED');}
-      const u=data.user;
-      return u?.id===subject&&!u.deleted_at&&(!u.banned_until||Date.parse(u.banned_until)<=Date.now())&&u.email?{email:u.email,verified:!!u.email_confirmed_at}:null;
+  const operations=createAuthProviderOperations();
+  const run=async<T,>(work:()=>Promise<T>)=>{try{return await work();}catch(error){if(error instanceof AuthOperationError)throw new SupportError(error.status,error.message);throw error;}};
+  return {configured:operations.configured,
+    ownerIdentity:subject=>run(()=>operations.ownerIdentity(subject)),
+    async ownerEmail(subject){const identity=await run(()=>operations.ownerIdentity(subject));return identity?.verified?identity.email:null;},
+    sendConfirmation:email=>run(()=>operations.sendConfirmation(email)),
+    sendReset:email=>run(()=>operations.sendReset(email)),
   };
-  return {configured:!!auth,ownerIdentity:identity,
-    async ownerEmail(subject){const u=await identity(subject);return u?.verified?u.email:null;},
-    async sendConfirmation(email){
-      if(!auth)throw new SupportError(503,'SUPPORT_AUTH_NOT_CONFIGURED');
-      const destination=new URL('/login',process.env.APP_URL||'https://kasir.newhope.space');
-      if(destination.protocol!=='https:')throw new SupportError(503,'SUPPORT_REDIRECT_NOT_CONFIGURED');
-      const {error}=await auth.auth.resend({type:'signup',email,options:{emailRedirectTo:destination.href}});
-      if(error)throw new SupportError(error.status===429?429:502,'EMAIL_CONFIRMATION_PROVIDER_REJECTED');
-    },
-    async sendReset(email){
-      if(!auth)throw new SupportError(503,'SUPPORT_AUTH_NOT_CONFIGURED');
-      const destination=new URL('/reset-password',process.env.APP_URL||'https://kasir.newhope.space');
-      if(destination.protocol!=='https:')throw new SupportError(503,'SUPPORT_REDIRECT_NOT_CONFIGURED');
-      const {error}=await auth.auth.resetPasswordForEmail(email,{redirectTo:destination.href});
-      if(error)throw new SupportError(error.status===429?429:502,'PASSWORD_RESET_PROVIDER_REJECTED');
-    }};
 }
 
 export function supportStepUpError(principal:AuthPrincipal|undefined,now=Date.now()) {
