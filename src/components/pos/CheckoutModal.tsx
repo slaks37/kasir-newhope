@@ -134,6 +134,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [checkoutError, setCheckoutError] = useState('');
   const processingRef = useRef(false);
+  const mountedRef = useRef(false);
+  useEffect(()=>{mountedRef.current=true;return()=>{mountedRef.current=false;};},[]);
+  const requestClose=()=>{if(!processingRef.current)onClose();};
 
   /**
    * Wait for durable storage before presenting the receipt.
@@ -147,16 +150,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setCheckoutError('');
     try {
       const result = await record();
-      if (result) onRecorded(result);
+      if (result && mountedRef.current) onRecorded(result);
     } catch (error) {
-      setCheckoutError(checkoutErrorMessage(error));
+      if(mountedRef.current)setCheckoutError(checkoutErrorMessage(error));
     } finally {
       processingRef.current = false;
-      setIsProcessing(false);
+      if(mountedRef.current)setIsProcessing(false);
     }
   };
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalFocus(dialogRef, () => { if (!isProcessing) onClose(); });
+  useModalFocus(dialogRef, requestClose);
 
   // Carwash & Laundry Specialized Fields
   const [vehiclePlateInput, setVehiclePlateInput] = useState<string>('');
@@ -304,7 +307,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           <button
             aria-label={t('common.close')}
             disabled={isProcessing}
-            onClick={onClose}
+            onClick={requestClose}
             className="p-1.5 text-slate-400 hover:text-slate-800 rounded-xl hover:bg-slate-100"
           >
             <X className="w-5 h-5" />
@@ -686,7 +689,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         {/* Footer Confirm Payment */}
         <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex flex-wrap items-center justify-between gap-2">
           <button
-            onClick={onClose}
+            disabled={isProcessing}
+            onClick={requestClose}
             className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
           >
             {t('common.cancel')}

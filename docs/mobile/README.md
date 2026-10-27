@@ -1,4 +1,4 @@
-# Cross-platform foundation (increment 1)
+# Cross-platform foundation and native journal (increment 2)
 
 Stacked on Draft PR27 at `12e3d11070f7fa803a8f2e9796f6f5027bcc7474`. This is an isolated foundation, not an enabled native financial release. The shared React/Vite merchant app and central API/Neon ledgers remain authoritative; no platform-specific merchant, subscription or financial identity is created.
 
@@ -25,7 +25,7 @@ Foreground resume restarts token refresh and requests reconciliation through the
 
 The operational transaction, cash/refund, inventory and shift-close queues now use an app-private SQLite bridge on native platforms (WAL, synchronous FULL). Bootstrap loads the journal before rendering the workspace. Async enqueue resolves after COMMIT; compare-and-set rejects competing writes, and native ACK checks retain commands when the server reply does not match. Checkout waits for storage before showing a receipt. The browser keeps its existing localStorage queues; no existing data is migrated or cleared. The older `commandStore.ts` IndexedDB prototype remains a separately tested contract, not the native storage engine.
 
-Synthetic bridge tests cover commit failure, lost commit reply and restart, competing writes, scope/device separation, revoked authorization, malformed ACK, cash, inventory and shift-close recovery. **These tests do not execute the Android/iOS SQLite implementations.** Native compilation, emulator process termination/restart, physical-device storage/locked-device behavior, hosted authentication and end-to-end payment acceptance are separate gates. Financial storage uses OS app-private protection, not application-level database encryption. Uninstall deletes the journal; do not uninstall with unconfirmed transactions. Pending native sales are immutable: additional split tenders or payment changes must wait for confirmation; resolving this workflow remains outstanding. Native checkout/shift/cash and all API writes remain disabled. A closed gate is not an accepted native POS workflow.
+Synthetic bridge tests cover commit failure, lost commit reply and restart, competing writes, scope/device separation, revoked authorization, malformed ACK, cash, inventory and shift-close recovery. **These tests do not execute the Android/iOS SQLite implementations.** The separate Android emulator job executes the production SQLite plugin across force-stopped processes, checks stable device identity and competing-write rejection, and verifies corrupt database bytes are preserved. Inspect its exact commit result before accepting that gate. iOS runtime storage, physical-device storage/locked-device behavior, hosted authentication and end-to-end payment acceptance remain separate gates. Financial storage uses OS app-private protection, not application-level database encryption. Uninstall deletes the journal; do not uninstall with unconfirmed transactions. Pending native sales are immutable: additional split tenders or payment changes must wait for confirmation; resolving this workflow remains outstanding. Native checkout/shift/cash and all API writes remain disabled. A closed gate is not an accepted native POS workflow.
 
 ## PWA and device UX
 
@@ -50,10 +50,14 @@ References: [Capacitor environment](https://capacitorjs.com/docs/getting-started
 | Installation | Manifest/icons/help; manual install still to verify | Debug APK CI | Simulator build CI; no signed IPA |
 | Hosted account / PKCE / recovery | Existing Auth preserved | Implemented; hosted/device unverified | Implemented; hosted/device unverified |
 | Two modules/outlets, cashier revenue/shifts | PR27 synthetic workflows | Cross-device workflow blocked | Cross-device workflow blocked |
-| Transaction journal restart/conflict | Existing outbox tests | SQLite integration; synthetic bridge tests only | SQLite integration; synthetic bridge tests only |
+| Transaction journal restart/conflict | Existing outbox tests | SQLite integration; emulator recovery job + synthetic bridge tests | SQLite integration; synthetic bridge tests only |
 | Camera/export/printing | Browser alternatives retained | Interface only, real device unverified | Interface only, real device unverified |
 | Responsive Retail/Barber/F&B/Laundry/Carwash | Shared CSS; full per-screen visual acceptance pending | Pending physical acceptance | Pending physical acceptance |
 | Universal/App Links | Templates only | Signed association + handler missing | Signed association + handler missing |
 | Store distribution | N/A | Signing/store review pending | Signing/TestFlight/store review pending |
+
+Android recovery tests require a disposable emulator and reject a physical-device serial: `bash scripts/mobile/test-android-recovery.sh`. They install unconfigured debug APKs and synthetic fixtures only. The CI job checks each instrumentation phase actually reports one passed test; a successful APK compilation alone cannot satisfy recovery acceptance.
+
+Browser regression on the disposable independent-cashier fixture: Retail checkout at Rp10,000 while offline, receipt after persistence, reconnect, then reload retained exactly one completed sale and stock 4 from an initial 5. This is desktop synthetic evidence; it does not establish hosted cross-platform payment acceptance.
 
 Run `npm run verify`, `npm run test:platform`, `npm run native:sync`, native CI, and both existing PostgreSQL17 jobs. Record exact commit/job results in the linked Draft PR. This matrix deliberately distinguishes implemented code, synthetic contract tests, native compilation, hosted workflow and physical-device evidence.
