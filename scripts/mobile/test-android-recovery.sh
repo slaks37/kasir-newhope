@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd android
-./gradlew assembleDebug assembleDebugAndroidTest
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 for phase in prepareForProcessDeath recoverAfterProcessDeath; do

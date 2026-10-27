@@ -101,7 +101,7 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
   if (flushing.has(businessId)) return getCashSyncStatus(businessId);
   let rows: CashCommand[];
   let held:Set<string>;
-  try { rows = read(businessId); held=new Set(legacyFinancialHolds(businessId).cash_movements); }
+  try { if(target.workspace&&financialWorkspaceKey(target.workspace)!==businessId)throw Error('WORKSPACE_CASH_QUEUE_MISMATCH');rows = read(businessId); held=new Set(legacyFinancialHolds(businessId).cash_movements); }
   catch(error) {
     writeMeta(businessId,{lastError:error instanceof Error?error.message:'LOCAL_CASH_QUEUE_READ_FAILED',failures:1,lastErrorAt:new Date().toISOString()});
     return getCashSyncStatus(businessId);
@@ -122,7 +122,7 @@ export async function flushCashQueue(target: SyncTarget, force = false): Promise
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.ok) throw new Error(data?.error ? `${data.error} (HTTP ${response.status})` : `HTTP ${response.status}`);
-      if(isNative()&&(data.clientEventId!==command.body.clientEventId||command.action==='refund'&&!data.refund))throw Error('CASH_ACK_MISMATCH');
+      if(isNative()&&(data.clientEventId!==command.body.clientEventId||command.action==='refund'&&data.refund?.clientRefundId!==command.body.refund.clientRefundId))throw Error('CASH_ACK_MISMATCH');
       if(command.action==='refund')await writeFinancialValue(`newhope_refund_ack_${businessId}_${command.body.clientEventId}`,JSON.stringify(data.refund));
       if (command.legacyMigration) {
         const key = `${ACK}${businessId}`;

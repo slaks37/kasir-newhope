@@ -49,6 +49,7 @@ await flush(target,true);assert.deepEqual(getPendingTransactions(id),[concurrent
 await requeueQuarantinedDurable(id,txn.clientTxnId);assert.equal(getPendingTransactions(id).length,2);assert.equal(readQuarantine(id).length,0);
 const cash:CashCommand={workspace:w,action:'cash',body:{sector:'RETAIL',outletId:w.outletId,clientEventId:randomUUID(),type:'CASH_IN',amount:10,category:'OTHER',description:'Synthetic',occurredAt:new Date().toISOString()}};
 await enqueueCashCommandDurable(id,cash);
+assert.equal((await flushCashQueue({...target,workspace:{...w,actorRef:randomUUID()}},true)).lastError,'WORKSPACE_CASH_QUEUE_MISMATCH');
 Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:'wrong'})})});assert.equal((await flushCashQueue(target,true)).pending,1);
 Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:cash.body.clientEventId})})});await flushCashQueue(target,true);assert.equal(getCashSyncStatus(id).pending,0);
 const close={businessId:w.merchantId,outletId:w.outletId,moduleId:w.moduleId,registerId:randomUUID(),clientShiftId:randomUUID(),clientCloseId:randomUUID(),expectedVersion:'a'.repeat(64),actualCash:100,notes:'synthetic'};
