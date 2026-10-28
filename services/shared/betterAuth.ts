@@ -8,6 +8,7 @@ import {getAuthConfig,authDatabaseOptions} from './betterAuthConfig';
 import {databasePoolLimits} from './poolConfig';
 import {sendBetterAuthEmail,type AuthEmail} from './betterAuthEmail';
 import {authReturnUrl} from './authReturnUrl';
+import {hasSchemaFeature} from './schemaFeatures';
 
 /** Mounted on the app host. All auth queries qualify newhope_auth explicitly;
  * no SET search_path and no managed neon_auth credential/schema import. */
@@ -43,6 +44,10 @@ export function createBetterAuthRuntime(config=getAuthConfig(),sendEmail:(mail:A
         }
         if(ctx.path==='/sign-up/email'&&ctx.body){
           const raw=ctx.body.onboarding||{};ctx.body.onboarding=Object.fromEntries(['full_name','store_name','business_sector','first_outlet_name','second_outlet_name'].filter(k=>typeof raw[k]==='string'&&raw[k].length<=100).map(k=>[k,raw[k]]));
+          if(raw.account_purpose==='STAFF'){
+            if(!await hasSchemaFeature(pool,'staffIdentityPurpose'))throw new APIError('SERVICE_UNAVAILABLE',{code:'STAFF_REGISTRATION_NOT_READY',message:'Pendaftaran staf belum tersedia.'});
+            ctx.body.onboarding.account_purpose='STAFF';
+          }
         }
         if(ctx.path==='/sign-in/social'&&ctx.body){
           let target:URL;try{target=new URL(ctx.body.callbackURL||config.baseUrl+'/overview');}catch{throw new APIError('BAD_REQUEST',{code:'AUTH_CALLBACK_REJECTED'});}

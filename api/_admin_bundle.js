@@ -38,6 +38,37 @@ var init_poolConfig = __esm({
   }
 });
 
+// services/shared/schemaFeatures.ts
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+var FEATURES, ABSENT_RECHECK_MS, known;
+var init_schemaFeatures = __esm({
+  "services/shared/schemaFeatures.ts"() {
+    "use strict";
+    FEATURES = {
+      staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+      staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
+      cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+      moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+      merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+      /** migration 0054 / 20261004090200 */
+      syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+      /** migration 0055 / 20261004090300 */
+      sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+    };
+    ABSENT_RECHECK_MS = 6e4;
+    known = /* @__PURE__ */ new Map();
+  }
+});
+
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
   const value = env.AUTH_PROVIDER || "supabase";
@@ -224,6 +255,10 @@ function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBette
         if (ctx.path === "/sign-up/email" && ctx.body) {
           const raw = ctx.body.onboarding || {};
           ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+          if (raw.account_purpose === "STAFF") {
+            if (!await hasSchemaFeature(pool, "staffIdentityPurpose")) throw new APIError("SERVICE_UNAVAILABLE", { code: "STAFF_REGISTRATION_NOT_READY", message: "Pendaftaran staf belum tersedia." });
+            ctx.body.onboarding.account_purpose = "STAFF";
+          }
         }
         if (ctx.path === "/sign-in/social" && ctx.body) {
           let target;
@@ -278,6 +313,7 @@ var init_betterAuth = __esm({
     init_poolConfig();
     init_betterAuthEmail();
     init_authReturnUrl();
+    init_schemaFeatures();
   }
 });
 
@@ -745,6 +781,7 @@ async function connectDb(opts) {
 }
 
 // services/billing/routes.ts
+init_schemaFeatures();
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // services/shared/auth.ts
@@ -1564,6 +1601,10 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    if (await hasSchemaFeature(db, "staffIdentityPurpose")) {
+      const purpose = await db.query("SELECT internal.is_staff_only_identity($1) AS staff_only", [principal.subject]);
+      if (purpose.rows[0]?.staff_only) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+    }
     let id = await tenantForPrincipal(db, principal);
     if (!id && principal.subject !== "local-development") {
       const assigned = await db.query("SELECT internal.has_active_staff_assignment($1) AS assigned", [principal.subject]);
@@ -4538,30 +4579,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 
 // services/pos/registerOperations.ts
 import { createHash as createHash4 } from "node:crypto";
-
-// services/shared/schemaFeatures.ts
-var FEATURES = {
-  staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
-  cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
-  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
-  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
-  /** migration 0054 / 20261004090200 */
-  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
-    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
-  /** migration 0055 / 20261004090300 */
-  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
-};
-var ABSENT_RECHECK_MS = 6e4;
-var known = /* @__PURE__ */ new Map();
-async function hasSchemaFeature(db, feature, now = Date.now()) {
-  const cached = known.get(feature);
-  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
-  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
-  known.set(feature, { ok, at: now });
-  return ok;
-}
+init_schemaFeatures();
 
 // src/platform/modules/registerCapabilities.ts
 var REGISTER_CAPABILITIES = ["outlet_revenue.read", "shift.open", "shift.read", "shift_history.read", "shift.close", "shift_variance.submit", "shift_variance.approve", "register.configure"];
@@ -5135,6 +5153,7 @@ function legacyModuleForSector(sector) {
 }
 
 // services/pos/modules.ts
+init_schemaFeatures();
 var UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ModuleAccessError = class extends Error {
   constructor(status, code) {
@@ -5409,6 +5428,7 @@ function requireWorkspaceRole(scope, roles) {
 }
 
 // services/pos/activity.ts
+init_schemaFeatures();
 var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES2 = [
   "POS",
@@ -5760,6 +5780,9 @@ function registerCashierFinanceRoutes(app, db) {
     return { event, replayed: false };
   });
 }
+
+// services/pos/finance.ts
+init_schemaFeatures();
 
 // services/pos/financialAuthorization.ts
 import { createHash as createHash5, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
@@ -6481,6 +6504,7 @@ async function projectLabor(c, scope, sector, op) {
 }
 
 // services/pos/sharedState.ts
+init_schemaFeatures();
 var SECTOR_SET = new Set(SECTORS2);
 var GLOBAL_KINDS = /* @__PURE__ */ new Set(["users", "staff_members"]);
 var SECTOR_KINDS = /* @__PURE__ */ new Set([
@@ -7005,6 +7029,7 @@ function registerWorkspaceStateRoutes(app, db) {
 import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
 init_betterAuthConfig();
 init_betterAuthEmail();
+init_schemaFeatures();
 var UUID4 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 var STAFF_ROLES = ["OWNER", "ADMIN", "MANAGER", "CASHIER", "BARISTA", "CHEF", "WASHER", "KAPSTER", "ACCOUNTANT", "STAFF"];
 var StaffAccessError = class extends Error {
@@ -7215,6 +7240,7 @@ function registerStaffAccountRoutes(app, db, send = sendBetterAuthEmail) {
 }
 
 // services/pos/workspaceDirectory.ts
+init_schemaFeatures();
 async function workspaceDirectory(db, subject2, requestedTenant) {
   if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "workspaceIsolation")) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
   const managedStaff = await hasSchemaFeature(db, "staffAccounts");
@@ -7295,6 +7321,7 @@ function registerBusinessDirectory(app, db) {
 
 // services/pos/sync.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
+init_schemaFeatures();
 
 // services/pos/tenders.ts
 async function applyTenders(db, scope, transactionId, tenders) {

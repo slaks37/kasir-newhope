@@ -7,6 +7,7 @@ import {PGLiteSocketServer} from '@electric-sql/pglite-socket';
 import {createOTP} from '@better-auth/utils/otp';
 import {base32} from '@better-auth/utils/base32';
 import {getMigrations} from 'better-auth/db/migration';
+import {resetSchemaFeatureCache} from '../../services/shared/schemaFeatures';
 import {createBetterAuthRuntime} from '../../services/shared/betterAuth';
 import {getAuthConfig} from '../../services/shared/betterAuthConfig';
 import {createNeonAuthHandler} from '../../src/server/neonAuthHandler';
@@ -28,10 +29,15 @@ async function call(path:string,body?:any,extra:Record<string,string>={}){
 }
 try{
  const plan=await getMigrations(runtime.auth.options);assert.equal(plan.toBeCreated.length,0,'Pinned auth schema has every runtime table');assert.equal(plan.toBeAdded.length,0,'Pinned auth schema has every field');
- assert.equal((await call('/sign-up/email',{email:'new-user@fixture.invalid',password:'Synthetic-Password-For-Tests-2026',name:'Synthetic User',callbackURL:base+'/login',onboarding:{business_sector:'RETAIL',store_name:'Synthetic'}})).status,200);assert.equal(mail.length,1);
+ await pg.exec('ALTER FUNCTION internal.is_staff_only_identity(text) RENAME TO unavailable_staff_identity_probe');resetSchemaFeatureCache();
+ assert.equal((await call('/sign-up/email',{email:'blocked-staff@fixture.invalid',password:'Synthetic-Password-For-Tests-2026',name:'Blocked staff',callbackURL:base+'/login',onboarding:{account_purpose:'STAFF'}})).status,503);
+ assert.equal((await pg.query<{n:number}>(`SELECT count(*)::int AS n FROM newhope_auth."user" WHERE email='blocked-staff@fixture.invalid'`)).rows[0].n,0,'Migration missing: no unprotected staff signup');
+ await pg.exec('ALTER FUNCTION internal.unavailable_staff_identity_probe(text) RENAME TO is_staff_only_identity');resetSchemaFeatureCache();
+ assert.equal((await call('/sign-up/email',{email:'new-user@fixture.invalid',password:'Synthetic-Password-For-Tests-2026',name:'Synthetic User',callbackURL:base+'/login',onboarding:{full_name:'Synthetic staff',account_purpose:'STAFF'}})).status,200);assert.equal(mail.length,1);
  const verify=new URL(mail[0].url);const verified=await fetch(origin+verify.pathname+verify.search,{headers:{origin:base},redirect:'manual'});assert(verified.status<400);
  const login=await call('/sign-in/email',{email:'new-user@fixture.invalid',password:'Synthetic-Password-For-Tests-2026'});assert.equal(login.status,200);const signed=cookie.split('; ').find(v=>v.includes('session_token='))?.split('=').slice(1).join('=');assert(signed);
  const identity=await (await call('/identity')).json();assert.match(identity.user.id,/^[a-f0-9-]{36}$/);assert.equal(identity.user.emailVerified,true);assert.equal(identity.user.passwordCredential,true);
+ assert.equal((await pg.query<{auth_staff_only:boolean}>('SELECT auth_staff_only FROM internal.users WHERE id=$1',[identity.user.id])).rows[0].auth_staff_only,true,'Real staff signup is durably restricted before invitation acceptance');
  const offlineDevice=randomUUID(),receiptIdentity=await (await call('/identity',undefined,{'x-newhope-offline-device':offlineDevice})).json();
  const offlineClaims=await verifyOfflineIdentity(receiptIdentity.offlineReceipt,offlineIdentityKeys(getAuthConfig().secret,base).publicKey,base,offlineDevice);
  assert.equal(offlineClaims.sub,identity.user.id);assert.equal(offlineClaims.sid,identity.session.id);

@@ -6,6 +6,14 @@ const baseURL='https://staging.invalid/api/auth',canonical=randomUUID(),provider
 const identity=()=>({user:{id:canonical,email:'synthetic@fixture.invalid',emailVerified:true,twoFactorEnabled:true,passwordCredential:true,providers:['credential','google'],user_metadata:{full_name:'Synthetic cashier'}},session:{id:'non-secret-session-row',expiresAt:new Date(now+3600000).toISOString(),aal:'aal2',mfaVerifiedAt:Math.floor(now/1000)}});
 const reply=(body:any,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json',...headers}});
 for(const candidate of ['http://other.invalid/api/auth','https://evil.invalid/api/auth','https://u:p@staging.invalid/api/auth','https://staging.invalid/api/else','https://staging.invalid/api/auth?next=evil'])assert.throws(()=>createNeonAuthClient({baseURL:candidate,appOrigin:'https://staging.invalid',fetch:globalThis.fetch}));
+// Provider verification denial must remain a denial and explain the next action.
+let deniedRequests=0;
+const unverified=createNeonAuthClient({baseURL,appOrigin:'https://staging.invalid',fetch:async()=>{deniedRequests++;return reply({code:'EMAIL_NOT_VERIFIED',message:'provider message must not replace safe local text'},403);}});
+const verificationDenied=await unverified.signInWithPassword({email:'synthetic@fixture.invalid',password:'synthetic-password'});
+assert.equal(verificationDenied.error?.code,'EMAIL_NOT_VERIFIED');
+assert.match(verificationDenied.error?.message||'',/Email akun belum diverifikasi/);
+assert.equal(verificationDenied.data.session,null);
+assert.equal(deniedRequests,1,'No identity call or fallback after verification denial');
 const calls:Array<{url:string;init:RequestInit}>=[];let state='ready',postedBody:any;
 const fetcher:typeof fetch=async(input,init={})=>{const url=String(input);calls.push({url,init});assert(url.startsWith(baseURL+'/'));assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');assert.equal(init.credentials,'include');assert.equal(new Headers(init.headers).get('authorization'),null,'Browser credentials remain HttpOnly; no bearer is copied from a JSON payload/header');
  if(url.endsWith('/sign-in/email')){postedBody=JSON.parse(String(init.body));return state==='mfa'?reply({twoFactorRedirect:true}):reply({user:{id:providerId},token:'must-never-be-stored'},200,{'set-auth-token':'ignored-web-bearer'});}

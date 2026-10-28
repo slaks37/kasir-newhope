@@ -1,4 +1,5 @@
 import type express from 'express';
+import {hasSchemaFeature} from '../shared/schemaFeatures';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { AuthUnavailableError, authenticateBearer, tenantForPrincipal, trustedPrincipal } from '../shared/auth';
@@ -32,6 +33,10 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
     if (!principal || (principal.subject==='local-development' && !allowLocal)) throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    if(await hasSchemaFeature(db,'staffIdentityPurpose')) {
+      const purpose=await db.query('SELECT internal.is_staff_only_identity($1) AS staff_only',[principal.subject]);
+      if(purpose.rows[0]?.staff_only)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+    }
     let id=await tenantForPrincipal(db,principal);
     if (!id && principal.subject!=='local-development') {
       // An authenticated staff identity must select its authorized workspace.

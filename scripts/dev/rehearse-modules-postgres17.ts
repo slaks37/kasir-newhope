@@ -35,7 +35,7 @@ try{
  const before=await fingerprint();
  for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql','0068_cashier_register_operations.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
- for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql'])await apply('migrations/'+name);
+ for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql'])await apply('migrations/'+name);
  assert.equal(await fingerprint(),before,'Staff billing guard replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
@@ -44,6 +44,10 @@ try{
  const internal=await asService('svc_internal'),billing=await asService('svc_billing'),pos=await asService('svc_pos'),ai=await asService('svc_ai');
  assert.equal((await billing.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[staff])).rows[0].assigned,true);
  assert.equal((await billing.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[owner])).rows[0].assigned,false);
+ const preInviteStaff=randomUUID();await admin.query("INSERT INTO internal.users(id,email,full_name,auth_staff_only) VALUES($1,$2,'Pre-invitation staff',true)",[preInviteStaff,preInviteStaff+'@fixture.invalid']);
+ assert.equal((await billing.query('SELECT internal.is_staff_only_identity($1) AS blocked',[preInviteStaff])).rows[0].blocked,true);
+ assert.equal((await billing.query('SELECT internal.is_staff_only_identity($1) AS blocked',[owner])).rows[0].blocked,false);
+ await assert.rejects(()=>pos.query('SELECT internal.is_staff_only_identity($1)',[preInviteStaff]),(e:any)=>e.code==='42501');
  await assert.rejects(()=>billing.query('SELECT pin FROM internal.memberships'),(e:any)=>e.code==='42501');
  await assert.rejects(()=>billing.query('UPDATE internal.memberships SET is_active=false'),(e:any)=>e.code==='42501');
  await assert.rejects(()=>pos.query('SELECT internal.has_active_staff_assignment($1)',[staff]),(e:any)=>e.code==='42501');

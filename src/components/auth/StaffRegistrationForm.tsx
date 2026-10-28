@@ -8,7 +8,7 @@ export function StaffRegistrationForm({onSignIn}:{onSignIn:()=>void}) {
  const submit=async(e:React.FormEvent)=>{
   e.preventDefault();if(busy)return;setBusy(true);setError('');
   try {
-   const response=await authRuntime.auth.signUp({email:email.trim().toLowerCase(),password,options:{emailRedirectTo:window.location.origin+'/login',data:{full_name:name.trim()}}});
+   const response=await authRuntime.auth.signUp({email:email.trim().toLowerCase(),password,options:{emailRedirectTo:window.location.origin+'/login',data:{full_name:name.trim(),account_purpose:'STAFF'}}});
    if(response.error)throw response.error;
    setSubmitted(true);
   } catch(e) {setError((e as Error).message||'Pendaftaran belum dapat diproses.');}
