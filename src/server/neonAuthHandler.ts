@@ -21,8 +21,15 @@ export function createNeonAuthHandler(runtime=getBetterAuthRuntime){return async
   }
   if(req.method==='OPTIONS')return res.status(204).end();
   if(req.method==='POST'&&!origin)return res.status(403).json({error:'AUTH_ORIGIN_REQUIRED'});
+  // Never let upstream route normalization bypass the excluded API surfaces.
+  if(path.includes('%')||path.includes('//')||path.endsWith('/'))return res.status(404).json({error:'NOT_FOUND'});
+  // Provider credentials and alternate identity linking are not app workflows.
+  if(['/api/auth/get-access-token','/api/auth/refresh-token','/api/auth/account-info','/api/auth/link-social','/api/auth/unlink-account'].includes(path))return res.status(404).json({error:'NOT_FOUND'});
   const r=runtime();await r.ready;
   const headers=new Headers();for(const [k,v] of Object.entries(req.headers)){if(typeof v==='string'&&!['host','content-length','connection','transfer-encoding','x-auth-sub','x-auth-email','x-auth-aal','x-real-ip','x-forwarded-for'].includes(k))headers.set(k,v);}
+  // An explicit bearer must never fall back to a different cookie principal.
+  // Native MFA may add only its separately sealed pending challenge below.
+  if(headers.has('authorization'))headers.delete('cookie');
   headers.set('x-forwarded-for',process.env.VERCEL?String(req.headers['x-vercel-forwarded-for']||'unknown'):String(req.socket?.remoteAddress||'unknown'));
   if(native){headers.delete('cookie');headers.set('origin',config.baseUrl);const state=req.headers['x-newhope-auth-state'];if(state){const cookies=openAuthState(String(state),config.secret,'native-pending:'+config.baseUrl+':'+origin);if(typeof cookies!=='string'||!cookies.split('; ').every(c=>pendingCookie.test(c)))return res.status(400).json({error:'AUTH_STATE_REJECTED'});headers.set('cookie',cookies);}}
   let bytes:Buffer|undefined;

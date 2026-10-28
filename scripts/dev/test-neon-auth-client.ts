@@ -35,7 +35,9 @@ const nativeFetcher:typeof fetch=async(input,init={})=>{const url=String(input),
  if(url.endsWith('/two-factor/verify-totp')){assert.equal(headers.get('x-newhope-auth-state'),'opaque-encrypted-pending-state');nativeState='identity';return reply({user:{id:providerId}},200,{'set-auth-token':'signed-native-session-token'});}
  if(url.endsWith('/native/exchange')){const body=JSON.parse(String(init.body));assert.equal(body.verifier,'synthetic-pkce-verifier');assert.equal(body.code,'one-use-code');nativeState='identity';return reply({ok:true},200,{'set-auth-token':'signed-native-session-token'});}
  if(url.endsWith('/identity')){if(nativeState==='revoked')return reply({error:'UNAUTHENTICATED'},401);if(nativeState==='google-mfa')return reply({error:'MFA_REQUIRED'},401);assert.equal(headers.get('authorization'),'Bearer signed-native-session-token');return reply(identity());}
- if(url.endsWith('/sign-out'))return reply({success:true});throw Error('Unexpected native path');};
+ if(url.endsWith('/sign-out'))return reply({success:true});
+ if(url.endsWith('/revoke-sessions')||url.endsWith('/revoke-other-sessions'))return nativeState==='management-denied'?reply({code:'REAUTH_REQUIRED'},403):reply({status:true});
+ throw Error('Unexpected native path');};
 let native=createNeonAuthClient({baseURL,appOrigin:'capacitor://localhost',native:true,fetch:nativeFetcher,storage,now:()=>now});
 assert.equal((await native.signInWithPassword({email:'synthetic@fixture.invalid',password:'synthetic-password'})).error?.code,'MFA_REQUIRED');assert.equal(vault.get(NATIVE_BEARER_KEY),undefined);
 assert.equal((await native.mfa.challengeAndVerify({factorId:'neon-totp',code:'123456'})).error,null);assert.equal(vault.get(NATIVE_BEARER_KEY),'signed-native-session-token');assert(![...vault.keys()].some(k=>k.includes('pending')));
@@ -43,5 +45,11 @@ native=createNeonAuthClient({baseURL,appOrigin:'capacitor://localhost',native:tr
 nativeState='google-mfa';assert.equal((await native.getSession()).error?.code,'MFA_REQUIRED');assert(vault.has(NATIVE_BEARER_KEY),'First-factor native bearer is retained only to complete MFA');
 nativeState='identity';await storage.setItem(NATIVE_PKCE_KEY,'synthetic-pkce-verifier');assert.equal((await native.exchangeCodeForSession('one-use-code')).error,null);assert(!vault.has(NATIVE_PKCE_KEY));
 nativeState='revoked';assert.equal((await native.getSession()).data.session,null);assert(!vault.has(NATIVE_BEARER_KEY));assert(touched.every(k=>k.startsWith('newhope-neon-auth-')||k===NATIVE_PKCE_KEY),'Authentication never clears financial queues');
+// Logout scope is explicit; rejection never pretends other sessions were revoked.
+vault.set('financial-outbox-sentinel','immutable-payload');nativeState='identity';await storage.setItem(NATIVE_BEARER_KEY,'signed-native-session-token');await native.getSession();
+const scopeEvents:string[]=[];native.onAuthStateChange(e=>scopeEvents.push(e));
+assert.equal((await native.signOut({scope:'others'})).error,null);assert(nativeCalls.at(-1)!.url.endsWith('/revoke-other-sessions'));assert(vault.has(NATIVE_BEARER_KEY));assert(!scopeEvents.includes('SIGNED_OUT'));
+nativeState='management-denied';assert.equal((await native.signOut({scope:'global'})).error?.code,'REAUTH_REQUIRED');assert(nativeCalls.at(-1)!.url.endsWith('/revoke-sessions'));assert(vault.has(NATIVE_BEARER_KEY));assert(!scopeEvents.includes('SIGNED_OUT'));
+nativeState='identity';assert.equal((await native.signOut({scope:'global'})).error,null);assert(!vault.has(NATIVE_BEARER_KEY));assert(scopeEvents.includes('SIGNED_OUT'));assert.equal(vault.get('financial-outbox-sentinel'),'immutable-payload');
 assert(!readFileSync('src/lib/auth/neonClient.ts','utf8').includes('@supabase/'));
 console.log('PASS Neon client: canonical actor IDs, cookie-only web sessions, isolated native vault/pending MFA relay, Google/password MFA, recovery codes, one-use PKCE exchange, live revocation/outage, no Supabase SDK/fallback and no financial queue deletion. HTTP responses simulated.');

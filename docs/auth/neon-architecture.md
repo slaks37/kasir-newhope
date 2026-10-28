@@ -8,6 +8,15 @@ On 2026-10-27 the existing managed Neon Auth staging branch was inspected read-o
 
 The current [Managed Auth roadmap](https://github.com/neondatabase/website/blob/main/content/docs/auth/roadmap.md) still lists MFA as pending and describes limits for a separate frontend/backend. Its [plugin matrix](https://github.com/neondatabase/website/blob/main/content/docs/auth/guides/plugins.md) does not expose TOTP. New Hope requires session-bound MFA and independent mobile clients. The implemented alternative is self-managed **Better Auth 1.7.14 backed by Neon PostgreSQL**, hosted at the existing app's `/api/auth/*`; no new auth SaaS or financial identity is introduced. [Better Auth Google](https://better-auth.com/docs/authentication/google), [TOTP](https://better-auth.com/docs/plugins/2fa), [signed bearer](https://better-auth.com/docs/plugins/bearer).
 
+| Mandatory capability | Managed Neon evaluation | Selected implementation |
+|---|---|---|
+| Google OAuth | Configured in managed staging; configuration does not certify login | Dedicated staging client and official Better Auth callback |
+| Email/password and reset | Supported by existing managed configuration | Verified email, password policy, restricted real sender, one-use reset |
+| MFA and backup recovery | TOTP remains a managed roadmap gap | Official self-managed TOTP and one-use backup codes; only TOTP grants fresh `aal2` |
+| Session revocation | Configuration inspection does not prove cross-client revocation | Authoritative live session lookup, explicit revoke/reset tests |
+| Staff and historical identities | Provider IDs do not establish business membership | Reviewed explicit canonical mappings and existing server RBAC |
+| Native OAuth/recovery | New Hope requires app-level deep-link and PKCE integration | System browser, sealed MFA state, single-use PKCE handoff; real-device gate retained |
+
 ## Runtime contract
 
 - Browser/PWA use HttpOnly secure cookies, live database sessions and same-origin auth. Session renewal headers propagate back to the client. Native uses signed opaque bearer credentials in the existing Keystore/Keychain adapter. No browser token persistence is introduced by the Neon adapter.
@@ -15,6 +24,7 @@ The current [Managed Auth roadmap](https://github.com/neondatabase/website/blob/
 - Neon web/native build aliases exclude legacy Auth modules. `check-neon-auth-bundle.mjs` rejects SDK/endpoint signatures. Legacy-mode regression remains part of `npm run verify`.
 - Every API request validates a live session, active verified provider user, active explicit canonical mapping and existing business/membership authorization. A bearer cannot silently downgrade to another cookie session. Cookie-authenticated writes require an exact trusted Origin. Failed/revoked sessions return 401; dependency outages return 503.
 - Official TOTP and recovery codes are available to merchant/staff accounts. Only successful official TOTP produces recent `aal2`; recovery codes provide login recovery at `aal1`. Password login, Google login, user metadata and trusted-device cookies do not manufacture step-up evidence. Changing MFA requires recent TOTP. Google-only owners may authorize PIN enrollment with verified Google identity plus fresh session-bound TOTP; password accounts retain password reauthentication.
+- Raw provider-token/account-linking APIs are disabled, including noncanonical path variants. Once MFA is enabled, secret retrieval, password changes and session management require recent session-bound TOTP. Explicit bearers cannot fall back to another cookie principal. Logout honors local/global/other-session scopes.
 - Native Google uses the system browser, provider state, a random transaction and S256 PKCE. Callback URLs carry a 60-second single-use code, never a session token. Exchange atomically checks the verifier and current session. Native password-MFA pending cookies are purpose-bound, authenticated encrypted short-lived state relayed only to the exact auth endpoint; normal session cookies are never relayed this way.
 - Password reset uses one-use HTTPS links and revokes all sessions. Recovery may finish in the system browser; the user then signs into the native app again. Universal/App Link activation from PR28 remains pending, separate from the existing exact custom-scheme callback.
 
@@ -38,14 +48,16 @@ The temporary staging target is an empty database `newhope_auth_pr29` on existin
 
 | Requirement | Implemented / local evidence | Hosted / real-device gate |
 |---|---|---|
-| Email/password and verification | Real Better Auth + isolated SQL and captured email | Real sender/inbox/HTTPS login pending |
-| Google OAuth | Official provider, exact callback, no auto-link; configured managed branch audited | New self-managed provider credentials/callback and real Google session pending |
-| MFA and recovery codes | Actual TOTP/backup-code engine, session proofs, fresh admin checks and negative tests | Hosted enrollment/login/recovery pending |
-| Session refresh/revocation/reset | Live sessions, cookie/native renewal, reset revokes sessions; isolated SQL tests | Hosted cross-device revocation pending |
-| Historical owner and independent staff | Explicit differing-ID mappings; full business fingerprints unchanged; queue actor IDs canonical | Reviewed source mapping, user acceptance and writer-freeze snapshot pending |
-| Browser/PWA | Provider-neutral client and Neon bundle checks | Real HTTPS UI/provider sessions pending |
-| Android/iOS | Preserved Capacitor/secure storage, S256 handoff and native state tests | Native build CI and actual hosted app sessions pending |
-| Rollback | Legacy runtime retained, revoked mapping refuses Neon access, no actor rewrites | Hosted alternate-provider rollback rehearsal pending |
+| Email/password and verification | Actual Better Auth + isolated SQL | PASS real Preview signup, HTTPS verification, password login and reset; Resend reports delivered. Connected inbox search found no matching message, so inbox placement is unverified |
+| Google OAuth | Official provider, exact callback, no auto-link | Dedicated self-managed staging client/callback installed; real browser provider-session acceptance pending |
+| MFA and recovery | Actual TOTP/backup engine, session proofs and authorization tests | PASS hosted TOTP `aal2`, independent recovery session `aal1`, recovery cannot disable MFA; UI acceptance pending |
+| Revocation and reset | Live database sessions; local/global/other-session scope semantics | PASS hosted reset revokes two independent HTTPS sessions, rejects token replay; explicit revoke rejects native-origin signed bearer. Physical cross-device check pending |
+| Historical owner and independent staff | Differing-ID mappings; business/ledger fingerprints and canonical actor continuity | Reviewed frozen-source mapping and user acceptance pending |
+| Browser/PWA | Provider-neutral client and Neon bundle checks | Real browser UI/provider acceptance pending |
+| Android/iOS | Capacitor/secure storage, S256 handoff, native state tests | Both native CI jobs PASS at `3a92137`; hosted native-origin protocol PASS through protected CLI transport. Installed app sessions blocked by unavailable local device/runtime; not physical-device evidence |
+| Rollback | Legacy regression retained, mapping revocation fails closed, no actor rewrites | Hosted alternate-provider rollback rehearsal pending |
+
+Hosted protocol evidence on 2026-10-28 (Asia/Jakarta): Preview `dpl_6sMKFonXurtFdW7DqHZQBniNseV8`, source `3a9213760fc7c9b98e8f7b84199fac212b381855`, with explicitly approved branch-only credentials and the single-recipient email allowlist. Existing Vercel authentication accessed protection; no bypass credential was embedded into a native build. Private response/cookie/fixture files in the original temporary checkout were lost on host restart after testing. Their recorded tool results establish the tests above, but secrets are never reconstructed from logs or committed. Source and approved Preview configuration were restored into a persistent workspace; the hardened runtime and UI require a refreshed Preview check.
 
 `npm run test:neon-auth` exercises the real self-managed auth engine with isolated PostgreSQL-compatible storage, and separately labels mocked client/provider responses. It does not establish hosted Google, email delivery or physical mobile acceptance. Existing full verification and PG17/native CI remain required.
 

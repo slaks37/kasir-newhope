@@ -185,9 +185,9 @@ function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBette
           ctx.body.callbackURL = target.href;
         }
         if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
-        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(ctx.path)) {
+        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes", "/two-factor/get-totp-uri", "/change-password", "/revoke-session", "/revoke-sessions", "/revoke-other-sessions", "/list-sessions"].includes(ctx.path)) {
           const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
-          if (current?.user && !current.user.twoFactorEnabled && Date.now() - new Date(current.session.createdAt).getTime() > 3e5) throw new APIError("FORBIDDEN", { message: "Masuk kembali sebelum menyiapkan autentikator.", code: "REAUTH_REQUIRED" });
+          if (ctx.path === "/two-factor/enable" && current?.user && !current.user.twoFactorEnabled && Date.now() - new Date(current.session.createdAt).getTime() > 3e5) throw new APIError("FORBIDDEN", { message: "Masuk kembali sebelum menyiapkan autentikator.", code: "REAUTH_REQUIRED" });
           if (current?.user.twoFactorEnabled) {
             const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
               WHERE session_id=$1 AND user_id=$2 AND method='totp' AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
@@ -472,12 +472,15 @@ function createNeonAuthHandler(runtime2 = getBetterAuthRuntime) {
       }
       if (req.method === "OPTIONS") return res.status(204).end();
       if (req.method === "POST" && !origin) return res.status(403).json({ error: "AUTH_ORIGIN_REQUIRED" });
+      if (path.includes("%") || path.includes("//") || path.endsWith("/")) return res.status(404).json({ error: "NOT_FOUND" });
+      if (["/api/auth/get-access-token", "/api/auth/refresh-token", "/api/auth/account-info", "/api/auth/link-social", "/api/auth/unlink-account"].includes(path)) return res.status(404).json({ error: "NOT_FOUND" });
       const r = runtime2();
       await r.ready;
       const headers = new Headers();
       for (const [k, v] of Object.entries(req.headers)) {
         if (typeof v === "string" && !["host", "content-length", "connection", "transfer-encoding", "x-auth-sub", "x-auth-email", "x-auth-aal", "x-real-ip", "x-forwarded-for"].includes(k)) headers.set(k, v);
       }
+      if (headers.has("authorization")) headers.delete("cookie");
       headers.set("x-forwarded-for", process.env.VERCEL ? String(req.headers["x-vercel-forwarded-for"] || "unknown") : String(req.socket?.remoteAddress || "unknown"));
       if (native) {
         headers.delete("cookie");
