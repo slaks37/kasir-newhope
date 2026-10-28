@@ -1463,6 +1463,21 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   app.all(DOKU_NOTIFICATION_PATH, (_req, res) => res.set("Allow", "POST").status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" }));
 }
 
+// services/billing/store.ts
+async function pastikanPaket(db, paket) {
+  for (const p of paket) {
+    await db.query(
+      `INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, product_limit, features)
+       VALUES ($1, $2, $3, 'MONTHLY', $4, $5, $6::jsonb)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name, tier_level = EXCLUDED.tier_level,
+         price_idr = EXCLUDED.price_idr, product_limit = EXCLUDED.product_limit, features = EXCLUDED.features,
+         updated_at = CURRENT_TIMESTAMP`,
+      [p.id, p.name, p.tierLevel, p.priceIdr, p.productLimit, JSON.stringify(p.features)]
+    );
+  }
+}
+
 // services/shared/nativeCors.ts
 function nativeCors(req, res, methods) {
   const origin = String(req.headers.origin || "");
@@ -1643,6 +1658,17 @@ var BILLING_ROUTES = {
   [DOKU_NOTIFICATION_PATH]: ["POST"]
 };
 function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "billing", max: 2 })) {
+  const readyDatabase = async () => {
+    const db = await connect();
+    try {
+      await pastikanPaket(db, SAAS_PLANS);
+      return db;
+    } catch (error) {
+      await db.close().catch(() => {
+      });
+      throw error;
+    }
+  };
   return createServerlessBoundary({
     name: "billing",
     routes: BILLING_ROUTES,
@@ -1652,7 +1678,7 @@ function createBillingHandler(authenticate = authenticateBearer, connect = () =>
     register: (app, db) => registerBillingRoutes(app, db, true),
     unavailableError: "BILLING_UNAVAILABLE",
     invalidRequestError: "INVALID_REQUEST"
-  }, authenticate, connect);
+  }, authenticate, readyDatabase);
 }
 var billingHandler_default = createBillingHandler();
 export {

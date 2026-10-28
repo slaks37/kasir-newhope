@@ -16,7 +16,7 @@
     "env:import": "node scripts/dev/import-env.mjs",
     "env:set": "node scripts/dev/import-env.mjs",
     "smoke": "tsx scripts/dev/smoke-assistant.ts",
-    "test:subscriptions": "node --import tsx scripts/dev/test-subscriptions.ts",
+    "test:subscriptions": "node --import tsx scripts/dev/test-billing-bootstrap.ts && node --import tsx scripts/dev/test-subscriptions.ts",
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
     "verify": "npm run db:verify && npm run lint && npm run build && npm run test:runtime && npm test",
