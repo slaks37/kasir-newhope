@@ -10,6 +10,8 @@
 
 import React, { useState } from "react";
 import "../../styles/app-theme.css";
+import {SecondFactorChallenge} from './SecondFactorChallenge';
+import {authRuntime,isNeonAuth} from '../../lib/authRuntime';
 import { useAuth } from "../../context/AuthContext";
 import {navigate} from '../../lib/navigation/workspaceRouter';
 import {readCheckoutIntent} from '../../lib/workspace/checkoutIntent';
@@ -41,7 +43,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onBackToLanding,
   initialMode = "login",
 }) => {
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail, signUpWithEmail,signInWithGoogle,mfaRequired,signOut } = useAuth();
+  const minimumPasswordLength=isNeonAuth?12:8;
 
   // URL owns the mode. A mirrored state/effect pair can overwrite navigation
   // while the next lazy route is still loading.
@@ -100,8 +103,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setError("Email dan password wajib diisi.");
       return;
     }
-    if (mode === "register" && password.length < 8) {
-      setError("Password minimal 8 karakter.");
+    if (mode === "register" && password.length < minimumPasswordLength) {
+      setError(`Password minimal ${minimumPasswordLength} karakter.`);
       return;
     }
 
@@ -202,6 +205,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setError(null);
     setIsNotRegistered(false);
   };
+
+  const handleGoogle = async () => {
+    if(loading)return;setLoading(true);setError(null);setSuccess(null);
+    try{const result=await signInWithGoogle();if(result.error)setError(result.error.message);}
+    catch{setError('Belum dapat membuka Google. Coba kembali.');}
+    finally{setLoading(false);}
+  };
+  const handleRecovery = async () => {
+    if(loading)return;setError(null);setSuccess(null);
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){setError('Isi email akun Anda terlebih dahulu.');return;}
+    setLoading(true);
+    try{
+      // Native recovery completes on the trusted HTTPS host before signing in again.
+      const origin=new URL(import.meta.env.VITE_NEWHOPE_AUTH_URL||window.location.origin).origin;
+      const result=await authRuntime.auth.resetPasswordForEmail(email.trim().toLowerCase(),{redirectTo:origin+'/reset-password'});
+      if(result.error)setError(result.error.message);
+      else setSuccess('Jika akun terdaftar, tautan pemulihan akan dikirim. Periksa inbox dan folder spam Anda.');
+    }catch{setError('Belum dapat meminta tautan pemulihan. Coba kembali.');}
+    finally{setLoading(false);}
+  };
+
+  if(mfaRequired)return <AuthLayout><SecondFactorChallenge onVerified={async()=>{const restored=await authRuntime.auth.getSession();if(restored.error)throw restored.error;}} onCancel={signOut}/></AuthLayout>;
 
   return (
     <AuthLayout register={mode === "register"} onBack={onBackToLanding}>
@@ -356,7 +381,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 autoComplete={
                   mode === "login" ? "current-password" : "new-password"
                 }
-                minLength={mode === 'register' ? 8 : undefined}
+                minLength={mode === 'register' ? minimumPasswordLength : undefined}
+                maxLength={isNeonAuth?128:undefined}
                 aria-describedby={
                   mode === "register" ? "password-hint" : undefined
                 }
@@ -378,11 +404,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
             {mode === "register" && (
               <p id="password-hint" className="nh-field-hint">
-                {mode === 'register' ? 'Gunakan minimal 8 karakter.' : 'Masukkan kata sandi akun Anda.'}
+                Gunakan minimal {minimumPasswordLength} karakter.
               </p>
             )}
           </div>
         </fieldset>
+        {isNeonAuth&&mode==='login'&&<button type="button" disabled={loading} className="nh-app-text-link" onClick={handleRecovery}>Lupa kata sandi?</button>}
         {error && (
           <div className="nh-form-alert" role="alert">
             <AlertCircle size={18} />
@@ -425,6 +452,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           )}
         </button>
       </form>
+      {isNeonAuth&&mode==='login'&&<button type="button" disabled={loading} className="nh-app-button-secondary nh-auth-submit" onClick={handleGoogle}>Lanjutkan dengan Google</button>}
       <p className="nh-auth-switch">
         {mode === "login" ? "Baru di New Hope POS?" : "Sudah punya akun?"}{" "}
         <button

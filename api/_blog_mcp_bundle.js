@@ -1,9 +1,12 @@
-// src/server/blogMcpHandler.ts
-import express from "express";
-
-// services/shared/db.ts
-import fs from "node:fs";
-import pg from "pg";
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
@@ -29,6 +32,358 @@ function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
 }
+var init_poolConfig = __esm({
+  "services/shared/poolConfig.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/betterAuthConfig.ts
+function authProvider(env = process.env) {
+  const value = env.AUTH_PROVIDER || "supabase";
+  if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+  return value;
+}
+function getAuthConfig(env = process.env) {
+  const production = env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging";
+  if (production || env.NEWHOPE_NEON_AUTH_STAGING !== "1") throw Error("NEON_AUTH_PRODUCTION_CUTOVER_DISABLED");
+  const base = new URL(env.NEWHOPE_AUTH_URL || "");
+  if (base.username || base.password || base.pathname !== "/" || base.search || base.hash || base.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(base.hostname))) throw Error("AUTH_HTTPS_ORIGIN_REQUIRED");
+  const databaseUrl = env.BETTER_AUTH_DATABASE_URL || "", db = new URL(databaseUrl), app = new URL(env.DATABASE_URL || databaseUrl);
+  const host = db.hostname.replace("-pooler", ""), expected = env.NEWHOPE_AUTH_NEON_HOST;
+  const testLocal = env.NODE_ENV === "test" && local(db.hostname);
+  if (!["postgres:", "postgresql:"].includes(db.protocol) || db.hash || db.port && db.port !== "5432" && !testLocal || [...db.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("AUTH_DATABASE_TARGET_REJECTED");
+  if (!testLocal && (!expected || host !== expected || !/^br-/.test(env.NEWHOPE_AUTH_NEON_BRANCH_ID || "") || !host.endsWith(".neon.tech"))) throw Error("AUTH_STAGING_BRANCH_REQUIRED");
+  if (app.hostname.replace("-pooler", "") !== host || app.pathname !== db.pathname) throw Error("AUTH_APPLICATION_BRANCH_MISMATCH");
+  if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 48) throw Error("AUTH_SECRET_REQUIRED");
+  const allowedOrigins = [.../* @__PURE__ */ new Set([base.origin, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").filter(Boolean)])];
+  for (const origin of allowedOrigins) {
+    const u = new URL(origin);
+    if (u.origin !== origin || u.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(u.hostname))) throw Error("AUTH_ORIGIN_REJECTED");
+  }
+  const nativeOrigins = (env.NEW_HOPE_NATIVE_ORIGINS || "").split(",").filter(Boolean);
+  if (nativeOrigins.some((o) => !["capacitor://localhost", "https://localhost"].includes(o))) throw Error("AUTH_NATIVE_ORIGIN_REJECTED");
+  const google = env.NEWHOPE_GOOGLE_CLIENT_ID && env.NEWHOPE_GOOGLE_CLIENT_SECRET ? { clientId: env.NEWHOPE_GOOGLE_CLIENT_ID, clientSecret: env.NEWHOPE_GOOGLE_CLIENT_SECRET } : void 0;
+  return { databaseUrl, baseUrl: base.origin, secret: env.BETTER_AUTH_SECRET, allowedOrigins, nativeOrigins, google };
+}
+function authDatabaseOptions(value) {
+  const u = new URL(value);
+  u.searchParams.delete("sslmode");
+  u.searchParams.delete("channel_binding");
+  return { connectionString: u.href, ssl: local(u.hostname) ? false : { rejectUnauthorized: true } };
+}
+var local;
+var init_betterAuthConfig = __esm({
+  "services/shared/betterAuthConfig.ts"() {
+    "use strict";
+    local = (host) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  }
+});
+
+// services/shared/authReturnUrl.ts
+function authReturnUrl(kind, value, baseUrl, allowedOrigins = [baseUrl]) {
+  const path = kind === "RESET" ? "/reset-password" : "/login";
+  if (value === void 0 || value === null || value === "") return baseUrl + path;
+  if (typeof value !== "string") throw Error("AUTH_CALLBACK_REJECTED");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw Error("AUTH_CALLBACK_REJECTED");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== path || !allowedOrigins.includes(url.origin) || url.href !== url.origin + path) throw Error("AUTH_CALLBACK_REJECTED");
+  return url.href;
+}
+var init_authReturnUrl = __esm({
+  "services/shared/authReturnUrl.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/betterAuthEmail.ts
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+function authEmailPayload(mail, env = process.env) {
+  const origin = new URL(mail.baseUrl), link = new URL(mail.url);
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
+  const callbacks = link.searchParams.getAll("callbackURL");
+  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
+  if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
+    throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
+  const sender = env.AUTH_EMAIL_FROM.match(/^(?:[^<>\r\n]+<)?([^<>\s@,;]+@[^<>\s@,;]+)(?:>)?$/)?.[1];
+  if (!sender || sender.split("@")[1].toLowerCase() !== env.AUTH_EMAIL_VERIFIED_DOMAIN.toLowerCase()) throw Error("AUTH_EMAIL_SENDER_REJECTED");
+  if (env.VERCEL_ENV === "preview" || env.APP_ENV === "staging") {
+    const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
+  }
+  const text2 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
+  return { payload: {
+    from: env.AUTH_EMAIL_FROM,
+    to: mail.email,
+    replyTo: "stefen@newsystem.space",
+    subject: text2,
+    text: text2 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text2 + "</title></head><body><h1>" + text2 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+  }, idempotencyKey: "newhope-auth-" + key };
+}
+async function sendBetterAuthEmail(mail) {
+  const { payload, idempotencyKey } = authEmailPayload(mail);
+  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(payload, { idempotencyKey });
+  if (response.error || !response.data?.id) throw Error("AUTH_EMAIL_DELIVERY_FAILED");
+}
+var init_betterAuthEmail = __esm({
+  "services/shared/betterAuthEmail.ts"() {
+    "use strict";
+    init_authReturnUrl();
+  }
+});
+
+// services/shared/betterAuth.ts
+import { betterAuth } from "better-auth";
+import { bearer, twoFactor } from "better-auth/plugins";
+import { createAuthMiddleware, APIError } from "better-auth/api";
+import { PostgresDialect } from "kysely";
+import pg2 from "pg";
+import { randomUUID } from "node:crypto";
+function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBetterAuthEmail) {
+  const pool = new pg2.Pool({ ...authDatabaseOptions(config.databaseUrl), ...databasePoolLimits(2) });
+  const auth = betterAuth({
+    appName: "New Hope POS",
+    baseURL: config.baseUrl,
+    basePath: "/api/auth",
+    secret: config.secret,
+    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    trustedOrigins: config.allowedOrigins || [config.baseUrl],
+    telemetry: { enabled: false },
+    logger: { disabled: true },
+    advanced: { database: { generateId: () => randomUUID() }, useSecureCookies: config.baseUrl.startsWith("https://") },
+    user: { additionalFields: { isActive: { type: "boolean", defaultValue: true, required: true, input: false }, onboarding: { type: "json", required: false, input: true } } },
+    socialProviders: config.google ? { google: config.google } : {},
+    account: { accountLinking: { enabled: false } },
+    databaseHooks: { user: { create: { after: async (user) => {
+      await pool.query("INSERT INTO newhope_auth.registration_intents(user_id) VALUES($1) ON CONFLICT DO NOTHING", [user.id]);
+    } } } },
+    session: { expiresIn: 3600, updateAge: 900, cookieCache: { enabled: false }, freshAge: 300 },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      resetPasswordTokenExpiresIn: 900,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => sendEmail({ kind: "RESET", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      expiresIn: 900,
+      sendVerificationEmail: async ({ user, url }) => sendEmail({ kind: "VERIFY", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    rateLimit: {
+      enabled: true,
+      storage: "database",
+      window: 60,
+      max: 100,
+      customRules: {
+        "/sign-in/email": { window: 60, max: 5 },
+        "/two-factor/verify-totp": { window: 60, max: 5 },
+        "/two-factor/verify-backup-code": { window: 60, max: 5 },
+        "/request-password-reset": { window: 3600, max: 3 },
+        "/send-verification-email": { window: 3600, max: 3 }
+      }
+    },
+    plugins: [bearer({ requireSignature: true }), twoFactor({
+      issuer: "New Hope POS",
+      skipVerificationOnEnable: false,
+      allowPasswordless: true,
+      accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 }
+    })],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (["/request-password-reset", "/sign-up/email", "/send-verification-email"].includes(ctx.path) && ctx.body) {
+          const reset = ctx.path === "/request-password-reset", field = reset ? "redirectTo" : "callbackURL";
+          try {
+            ctx.body[field] = authReturnUrl(reset ? "RESET" : "VERIFY", ctx.body[field], config.baseUrl, config.allowedOrigins);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Tautan kembali autentikasi tidak valid.", code: "AUTH_CALLBACK_REJECTED" });
+          }
+        }
+        if (ctx.path === "/sign-up/email" && ctx.body) {
+          const raw = ctx.body.onboarding || {};
+          ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+        }
+        if (ctx.path === "/sign-in/social" && ctx.body) {
+          let target;
+          try {
+            target = new URL(ctx.body.callbackURL || config.baseUrl + "/overview");
+          } catch {
+            throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          }
+          if (target.origin !== config.baseUrl || target.hash || target.username || target.password || !(["/overview", "/login"].includes(target.pathname) && !target.search || target.pathname === "/api/auth/native/complete" && target.searchParams.size === 1 && /^[-_A-Za-z0-9]{43}$/.test(target.searchParams.get("transaction") || ""))) throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          ctx.body.callbackURL = target.href;
+        }
+        if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
+        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes", "/two-factor/get-totp-uri", "/change-password", "/revoke-session", "/revoke-sessions", "/revoke-other-sessions", "/list-sessions"].includes(ctx.path)) {
+          const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
+          if (ctx.path === "/two-factor/enable" && current?.user && !current.user.twoFactorEnabled && Date.now() - new Date(current.session.createdAt).getTime() > 3e5) throw new APIError("FORBIDDEN", { message: "Masuk kembali sebelum menyiapkan autentikator.", code: "REAUTH_REQUIRED" });
+          if (current?.user.twoFactorEnabled) {
+            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+              WHERE session_id=$1 AND user_id=$2 AND method='totp' AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
+            if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
+          }
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (!["/two-factor/verify-totp", "/two-factor/verify-backup-code"].includes(ctx.path) || ctx.context.returned instanceof APIError) return;
+        const result = ctx.context.returned;
+        if (!result?.token || !result.user?.id) return;
+        const fresh = ctx.context.newSession;
+        const sessionToken = fresh?.session.token || result.token;
+        const userId = fresh?.user.id || result.user.id;
+        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,method,verified_at)
+          SELECT id,"userId",$3,now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
+          ON CONFLICT(session_id) DO UPDATE SET method=EXCLUDED.method,verified_at=EXCLUDED.verified_at`, [sessionToken, userId, ctx.path === "/two-factor/verify-totp" ? "totp" : "recovery"]);
+      })
+    }
+  });
+  const ready = process.env.NODE_ENV === "test" ? Promise.resolve() : pool.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_has_role(current_user,'svc_auth','MEMBER') AS auth_role,EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pos' AND c.relname='transactions' AND has_table_privilege(current_user,c.oid,'SELECT')) AS ledger_access,has_table_privilege(current_user,'internal.auth_identity_bindings','INSERT') AS mapping_write FROM pg_roles r WHERE r.rolname=current_user`).then((result) => {
+    const role = result.rows[0];
+    if (!role || role.rolsuper || role.rolbypassrls || role.rolcreaterole || role.rolcreatedb || !role.auth_role || role.ledger_access || role.mapping_write) throw Error("AUTH_DATABASE_ROLE_REJECTED");
+  });
+  void ready.catch(() => {
+  });
+  return { auth, pool, ready, close: () => pool.end() };
+}
+function getBetterAuthRuntime() {
+  return runtime ??= createBetterAuthRuntime();
+}
+var runtime;
+var init_betterAuth = __esm({
+  "services/shared/betterAuth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    init_poolConfig();
+    init_betterAuthEmail();
+    init_authReturnUrl();
+  }
+});
+
+// services/shared/authIdentity.ts
+function issuer(value) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    return fail("AUTH_IDENTITY_ISSUER_INVALID");
+  }
+  if (u.protocol !== "https:" || u.origin !== value || u.username || u.password) fail("AUTH_IDENTITY_ISSUER_INVALID");
+  return value;
+}
+function subject(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 255 || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value)) fail("AUTH_IDENTITY_SUBJECT_INVALID");
+  return value;
+}
+function verified(input) {
+  if (input.provider !== "better-auth" || input.isEmailVerified !== true || typeof input.email !== "string" || input.email.length > 320 || !/^\S+@\S+\.\S+$/.test(input.email)) return false;
+  try {
+    issuer(input.issuer);
+    subject(input.subject);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function resolveAuthIdentity(db, input) {
+  if (!verified(input)) return null;
+  const rows = (await db.query(`SELECT b.canonical_user_id FROM internal.auth_identity_bindings b
+  JOIN internal.users u ON u.id=b.canonical_user_id AND u.is_active
+  WHERE b.provider=$1 AND b.issuer=$2 AND b.provider_subject=$3 AND b.is_active`, [input.provider, input.issuer, input.subject])).rows;
+  return rows.length === 1 ? rows[0].canonical_user_id : null;
+}
+var fail;
+var init_authIdentity = __esm({
+  "services/shared/authIdentity.ts"() {
+    "use strict";
+    fail = (code) => {
+      throw Error(code);
+    };
+  }
+});
+
+// services/shared/betterAuthPrincipal.ts
+var betterAuthPrincipal_exports = {};
+__export(betterAuthPrincipal_exports, {
+  NeonIdentityError: () => NeonIdentityError,
+  authenticateNeonRequest: () => authenticateNeonRequest,
+  neonSession: () => neonSession,
+  resolveNeonSession: () => resolveNeonSession
+});
+async function neonSession(headers, runtime2 = getBetterAuthRuntime(), capture) {
+  await runtime2.ready;
+  const checked = new Headers(headers);
+  if (checked.has("authorization")) checked.delete("cookie");
+  const result = await runtime2.auth.api.getSession({ headers: checked, query: { disableCookieCache: true }, returnHeaders: true });
+  capture?.(result.headers);
+  return result.response;
+}
+async function resolveNeonSession(headers, options = {}, runtime2 = getBetterAuthRuntime()) {
+  let refreshHeaders = new Headers();
+  const config = getAuthConfig(), session = await neonSession(headers, runtime2, (h) => {
+    refreshHeaders = h;
+  });
+  if (!session?.user.emailVerified || !session.user.isActive) return null;
+  const db = runtime2.pool;
+  let subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  if (!subject2 && options.enroll) {
+    await db.query("SELECT newhope_auth.enroll_new_identity($1,$2)", [session.user.id, config.baseUrl]);
+    subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  }
+  if (!subject2) throw new NeonIdentityError("IDENTITY_MAPPING_REQUIRED");
+  const proof = (await db.query(`SELECT method,verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2 AND method IN ('totp','recovery') AND verified_at<=now()+interval '30 seconds'`, [session.session.id, session.user.id])).rows[0];
+  if (session.user.twoFactorEnabled && !proof && options.requireMfa !== false) throw new NeonIdentityError("MFA_REQUIRED");
+  const principal = { subject: subject2, email: session.user.email, isEmailVerified: true, aal: proof?.method === "totp" ? "aal2" : "aal1", ...proof?.method === "totp" ? { mfaVerifiedAt: new Date(proof.verified_at).getTime() / 1e3 } : {} };
+  return { session, principal, refreshHeaders };
+}
+async function authenticateNeonRequest(req) {
+  const config = getAuthConfig(), headers = new Headers();
+  for (const name of ["authorization", "cookie"]) if (typeof req.headers[name] === "string") headers.set(name, req.headers[name]);
+  if (!headers.has("authorization") && !headers.has("cookie")) return null;
+  if (!headers.has("authorization") && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET") && !config.allowedOrigins.includes(String(req.headers.origin || ""))) return null;
+  try {
+    return (await resolveNeonSession(headers))?.principal || null;
+  } catch (error) {
+    if (error instanceof NeonIdentityError) return null;
+    throw error;
+  }
+}
+var NeonIdentityError;
+var init_betterAuthPrincipal = __esm({
+  "services/shared/betterAuthPrincipal.ts"() {
+    "use strict";
+    init_betterAuth();
+    init_betterAuthConfig();
+    init_authIdentity();
+    NeonIdentityError = class extends Error {
+      constructor(code) {
+        super(code);
+        this.code = code;
+      }
+    };
+  }
+});
+
+// src/server/blogMcpHandler.ts
+import express from "express";
+
+// services/shared/db.ts
+init_poolConfig();
+import fs from "node:fs";
+import pg from "pg";
 
 // services/shared/databaseStartup.ts
 async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
@@ -115,6 +470,7 @@ async function connectDb(opts) {
 }
 
 // services/shared/auth.ts
+init_betterAuthConfig();
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
   return Array.isArray(value) ? String(value[0] || "") : String(value || "");
@@ -130,6 +486,13 @@ var AuthUnavailableError = class extends Error {
   }
 };
 async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
@@ -170,7 +533,7 @@ async function authenticateBearer(req) {
 }
 
 // services/blog-mcp/routes.ts
-import { createHash as createHash2, randomBytes, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/server/adminSecurity.ts
 function adminSecurityError(principal, method, now = Date.now()) {
@@ -180,7 +543,7 @@ function adminSecurityError(principal, method, now = Date.now()) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -549,7 +912,7 @@ function createBlogAutomation(getDb) {
             author_avatar=$9,reading_time_minutes=$10,tags=$11,seo=$12::jsonb,is_published=$13,is_featured=$14,updated_at=CURRENT_TIMESTAMP
             WHERE id=$15 RETURNING ${COLUMNS}`, [...values, existing.id]) : await c.query(`INSERT INTO public.blog_posts (id,slug,title,excerpt,content,category,cover_image,author_name,author_role,author_avatar,
             reading_time_minutes,tags,seo,is_published,is_featured,media_embeds) VALUES ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,'[]'::jsonb)
-            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID()]);
+            RETURNING ${COLUMNS}`, [...values, "blog-" + randomUUID2()]);
       if (existing?.is_published) changedSlugs.push(existing.slug);
       if (record.isPublished) changedSlugs.push(record.slug);
       console.info("[blog-automation]", existing ? "UPDATED" : "CREATED", record.slug, record.isPublished ? "published" : "draft");
@@ -611,34 +974,34 @@ var BLOG_MCP_TOOLS = [
 
 // services/blog-mcp/routes.ts
 var BLOG_SCOPE = "blog:write";
-var hash = (s) => createHash2("sha256").update(s).digest("hex");
+var hash = (s) => createHash3("sha256").update(s).digest("hex");
 var secret = () => randomBytes(32).toString("base64url");
 var scalar = (v, max = 2048) => typeof v === "string" && v.length <= max ? v : "";
-function fail(code) {
+function fail2(code) {
   throw new Error(code);
 }
 function blogMcpConfig() {
   const origin = new URL(process.env.BLOG_MCP_PUBLIC_ORIGIN || process.env.MCP_PUBLIC_ORIGIN || "https://kasir.newhope.space");
-  if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) fail("INVALID_BLOG_MCP_ORIGIN");
+  if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) fail2("INVALID_BLOG_MCP_ORIGIN");
   const callbacks = ["https://chatgpt.com/connector_platform_oauth_redirect", ...(process.env.BLOG_MCP_CHATGPT_REDIRECT_URIS || "").split(",").filter(Boolean)];
   for (const callback of callbacks) {
     const u = new URL(callback);
-    if (u.protocol !== "https:" || u.hostname !== "chatgpt.com" || u.username || u.password || u.hash) fail("INVALID_BLOG_MCP_CALLBACK");
+    if (u.protocol !== "https:" || u.hostname !== "chatgpt.com" || u.username || u.password || u.hash) fail2("INVALID_BLOG_MCP_CALLBACK");
   }
   return { origin: origin.origin, resource: origin.origin + "/api/blog-mcp", issuer: origin.origin + "/api/blog-mcp/oauth", callbacks };
 }
 function blogAuthorizationParams(q, c = blogMcpConfig()) {
-  if (q?.client_id !== "newhope-blog-chatgpt" || !c.callbacks.includes(scalar(q.redirect_uri))) fail("invalid_client");
-  if (q.response_type !== "code" || q.code_challenge_method !== "S256" || !/^[A-Za-z0-9_-]{43}$/.test(scalar(q.code_challenge))) fail("invalid_request");
-  if (q.resource !== c.resource) fail("invalid_target");
-  if (q.scope !== BLOG_SCOPE) fail("invalid_scope");
+  if (q?.client_id !== "newhope-blog-chatgpt" || !c.callbacks.includes(scalar(q.redirect_uri))) fail2("invalid_client");
+  if (q.response_type !== "code" || q.code_challenge_method !== "S256" || !/^[A-Za-z0-9_-]{43}$/.test(scalar(q.code_challenge))) fail2("invalid_request");
+  if (q.resource !== c.resource) fail2("invalid_target");
+  if (q.scope !== BLOG_SCOPE) fail2("invalid_scope");
   const state = scalar(q.state, 1024);
-  if (!state) fail("invalid_request");
+  if (!state) fail2("invalid_request");
   return { client_id: q.client_id, redirect_uri: q.redirect_uri, code_challenge: q.code_challenge, state };
 }
-async function editor(db, subject) {
-  const row = (await db.query("SELECT id FROM internal.internal_users WHERE sso_subject=$1 AND is_active AND role='ROLE_SUPERADMIN'", [subject])).rows[0];
-  if (!row) fail("access_denied");
+async function editor(db, subject2) {
+  const row = (await db.query("SELECT id FROM internal.internal_users WHERE sso_subject=$1 AND is_active AND role='ROLE_SUPERADMIN'", [subject2])).rows[0];
+  if (!row) fail2("access_denied");
   return row;
 }
 var writeTools = /* @__PURE__ */ new Set(["create_post", "update_post", "unpublish_post"]);
@@ -667,11 +1030,11 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
   const route = (method, path, fn) => app[method](path, (req, res, next) => Promise.resolve().then(() => fn(req, res)).catch(next));
   const audit = (cx, id, event, tool = null, slug = null) => cx.query("INSERT INTO blog_mcp_private.audit(connection_id,event,tool,slug) VALUES($1,$2,$3,$4)", [id, event, tool, slug]);
   const owner = async (req) => {
-    if (req.method === "POST" && req.headers.origin !== config.origin) fail("access_denied");
+    if (req.method === "POST" && req.headers.origin !== config.origin) fail2("access_denied");
     const p = await authenticate(req);
-    if (!p || p.subject === "local-development") fail("unauthorized");
+    if (!p || p.subject === "local-development") fail2("unauthorized");
     const security = adminSecurityError(p, req.method);
-    if (security) fail(security);
+    if (security) fail2(security);
     await editor(db, p.subject);
     return p;
   };
@@ -700,7 +1063,7 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
   }));
   route("post", base + "/register", (req, res) => {
     const b = req.body;
-    if (!Array.isArray(b?.redirect_uris) || b.redirect_uris.length !== 1 || !config.callbacks.includes(b.redirect_uris[0]) || b.token_endpoint_auth_method && b.token_endpoint_auth_method !== "none") fail("invalid_client_metadata");
+    if (!Array.isArray(b?.redirect_uris) || b.redirect_uris.length !== 1 || !config.callbacks.includes(b.redirect_uris[0]) || b.token_endpoint_auth_method && b.token_endpoint_auth_method !== "none") fail2("invalid_client_metadata");
     return res.status(201).json({ client_id: "newhope-blog-chatgpt", client_name: "New Hope Blog \u2014 ChatGPT", redirect_uris: b.redirect_uris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
   });
   route("get", base + "/authorize", (req, res) => {
@@ -722,11 +1085,11 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
       redirect.searchParams.set("error", "access_denied");
       return res.json({ redirect: redirect.href });
     }
-    const code = secret(), id = randomUUID2();
+    const code = secret(), id = randomUUID3();
     await db.tx(async (cx) => {
       await cx.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["blog-mcp:" + p.subject]);
       const n = (await cx.query("SELECT count(*)::int AS n FROM blog_mcp_private.connections WHERE owner_ref=$1 AND created_at>now()-interval '1 hour'", [p.subject])).rows[0].n;
-      if (n >= 10) fail("rate_limited");
+      if (n >= 10) fail2("rate_limited");
       await editor(cx, p.subject);
       await cx.query("INSERT INTO blog_mcp_private.connections(id,owner_ref,client_id,resource,scope,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '3 years')", [id, p.subject, a.client_id, config.resource, BLOG_SCOPE]);
       await cx.query("INSERT INTO blog_mcp_private.credentials(hash,connection_id,kind,redirect_uri,challenge,expires_at) VALUES($1,$2,'code',$3,$4,now()+interval '5 minutes')", [hash(code), id, a.redirect_uri, a.code_challenge]);
@@ -737,7 +1100,7 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
   });
   route("post", base + "/disconnect", async (req, res) => {
     const p = await owner(req), id = scalar(req.body?.id, 36);
-    if (!/^[0-9a-f-]{36}$/i.test(id)) fail("invalid_request");
+    if (!/^[0-9a-f-]{36}$/i.test(id)) fail2("invalid_request");
     await db.tx(async (cx) => {
       const row = (await cx.query("UPDATE blog_mcp_private.connections SET revoked_at=now() WHERE id=$1 AND owner_ref=$2 AND revoked_at IS NULL RETURNING id", [id, p.subject])).rows[0];
       if (row) await audit(cx, id, "owner_revoked");
@@ -746,18 +1109,18 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
   });
   route("post", base + "/token", async (req, res) => {
     const b = req.body;
-    if (b?.client_id !== "newhope-blog-chatgpt") fail("invalid_client");
-    if (b.resource !== config.resource) fail("invalid_target");
-    if (b.scope !== void 0 && b.scope !== BLOG_SCOPE) fail("invalid_scope");
+    if (b?.client_id !== "newhope-blog-chatgpt") fail2("invalid_client");
+    if (b.resource !== config.resource) fail2("invalid_target");
+    if (b.scope !== void 0 && b.scope !== BLOG_SCOPE) fail2("invalid_scope");
     const isCode = b.grant_type === "authorization_code";
-    if (!isCode && b.grant_type !== "refresh_token") fail("unsupported_grant_type");
+    if (!isCode && b.grant_type !== "refresh_token") fail2("unsupported_grant_type");
     const raw = scalar(isCode ? b.code : b.refresh_token, 128);
-    if (!raw) fail("invalid_grant");
+    if (!raw) fail2("invalid_grant");
     const result = await db.tx(async (cx) => {
       const k = (await cx.query(`SELECT k.*,c.owner_ref,c.client_id,c.resource,c.scope,c.revoked_at,c.expires_at AS connection_expiry
         FROM blog_mcp_private.credentials k JOIN blog_mcp_private.connections c ON c.id=k.connection_id WHERE k.hash=$1 FOR UPDATE OF c,k`, [hash(raw)])).rows[0];
       if (!k || k.resource !== config.resource || k.scope !== BLOG_SCOPE || k.client_id !== b.client_id || k.kind !== (isCode ? "code" : "refresh")) return null;
-      if (isCode && (!/^[A-Za-z0-9._~-]{43,128}$/.test(scalar(b.code_verifier, 128)) || createHash2("sha256").update(b.code_verifier).digest("base64url") !== k.challenge || b.redirect_uri !== k.redirect_uri)) return null;
+      if (isCode && (!/^[A-Za-z0-9._~-]{43,128}$/.test(scalar(b.code_verifier, 128)) || createHash3("sha256").update(b.code_verifier).digest("base64url") !== k.challenge || b.redirect_uri !== k.redirect_uri)) return null;
       if (k.consumed_at) {
         await cx.query("UPDATE blog_mcp_private.connections SET revoked_at=now() WHERE id=$1", [k.connection_id]);
         await audit(cx, k.connection_id, "credential_replay_revoked");
@@ -771,11 +1134,11 @@ function registerBlogMcpRoutes(app, db, authenticate = authenticateBearer) {
       await audit(cx, k.connection_id, isCode ? "connected" : "token_refreshed");
       return { access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: Math.min(3600, Math.floor((Date.parse(k.connection_expiry) - Date.now()) / 1e3)), scope: BLOG_SCOPE };
     });
-    if (!result) fail("invalid_grant");
+    if (!result) fail2("invalid_grant");
     res.json(result);
   });
   route("post", base + "/revoke", async (req, res) => {
-    if (req.body?.client_id !== "newhope-blog-chatgpt") fail("invalid_client");
+    if (req.body?.client_id !== "newhope-blog-chatgpt") fail2("invalid_client");
     await db.tx(async (cx) => {
       const rows = (await cx.query(`UPDATE blog_mcp_private.connections SET revoked_at=now() WHERE client_id=$1 AND revoked_at IS NULL AND id IN
         (SELECT connection_id FROM blog_mcp_private.credentials WHERE hash=$2 AND kind IN ('access','refresh')) RETURNING id`, [req.body.client_id, hash(scalar(req.body.token, 128))])).rows;
@@ -875,13 +1238,13 @@ function normalizeVercelUrl(req) {
 
 // src/server/blogMcpHandler.ts
 function createBlogMcpHandler(connect = () => connectDb({ schema: "blog_mcp_private", max: 2 }), authenticate = authenticateBearer) {
-  let runtime;
+  let runtime2;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     if (process.env.BLOG_MCP_ENABLED === "false") return res.status(503).json({ error: "BLOG_MCP_DISABLED" });
     try {
-      runtime ??= connect().then((db) => {
+      runtime2 ??= connect().then((db) => {
         const app = express();
         app.disable("x-powered-by");
         const json = express.json({ limit: "768kb" }), form = express.urlencoded({ extended: false, limit: "16kb" });
@@ -911,10 +1274,10 @@ function createBlogMcpHandler(connect = () => connectDb({ schema: "blog_mcp_priv
         });
         return app;
       }).catch((error) => {
-        runtime = void 0;
+        runtime2 = void 0;
         throw error;
       });
-      (await runtime)(req, res);
+      (await runtime2)(req, res);
     } catch {
       res.status(503).json({ error: "BLOG_MCP_UNAVAILABLE" });
     }

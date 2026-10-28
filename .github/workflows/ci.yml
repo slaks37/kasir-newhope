@@ -24,3 +24,7 @@ jobs:
         run: npm run verify
       - name: Committed Vercel bundles match source
         run: git diff --exit-code -- api/
+      - name: Neon web/PWA build excludes legacy Auth
+        run: |
+          VITE_AUTH_PROVIDER=neon VITE_NEWHOPE_AUTH_URL=https://unconfigured.invalid/api/auth npx vite build
+          node scripts/mobile/check-neon-auth-bundle.mjs dist

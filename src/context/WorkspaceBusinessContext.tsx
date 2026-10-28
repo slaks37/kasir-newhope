@@ -1,4 +1,5 @@
 import React,{createContext,useContext,useEffect,useState,useRef,useCallback} from 'react';
+import {isNeonAuth} from '../lib/authRuntime';
 import {useAuth} from './AuthContext';
 import {useBusinessDirectory,type Directory} from '../lib/workspace/businessDirectory';
 import {selectionKey,verifiedSelection,type BusinessSelection} from '../lib/workspace/selection';
@@ -17,7 +18,7 @@ export function useWorkspaceBusiness(){const value=useContext(Context);if(!value
 /** Identity bootstrap mounts no operational/financial stores until membership
  * is verified. Remounting a selected namespace cancels outgoing hydration. */
 export function WorkspaceBusinessProvider({children}:{children:React.ReactNode}){
-  const {user}=useAuth();const owner=user!.id;
+  const {user,session}=useAuth();const owner=user!.id;
   const networkOnline=useOnline();
   const {directory,error,verified:directoryVerified,offlineExpiresAt:directoryOfflineExpiry}=useBusinessDirectory(owner);
   const [offlineBootstrap]=useState(()=>!navigator.onLine?readOfflineBootstrap(owner):null);
@@ -29,7 +30,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     if(import.meta.env.VITE_MODULE_WORKSPACES==='1')return;
     const controller=new AbortController();
     const run=async()=>{try{
-      const data=await coalescedRead('subscription:'+owner,async()=>{const response=await fetch('/api/v1/subscription/status',{cache:'no-store',signal:AbortSignal.timeout(15000)});if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');const result=await response.json();if(!response.ok||!result.ok||!result.subscription)throw Error('SUBSCRIPTION_UNAVAILABLE');return result;},controller.signal);
+      const data=await coalescedRead('subscription:'+owner,async()=>{const response=await fetch('/api/v1/subscription/status',{cache:'no-store',signal:AbortSignal.timeout(15000)});const result=await response.json();if(response.status===403&&result.error==='STAFF_WORKSPACE_SELECTION_REQUIRED')throw Error(result.error);if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');if(!response.ok||!result.ok||!result.subscription)throw Error('SUBSCRIPTION_UNAVAILABLE');return result;},controller.signal);
       if(!controller.signal.aborted){setSubscription(previous=>JSON.stringify(previous)===JSON.stringify(data.subscription)?previous:data.subscription);setSubscriptionVerified(true);setAccountError('');}
     }catch(error){if(!controller.signal.aborted)setAccountError(error instanceof Error?error.message:'SUBSCRIPTION_UNAVAILABLE');}};
     const unsubscribe=refreshCoordinator.register('subscription:'+owner,{run,interval:120000,events:['subscription-updated']});
@@ -41,9 +42,10 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
       try{saveVerifiedBootstrap(owner,directory,subscription);}catch{console.warn('[workspace] Offline metadata cache unavailable; cloud data unchanged');}
     }
   },[owner,directoryVerified,subscriptionVerified,directory,subscription,error,accountError]);
-  const offlineExpiresAt=React.useMemo(()=>!networkOnline?readOfflineBootstrap(owner)?.expiresAt:
+  const authExpiry=isNeonAuth?session?.expires_at?session.expires_at*1000:0:Infinity;
+  const offlineExpiresAt=React.useMemo(()=>!networkOnline?Math.min(readOfflineBootstrap(owner)?.expiresAt||0,authExpiry)||undefined:
     !directoryVerified||!subscriptionVerified?Math.min(directoryOfflineExpiry||0,offlineBootstrap?.expiresAt||0)||undefined:undefined,
-    [networkOnline,owner,directoryVerified,subscriptionVerified,directoryOfflineExpiry,offlineBootstrap]);
+    [networkOnline,owner,directoryVerified,subscriptionVerified,directoryOfflineExpiry,offlineBootstrap,authExpiry]);
   const [hint,setHint]=useState<BusinessSelection|null>(()=>{try{return JSON.parse(localStorage.getItem(selectionKey(owner))||'null');}catch{return null;}});
   const [name,setName]=useState(user?.user_metadata?.store_name||'Toko Saya');
   const [sector,setSector]=useState<BusinessSector>(user?.user_metadata?.business_sector||'FNB');
@@ -73,6 +75,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||'BUSINESS_SETUP_FAILED');
     setHint({businessId:data.merchantId});window.dispatchEvent(new Event('outlets-updated'));
   }catch(error){setSetupError(error instanceof Error?error.message:'BUSINESS_SETUP_FAILED');}finally{setBusy(false);}};
+  if(accountError==='STAFF_WORKSPACE_SELECTION_REQUIRED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akun staf ini sudah terhubung ke bisnis. Ruang kerja staf belum diaktifkan pada lingkungan ini. Hubungi pemilik bisnis; akun staf tidak otomatis membuat toko atau langganan baru.</p></main>;
   if(error==='WORKSPACE_ACCESS_REVOKED'||accountError==='WORKSPACE_ACCESS_REVOKED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akses bisnis perlu diverifikasi kembali. Cache dan antrean tetap disimpan; data tidak dikirim sampai akses diizinkan server.</p></main>;
   if(directory?.workspaceAuth&&!directory.tenantId&&directory.tenants?.length)return <main className="p-8 space-y-3"><h1>Pilih organisasi</h1>{directory.tenants.map(t=><button key={t.tenantId} className="block border rounded p-3" onClick={()=>{localStorage.setItem('newhope_directory_tenant_'+owner,t.tenantId);window.dispatchEvent(new Event('outlets-updated'));}}>{t.name}</button>)}</main>;
   if(directory?.workspaceAuth&&directory.tenantId&&!subscription)return <main role="alert" className="p-8">Paket organisasi belum tersedia. Minta pemilik memeriksa langganan.</main>;

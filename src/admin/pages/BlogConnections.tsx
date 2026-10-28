@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import {authRuntime,authHeaders} from '../../lib/authRuntime';
 
 type Overview = {
   endpoint: string;
@@ -7,10 +7,11 @@ type Overview = {
   events: {event:string;tool:string|null;slug:string|null;created_at:string}[];
 };
 async function request(path:string,body?:unknown,signal?:AbortSignal) {
-  const { data }=await supabase.auth.getSession();
+  const {data,error}=await authRuntime.auth.getSession();
+  if(error)throw Error(error.message);
   if (!data.session) throw new Error('Masuk kembali sebagai Superadmin.');
   const r=await fetch('/api/blog-mcp/'+path,{method:body?'POST':'GET',signal,
-    headers:{Authorization:'Bearer '+data.session.access_token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+    credentials:'same-origin',headers:{...authHeaders(data.session),...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   const result=await r.json();
   if (!r.ok) {
     if (['MFA_REQUIRED','REAUTH_REQUIRED'].includes(result.error)) {

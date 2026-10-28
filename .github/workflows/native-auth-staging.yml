@@ -1,0 +1,49 @@
+name: Native auth staging artifacts
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-auth-staging.yml'
+      - 'mobile/auth-staging.public.json'
+      - 'scripts/mobile/build-auth-staging.mjs'
+      - 'scripts/mobile/check-auth-staging-api.mjs'
+      - 'src/lib/auth/**'
+      - 'src/platform/runtime/**'
+permissions:
+  contents: read
+jobs:
+  android-staging:
+    if: github.head_ref == 'codex/neon-auth-cross-platform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 21}
+      - run: npm ci
+      - run: node scripts/mobile/check-auth-staging-api.mjs
+      - run: node scripts/mobile/build-auth-staging.mjs
+      - run: ./gradlew assembleDebug lintDebug
+        working-directory: android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-neon-auth-staging-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+  ios-staging:
+    if: github.head_ref == 'codex/neon-auth-cross-platform'
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: node scripts/mobile/build-auth-staging.mjs
+      - run: xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios-auth-staging CODE_SIGNING_ALLOWED=NO build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-neon-auth-staging-ios-simulator
+          path: build/ios-auth-staging/Build/Products/Debug-iphonesimulator/App.app
+          retention-days: 7
