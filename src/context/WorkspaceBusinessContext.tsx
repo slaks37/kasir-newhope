@@ -1,4 +1,5 @@
 import React,{createContext,useContext,useEffect,useState,useRef,useCallback} from 'react';
+import {isNeonAuth} from '../lib/authRuntime';
 import {useAuth} from './AuthContext';
 import {useBusinessDirectory,type Directory} from '../lib/workspace/businessDirectory';
 import {selectionKey,verifiedSelection,type BusinessSelection} from '../lib/workspace/selection';
@@ -17,7 +18,7 @@ export function useWorkspaceBusiness(){const value=useContext(Context);if(!value
 /** Identity bootstrap mounts no operational/financial stores until membership
  * is verified. Remounting a selected namespace cancels outgoing hydration. */
 export function WorkspaceBusinessProvider({children}:{children:React.ReactNode}){
-  const {user}=useAuth();const owner=user!.id;
+  const {user,session}=useAuth();const owner=user!.id;
   const networkOnline=useOnline();
   const {directory,error,verified:directoryVerified,offlineExpiresAt:directoryOfflineExpiry}=useBusinessDirectory(owner);
   const [offlineBootstrap]=useState(()=>!navigator.onLine?readOfflineBootstrap(owner):null);
@@ -41,9 +42,10 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
       try{saveVerifiedBootstrap(owner,directory,subscription);}catch{console.warn('[workspace] Offline metadata cache unavailable; cloud data unchanged');}
     }
   },[owner,directoryVerified,subscriptionVerified,directory,subscription,error,accountError]);
-  const offlineExpiresAt=React.useMemo(()=>!networkOnline?readOfflineBootstrap(owner)?.expiresAt:
+  const authExpiry=isNeonAuth?session?.expires_at?session.expires_at*1000:0:Infinity;
+  const offlineExpiresAt=React.useMemo(()=>!networkOnline?Math.min(readOfflineBootstrap(owner)?.expiresAt||0,authExpiry)||undefined:
     !directoryVerified||!subscriptionVerified?Math.min(directoryOfflineExpiry||0,offlineBootstrap?.expiresAt||0)||undefined:undefined,
-    [networkOnline,owner,directoryVerified,subscriptionVerified,directoryOfflineExpiry,offlineBootstrap]);
+    [networkOnline,owner,directoryVerified,subscriptionVerified,directoryOfflineExpiry,offlineBootstrap,authExpiry]);
   const [hint,setHint]=useState<BusinessSelection|null>(()=>{try{return JSON.parse(localStorage.getItem(selectionKey(owner))||'null');}catch{return null;}});
   const [name,setName]=useState(user?.user_metadata?.store_name||'Toko Saya');
   const [sector,setSector]=useState<BusinessSector>(user?.user_metadata?.business_sector||'FNB');

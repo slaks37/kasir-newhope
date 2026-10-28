@@ -9,7 +9,7 @@ const Workspace=lazy(()=>import('./Workspace').then(m=>({default:m.Workspace})))
 const TabLoading=()=> <div className="min-h-screen grid place-items-center" role="status">Memuat halaman…</div>;
 
 export function App() {
-  const {user,loading,restoreError,signOut}=useAuth();
+  const {user,session,loading,restoreError,signOut}=useAuth();
   const route=useWorkspaceRoute(),pathname=route.split('?')[0];
   const destination=guardedPath(route,Boolean(user));
   React.useEffect(()=>{if(!loading&&!restoreError&&destination!==route)navigate(destination,true);},[loading,restoreError,destination,route]);
@@ -23,7 +23,7 @@ export function App() {
   if(!user&&(pathname==='/login'||pathname==='/register'))return <Suspense fallback={<TabLoading/>}><LoginPage onBackToLanding={handleGoToLanding} initialMode={pathname==='/register'?'register':'login'}/></Suspense>;
   // The blog is server-rendered (src/server/blogPages.ts); a client-side visit (old #blog links) loads the real page.
   if(pathname==='/blog'||pathname.startsWith('/blog/'))return <BlogRedirect path={route}/>;
-  return <Suspense fallback={<TabLoading/>}><Workspace userId={user!.id} onGoToHome={handleGoToLanding} onLogout={handleLogout}/></Suspense>;
+  return <>{session?.offlineRecovery&&<p role="status" className="bg-amber-100 px-4 py-2 text-sm">Mode offline untuk data perangkat dan antrean sampai {new Date((session.expires_at||0)*1000).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})}. Sinkronisasi, perubahan akun dan MFA memerlukan jaringan dan verifikasi ulang.</p>}<Suspense fallback={<TabLoading/>}><Workspace userId={user!.id} onGoToHome={handleGoToLanding} onLogout={handleLogout}/></Suspense></>;
 }
 /** One full-page hop to the server-rendered blog; a second arrival here (no server route, e.g. offline) shows a link instead of looping. */
 function BlogRedirect({path}:{path:string}){

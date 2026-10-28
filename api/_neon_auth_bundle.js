@@ -1,3 +1,32 @@
+// services/shared/offlineIdentity.ts
+import { createECDH, createHmac, createPrivateKey, createPublicKey, createHash, sign } from "node:crypto";
+
+// src/lib/auth/offlineIdentity.ts
+var OFFLINE_MAX_SECONDS = 3600;
+
+// services/shared/offlineIdentity.ts
+function offlineIdentityKeys(secret, issuer2) {
+  if (secret.length < 48 || new URL(issuer2).origin !== issuer2) throw Error("OFFLINE_SIGNER_CONFIG_INVALID");
+  const seed = createHmac("sha256", secret).update("newhope-offline-ui-signing-v1\0" + issuer2).digest();
+  const order = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+  const d = Buffer.from((BigInt("0x" + seed.toString("hex")) % (order - 1n) + 1n).toString(16).padStart(64, "0"), "hex");
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(d);
+  const publicBytes = ecdh.getPublicKey(void 0, "uncompressed");
+  const jwk = { kty: "EC", crv: "P-256", x: publicBytes.subarray(1, 33).toString("base64url"), y: publicBytes.subarray(33).toString("base64url"), d: d.toString("base64url") };
+  const privateKey = createPrivateKey({ key: jwk, format: "jwk" }), pub = createPublicKey(privateKey).export({ format: "jwk" });
+  const publicKey = { kty: "EC", crv: "P-256", x: pub.x, y: pub.y, kid: createHash("sha256").update(pub.x + "." + pub.y).digest("base64url").slice(0, 16) };
+  return { privateKey, publicKey };
+}
+function issueOfflineIdentity(input, now = Date.now()) {
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(input.device) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(input.user.id) || !input.sessionId || input.sessionId.length > 255) throw Error("OFFLINE_RECEIPT_INPUT_INVALID");
+  const iat = Math.floor(now / 1e3), sessionExp = Math.floor(new Date(input.expiresAt).getTime() / 1e3), exp = Math.min(iat + OFFLINE_MAX_SECONDS, sessionExp);
+  if (!Number.isFinite(exp) || exp <= iat) throw Error("OFFLINE_SESSION_EXPIRED");
+  const { privateKey, publicKey } = offlineIdentityKeys(input.secret, input.issuer), claims = { v: 1, aud: "newhope-offline-ui", iss: input.issuer, sub: input.user.id, sid: input.sessionId, device: input.device, iat, exp, sessionExp, user: { id: input.user.id, email: input.user.email, twoFactorEnabled: input.user.twoFactorEnabled, passwordCredential: input.user.passwordCredential, providers: input.user.providers, user_metadata: Object.fromEntries(Object.entries(input.user.user_metadata).filter(([k, v]) => ["full_name", "store_name", "business_sector"].includes(k) && typeof v === "string" && v.length <= 150)) } };
+  const encode = (v) => Buffer.from(JSON.stringify(v)).toString("base64url"), body = encode({ alg: "ES256", typ: "NH-OFFLINE-UI", kid: publicKey.kid }) + "." + encode(claims);
+  return body + "." + sign("sha256", Buffer.from(body), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+}
+
 // services/shared/betterAuth.ts
 import { betterAuth } from "better-auth";
 import { bearer, twoFactor } from "better-auth/plugins";
@@ -53,7 +82,7 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
 }
 
 // services/shared/betterAuthEmail.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { Resend } from "resend";
 
 // services/shared/authReturnUrl.ts
@@ -90,7 +119,7 @@ function authEmailPayload(mail, env = process.env) {
   }
   const text = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
   const safeUrl = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
+  const key = createHash2("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
   return { payload: {
     from: env.AUTH_EMAIL_FROM,
     to: mail.email,
@@ -292,9 +321,9 @@ async function resolveNeonSession(headers, options = {}, runtime2 = getBetterAut
 }
 
 // services/shared/nativeAuthState.ts
-import { createCipheriv, createDecipheriv, createHash as createHash2, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash as createHash3, randomBytes } from "node:crypto";
 function sealAuthState(value, secret, purpose, ttl = 300, now = Date.now()) {
-  const iv = randomBytes(12), key = createHash2("sha256").update(secret).digest(), cipher = createCipheriv("aes-256-gcm", key, iv);
+  const iv = randomBytes(12), key = createHash3("sha256").update(secret).digest(), cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(Buffer.from(purpose));
   const bytes = Buffer.concat([cipher.update(JSON.stringify({ value, expires: now + ttl * 1e3 })), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), bytes]).toString("base64url");
@@ -303,7 +332,7 @@ function openAuthState(value, secret, purpose, now = Date.now()) {
   if (value.length > 16384) throw Error("AUTH_STATE_REJECTED");
   const bytes = Buffer.from(value, "base64url");
   if (bytes.length < 29) throw Error("AUTH_STATE_REJECTED");
-  const decipher = createDecipheriv("aes-256-gcm", createHash2("sha256").update(secret).digest(), bytes.subarray(0, 12));
+  const decipher = createDecipheriv("aes-256-gcm", createHash3("sha256").update(secret).digest(), bytes.subarray(0, 12));
   decipher.setAAD(Buffer.from(purpose));
   decipher.setAuthTag(bytes.subarray(12, 28));
   const parsed = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString());
@@ -342,8 +371,8 @@ function normalizeVercelUrl(req) {
 }
 
 // src/server/nativeAuthRoutes.ts
-import { createHash as createHash3, randomBytes as randomBytes2 } from "node:crypto";
-var digest = (v) => createHash3("sha256").update(v).digest("base64url");
+import { createHash as createHash4, randomBytes as randomBytes2 } from "node:crypto";
+var digest = (v) => createHash4("sha256").update(v).digest("base64url");
 var callback = "space.newhope.kasir://auth/callback";
 async function throttle(c) {
   const now = Date.now(), key = "native:" + digest((c.headers.get("x-forwarded-for") || "unknown") + c.url.pathname), r = await c.runtime.pool.query(`INSERT INTO newhope_auth."rateLimit"(id,key,count,"lastRequest") VALUES($1,$1,1,$2)
@@ -463,10 +492,10 @@ function createNeonAuthHandler(runtime2 = getBetterAuthRuntime) {
       if (origin && !(native ? config.nativeOrigins : config.allowedOrigins).includes(origin)) return res.status(403).json({ error: "AUTH_ORIGIN_REJECTED" });
       if (native) {
         const requested = String(req.headers["access-control-request-headers"] || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-        if (requested.some((h) => !["authorization", "content-type", "x-newhope-auth-state"].includes(h))) return res.status(403).json({ error: "AUTH_CORS_REJECTED" });
+        if (requested.some((h) => !["authorization", "content-type", "x-newhope-auth-state", "x-newhope-offline-device"].includes(h))) return res.status(403).json({ error: "AUTH_CORS_REJECTED" });
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Vary", "Origin");
-        res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Newhope-Auth-State");
+        res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Newhope-Auth-State, X-Newhope-Offline-Device");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         res.setHeader("Access-Control-Expose-Headers", "set-auth-token, X-Newhope-Auth-State");
       }
@@ -521,7 +550,11 @@ function createNeonAuthHandler(runtime2 = getBetterAuthRuntime) {
           if (cookies3.length) res.setHeader("set-cookie", cookies3);
         }
         const accounts = (await r.pool.query('SELECT "providerId",password IS NOT NULL AS credential FROM newhope_auth.account WHERE "userId"=$1', [session.user.id])).rows;
-        return res.json({ user: { id: principal.subject, email: principal.email, emailVerified: true, twoFactorEnabled: session.user.twoFactorEnabled === true, passwordCredential: accounts.some((a) => a.providerId === "credential" && a.credential), providers: accounts.map((a) => a.providerId), user_metadata: { ...session.user.onboarding || {}, full_name: session.user.name } }, session: { id: session.session.id, expiresAt: session.session.expiresAt, aal: principal.aal, mfaVerifiedAt: principal.mfaVerifiedAt } });
+        const identity = { user: { id: principal.subject, email: principal.email, emailVerified: true, twoFactorEnabled: session.user.twoFactorEnabled === true, passwordCredential: accounts.some((a) => a.providerId === "credential" && a.credential), providers: accounts.map((a) => a.providerId), user_metadata: { ...session.user.onboarding || {}, full_name: session.user.name } }, session: { id: session.session.id, expiresAt: session.session.expiresAt, aal: principal.aal, mfaVerifiedAt: principal.mfaVerifiedAt } };
+        const device = String(req.headers["x-newhope-offline-device"] || "");
+        if (device && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(device)) return res.status(400).json({ error: "OFFLINE_DEVICE_REJECTED" });
+        const offlineReceipt = device ? issueOfflineIdentity({ secret: config.secret, issuer: config.baseUrl, device, sessionId: session.session.id, expiresAt: session.session.expiresAt, user: { ...identity.user, user_metadata: Object.fromEntries(Object.entries(identity.user.user_metadata).filter((entry) => typeof entry[1] === "string")) } }) : void 0;
+        return res.json({ ...identity, ...offlineReceipt ? { offlineReceipt } : {} });
       }
       const response = await r.auth.handler(new Request(config.baseUrl + path + url.search, { method: req.method, headers, body: bytes }));
       const result = Buffer.from(await response.arrayBuffer());

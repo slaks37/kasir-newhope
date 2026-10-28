@@ -1,3 +1,4 @@
+import {offlinePublicKey} from './src/lib/auth/offlineIdentity';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -41,6 +42,7 @@ const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({mode}) => {
  const env={...loadEnv(mode,projectDir,'VITE_'),...process.env};
+ if(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY)offlinePublicKey(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY);
   return {
     plugins: [react(), tailwindcss(), cashierServiceWorker()],
     resolve: {

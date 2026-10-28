@@ -11,7 +11,9 @@ import {createBetterAuthRuntime} from '../../services/shared/betterAuth';
 import {getAuthConfig} from '../../services/shared/betterAuthConfig';
 import {createNeonAuthHandler} from '../../src/server/neonAuthHandler';
 import {sealAuthState,openAuthState} from '../../services/shared/nativeAuthState';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {offlineIdentityKeys} from '../../services/shared/offlineIdentity';
+import {verifyOfflineIdentity} from '../../src/lib/auth/offlineIdentity';
 const pg=new PGlite();await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
 for(const file of migrationFiles())await pg.exec(fs.readFileSync(file.path,'utf8'));
 const wire=new PGLiteSocketServer({db:pg,port:0,host:'127.0.0.1',maxConnections:6});await wire.start();
@@ -30,6 +32,11 @@ try{
  const verify=new URL(mail[0].url);const verified=await fetch(origin+verify.pathname+verify.search,{headers:{origin:base},redirect:'manual'});assert(verified.status<400);
  const login=await call('/sign-in/email',{email:'new-user@fixture.invalid',password:'Synthetic-Password-For-Tests-2026'});assert.equal(login.status,200);const signed=cookie.split('; ').find(v=>v.includes('session_token='))?.split('=').slice(1).join('=');assert(signed);
  const identity=await (await call('/identity')).json();assert.match(identity.user.id,/^[a-f0-9-]{36}$/);assert.equal(identity.user.emailVerified,true);assert.equal(identity.user.passwordCredential,true);
+ const offlineDevice=randomUUID(),receiptIdentity=await (await call('/identity',undefined,{'x-newhope-offline-device':offlineDevice})).json();
+ const offlineClaims=await verifyOfflineIdentity(receiptIdentity.offlineReceipt,offlineIdentityKeys(getAuthConfig().secret,base).publicKey,base,offlineDevice);
+ assert.equal(offlineClaims.sub,identity.user.id);assert.equal(offlineClaims.sid,identity.session.id);
+ assert.equal((await call('/identity',undefined,{authorization:'Bearer '+receiptIdentity.offlineReceipt})).status,401,'A signed offline UI receipt cannot authenticate an API request');
+ assert.equal((await call('/identity',undefined,{'x-newhope-offline-device':'forged-device'})).status,400);
  const provider=(await runtime.pool.query('SELECT id FROM newhope_auth."user"')).rows[0].id;assert.notEqual(provider,identity.user.id,'Canonical UUID is independent from provider ID');assert.equal((await pg.query<{n:number}>('SELECT count(*)::int AS n FROM internal.tenants')).rows[0].n,0);
  assert.equal((await call('/identity',undefined,{authorization:'Bearer forged'})).status,401,'Never downgrade a forged bearer to another cookie session');
  // Mutations obey the same explicit-bearer principal rule as identity.

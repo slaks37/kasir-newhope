@@ -1,3 +1,4 @@
+import {issueOfflineIdentity} from '../../services/shared/offlineIdentity';
 import {getBetterAuthRuntime} from '../../services/shared/betterAuth';
 import {authProvider,getAuthConfig} from '../../services/shared/betterAuthConfig';
 import {resolveNeonSession,NeonIdentityError} from '../../services/shared/betterAuthPrincipal';
@@ -16,8 +17,8 @@ export function createNeonAuthHandler(runtime=getBetterAuthRuntime){return async
   if(origin&&!(native?config.nativeOrigins:config.allowedOrigins).includes(origin))return res.status(403).json({error:'AUTH_ORIGIN_REJECTED'});
   if(native){
    const requested=String(req.headers['access-control-request-headers']||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
-   if(requested.some(h=>!['authorization','content-type','x-newhope-auth-state'].includes(h)))return res.status(403).json({error:'AUTH_CORS_REJECTED'});
-   res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type, X-Newhope-Auth-State');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Expose-Headers','set-auth-token, X-Newhope-Auth-State');
+   if(requested.some(h=>!['authorization','content-type','x-newhope-auth-state','x-newhope-offline-device'].includes(h)))return res.status(403).json({error:'AUTH_CORS_REJECTED'});
+   res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type, X-Newhope-Auth-State, X-Newhope-Offline-Device');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Expose-Headers','set-auth-token, X-Newhope-Auth-State');
   }
   if(req.method==='OPTIONS')return res.status(204).end();
   if(req.method==='POST'&&!origin)return res.status(403).json({error:'AUTH_ORIGIN_REQUIRED'});
@@ -45,7 +46,11 @@ export function createNeonAuthHandler(runtime=getBetterAuthRuntime){return async
    const {session,principal,refreshHeaders}=verified;
    if(native){const token=refreshHeaders.get('set-auth-token');if(token)res.setHeader('set-auth-token',token);}else{const cookies=refreshHeaders.getSetCookie();if(cookies.length)res.setHeader('set-cookie',cookies);}
    const accounts=(await r.pool.query('SELECT "providerId",password IS NOT NULL AS credential FROM newhope_auth.account WHERE "userId"=$1',[session.user.id])).rows;
-   return res.json({user:{id:principal.subject,email:principal.email,emailVerified:true,twoFactorEnabled:session.user.twoFactorEnabled===true,passwordCredential:accounts.some(a=>a.providerId==='credential'&&a.credential),providers:accounts.map(a=>a.providerId),user_metadata:{...(session.user.onboarding as object||{}),full_name:session.user.name}},session:{id:session.session.id,expiresAt:session.session.expiresAt,aal:principal.aal,mfaVerifiedAt:principal.mfaVerifiedAt}});
+   const identity={user:{id:principal.subject,email:principal.email,emailVerified:true,twoFactorEnabled:session.user.twoFactorEnabled===true,passwordCredential:accounts.some(a=>a.providerId==='credential'&&a.credential),providers:accounts.map(a=>a.providerId),user_metadata:{...(session.user.onboarding as object||{}),full_name:session.user.name}},session:{id:session.session.id,expiresAt:session.session.expiresAt,aal:principal.aal,mfaVerifiedAt:principal.mfaVerifiedAt}};
+   const device=String(req.headers['x-newhope-offline-device']||'');
+   if(device&&!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(device))return res.status(400).json({error:'OFFLINE_DEVICE_REJECTED'});
+   const offlineReceipt=device?issueOfflineIdentity({secret:config.secret,issuer:config.baseUrl,device,sessionId:session.session.id,expiresAt:session.session.expiresAt,user:{...identity.user,user_metadata:Object.fromEntries(Object.entries(identity.user.user_metadata).filter((entry):entry is [string,string]=>typeof entry[1]==='string'))}}):undefined;
+   return res.json({...identity,...(offlineReceipt?{offlineReceipt}:{})});
   }
   const response=await r.auth.handler(new Request(config.baseUrl+path+url.search,{method:req.method,headers,body:bytes as any}));
   const result=Buffer.from(await response.arrayBuffer());let pending=false;try{pending=JSON.parse(result.toString()).twoFactorRedirect===true;}catch{/* HTML/redirect response */}

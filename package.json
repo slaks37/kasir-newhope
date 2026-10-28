@@ -62,7 +62,7 @@
     "native:android:debug": "npm run native:sync && cd android && ./gradlew assembleDebug",
     "native:android:bundle": "npm run native:sync && cd android && ./gradlew bundleRelease",
     "native:ios:simulator": "npm run native:sync && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build",
-    "test:neon-auth": "node --import tsx scripts/dev/test-neon-auth-client.ts && node --import tsx scripts/dev/test-neon-auth-identity.ts && node --import tsx scripts/dev/test-neon-auth-schema.ts && node --import tsx scripts/dev/test-provider-auth-operations.ts && node --import tsx scripts/dev/test-neon-auth-runtime.ts",
+    "test:neon-auth": "node --import tsx scripts/dev/test-offline-identity.ts && node --import tsx scripts/dev/test-neon-auth-client.ts && node --import tsx scripts/dev/test-neon-auth-identity.ts && node --import tsx scripts/dev/test-neon-auth-schema.ts && node --import tsx scripts/dev/test-provider-auth-operations.ts && node --import tsx scripts/dev/test-neon-auth-runtime.ts",
     "test:platform": "node --import tsx scripts/dev/test-platform.ts && node --import tsx scripts/dev/test-native-financial-storage.ts"
   },
   "dependencies": {

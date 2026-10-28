@@ -9,6 +9,8 @@ export interface Session {
  user:User;aal?:'aal1'|'aal2';mfaVerifiedAt?:number;
  /** Non-secret server-session discriminator for in-flight request isolation. */
  sessionId?:string;
+ /** Bounded local cache/queue UI only; never API authority or fresh MFA. */
+ offlineRecovery?:boolean;
 }
 export interface AuthError {message:string;code?:string;status?:number}
 export type AuthEvent='INITIAL_SESSION'|'SIGNED_IN'|'SIGNED_OUT'|'TOKEN_REFRESHED'|'PASSWORD_RECOVERY'|'USER_UPDATED'|'MFA_REQUIRED';

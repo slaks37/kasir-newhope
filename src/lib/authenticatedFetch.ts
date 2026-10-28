@@ -21,6 +21,7 @@ export function installAuthenticatedFetch(): void {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     if (isAuthConfigured && !headers.has('authorization')) {
       const {data,error}=await authRuntime.auth.getSession();if(error)throw Error(error.code||'AUTH_UNAVAILABLE');
+      if(data.session?.offlineRecovery)throw Error('OFFLINE_UI_ONLY');
       if (data.session?.access_token) headers.set('authorization', `Bearer ${data.session.access_token}`);
     }
     const request=input instanceof Request?new Request(url,input):url;
