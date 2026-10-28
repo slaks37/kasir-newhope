@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {forbiddenMerchantAsset} from './asset-policy.mjs';
 const root='dist-mobile';
 const files=fs.readdirSync(root,{recursive:true}).filter(p=>fs.statSync(path.join(root,p)).isFile());
 for(const file of files){
- if(/admin|landing|sw\.js|\.map$|\.env/i.test(file))throw Error('NON_MERCHANT_ASSET: '+file);
+ if(forbiddenMerchantAsset(file))throw Error('NON_MERCHANT_ASSET: '+file);
  if(/\.(js|html)$/.test(file)){
   const source=fs.readFileSync(path.join(root,file),'utf8');
   if(/postgres(?:ql)?:\/\/|sb_secret_|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/.test(source))throw Error('PRIVILEGED_SECRET_IN_MOBILE');
