@@ -646,7 +646,12 @@ async function authenticateBearer(req) {
 function trustedPrincipal(req) {
   const subject2 = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject2) {
+    const aal = firstHeader(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp3 = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp3) ? { mfaVerifiedAt: timestamp3 } : {} };
+  }
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -5213,6 +5218,8 @@ var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
+  "x-auth-aal",
+  "x-auth-mfa-verified-at",
   "x-internal-user",
   "x-env-override",
   "x-newhope-gateway-token"
@@ -5225,6 +5232,8 @@ function applyPrincipal(req, principal) {
   req.headers["x-auth-sub"] = principal.subject;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+  if (principal.aal) req.headers["x-auth-aal"] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers["x-auth-mfa-verified-at"] = String(principal.mfaVerifiedAt);
 }
 var MAX_RAW_BODY = 1048576;
 async function readRawBody(req) {

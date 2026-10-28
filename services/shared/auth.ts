@@ -127,7 +127,12 @@ export function requireTrustedGateway(req: Request, res: Response, next: NextFun
 export function trustedPrincipal(req: Request): AuthPrincipal | null {
   const subject = firstHeader(req.headers['x-auth-sub']);
   const isEmailVerified = firstHeader(req.headers['x-auth-email-verified']) === 'true';
-  if (subject) return { subject, email: firstHeader(req.headers['x-auth-email']) || undefined, isEmailVerified };
+  if (subject) {
+    const aal = firstHeader(req.headers['x-auth-aal']) === 'aal2' ? 'aal2' : 'aal1';
+    const rawTime = firstHeader(req.headers['x-auth-mfa-verified-at']);
+    const timestamp = rawTime ? Number(rawTime) : NaN;
+    return {subject, email: firstHeader(req.headers['x-auth-email']) || undefined, isEmailVerified, aal, ...(Number.isFinite(timestamp) ? {mfaVerifiedAt:timestamp} : {})};
+  }
   return LOCAL_BYPASS() ? { subject: 'local-development', isEmailVerified: true } : null;
 }
 

@@ -399,6 +399,77 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
+// src/server/s3BlogMedia.ts
+var s3BlogMedia_exports = {};
+__export(s3BlogMedia_exports, {
+  createS3BlogMediaProvider: () => createS3BlogMediaProvider
+});
+import { Readable } from "node:stream";
+import { createHash as createHash2 } from "node:crypto";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+function createS3BlogMediaProvider(env = process.env) {
+  const required = ["OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_PUBLIC_ORIGIN", "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY"];
+  if (env.OBJECT_STORAGE_PROVIDER !== "s3" || required.some((key) => !env[key])) throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+  let endpoint, origin;
+  try {
+    endpoint = new URL(env.OBJECT_STORAGE_ENDPOINT);
+    origin = new URL(env.OBJECT_STORAGE_PUBLIC_ORIGIN);
+    for (const url of [endpoint, origin]) {
+      const localTest = env.NODE_ENV === "test" && url.protocol === "http:" && url.hostname === "127.0.0.1";
+      if (!localTest && url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw Error();
+    }
+    if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.OBJECT_STORAGE_BUCKET)) throw Error();
+  } catch {
+    throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+  }
+  const client = new S3Client({
+    endpoint: endpoint.href,
+    region: env.OBJECT_STORAGE_REGION || "auto",
+    forcePathStyle: true,
+    maxAttempts: 1,
+    credentials: { accessKeyId: env.OBJECT_STORAGE_ACCESS_KEY_ID, secretAccessKey: env.OBJECT_STORAGE_SECRET_ACCESS_KEY }
+  });
+  const bucket = env.OBJECT_STORAGE_BUCKET;
+  return { async upload(bytes, path) {
+    if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/i.test(path) || bytes.length < 100 || bytes.length > 5e5) throw Error("INVALID_BLOG_PHOTO");
+    const key = `blog-media/${path}`;
+    const digest4 = createHash2("sha256").update(bytes).digest("hex");
+    const abortSignal = AbortSignal.timeout(18e3);
+    await client.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ContentType: "image/jpeg",
+      ContentLength: bytes.length,
+      CacheControl: "public, max-age=31536000, immutable",
+      IfNoneMatch: "*",
+      Metadata: { sha256: digest4 }
+    }), { abortSignal });
+    const stored = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal });
+    if (!(stored.Body instanceof Readable) || stored.ContentLength !== bytes.length || stored.ContentType !== "image/jpeg") {
+      if (stored.Body instanceof Readable) stored.Body.destroy();
+      throw Error("BLOG_PHOTO_READBACK_FAILED");
+    }
+    const hash2 = createHash2("sha256");
+    let count = 0;
+    for await (const chunk of stored.Body) {
+      count += chunk.length;
+      if (count > bytes.length) {
+        stored.Body.destroy();
+        throw Error("BLOG_PHOTO_READBACK_FAILED");
+      }
+      hash2.update(chunk);
+    }
+    if (count !== bytes.length || hash2.digest("hex") !== digest4) throw Error("BLOG_PHOTO_READBACK_FAILED");
+    return new URL(key, origin).href;
+  } };
+}
+var init_s3BlogMedia = __esm({
+  "src/server/s3BlogMedia.ts"() {
+    "use strict";
+  }
+});
+
 // services/shared/legacyAuthOperations.ts
 var legacyAuthOperations_exports = {};
 __export(legacyAuthOperations_exports, {
@@ -741,7 +812,12 @@ async function authenticateBearer(req) {
 function trustedPrincipal(req) {
   const subject2 = firstHeader(req.headers["x-auth-sub"]);
   const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
+  if (subject2) {
+    const aal = firstHeader(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp4 = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp4) ? { mfaVerifiedAt: timestamp4 } : {} };
+  }
   return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
@@ -1825,7 +1901,7 @@ async function notifyBlogDiscovery(slugs, send = fetch) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash as createHash2, randomUUID as randomUUID6, timingSafeEqual } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID6, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -2069,7 +2145,10 @@ var BLOG_PHOTO_MAX_CHARS = 65e4;
 var BUCKET = "blog-media";
 function createBlogMediaProvider() {
   return { async upload(bytes, path) {
-    if (authProvider() === "neon") throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+    if (authProvider() === "neon") {
+      const { createS3BlogMediaProvider: createS3BlogMediaProvider2 } = await Promise.resolve().then(() => (init_s3BlogMedia(), s3BlogMedia_exports));
+      return createS3BlogMediaProvider2().upload(bytes, path);
+    }
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
@@ -2619,7 +2698,7 @@ var BlogApiError = class extends Error {
     this.details = details;
   }
 };
-var digest = (value) => createHash2("sha256").update(value).digest();
+var digest = (value) => createHash3("sha256").update(value).digest();
 function apiKeyValid(req) {
   const configured = [
     ...String(process.env.BLOG_API_KEYS || "").split(","),
@@ -2635,7 +2714,7 @@ function apiKeyValid(req) {
 var writeWindow = /* @__PURE__ */ new Map();
 var BLOG_WRITES_PER_HOUR = 120;
 function allowWrite(req) {
-  const key = createHash2("sha256").update(String(req.headers.authorization || req.headers["x-api-key"] || "")).digest("hex").slice(0, 16);
+  const key = createHash3("sha256").update(String(req.headers.authorization || req.headers["x-api-key"] || "")).digest("hex").slice(0, 16);
   const now = Date.now(), entry = writeWindow.get(key);
   if (!entry || entry.resetAt < now) {
     writeWindow.set(key, { count: 1, resetAt: now + 36e5 });
@@ -4458,7 +4537,7 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 }
 
 // services/pos/registerOperations.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
@@ -5382,7 +5461,7 @@ async function writeActivity(db, a) {
 var UUID2 = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var round = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
-var hash = (v) => createHash3("sha256").update(JSON.stringify(v)).digest("hex");
+var hash = (v) => createHash4("sha256").update(JSON.stringify(v)).digest("hex");
 var iso = (v) => new Date(String(v)).toISOString();
 var RegisterError = class extends Error {
   constructor(status, code) {
@@ -5683,7 +5762,7 @@ function registerCashierFinanceRoutes(app, db) {
 }
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash4, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash5, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 init_authProviderOperations();
 var scrypt = (pin, salt) => new Promise((resolve2, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve2(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
@@ -5694,8 +5773,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash4("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash4("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash5("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash5("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -6112,8 +6191,8 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
 }
 
 // services/pos/workspaceIdentity.ts
-import { createHash as createHash5 } from "node:crypto";
-var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash5("sha256").update(moduleId + "\0" + recordId).digest("hex");
+import { createHash as createHash6 } from "node:crypto";
+var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash6("sha256").update(moduleId + "\0" + recordId).digest("hex");
 
 // services/pos/workspaceInventory.ts
 async function workspaceProduct(c, s, recordId, lock = false) {
@@ -6923,7 +7002,7 @@ function registerWorkspaceStateRoutes(app, db) {
 }
 
 // services/pos/staffAccounts.ts
-import { createHash as createHash6, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
+import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
 init_betterAuthConfig();
 init_betterAuthEmail();
 var UUID4 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -6937,7 +7016,7 @@ var StaffAccessError = class extends Error {
 var deny = (code = "STAFF_MANAGEMENT_FORBIDDEN") => {
   throw new StaffAccessError(403, code);
 };
-var digest3 = (s) => createHash6("sha256").update(s).digest("hex");
+var digest3 = (s) => createHash7("sha256").update(s).digest("hex");
 function staffAssignments(value) {
   if (!Array.isArray(value) || !value.length || value.length > 32) throw new StaffAccessError(400, "STAFF_ASSIGNMENTS_REQUIRED");
   const seen = /* @__PURE__ */ new Set();
@@ -8636,6 +8715,8 @@ var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
+  "x-auth-aal",
+  "x-auth-mfa-verified-at",
   "x-internal-user",
   "x-env-override",
   "x-newhope-gateway-token"
@@ -8648,6 +8729,8 @@ function applyPrincipal(req, principal) {
   req.headers["x-auth-sub"] = principal.subject;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+  if (principal.aal) req.headers["x-auth-aal"] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers["x-auth-mfa-verified-at"] = String(principal.mfaVerifiedAt);
 }
 
 // api/_runtime.ts

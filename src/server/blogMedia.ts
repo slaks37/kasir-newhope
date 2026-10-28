@@ -7,9 +7,10 @@ const BUCKET = 'blog-media';
 export interface BlogMediaProvider { upload(bytes: Buffer, path: string): Promise<string> }
 export function createBlogMediaProvider(): BlogMediaProvider {
   return { async upload(bytes, path) {
-    // Selecting Neon must never consume legacy Storage credentials. A separately
-    // approved object-store adapter/migration is still required for this feature.
-    if(authProvider()==='neon')throw Error('BLOG_OBJECT_STORAGE_NOT_CONFIGURED');
+    if(authProvider()==='neon') {
+      const {createS3BlogMediaProvider}=await import('./s3BlogMedia');
+      return createS3BlogMediaProvider().upload(bytes,path);
+    }
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw Error('BLOG_STORAGE_NOT_CONFIGURED');
