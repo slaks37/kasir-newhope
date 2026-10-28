@@ -63,7 +63,7 @@ try{
    const left=before.securityDetails[kind],right=after.securityDetails[kind];
    for(let i=0;i<Math.max(left.length,right.length);i++)if(JSON.stringify(left[i])!==JSON.stringify(right[i])){
     const a=left[i]||{},b=right[i]||{},fields=Object.keys({...a,...b}).filter(k=>JSON.stringify(a[k])!==JSON.stringify(b[k]));
-    differences.push({kind,object:a.name||a.proname||a.tablename||a.relname||a.nspname,fields,...(fields.includes('acl')?{beforeAcl:a.acl,afterAcl:b.acl}:{}),...(fields.includes('owner')?{beforeOwner:a.owner,afterOwner:b.owner}:{})});
+    differences.push({kind,object:a.name||a.proname||a.tablename||a.relname||a.nspname,fields,...(fields.includes('acl')?{beforeAcl:a.acl,afterAcl:b.acl}:{}),...(fields.includes('owner')?{beforeOwner:a.owner,afterOwner:b.owner}:{}),...(kind==='policies'?{beforeQual:a.qual,afterQual:b.qual,beforeCheck:a.with_check,afterCheck:b.with_check}:{})});
    }
   }
   evidence.securityDifferences=differences.slice(0,20);console.log('Bounded restore security metadata differences',JSON.stringify(evidence.securityDifferences));
