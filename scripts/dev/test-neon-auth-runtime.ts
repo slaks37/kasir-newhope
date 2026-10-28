@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {migrationFiles} from '../db/migration-files.mjs';
 import express from 'express';
 import {PGlite} from '@electric-sql/pglite';
 import {PGLiteSocketServer} from '@electric-sql/pglite-socket';
@@ -12,7 +13,7 @@ import {createNeonAuthHandler} from '../../src/server/neonAuthHandler';
 import {sealAuthState,openAuthState} from '../../services/shared/nativeAuthState';
 import {createHash,randomBytes} from 'node:crypto';
 const pg=new PGlite();await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
-for(const path of ['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)])await pg.exec(fs.readFileSync(path,'utf8'));
+for(const file of migrationFiles())await pg.exec(fs.readFileSync(file.path,'utf8'));
 const wire=new PGLiteSocketServer({db:pg,port:0,host:'127.0.0.1',maxConnections:6});await wire.start();
 const base='https://auth.fixture.invalid';Object.assign(process.env,{NODE_ENV:'test',APP_ENV:'staging',AUTH_PROVIDER:'neon',NEWHOPE_NEON_AUTH_STAGING:'1',NEWHOPE_AUTH_URL:base,BETTER_AUTH_SECRET:'synthetic-runtime-secret-'.repeat(4),BETTER_AUTH_DATABASE_URL:'postgresql://postgres:postgres@'+wire.getServerConn()+'/postgres',DATABASE_URL:'postgresql://postgres:postgres@'+wire.getServerConn()+'/postgres',NEW_HOPE_NATIVE_ORIGINS:'capacitor://localhost'});
 const mail:Array<{url:string;kind:string}>=[],runtime=createBetterAuthRuntime(getAuthConfig(),async m=>{mail.push(m);});

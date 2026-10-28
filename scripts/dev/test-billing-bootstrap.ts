@@ -2,6 +2,7 @@
 // long-running billing service before a first verified account requests status.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {migrationFiles} from '../db/migration-files.mjs';
 import {randomUUID} from 'node:crypto';
 import express from 'express';
 import {PGlite} from '@electric-sql/pglite';
@@ -9,7 +10,7 @@ import type {Db} from '../../services/shared/db';
 import {createBillingHandler} from '../../src/server/billingHandler';
 import {SAAS_PLANS,TRIAL_PLAN_ID} from '../../src/config/saasPlans';
 const pg=new PGlite();
-for(const file of ['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)])await pg.exec(fs.readFileSync(file,'utf8'));
+for(const file of migrationFiles())await pg.exec(fs.readFileSync(file.path,'utf8'));
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};},exec:async sql=>{await runner.exec(sql);},tx:fn=>pg.transaction(c=>fn(wrap(c))),close:async()=>{}});
 const db=wrap(pg),owner=randomUUID();
 assert.equal((await db.query('SELECT id FROM billing.plans WHERE id=$1',[TRIAL_PLAN_ID])).rows.length,0,'No test helper preloads the missing canonical trial plan');
