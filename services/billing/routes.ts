@@ -34,6 +34,10 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     if (!principal || (principal.subject==='local-development' && !allowLocal)) throw new BillingError(401,'AUTHENTICATION_REQUIRED');
     let id=await tenantForPrincipal(db,principal);
     if (!id && principal.subject!=='local-development') {
+      // An authenticated staff identity must select its authorized workspace.
+      // Never turn a membership (including an OWNER membership) into ownership.
+      const assigned=await db.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[principal.subject]);
+      if(assigned.rows[0]?.assigned)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
       const name = principal.email ? principal.email.split('@')[0] : 'Toko Utama';
       const res = await db.query(
         `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)

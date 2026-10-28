@@ -75,6 +75,28 @@ Staging provisioning now imports the same complete migration manifest as `db:ver
 
 A cold offline launch verifies the pinned key, signature, issuer, device, canonical actor, session and expiry before opening existing device caches/queues. It exposes `aal1` UI recovery, without an access token or MFA timestamp. The existing business/module/financial offline leases are additionally bounded by the auth deadline. The authenticated fetch boundary refuses dispatch with this recovery state. Online 401/403, explicit account changes, reset and successful logout clear only the receipt/auth state; financial queues remain intact. Cache mutations are serialized and late identity responses cannot restore a logged-out receipt.
 
-Offline mode cannot discover a remote revocation until connectivity returns. The receipt is bounded by device time and is never accepted as server authorization: every online replay still verifies the live session and current tenant/outlet/module permissions. An online provider outage does not fall back to this receipt. Unsupported crypto/storage, a missing key, invalid receipt or expired session requires reconnection. Browser installation, actual cold offline reload/reconnection and device tests remain separate hosted acceptance gates until exercised.
+Offline mode cannot discover a remote revocation until connectivity returns. The receipt is bounded by device time and is never accepted as server authorization: every online replay still verifies the live session and current tenant/outlet/module permissions. An online provider outage does not fall back to this receipt. Unsupported crypto/storage, a missing key, invalid receipt or expired session requires reconnection. Actual hosted browser cold offline reload and reconnection were exercised on 2026-10-28 at f339f33: a real Google session restored the same Retail business/outlet with the bounded offline banner, and online reload returned to authoritative cloud data. The offline summary correctly has no authoritative cloud figures; a follow-up UI repair replaces its indefinite loading message with an explicit reconnect state. Browser installation and physical-device tests remain separate gates.
 
-Native HTTP authentication now maps only the canonical auth API surface to the configured native API origin; OAuth browser navigation keeps the existing issuer/callback. The concrete public staging-alias proposal is documented in [native staging access](native-staging-access.md) and is not activated without owner approval.
+Native HTTP authentication now maps only the canonical auth API surface to the configured native API origin; OAuth browser navigation keeps the existing issuer/callback. The owner-approved public staging alias and its alias-only SSO override are documented in [native staging access](native-staging-access.md). Native client build configuration uses it; the canonical OAuth callback/issuer stays unchanged.
+
+
+## Staff onboarding repair and remaining acceptance
+
+An HTTP/SQL regression reproduced an existing legacy billing flaw: a verified canonical staff member without an owned tenant received a new owner tenant/subscription from `/subscription/status`. Migration0071 and the billing guard now reject implicit onboarding with `403 STAFF_WORKSPACE_SELECTION_REQUIRED` whenever that identity has an active staff assignment. A membership role named OWNER also does not establish `owner_user_ref`. Existing explicit ownership still takes the legacy owner path. The UI explains that staff workspace rollout is unavailable rather than treating the staff identity as a new merchant. Both rollout flags stay disabled; this repair does not claim an enabled hosted staff workspace.
+
+The guard uses a backend-only boolean function owned by a restricted NOLOGIN/NOBYPASSRLS role. Billing cannot assume that role, inspect membership PINs, or modify assignments. Tests cover CASHIER, MANAGER, ADMIN, OWNER membership, STAFF, ACCOUNTANT, BARISTA, CHEF, WASHER and KAPSTER, migration replay, no tenant/subscription creation and unchanged canonical ledgers. PG17 CI also exercises the probe with the actual billing LOGIN and verifies read/write denials. No existing identity, membership or financial actor is rewritten.
+
+| Additional gate | Result / limitation |
+|---|---|
+| Exact-head f339f33 CI | Full verification, PG17 security and module workflows, Android and iOS jobs PASS |
+| Real Google browser + offline cold reload | PASS bounded offline UI identity and same existing business/outlet; no offline API authorization; online reload restores cloud data |
+| Public native API origin | HTTPS app401 and native preflight204 PASS; alias-only protection override, branch-only public origin |
+| Staff billing enrollment regression | Reproduced 200/new-owner flaw; repaired403 for ten membership roles; no staff owner enrollment |
+| Independent hosted staff operational UI | Pending rollout/provider acceptance; flags remain0 |
+| Installed native OAuth/MFA/deep links | Pending emulator/physical devices; host lacks Android SDK/emulator and full Xcode |
+| Production migration/rollback | Still NO-GO; old production Auth and all business data retained |
+
+
+Staging0071 was replayed twice in a single transaction with all17 protected table fingerprints unchanged. The existing `newhope_app_pr29_login` can invoke the guard under `SET ROLE svc_billing`; that role cannot read membership PINs or update assignments, and the LOGIN cannot assume the probe role. The combined application LOGIN still inherits the pre-existing POS/internal/billing/AI service groups; the billing-only denial must not be reported as separation of credentials for every handler. No existing grants were removed by this patch.
+
+Configured native assets now build locally using only the approved public staging URLs/key and pass the no-Supabase-Auth/private-signing-code bundle checks. The dedicated Native auth staging artifacts CI builds usable staging APK/simulator artifacts separately from the preserved unconfigured foundation checks. Successful compilation remains distinct from real installed Google/password/MFA/deep-link acceptance.

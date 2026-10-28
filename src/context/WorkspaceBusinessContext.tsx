@@ -30,7 +30,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     if(import.meta.env.VITE_MODULE_WORKSPACES==='1')return;
     const controller=new AbortController();
     const run=async()=>{try{
-      const data=await coalescedRead('subscription:'+owner,async()=>{const response=await fetch('/api/v1/subscription/status',{cache:'no-store',signal:AbortSignal.timeout(15000)});if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');const result=await response.json();if(!response.ok||!result.ok||!result.subscription)throw Error('SUBSCRIPTION_UNAVAILABLE');return result;},controller.signal);
+      const data=await coalescedRead('subscription:'+owner,async()=>{const response=await fetch('/api/v1/subscription/status',{cache:'no-store',signal:AbortSignal.timeout(15000)});const result=await response.json();if(response.status===403&&result.error==='STAFF_WORKSPACE_SELECTION_REQUIRED')throw Error(result.error);if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');if(!response.ok||!result.ok||!result.subscription)throw Error('SUBSCRIPTION_UNAVAILABLE');return result;},controller.signal);
       if(!controller.signal.aborted){setSubscription(previous=>JSON.stringify(previous)===JSON.stringify(data.subscription)?previous:data.subscription);setSubscriptionVerified(true);setAccountError('');}
     }catch(error){if(!controller.signal.aborted)setAccountError(error instanceof Error?error.message:'SUBSCRIPTION_UNAVAILABLE');}};
     const unsubscribe=refreshCoordinator.register('subscription:'+owner,{run,interval:120000,events:['subscription-updated']});
@@ -75,6 +75,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
     const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||'BUSINESS_SETUP_FAILED');
     setHint({businessId:data.merchantId});window.dispatchEvent(new Event('outlets-updated'));
   }catch(error){setSetupError(error instanceof Error?error.message:'BUSINESS_SETUP_FAILED');}finally{setBusy(false);}};
+  if(accountError==='STAFF_WORKSPACE_SELECTION_REQUIRED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akun staf ini sudah terhubung ke bisnis. Ruang kerja staf belum diaktifkan pada lingkungan ini. Hubungi pemilik bisnis; akun staf tidak otomatis membuat toko atau langganan baru.</p></main>;
   if(error==='WORKSPACE_ACCESS_REVOKED'||accountError==='WORKSPACE_ACCESS_REVOKED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akses bisnis perlu diverifikasi kembali. Cache dan antrean tetap disimpan; data tidak dikirim sampai akses diizinkan server.</p></main>;
   if(directory?.workspaceAuth&&!directory.tenantId&&directory.tenants?.length)return <main className="p-8 space-y-3"><h1>Pilih organisasi</h1>{directory.tenants.map(t=><button key={t.tenantId} className="block border rounded p-3" onClick={()=>{localStorage.setItem('newhope_directory_tenant_'+owner,t.tenantId);window.dispatchEvent(new Event('outlets-updated'));}}>{t.name}</button>)}</main>;
   if(directory?.workspaceAuth&&directory.tenantId&&!subscription)return <main role="alert" className="p-8">Paket organisasi belum tersedia. Minta pemilik memeriksa langganan.</main>;
