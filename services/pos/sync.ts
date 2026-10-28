@@ -26,6 +26,7 @@ import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthor
 
 import type express from 'express';
 import {authorizeNativeModule,registerModuleRoutes} from './modules';
+import {registerStaffAccountRoutes} from './staffAccounts';
 import {registerBusinessDirectory} from './businessDirectory';
 import {BusinessScopeError,resolveBusinessScope} from './businessScope';
 import { randomBytes } from 'node:crypto';
@@ -148,6 +149,7 @@ const INVOICE_CONSTRAINTS = new Set(['uq_transactions_invoice_number', 'uq_txn_i
 
 export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerModuleRoutes(app,db);
+  registerStaffAccountRoutes(app,db);
   registerWorkspaceStateRoutes(app,db);
   registerWorkspaceInventoryRoutes(app,db);
   registerPrivacyRoutes(app,db);

@@ -4,6 +4,11 @@ import { registerSyncRoutes } from '../../services/pos/sync';
 import { createServerlessBoundary } from './serverlessBoundary';
 
 const allowedMethods: Record<string, readonly string[]> = {
+  '/api/v1/sync/staff': ['GET'],
+  '/api/v1/sync/staff/invite': ['POST'],
+  '/api/v1/sync/staff/accept': ['POST'],
+  '/api/v1/sync/staff/access': ['POST'],
+  '/api/v1/sync/staff/revoke-invite': ['POST'],
   '/api/v1/sync/modules/access': ['GET'],
   '/api/v1/sync/modules/inventory': ['POST'],
   '/api/v1/sync/modules/state': ['GET','POST'],

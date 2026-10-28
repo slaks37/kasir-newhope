@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import {authProvider} from '../../services/shared/betterAuthConfig';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
 import { BLOG_PHOTO_MAX_CHARS } from '../lib/blog/photo';
@@ -7,9 +7,13 @@ const BUCKET = 'blog-media';
 export interface BlogMediaProvider { upload(bytes: Buffer, path: string): Promise<string> }
 export function createBlogMediaProvider(): BlogMediaProvider {
   return { async upload(bytes, path) {
+    // Selecting Neon must never consume legacy Storage credentials. A separately
+    // approved object-store adapter/migration is still required for this feature.
+    if(authProvider()==='neon')throw Error('BLOG_OBJECT_STORAGE_NOT_CONFIGURED');
     const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw Error('BLOG_STORAGE_NOT_CONFIGURED');
+    const {createClient}=await import('@supabase/supabase-js');
     const signal = AbortSignal.timeout(18000);
     const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
     const bucket = await client.storage.getBucket(BUCKET);
@@ -44,7 +48,7 @@ export function registerBlogMediaRoutes(app: Express, guard: any, provider = cre
       res.status(201).json({ ok: true, url });
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
-      res.status(code === 'BLOG_STORAGE_NOT_CONFIGURED' ? 503 : 502).json({ ok: false, error: ['BLOG_STORAGE_NOT_CONFIGURED', 'BLOG_STORAGE_BUCKET_PRIVATE'].includes(code) ? code : 'BLOG_PHOTO_UPLOAD_FAILED' });
+      res.status(['BLOG_STORAGE_NOT_CONFIGURED','BLOG_OBJECT_STORAGE_NOT_CONFIGURED'].includes(code) ? 503 : 502).json({ ok: false, error: ['BLOG_STORAGE_NOT_CONFIGURED','BLOG_OBJECT_STORAGE_NOT_CONFIGURED', 'BLOG_STORAGE_BUCKET_PRIVATE'].includes(code) ? code : 'BLOG_PHOTO_UPLOAD_FAILED' });
     }
   });
 }

@@ -105,11 +105,13 @@ import { createHash } from "node:crypto";
 import { Resend } from "resend";
 function authEmailPayload(mail, env = process.env) {
   const origin = new URL(mail.baseUrl), link = new URL(mail.url);
-  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "STAFF_INVITE" ? link.pathname !== "/staff-invite" || link.search !== "" || !/^#token=[\w-]{43}$/.test(link.hash) : mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
   if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
-  const callbacks = link.searchParams.getAll("callbackURL");
-  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
-  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (mail.kind !== "STAFF_INVITE") {
+    const callbacks = link.searchParams.getAll("callbackURL");
+    if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+    authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  }
   if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
   if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
     throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
@@ -119,7 +121,8 @@ function authEmailPayload(mail, env = process.env) {
     const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
     if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
   }
-  const text2 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const text2 = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const duration = mail.kind === "STAFF_INVITE" ? "24 jam" : "15 menit";
   const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
   return { payload: {
@@ -127,8 +130,8 @@ function authEmailPayload(mail, env = process.env) {
     to: mail.email,
     replyTo: "stefen@newsystem.space",
     subject: text2,
-    text: text2 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
-    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text2 + "</title></head><body><h1>" + text2 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+    text: text2 + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text2 + "</title></head><body><h1>" + text2 + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl2 + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
   }, idempotencyKey: "newhope-auth-" + key };
 }
 async function sendBetterAuthEmail(mail) {
@@ -790,7 +793,7 @@ async function notifyBlogDiscovery(slugs, send = fetch) {
 import sharp from "sharp";
 
 // src/server/blogMedia.ts
-import { createClient } from "@supabase/supabase-js";
+init_betterAuthConfig();
 
 // src/server/blogPages.ts
 function siteUrl() {

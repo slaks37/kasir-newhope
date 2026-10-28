@@ -21,7 +21,7 @@ try{
   const conn=new URL(url);conn.username=name;conn.password=password;return conn.href;
  };
  const auth=await createLogin('newhope_auth_pr29_login',['svc_auth']);
- const app=await createLogin('newhope_app_pr29_login',roles.filter(r=>['svc_pos','svc_billing','svc_ai','svc_internal','svc_analytics','svc_bi'].includes(r)));
+ const app=await createLogin('newhope_app_pr29_login',roles.filter(r=>['svc_pos','svc_billing','svc_ai','svc_internal','svc_analytics','svc_bi','svc_staff'].includes(r)));
  const env={AUTH_PROVIDER:'neon',VITE_AUTH_PROVIDER:'neon',NEWHOPE_NEON_AUTH_STAGING:'1',APP_ENV:'staging',DATABASE_URL:app,BETTER_AUTH_DATABASE_URL:auth,BETTER_AUTH_SECRET:crypto.randomBytes(48).toString('base64url'),NEWHOPE_AUTH_NEON_HOST:url.hostname.replace('-pooler',''),NEWHOPE_AUTH_NEON_BRANCH_ID:'br-plain-snow-azjwwq6u',NEW_HOPE_MODULE_WORKSPACES:'0',VITE_MODULE_WORKSPACES:'0',NEW_HOPE_NATIVE_ORIGINS:'capacitor://localhost,https://localhost',NEWHOPE_AUTH_URL:'',VITE_NEWHOPE_AUTH_URL:'',NEWHOPE_GOOGLE_CLIENT_ID:'',NEWHOPE_GOOGLE_CLIENT_SECRET:''};
  fs.writeFileSync(output,Object.entries(env).map(([k,v])=>k+'='+v).join('\n')+'\n',{mode:0o600});
  console.log('Provisioned isolated empty auth database; private staging config written. Operational rows copied: 0.');

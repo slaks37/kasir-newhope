@@ -74,6 +74,14 @@ jobs:
       - run: npm ci
       - run: node scripts/dev/test-rehearsal-target.mjs
       - run: node --import tsx scripts/dev/rehearse-modules-postgres17.ts
+      - name: Encrypted synthetic auth backup, restore and identity rollback
+        run: node --import tsx scripts/dev/rehearse-auth-backup-postgres17.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: postgres17-auth-backup-evidence
+          path: build/auth-backup-rehearsal/postgres17.json
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
         with:
