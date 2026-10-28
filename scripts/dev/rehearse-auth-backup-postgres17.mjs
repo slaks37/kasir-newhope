@@ -24,7 +24,7 @@ async function snapshot(c){
  const objects=(await c.query("SELECT n.nspname,c.relname,c.relkind,pg_get_userbyid(c.relowner) AS owner,ARRAY(SELECT v::text FROM unnest(c.relacl) v ORDER BY 1)::text AS acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND c.relkind IN('v','m','S') ORDER BY 1,2")).rows;
  const schemas=(await c.query("SELECT nspname,pg_get_userbyid(nspowner) AS owner,ARRAY(SELECT v::text FROM unnest(nspacl) v ORDER BY 1)::text AS acl FROM pg_namespace WHERE nspname NOT IN('pg_catalog','information_schema') AND nspname NOT LIKE 'pg_%' ORDER BY 1")).rows;
  const sequences=[];for(const s of (await c.query("SELECT schemaname,sequencename FROM pg_sequences WHERE schemaname NOT LIKE 'pg_%' ORDER BY 1,2")).rows)sequences.push([s.schemaname,s.sequencename,(await c.query('SELECT last_value::text,is_called FROM '+quote(s.schemaname)+'.'+quote(s.sequencename))).rows]);
- return {tables:tables.length,rows:data.reduce((n,row)=>n+row[2],0),data:hash(JSON.stringify(data)),security:hash(JSON.stringify([tables,policies,functions,objects,schemas])),sequences:hash(JSON.stringify(sequences))};
+ return {tables:tables.length,rows:data.reduce((n,row)=>n+row[2],0),data:hash(JSON.stringify(data)),security:hash(JSON.stringify([tables,policies,functions,objects,schemas])),sequences:hash(JSON.stringify(sequences)),securityDetails:{tables,policies,functions,objects,schemas}};
 }
 let created=false,connected=false;const key=randomBytes(32);
 await source.connect();
@@ -56,7 +56,20 @@ try{
  await source.query('CREATE DATABASE newhope_auth_restore_rehearsal');created=true;
  command('docker',['exec','-i',container,'pg_restore','-U','postgres','-d','newhope_auth_restore_rehearsal','--exit-on-error','--clean','--if-exists'],plain);
  plain.fill(0);dump.fill(0);await restored.connect();connected=true;
- assert.deepEqual(await snapshot(restored),before,'Data, sequences, RLS, policies, helper owners and ACLs must survive restore');
+ const after=await snapshot(restored);
+ if(after.security!==before.security){
+  const differences=[];
+  for(const kind of Object.keys(before.securityDetails)){
+   const left=before.securityDetails[kind],right=after.securityDetails[kind];
+   for(let i=0;i<Math.max(left.length,right.length);i++)if(JSON.stringify(left[i])!==JSON.stringify(right[i])){
+    const a=left[i]||{},b=right[i]||{},fields=Object.keys({...a,...b}).filter(k=>JSON.stringify(a[k])!==JSON.stringify(b[k]));
+    differences.push({kind,object:a.name||a.proname||a.tablename||a.relname||a.nspname,fields,...(fields.includes('acl')?{beforeAcl:a.acl,afterAcl:b.acl}:{}),...(fields.includes('owner')?{beforeOwner:a.owner,afterOwner:b.owner}:{})});
+   }
+  }
+  evidence.securityDifferences=differences.slice(0,20);console.log('Bounded restore security metadata differences',JSON.stringify(evidence.securityDifferences));
+ }
+ const summary=({securityDetails,...value})=>value;
+ assert.deepEqual(summary(after),summary(before),'Data, sequences, RLS, policies, helper owners and ACLs must survive restore');
  const restoreDb=wrap(restored),input={provider:'better-auth',issuer:manifest.issuer,subject:providerSubject,email:providerSubject+'@fixture.invalid',isEmailVerified:true};
  assert.equal(await resolveAuthIdentity(restoreDb,input),canonical);assert.equal(await authIdentityBusinessFingerprint(restoreDb),businessBefore);
  await assert.rejects(()=>revokeAuthIdentityMigration(restoreDb,'0'.repeat(64),'fixture-reviewed-rollback','unknown-batch'),/AUTH_IDENTITY/);
