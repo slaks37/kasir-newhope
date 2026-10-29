@@ -202,3 +202,21 @@ These results prove the deployed selected runtime serves requests and denies ano
 | Alternate-provider hosted rollback | NOT RUN | Separately authorized isolated alternate-provider identities/environment and real provider sessions; synthetic canonical mapping rollback/restore PASS is retained |
 
 Phase2 remains PARTIAL. Existing owner MFA, canonical IDs, business data, financial actor references and offline journals were not changed. Both rollout flags and native financial checkout remain OFF; DOKU and production authentication untouched.
+
+## Remaining-gates continuation from 3190a8b
+
+New implementation only: PR30 now has a separate public native staging profile, explicit build selector (`node scripts/mobile/build-auth-staging.mjs pr30`) and PR30-enabled Android/iOS configured artifact jobs. Public profile uses exact PR30 issuer, API and offline public key; no private JWK field, provider secret or protection bypass token is accepted. PR29 defaults/configuration/domain are retained. Artifacts include a profile/status manifest and are labeled with pr30 to prevent confusing build output from another identity environment.
+
+The chosen API is the existing protected PR30 Preview. **Installed native login remains BLOCKED by SSO**; preparing an APK/simulator app does not authorize publishing a new API hostname. No domain, security override, production setting, account, owner TOTP or database was changed. Read-only PR30 preflight returned exit2: Android SDK/ADB unavailable, zero booted emulators; simctl unavailable, zero booted iOS simulators. This is prerequisite evidence only.
+
+The exact human actions are collected in [owner-acceptance-checklist.md](owner-acceptance-checklist.md). Reproducible configured builds, installation, restart and per-flow evidence requirements are in [mobile-hosted-acceptance.md](mobile-hosted-acceptance.md). Do not retry fresh identity, private MFA/reset, live storage or alternate-provider recovery gates until the listed prerequisites change.
+
+| Gate | Implementation | Synthetic/local | Hosted | Real device |
+|---|---|---|---|---|
+| PR30 native profile/artifact | Separate issuer/API/public key and CI jobs implemented | Profile tests reject wrong origin, cross-environment config and private-key fields | Native API still BLOCKED by protected Preview; no new provider login claimed | BLOCKED: missing SDKs/devices; configured build is not installed acceptance |
+| Fresh staff registration | Existing durable STAFF restriction retained | Previously verified milestones retained; full verification rerun below | BLOCKED: no genuinely unused authorized recipient/clean environment established | NOT RUN |
+| Staff MFA/recovery/reset/admin/revocation | Existing implementation retained | Existing actual-engine and authorization regressions retained | BLOCKED/PARTIAL: live independent sessions and private user participation required; owner enrollment unchanged | NOT RUN |
+| S3 replacement | Existing immutable adapter retained | Existing signed local compatibility/readback/failure tests retained | BLOCKED: no approved destination/credentials/source manifest | NOT RUN |
+| Migration/rollback | Existing canonical map/revoke/restore implementation retained | PG17 encrypted restore and actor preservation rerun in CI below | NOT RUN: approved restore destination/key custodian/isolated alternate provider required | Offline journals remain untouched |
+
+Only newly executed evidence is added below; prior successful Neon deployment/provider-smoke gates are not repeated or relabeled.

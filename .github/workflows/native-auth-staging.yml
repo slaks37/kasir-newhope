@@ -4,6 +4,8 @@ on:
     paths:
       - '.github/workflows/native-auth-staging.yml'
       - 'mobile/auth-staging.public.json'
+      - 'mobile/auth-staff-staging.public.json'
+      - 'scripts/mobile/auth-staging-config.mjs'
       - 'scripts/mobile/build-auth-staging.mjs'
       - 'scripts/mobile/check-auth-staging-api.mjs'
       - 'src/lib/auth/**'
@@ -12,7 +14,7 @@ permissions:
   contents: read
 jobs:
   android-staging:
-    if: github.head_ref == 'codex/neon-auth-cross-platform'
+    if: github.head_ref == 'codex/neon-auth-cross-platform' || github.head_ref == 'codex/phase2-staff-onboarding'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -22,17 +24,20 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: 21}
       - run: npm ci
-      - run: node scripts/mobile/check-auth-staging-api.mjs
-      - run: node scripts/mobile/build-auth-staging.mjs
+      - if: github.head_ref == 'codex/neon-auth-cross-platform'
+        run: node scripts/mobile/check-auth-staging-api.mjs
+      - run: node scripts/mobile/build-auth-staging.mjs ${{ github.head_ref == 'codex/phase2-staff-onboarding' && 'pr30' || 'pr29' }}
       - run: ./gradlew assembleDebug lintDebug
         working-directory: android
       - uses: actions/upload-artifact@v4
         with:
-          name: newhope-neon-auth-staging-android-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: newhope-${{ github.head_ref == 'codex/phase2-staff-onboarding' && 'pr30' || 'pr29' }}-auth-staging-android-debug
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            build/native-auth-acceptance/artifact-config.json
           retention-days: 7
   ios-staging:
-    if: github.head_ref == 'codex/neon-auth-cross-platform'
+    if: github.head_ref == 'codex/neon-auth-cross-platform' || github.head_ref == 'codex/phase2-staff-onboarding'
     runs-on: macos-26
     timeout-minutes: 20
     steps:
@@ -40,10 +45,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm}
       - run: npm ci
-      - run: node scripts/mobile/build-auth-staging.mjs
+      - run: node scripts/mobile/build-auth-staging.mjs ${{ github.head_ref == 'codex/phase2-staff-onboarding' && 'pr30' || 'pr29' }}
       - run: xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios-auth-staging CODE_SIGNING_ALLOWED=NO build
       - uses: actions/upload-artifact@v4
         with:
-          name: newhope-neon-auth-staging-ios-simulator
-          path: build/ios-auth-staging/Build/Products/Debug-iphonesimulator/App.app
+          name: newhope-${{ github.head_ref == 'codex/phase2-staff-onboarding' && 'pr30' || 'pr29' }}-auth-staging-ios-simulator
+          path: |
+            build/ios-auth-staging/Build/Products/Debug-iphonesimulator/App.app
+            build/native-auth-acceptance/artifact-config.json
           retention-days: 7

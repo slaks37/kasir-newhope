@@ -1,3 +1,4 @@
+import {stagingConfig,validateStagingConfig} from '../mobile/auth-staging-config.mjs';
 import {selectedNeonPreview} from './select-api-artifact.mjs';
 import {validateProviderAgreement} from './provider-agreement.mjs';
 import {build} from 'esbuild';
@@ -35,3 +36,14 @@ const preview={NEWHOPE_BUILD_TARGET:'neon',VERCEL_ENV:'preview',AUTH_PROVIDER:'n
 assert.equal(selectedNeonPreview({}),false);assert.equal(selectedNeonPreview(preview),true);
 for(const override of [{VERCEL_ENV:'production'},{VERCEL_ENV:undefined},{AUTH_PROVIDER:'supabase'},{VITE_AUTH_PROVIDER:'supabase'},{NEWHOPE_NEON_AUTH_STAGING:'0'},{NEW_HOPE_MODULE_WORKSPACES:'1'},{VITE_MODULE_WORKSPACES:'1'}])assert.throws(()=>selectedNeonPreview({...preview,...override}));
 console.log('PASS Neon artifact selection: explicit Preview only, provider agreement and both rollout flags OFF required');
+
+for(const profile of ['pr29','pr30']){
+ const config=stagingConfig(profile);assert.equal(config.VITE_AUTH_PROVIDER,'neon');
+ assert.throws(()=>validateStagingConfig(profile,{...config,VITE_NATIVE_API_ORIGIN:'https://foreign.invalid'}));
+ assert.throws(()=>validateStagingConfig(profile,{...config,SECRET:'forbidden'}));
+ const jwk=JSON.parse(config.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY);
+ assert.throws(()=>validateStagingConfig(profile,{...config,VITE_NEWHOPE_OFFLINE_PUBLIC_KEY:JSON.stringify({...jwk,d:'private-key-not-allowed'})}));
+}
+assert.throws(()=>validateStagingConfig('pr30',stagingConfig('pr29')));
+assert.throws(()=>stagingConfig('unknown'));
+console.log('PASS separate native staging profiles: wrong issuer/API, cross-environment config and private key fields rejected');

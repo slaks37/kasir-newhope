@@ -51,3 +51,11 @@ Do not run the ordinary native build command afterward: it can regenerate assets
 | Scope | Foreign merchant, sibling unauthorized outlet and wrong module denied by server; record status/error and synthetic target labels, never bearer tokens |
 
 Save bounded evidence per platform: UTC time, code/artifact hash, synthetic identity labels, route/status/error, canonical-ID equality comparisons, journal counts/hashes and redacted screenshots. SDK build success, CORS204, an app launch or synthetic HTTP tests cannot mark any provider login row PASS. Physical-device acceptance is a separate run after emulator/simulator acceptance.
+
+## PR30 configured artifacts
+
+Use `node scripts/mobile/build-auth-staging.mjs pr30` before the same Gradle/Xcode commands above. `node scripts/mobile/auth-acceptance-preflight.mjs pr30` reports PR30 prerequisites. Default/no argument remains PR29 for backward compatibility.
+
+PR30 uses `mobile/auth-staff-staging.public.json`: exact PR30 issuer/API origin and public-only offline key, with both rollout flags forced OFF. Its protected Preview origin is intentional: **installed native login remains BLOCKED by SSO**, and no bypass token or PR29 identity environment is silently substituted. After explicit approval of a PR30 native API hostname, review and update both the allowlisted profile and public configuration, then rebuild; do not edit compiled APK/IPA credentials.
+
+The native-artifacts workflow now builds this profile on PR30. Artifact names include pr30 and contain artifact-config.json alongside APK/unsigned simulator app. That manifest records provider/issuer/API and NOT RUN/BLOCKED login status. Record downloaded archive and binary SHA256 before installation. These artifacts certify configuration/build only until actual provider flows pass.
