@@ -1,3 +1,5 @@
+import {selectedNeonPreview} from './select-api-artifact.mjs';
+import {validateProviderAgreement} from './provider-agreement.mjs';
 import {build} from 'esbuild';
 import assert from 'node:assert/strict';
 import {pathToFileURL} from 'node:url';
@@ -22,3 +24,14 @@ const oldUrl='postgresql://fixture:fixture@aws-0-region.pooler.supabase.com:5432
 assert.equal(target.serverlessConnectionString(oldUrl,'1'),oldUrl);
 assert.equal(networkCalls,0,'No legacy/network fallback without Neon configuration');
 console.log('PASS compiled Neon runtime: defaults to Neon, rejects legacy provider, no Auth/Storage network fallback, no legacy pool rewrite');
+
+assert.equal(validateProviderAgreement({}),'supabase');
+assert.equal(validateProviderAgreement({VITE_AUTH_PROVIDER:'neon'}),'neon');
+assert.equal(validateProviderAgreement({VITE_AUTH_PROVIDER:'neon',AUTH_PROVIDER:'neon'}),'neon');
+for(const env of [{AUTH_PROVIDER:'neon'},{VITE_AUTH_PROVIDER:'neon',AUTH_PROVIDER:'supabase'},{VITE_AUTH_PROVIDER:'other'},{AUTH_PROVIDER:'other'},{NEWHOPE_BUILD_TARGET:'neon'}])assert.throws(()=>validateProviderAgreement(env),/AUTH_PROVIDER_/);
+console.log('PASS provider agreement: inconsistent or unsupported web/mobile/backend build intent rejected');
+
+const preview={NEWHOPE_BUILD_TARGET:'neon',VERCEL_ENV:'preview',AUTH_PROVIDER:'neon',VITE_AUTH_PROVIDER:'neon',NEWHOPE_NEON_AUTH_STAGING:'1',NEW_HOPE_MODULE_WORKSPACES:'0',VITE_MODULE_WORKSPACES:'0'};
+assert.equal(selectedNeonPreview({}),false);assert.equal(selectedNeonPreview(preview),true);
+for(const override of [{VERCEL_ENV:'production'},{VERCEL_ENV:undefined},{AUTH_PROVIDER:'supabase'},{VITE_AUTH_PROVIDER:'supabase'},{NEWHOPE_NEON_AUTH_STAGING:'0'},{NEW_HOPE_MODULE_WORKSPACES:'1'},{VITE_MODULE_WORKSPACES:'1'}])assert.throws(()=>selectedNeonPreview({...preview,...override}));
+console.log('PASS Neon artifact selection: explicit Preview only, provider agreement and both rollout flags OFF required');
