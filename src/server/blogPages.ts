@@ -112,11 +112,17 @@ a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{ou
 .tags{display:flex;flex-wrap:wrap;gap:8px}.tags span{font-size:13px;background:#f5f5f4;border-radius:999px;padding:5px 12px;color:var(--muted)}
 .cta{background:#1c1917;color:#fafaf9;border-radius:var(--radius);padding:28px;display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .cta h2{margin:0 0 6px;font-size:22px}.cta p{margin:0;color:#d6d3d1}
+.post-nav{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:32px 0;padding-top:24px;border-top:1px solid var(--line)}
+.post-nav a{display:flex;flex-direction:column;gap:4px;padding:14px 18px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface);text-decoration:none;transition:border-color .15s,box-shadow .15s}
+.post-nav a:hover{border-color:var(--ink);box-shadow:0 6px 20px rgba(28,25,23,.06)}
+.post-nav small{font-size:12px;font-weight:700;text-transform:uppercase;color:var(--soft);letter-spacing:.04em}
+.post-nav span{font-weight:700;font-size:15px;line-height:1.4;color:var(--ink)}
+.post-nav .next{text-align:right}
 .related{padding:12px 0 56px}.related>h2{font-size:24px;margin:0 0 18px}
 .site-footer{border-top:1px solid var(--line);background:var(--surface);padding:28px 0;font-size:14px;color:var(--soft)}
 .site-footer .wrap{display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:space-between}.site-footer a{color:var(--muted);text-decoration:none;margin-right:16px}
 @media (max-width:960px){.grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:minmax(0,1fr)}.toc{display:none}.feature{grid-template-columns:1fr}.feature img{min-height:0;aspect-ratio:16/9}}
-@media (max-width:640px){.wrap{padding:0 16px}.grid{grid-template-columns:1fr}.site-nav a:not(.btn){display:none}.brand small{display:none}.wide{display:none}.brand{font-size:15px}.page-header{padding:28px 0 16px}.prose{font-size:17px}.prose h2{font-size:23px}.cover img{aspect-ratio:16/9}}
+@media (max-width:640px){.wrap{padding:0 16px}.grid{grid-template-columns:1fr}.site-nav a:not(.btn){display:none}.brand small{display:none}.wide{display:none}.brand{font-size:15px}.page-header{padding:28px 0 16px}.prose{font-size:17px}.prose h2{font-size:23px}.cover img{aspect-ratio:16/9}.post-nav{grid-template-columns:1fr}.post-nav .next{text-align:left}}
 `;
 
 function document(opts: { title: string; description: string; canonical: string; image?: string; type?: 'website' | 'article'; jsonLd: unknown[]; body: string; robots?: string; extraHead?: string }) {
@@ -234,7 +240,7 @@ function youtubeId(url = '') {
   return m ? m[1] : null;
 }
 
-export function renderBlogPost(post: PublicPost, related: PublicPost[]): string {
+export function renderBlogPost(post: PublicPost, related: PublicPost[], nav?: { prev?: PublicPost; next?: PublicPost }): string {
   const article = renderArticle(post.content, post.title);
   const canonical = postUrl(post.slug);
   const title = `${cleanTitle(post.seo.metaTitle || '') || post.title} | ${BLOG_NAME}`;
@@ -248,6 +254,7 @@ export function renderBlogPost(post: PublicPost, related: PublicPost[]): string 
   const initials = post.author.name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const avatar = post.author.avatar ? `<img src="${esc(post.author.avatar)}" alt="" width="44" height="44" loading="lazy">` : `<span class="avatar" aria-hidden="true">${esc(initials)}</span>`;
   const updated = post.updatedAt && new Date(post.updatedAt).getTime() - new Date(post.createdAt).getTime() > 86_400_000;
+  const postNav = (nav?.prev || nav?.next) ? `<nav class="post-nav" aria-label="Navigasi artikel">${nav.prev ? `<a class="prev" href="/blog/${esc(nav.prev.slug)}"><small>← Artikel Sebelumnya</small><span>${esc(nav.prev.title)}</span></a>` : '<div></div>'}${nav.next ? `<a class="next" href="/blog/${esc(nav.next.slug)}"><small>Artikel Selanjutnya →</small><span>${esc(nav.next.title)}</span></a>` : '<div></div>'}</nav>` : '';
   const body = `<article>
   <div class="wrap">
     <header class="page-header" style="max-width:860px">
@@ -265,6 +272,7 @@ export function renderBlogPost(post: PublicPost, related: PublicPost[]): string 
         ${post.tags.length ? `<div class="section tags" aria-label="Tag">${post.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
         <section class="section"><div class="author-box">${avatar}<div><strong>${esc(post.author.name)}</strong><div class="meta">${esc(post.author.role)}</div><p style="margin:8px 0 0;color:var(--muted)">Ditulis untuk ${BLOG_NAME}. Punya pertanyaan tentang usaha Anda? Coba New Hope POS gratis dan hubungi tim kami.</p></div></div></section>
         <section class="section"><div class="cta"><div><h2>Rapikan kasir dan laporan usaha Anda</h2><p>Coba New Hope POS gratis 45 hari, tanpa kartu kredit.</p></div><a class="btn" href="/register">Mulai gratis</a></div></section>
+        ${postNav}
       </div>
       ${toc}
     </div>
@@ -292,14 +300,24 @@ export function renderNotFound(): string {
 
 export function renderSitemap(posts: PublicPost[], blogOnly = false): string {
   const base = siteUrl();
-  const latest = posts.reduce((m, p) => (p.updatedAt > m ? p.updatedAt : m), '2026-10-01T00:00:00.000Z');
+  const formatLastMod = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? '2026-10-01T00:00:00Z' : d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    } catch {
+      return '2026-10-01T00:00:00Z';
+    }
+  };
+  const latest = formatLastMod(posts.reduce((m, p) => (p.updatedAt > m ? p.updatedAt : m), '2026-10-01T00:00:00.000Z'));
   const urls = [
     ...(!blogOnly ? [
       { loc: `${base}/`, lastmod: latest, priority: '1.0' },
       { loc: `${base}/blog`, lastmod: latest, priority: '0.9' },
-      ...BLOG_CATEGORIES.filter(c => posts.some(p => p.category === c)).map(c => ({ loc: `${base}/blog?kategori=${categorySlug(c)}`, lastmod: latest, priority: '0.6' })),
+      { loc: `${base}/privacy`, lastmod: latest, priority: '0.5' },
+      { loc: `${base}/terms`, lastmod: latest, priority: '0.5' },
+      { loc: `${base}/support`, lastmod: latest, priority: '0.5' },
     ] : []),
-    ...posts.map(p => ({ loc: postUrl(p.slug), lastmod: p.updatedAt, priority: '0.8', image: p.coverImage })),
+    ...posts.map(p => ({ loc: postUrl(p.slug), lastmod: formatLastMod(p.updatedAt), priority: '0.8', image: p.coverImage })),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">

@@ -95,17 +95,51 @@ export function registerBlogRoutes(app: express.Express, getDb: () => Promise<Db
     res.type('application/xml').send(renderSitemap(posts, req.path === '/blog/sitemap.xml'));
   }));
 
+  const LEGACY_SLUG_REDIRECTS: Record<string, string> = {
+    'cara-membuka-kafe-modal-10-juta-sukses': '/blog?kategori=kuliner-fnb',
+    'rahasia-sukses-bisnis-laundry-kiloan-omset-puluhan-juta': '/blog?kategori=laundry-jasa',
+    'revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin': '/blog?kategori=fintech-qris',
+  };
+
   app.get('/blog/:slug', page(async (req, res, db) => {
     const slug = String(req.params.slug).toLowerCase();
     if (slug !== req.params.slug) return res.redirect(301, `/blog/${slug}`);
     const { rows } = await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE slug = $1 AND is_published = true`, [slug]);
-    if (!rows.length) { res.setHeader('Cache-Control', 'no-store'); return res.status(404).type('html').send(renderNotFound()); }
+    if (!rows.length) {
+      if (LEGACY_SLUG_REDIRECTS[slug]) return res.redirect(301, LEGACY_SLUG_REDIRECTS[slug]);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(404).type('html').send(renderNotFound());
+    }
     const post = rowToPublicPost(rows[0]);
-    const related = (await db.query(`SELECT ${COLUMNS} FROM public.blog_posts WHERE is_published = true AND slug <> $1
-      ORDER BY (category = $2) DESC, created_at DESC LIMIT 3`, [slug, post.category])).rows.map(rowToPublicPost);
+    const relatedQuery = `
+      WITH combined AS (
+        (SELECT ${COLUMNS}, 1 as grp FROM public.blog_posts WHERE is_published = true AND created_at < $1::timestamptz AND slug <> $2::text ORDER BY created_at DESC LIMIT 1)
+        UNION ALL
+        (SELECT ${COLUMNS}, 2 as grp FROM public.blog_posts WHERE is_published = true AND created_at > $1::timestamptz AND slug <> $2::text ORDER BY created_at ASC LIMIT 1)
+        UNION ALL
+        (SELECT ${COLUMNS}, 3 as grp FROM public.blog_posts WHERE is_published = true AND category = $3::text AND slug <> $2::text ORDER BY created_at DESC LIMIT 3)
+        UNION ALL
+        (SELECT ${COLUMNS}, 4 as grp FROM public.blog_posts WHERE is_published = true AND category <> $3::text AND slug <> $2::text ORDER BY created_at DESC LIMIT 3)
+      )
+      SELECT * FROM combined ORDER BY grp, created_at DESC
+    `;
+    const relatedRows = (await db.query(relatedQuery, [post.createdAt, slug, post.category])).rows;
+    const seen = new Set<string>([slug]);
+    const related: PublicPost[] = [];
+    let prevPost: PublicPost | undefined;
+    let nextPost: PublicPost | undefined;
+
+    for (const r of relatedRows) {
+      if (r.grp === 1 && !prevPost) prevPost = rowToPublicPost(r);
+      if (r.grp === 2 && !nextPost) nextPost = rowToPublicPost(r);
+      if (!seen.has(r.slug)) {
+        seen.add(r.slug);
+        related.push(rowToPublicPost(r));
+      }
+    }
     if (req.method !== 'HEAD') void db.query('UPDATE public.blog_posts SET view_count = view_count + 1 WHERE id = $1', [post.id]).catch(() => {});
     res.setHeader('Cache-Control', PAGE_CACHE);
-    res.type('html').send(renderBlogPost(post, related));
+    res.type('html').send(renderBlogPost(post, related.slice(0, 6), { prev: prevPost, next: nextPost }));
   }));
 
   app.get('/rss.xml', page(async (_req, res, db) => {

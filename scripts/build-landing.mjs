@@ -53,8 +53,12 @@ try {
   if (!page.includes('<h1')) throw new Error('Landing content was not prerendered');
   // Vercel's static directory index takes priority over a root rewrite.
   // Publish marketing as the actual index and preserve the cashier separately.
-  const appShell = await readFile('dist/index.html', 'utf8');
-  if (!appShell.includes('<div id="root"></div>')) throw new Error('Run vite build before prerendering; cashier shell must be preserved');
+  const appShellRaw = await readFile('dist/index.html', 'utf8');
+  if (!appShellRaw.includes('<div id="root"></div>')) throw new Error('Run vite build before prerendering; cashier shell must be preserved');
+  const appShell = appShellRaw.replace(
+    /<link\b[^>]*rel="canonical"[^>]*>/i,
+    '<meta name="robots" content="noindex, nofollow" />'
+  );
   await writeFile('dist/app.html', appShell);
   await writeFile('dist/landing.html', page);
   await writeFile('dist/index.html', page);

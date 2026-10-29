@@ -13,6 +13,23 @@
       "schedule": "0 2 * * *"
     }
   ],
+  "redirects": [
+    {
+      "source": "/blog/cara-membuka-kafe-modal-10-juta-sukses",
+      "destination": "/blog?kategori=kuliner-fnb",
+      "permanent": true
+    },
+    {
+      "source": "/blog/rahasia-sukses-bisnis-laundry-kiloan-omset-puluhan-juta",
+      "destination": "/blog?kategori=laundry-jasa",
+      "permanent": true
+    },
+    {
+      "source": "/blog/revolusi-qris-dinamis-pos-umkm-tanpa-biaya-admin",
+      "destination": "/blog?kategori=fintech-qris",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/privacy",
