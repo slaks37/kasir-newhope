@@ -220,3 +220,21 @@ The exact human actions are collected in [owner-acceptance-checklist.md](owner-a
 | Migration/rollback | Existing canonical map/revoke/restore implementation retained | PG17 encrypted restore and actor preservation rerun in CI below | NOT RUN: approved restore destination/key custodian/isolated alternate provider required | Offline journals remain untouched |
 
 Only newly executed evidence is added below; prior successful Neon deployment/provider-smoke gates are not repeated or relabeled.
+
+### Configured PR30 artifact evidence — code 020b88e
+
+Verified code: `020b88ee6c997c5dac2b661d753cee2ca68bd9ce`. Full local `npm run verify` PASS. All four exact-code workflows completed successfully:
+
+- [Full CI PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991655).
+- [PostgreSQL17 security/replay/restore rehearsal PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991647). This remains isolated synthetic evidence, not hosted alternate-provider recovery.
+- [Android/iOS foundation PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991678).
+- [Configured PR30 Android/iOS artifacts PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991642). Both artifacts were downloaded and their included artifact-config.json inspected: profile pr30, provider neon, exact PR30 API/issuer, module flags OFF, native checkout OFF, provider login NOT RUN, native reachability BLOCKED by protected Preview.
+
+| Artifact | ID | GitHub archive SHA-256 |
+|---|---|---|
+| newhope-pr30-auth-staging-android-debug | 12883409173 | 2527f39b7adda9bbab5af9522581068a3d23f2ceefc6e870c2c36867c7361646 |
+| newhope-pr30-auth-staging-ios-simulator | 12883823235 | 1d765c5817d2c2a56751286b00976cf7f09f148fa7d22129fe42f0d61e1711fc |
+
+Digests above are GitHub-reported archive digests. Artifact retention ends November 5, 2026; rebuild the same commit if expired. Artifact preparation is now PASS. Hosted Google OAuth/PKCE/MFA/session/restart/revocation and physical-device acceptance remain BLOCKED/NOT RUN; compilation does not close those gates. No new hosted identity, staff-security, storage or alternate-provider rollback gate was claimed.
+
+First owner action: provide one genuinely unused controlled staging recipient and authorize invitation/verification/reset email to that address, or specify and authorize a separate empty authentication environment. Do not send passwords, TOTP seeds or recovery codes. The existing repaired recipient cannot qualify. Remaining device, public staging API, storage and recovery prerequisites are listed in owner-acceptance-checklist.md. Phase2 remains PARTIAL.
