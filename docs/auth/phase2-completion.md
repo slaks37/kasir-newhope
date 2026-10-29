@@ -11,7 +11,7 @@ Baseline inspected on 2026-10-28: PR27 `12e3d11070f7fa803a8f2e9796f6f5027bcc7474
 
 ## Exact gap and acceptance matrix
 
-Latest implementation: `d1ac0996894f6c67f4f14847975afcce48a32732` (full local verification PASS; final CI evidence below); later narrative records earlier failures and their repairs. The current matrix takes precedence over earlier chronological pending notes.
+Latest implementation: `d07defa6ead01982c67f8965bae4f65e0f4b9ab0` (local/full CI PASS; newest execution evidence at the end); later narrative records earlier failures and their repairs. The current matrix takes precedence over earlier chronological pending notes.
 
 | Phase 2 requirement | Existing evidence / new implementation | Remaining gate |
 |---|---|---|
@@ -166,3 +166,39 @@ New provider-agreement guard runs in web/PWA and mobile Vite builds. Unsupported
 New opt-in API artifact selector permits the audited Neon candidate only for VERCEL_ENV=preview, AUTH_PROVIDER=neon, matching frontend provider, staging-auth gate1 and both rollout flags0. Production/unknown targets and enabled rollout flags fail closed. Normal builds remain compatible and committed API parity remains checked. An isolated deployment can override only its build command with NEWHOPE_BUILD_TARGET=neon; no global project build setting or production environment change is required.
 
 Storage remains **PARTIAL**: immutable S3 adapter/local signed HTTP tests available; no approved destination bucket/credential/public-origin mapping supplied, no paid bucket provisioned and no production object copied. Mapping/backup/restore/rollback retain isolated PG17 acceptance; real alternate-provider hosted session continuity and production cutover remain NOT RUN.
+
+### Latest exact-code acceptance evidence
+
+Code `d07defa6ead01982c67f8965bae4f65e0f4b9ab0`:
+
+- Full local `npm run verify` PASS, including provider agreement and Preview-only artifact selector negative cases.
+- [CI PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830700034): full verification, committed API parity, Neon web/PWA graph and backend artifact.
+- [PostgreSQL17 PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830699946): migrations/RLS/service roles/replay and encrypted restore/rollback. Artifact12878063002:114 tables/1011 synthetic rows, all eight checks PASS. Data digest `ae9a089d660df2742e3af11fe2cabbbbbca67ca8db487a5d4fa13f414136628e`; encrypted backup digest `830fe1c94c7e0b2c7c5d331ce37ccbdb4166c3b6b758ca03186ec588e885bb7d`; Actions merge ref `5bb1ebb5418fee4ddd4054531b2360499f9e12f1` corresponds to this PR head.
+- [Native Android/iOS foundation PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830700001), including Android emulator foundation recovery. Actual hosted provider/device login remains BLOCKED, not promoted from these results. Configured native workflow remains skipped by its PR29-only guard.
+
+**Neon deployed-candidate smoke gate PASS:** deployment `dpl_AD4SH5WRfNqLejUCvcauVGB86LRs`, exact code above, unique URL `https://kasir-newhope-ntcjo0qky-slaks37s-projects.vercel.app`. Vercel API calls its non-production target `staging`; build-time VERCEL_ENV=preview was required by the selector. Only this deployment's buildCommand override selected `NEWHOPE_BUILD_TARGET=neon npm run build`; no global project/production build setting or environment was changed. Build logs confirmed graph PASS for16 entries/162 dependency directories and actual selection of the audited API files. Production cutover remains prohibited.
+
+The protected-fetch connector could not complete its redirect/authentication flow. Using the existing scoped Vercel CLI credentials, without weakening deployment protection, actual runtime results were:
+
+| Route | Status | App result |
+|---|---|---|
+| /api/auth/identity | 401 | AUTH_SESSION_REQUIRED |
+| /api/v1/subscription/status | 401 | AUTHENTICATION_REQUIRED |
+| /api/v1/sync/business | 401 | AUTHENTICATION_REQUIRED |
+| /api/admin/integrations | 401 | AUTHENTICATION_REQUIRED |
+| /api/cron/daily-insights | 401 | UNAUTHORIZED_CRON; no authorized job execution |
+| /api/v1/subscription/plans | 200 | JSON ok=true |
+
+These results prove the deployed selected runtime serves requests and denies anonymous access. They do not prove authenticated staff flows, MFA, role changes or storage. A later normal documentation deployment may replace the branch alias with the compatible build; use the recorded unique candidate URL/ID for this evidence. Both builds retain Neon provider configuration on approved PR30 staging. No production resources were changed.
+
+| Remaining gate | Current status | Exact external dependency |
+|---|---|---|
+| Fresh hosted staff sequence at every milestone | BLOCKED | One unused controlled recipient authorized for PR30 test email; existing/repaired account cannot qualify |
+| Staff MFA/recovery/reset and simultaneous sessions | BLOCKED | Private staff credential/TOTP/recovery participation and live independently authenticated sessions; owner authenticator preserved |
+| Owner/delegated ADMIN changes and immediate hosted revocation | PARTIAL | Existing isolated authorization tests PASS; live owner TOTP and explicitly scoped delegated test access required for hosted mutations |
+| Android/iOS hosted auth | BLOCKED | SDKs, booted emulator/simulator, appropriate configured target and private provider sessions; PR30 native API scope must be approved before repointing PR29 configuration |
+| Physical devices | NOT RUN / BLOCKED | Authorized connected Android/iOS test devices and private login |
+| Actual storage migration | BLOCKED | Approved staging destination, credentials, public/private URL policy and approved source manifest; no paid provisioning or production copies authorized |
+| Alternate-provider hosted rollback | NOT RUN | Separately authorized isolated alternate-provider identities/environment and real provider sessions; synthetic canonical mapping rollback/restore PASS is retained |
+
+Phase2 remains PARTIAL. Existing owner MFA, canonical IDs, business data, financial actor references and offline journals were not changed. Both rollout flags and native financial checkout remain OFF; DOKU and production authentication untouched.
