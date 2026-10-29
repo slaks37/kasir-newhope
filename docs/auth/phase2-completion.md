@@ -11,7 +11,7 @@ Baseline inspected on 2026-10-28: PR27 `12e3d11070f7fa803a8f2e9796f6f5027bcc7474
 
 ## Exact gap and acceptance matrix
 
-Latest verified implementation: `71275e2`; later narrative records earlier failures and their repairs. The current matrix takes precedence over earlier chronological pending notes.
+Latest implementation: `d1ac0996894f6c67f4f14847975afcce48a32732` (full local verification PASS; final CI evidence below); later narrative records earlier failures and their repairs. The current matrix takes precedence over earlier chronological pending notes.
 
 | Phase 2 requirement | Existing evidence / new implementation | Remaining gate |
 |---|---|---|
@@ -53,7 +53,7 @@ The reviewed fixture mapping uses actual business fingerprints, then verifies re
 |---|---|---|
 | Browser legacy Auth | src/lib/supabase.ts, authClient.ts, authRuntime.ts | Legacy production selection retained; Neon web/mobile build graph excludes SDK implementation |
 | Native legacy Auth | legacyNativeAuth.ts; lifecycle/status use the provider-neutral adapter despite legacy variable aliases | Native Neon graph check retained; installed sessions still require acceptance |
-| Gateway/backend legacy Auth | services/shared/auth.ts, legacyAuthOperations.ts, authProviderOperations.ts | Explicit provider dispatch retained; no Neon-to-legacy auth fallback. Final backend release graph still needs strict elimination of unused legacy code |
+| Gateway/backend legacy Auth | services/shared/auth.ts, legacyAuthOperations.ts, authProviderOperations.ts | Explicit provider dispatch retained; no Neon-to-legacy auth fallback. Separate Neon backend candidate now excludes these modules and passes graph/runtime probes; compatible production artifact remains isolated |
 | Blog object upload | src/server/blogMedia.ts; legacy blog-media public bucket, JPEG max500KB, author UUID/random UUID object path | Neon uses the explicit S3 adapter, or returns BLOG_OBJECT_STORAGE_NOT_CONFIGURED without fallback. Legacy SDK is loaded only on the legacy path |
 | Product/photo/receipt/profile data | Operational JSON, existing photo helpers, receipt-logo route and historical URL fields | No live object inventory or private records read; classify inline data versus approved public/private objects before migration. Do not add bulk blobs to Postgres |
 | Dependency/configuration | @supabase/auth-js and @supabase/supabase-js remain for legacy compatibility; VITE_SUPABASE_*/SUPABASE_* variables and the optional pool remapper remain | Remove from the final target release only after replacement and rollback gates; production variables/resources are untouched |
@@ -142,3 +142,11 @@ Full local `npm run verify` PASS after this implementation, including the new in
 The retained browser inventory exposed an older `/register?returnTo=%2Fstaff-invite` page. The generic login/register mode toggle preserved returnTo but selected the merchant form. That path now renders the existing personal StaffRegistrationForm directly in Neon mode, even without original-tab invitation storage; it submits the STAFF restriction and requires the invitation to grant membership later. Exact local return-path parsing rejects external/ambiguous duplicate destinations. No credential is entered or submitted on the user's behalf. Full local verification PASS after this correction.
 
 Backend revision `5f12c86ed35722e8cbd5c2c63138b1ac45f84e31` already passed [PG17 security and restore](https://github.com/slaks37/kasir-newhope/actions/runs/40798543711). Downloaded artifact12864483475 contains PASS for all eight checks,114 tables/1011 rows, data SHA256 `917ec0623e6c369ad536cd58461f4b3eb87fec14710ac7130a2155501479904e`, encrypted backup SHA256 `57e18de1cb5a4b543e2072fbaa309590432aef4e4da663a9216c8851c8cfeb16`. Its revision `3f05d8f2c09d3bc702eefb1f86dd926170ed2a8d` is the Actions PR merge ref for that head, not a production commit. Authorized branch Preview `dpl_2ZtKWfnvH5kzz5P59kxvYCW2rbu7` was READY at code5f12c86. These results precede the small registration-route follow-up; final-head CI is recorded separately.
+
+### Final code evidence
+
+Code SHA `d1ac0996894f6c67f4f14847975afcce48a32732`; later documentation-only revisions do not change the implementation. Full local verification PASS. Hosted Preview `dpl_ARRe47QvLyJpEgqwmADgF8aZFeZj` READY at this SHA. A new unauthenticated browser tab visiting `/register?returnTo=%2Fstaff-invite` visibly renders only personal name/email/password and “Daftar akun staf”; no merchant/outlet fields. Form was not submitted. This is hosted route acceptance, not a fresh identity registration PASS.
+
+[Final-code PostgreSQL17 PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944447), artifact12864588922: all eight encrypted-backup/restore/mapping/rollback checks PASS,114 tables/1011 synthetic rows. Data SHA256 `f5e162b6408ee0aecf43c1ae1be18da218e5756558d85a37000761bfa4668591`; encrypted backup SHA256 `c3d4c42607081c6c5331f1c20ec148bacf899f4fcdeaac4e9325cc57f2bff525`. Artifact revision `06da30083026fef0faea4dc8d58f1325ab07983a` is the Actions merge ref for the recorded code head. No dump or encryption key was published.
+
+Final-code [CI / API parity / web-PWA graph / Neon backend candidate PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944544). Candidate artifact12865122144 archive SHA256 `c29a024d9f42752fe03a7de5940c8c21985fc3eeaf89f06f55eef992c45d6929`. [Native foundation Android and iOS jobs PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944628), including existing Android emulator foundation checks; this does not replace configured hosted-provider/device authentication acceptance. Configured staging-artifact workflow remains skipped by its retained PR29 branch gate. Phase2 remains PARTIAL, PR remains Draft, production remains unchanged.
