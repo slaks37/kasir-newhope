@@ -10,6 +10,7 @@ var __export = (target, all) => {
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -38,8 +39,43 @@ var init_poolConfig = __esm({
   }
 });
 
+// services/shared/schemaFeatures.ts
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+var FEATURES, ABSENT_RECHECK_MS, known;
+var init_schemaFeatures = __esm({
+  "services/shared/schemaFeatures.ts"() {
+    "use strict";
+    FEATURES = {
+      staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+      staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
+      cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+      moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+      merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+      /** migration 0054 / 20261004090200 */
+      syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+      /** migration 0055 / 20261004090300 */
+      sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+    };
+    ABSENT_RECHECK_MS = 6e4;
+    known = /* @__PURE__ */ new Map();
+  }
+});
+
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -105,11 +141,13 @@ import { createHash } from "node:crypto";
 import { Resend } from "resend";
 function authEmailPayload(mail, env = process.env) {
   const origin = new URL(mail.baseUrl), link = new URL(mail.url);
-  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "STAFF_INVITE" ? link.pathname !== "/staff-invite" || link.search !== "" || !/^#token=[\w-]{43}$/.test(link.hash) : mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
   if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
-  const callbacks = link.searchParams.getAll("callbackURL");
-  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
-  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (mail.kind !== "STAFF_INVITE") {
+    const callbacks = link.searchParams.getAll("callbackURL");
+    if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+    authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  }
   if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
   if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
     throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
@@ -119,7 +157,8 @@ function authEmailPayload(mail, env = process.env) {
     const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
     if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
   }
-  const text3 = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const text3 = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const duration = mail.kind === "STAFF_INVITE" ? "24 jam" : "15 menit";
   const safeUrl2 = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
   return { payload: {
@@ -127,8 +166,8 @@ function authEmailPayload(mail, env = process.env) {
     to: mail.email,
     replyTo: "stefen@newsystem.space",
     subject: text3,
-    text: text3 + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
-    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text3 + "</title></head><body><h1>" + text3 + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl2 + '">' + text3 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+    text: text3 + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text3 + "</title></head><body><h1>" + text3 + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl2 + '">' + text3 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
   }, idempotencyKey: "newhope-auth-" + key };
 }
 async function sendBetterAuthEmail(mail) {
@@ -221,6 +260,10 @@ function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBette
         if (ctx.path === "/sign-up/email" && ctx.body) {
           const raw = ctx.body.onboarding || {};
           ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+          if (raw.account_purpose === "STAFF") {
+            if (!await hasSchemaFeature(pool, "staffIdentityPurpose")) throw new APIError("SERVICE_UNAVAILABLE", { code: "STAFF_REGISTRATION_NOT_READY", message: "Pendaftaran staf belum tersedia." });
+            ctx.body.onboarding.account_purpose = "STAFF";
+          }
         }
         if (ctx.path === "/sign-in/social" && ctx.body) {
           let target;
@@ -275,6 +318,7 @@ var init_betterAuth = __esm({
     init_poolConfig();
     init_betterAuthEmail();
     init_authReturnUrl();
+    init_schemaFeatures();
   }
 });
 
@@ -396,6 +440,239 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
+function supabaseConfig() {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  return { url, apiKey };
+}
+async function authenticateLegacyBearer(req) {
+  const authorization = firstHeader(req.headers.authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  if (!match) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  const { url, apiKey } = supabaseConfig();
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  let upstream;
+  try {
+    upstream = await fetch(`${url}/auth/v1/user`, {
+      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
+      signal: AbortSignal.timeout(5e3)
+    });
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
+    const user = await upstream.json();
+    if (typeof user.id !== "string" || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
+    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
+    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
+    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
+    return {
+      subject: user.id,
+      email: typeof user.email === "string" ? user.email : void 0,
+      isEmailVerified,
+      aal: claims.aal === "aal2" ? "aal2" : "aal1",
+      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
+    };
+  } catch {
+    return null;
+  }
+}
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+});
+
+// services/shared/auth.ts
+function firstHeader2(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
+function trustedPrincipal(req) {
+  const subject2 = firstHeader2(req.headers["x-auth-sub"]);
+  const isEmailVerified = firstHeader2(req.headers["x-auth-email-verified"]) === "true";
+  if (subject2) {
+    const aal = firstHeader2(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader2(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp4 = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader2(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp4) ? { mfaVerifiedAt: timestamp4 } : {} };
+  }
+  return LOCAL_BYPASS2() ? { subject: "local-development", isEmailVerified: true } : null;
+}
+async function canAccessBusiness(db, principal, businessId) {
+  if (principal.subject === "local-development") return true;
+  const { rows } = await db.query(
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
+       FROM internal.merchants m
+       JOIN internal.tenants t ON t.id = m.tenant_id
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
+  );
+  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
+}
+async function tenantForPrincipal(db, principal) {
+  const { rows } = await db.query(
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
+     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
+    [principal.subject]
+  );
+  if (rows[0]?.id) return rows[0].id;
+  if (principal.subject === "local-development" && LOCAL_BYPASS2()) {
+    const res = await db.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    return res.rows[0]?.id ?? null;
+  }
+  return null;
+}
+var LOCAL_BYPASS2, AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    LOCAL_BYPASS2 = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
+// src/server/s3BlogMedia.ts
+var s3BlogMedia_exports = {};
+__export(s3BlogMedia_exports, {
+  createS3BlogMediaProvider: () => createS3BlogMediaProvider
+});
+import { Readable } from "node:stream";
+import { createHash as createHash2 } from "node:crypto";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+function createS3BlogMediaProvider(env = process.env) {
+  const required = ["OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_PUBLIC_ORIGIN", "OBJECT_STORAGE_ACCESS_KEY_ID", "OBJECT_STORAGE_SECRET_ACCESS_KEY"];
+  if (env.OBJECT_STORAGE_PROVIDER !== "s3" || required.some((key) => !env[key])) throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+  let endpoint, origin;
+  try {
+    endpoint = new URL(env.OBJECT_STORAGE_ENDPOINT);
+    origin = new URL(env.OBJECT_STORAGE_PUBLIC_ORIGIN);
+    for (const url of [endpoint, origin]) {
+      const localTest = env.NODE_ENV === "test" && url.protocol === "http:" && url.hostname === "127.0.0.1";
+      if (!localTest && url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw Error();
+    }
+    if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.OBJECT_STORAGE_BUCKET)) throw Error();
+  } catch {
+    throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+  }
+  const client = new S3Client({
+    endpoint: endpoint.href,
+    region: env.OBJECT_STORAGE_REGION || "auto",
+    forcePathStyle: true,
+    maxAttempts: 1,
+    credentials: { accessKeyId: env.OBJECT_STORAGE_ACCESS_KEY_ID, secretAccessKey: env.OBJECT_STORAGE_SECRET_ACCESS_KEY }
+  });
+  const bucket = env.OBJECT_STORAGE_BUCKET;
+  return { async upload(bytes, path) {
+    if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/i.test(path) || bytes.length < 100 || bytes.length > 5e5) throw Error("INVALID_BLOG_PHOTO");
+    const key = `blog-media/${path}`;
+    const digest4 = createHash2("sha256").update(bytes).digest("hex");
+    const abortSignal = AbortSignal.timeout(18e3);
+    await client.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ContentType: "image/jpeg",
+      ContentLength: bytes.length,
+      CacheControl: "public, max-age=31536000, immutable",
+      IfNoneMatch: "*",
+      Metadata: { sha256: digest4 }
+    }), { abortSignal });
+    const stored = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal });
+    if (!(stored.Body instanceof Readable) || stored.ContentLength !== bytes.length || stored.ContentType !== "image/jpeg") {
+      if (stored.Body instanceof Readable) stored.Body.destroy();
+      throw Error("BLOG_PHOTO_READBACK_FAILED");
+    }
+    const hash2 = createHash2("sha256");
+    let count = 0;
+    for await (const chunk of stored.Body) {
+      count += chunk.length;
+      if (count > bytes.length) {
+        stored.Body.destroy();
+        throw Error("BLOG_PHOTO_READBACK_FAILED");
+      }
+      hash2.update(chunk);
+    }
+    if (count !== bytes.length || hash2.digest("hex") !== digest4) throw Error("BLOG_PHOTO_READBACK_FAILED");
+    return new URL(key, origin).href;
+  } };
+}
+var init_s3BlogMedia = __esm({
+  "src/server/s3BlogMedia.ts"() {
+    "use strict";
+  }
+});
+
+// src/server/legacyBlogMedia.ts
+var legacyBlogMedia_exports = {};
+__export(legacyBlogMedia_exports, {
+  uploadLegacyBlogMedia: () => uploadLegacyBlogMedia
+});
+async function uploadLegacyBlogMedia(bytes, path) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
+  const { createClient } = await import("@supabase/supabase-js");
+  const signal = AbortSignal.timeout(18e3);
+  const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
+  const bucket = await client.storage.getBucket(BUCKET);
+  if (bucket.error) {
+    if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
+    const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
+    if (created.error) {
+      const existing = await client.storage.getBucket(BUCKET);
+      if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
+    }
+  } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
+  const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+  if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
+  return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+var BUCKET;
+var init_legacyBlogMedia = __esm({
+  "src/server/legacyBlogMedia.ts"() {
+    "use strict";
+    BUCKET = "blog-media";
+  }
+});
+
 // services/shared/legacyAuthOperations.ts
 var legacyAuthOperations_exports = {};
 __export(legacyAuthOperations_exports, {
@@ -408,7 +685,7 @@ function createLegacyAuthOperations() {
   let opening;
   const client = async () => {
     if (!url || !serviceKey) throw new AuthOperationError(503, "SUPPORT_AUTH_NOT_CONFIGURED");
-    return opening ??= import("@supabase/supabase-js").then(({ createClient: createClient2 }) => createClient2(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) } }));
+    return opening ??= import("@supabase/supabase-js").then(({ createClient }) => createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) } }));
   };
   const identity = async (subject2) => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(subject2)) return null;
@@ -471,16 +748,19 @@ var init_legacyAuthOperations = __esm({
 function createAuthProviderOperations(deps = {}) {
   const provider = deps.provider || authProvider();
   if (provider === "supabase") {
-    let operation;
-    const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
-    return {
-      provider,
-      configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
-      ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
-      sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
-      sendReset: async (e) => (await legacy()).sendReset(e),
-      reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
-    };
+    if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthOperationError(503, "AUTH_PROVIDER_UNSUPPORTED");
+    else {
+      let operation;
+      const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
+      return {
+        provider,
+        configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
+        ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
+        sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
+        sendReset: async (e) => (await legacy()).sendReset(e),
+        reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
+      };
+    }
   }
   const config = deps.config || getAuthConfig;
   const runtime2 = deps.runtime || (async () => {
@@ -671,108 +951,12 @@ async function connectDb(opts) {
 }
 
 // services/billing/routes.ts
+init_schemaFeatures();
+init_auth();
 import { randomUUID as randomUUID3 } from "node:crypto";
 
-// services/shared/auth.ts
-init_betterAuthConfig();
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
-}
-function supabaseConfig() {
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-  return { url, apiKey };
-}
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
-  if (authProvider() === "neon") {
-    try {
-      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
-    } catch {
-      throw new AuthUnavailableError();
-    }
-  }
-  const authorization = firstHeader(req.headers.authorization);
-  const match = /^Bearer\s+(.+)$/i.exec(authorization);
-  if (!match) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  let upstream;
-  try {
-    upstream = await fetch(`${url}/auth/v1/user`, {
-      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
-      signal: AbortSignal.timeout(5e3)
-    });
-  } catch {
-    throw new AuthUnavailableError();
-  }
-  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
-  if (!upstream.ok) return null;
-  try {
-    const user = await upstream.json();
-    if (typeof user.id !== "string" || !user.id) return null;
-    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
-    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
-    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
-    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
-    return {
-      subject: user.id,
-      email: typeof user.email === "string" ? user.email : void 0,
-      isEmailVerified,
-      aal: claims.aal === "aal2" ? "aal2" : "aal1",
-      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
-    };
-  } catch {
-    return null;
-  }
-}
-function trustedPrincipal(req) {
-  const subject2 = firstHeader(req.headers["x-auth-sub"]);
-  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
-  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-}
-async function canAccessBusiness(db, principal, businessId) {
-  if (principal.subject === "local-development") return true;
-  const { rows } = await db.query(
-    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
-       FROM internal.merchants m
-       JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
-    [businessId]
-  );
-  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
-}
-async function tenantForPrincipal(db, principal) {
-  const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
-     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
-    [principal.subject]
-  );
-  if (rows[0]?.id) return rows[0].id;
-  if (principal.subject === "local-development" && LOCAL_BYPASS()) {
-    const res = await db.query(
-      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
-       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
-       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-         DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`
-    );
-    return res.rows[0]?.id ?? null;
-  }
-  return null;
-}
-
 // services/pos/businessScope.ts
+init_auth();
 var BusinessScopeError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -1313,12 +1497,12 @@ function generateDigest(body) {
   const content = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   return crypto.createHash("sha256").update(content).digest("base64");
 }
-function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest3, secretKey) {
+function generateSignature(clientId, requestId, requestTimestamp, requestTarget, digest4, secretKey) {
   const componentSignature = `Client-Id:${clientId}
 Request-Id:${requestId}
 Request-Timestamp:${requestTimestamp}
 Request-Target:${requestTarget}
-Digest:${digest3}`;
+Digest:${digest4}`;
   const hmac = crypto.createHmac("sha256", secretKey);
   hmac.update(componentSignature, "utf8");
   const hmacBase64 = hmac.digest("base64");
@@ -1344,13 +1528,13 @@ async function createDokuCheckout(payload) {
   const requestId = crypto.randomUUID();
   const requestTimestamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19) + "Z";
   const requestTarget = "/checkout/v1/payment";
-  const digest3 = generateDigest(payload);
+  const digest4 = generateDigest(payload);
   const signature = generateSignature(
     clientId,
     requestId,
     requestTimestamp,
     requestTarget,
-    digest3,
+    digest4,
     secretKey
   );
   const response = await fetch(`${apiUrl}${requestTarget}`, {
@@ -1442,13 +1626,13 @@ function verifyDokuWebhookSignature(headers, rawBody, requestTarget, now = Date.
   const time = Date.parse(requestTimestamp);
   if (!Number.isFinite(time) || new Date(time).toISOString().replace(".000Z", "Z") !== requestTimestamp.replace(".000Z", "Z")) return false;
   if (time > now + 5 * 6e4 || now - time > 13 * 60 * 6e4) return false;
-  const digest3 = generateDigest(rawBody);
+  const digest4 = generateDigest(rawBody);
   const expectedSignature = generateSignature(
     clientId,
     requestId,
     requestTimestamp,
     requestTarget,
-    digest3,
+    digest4,
     secretKey
   );
   try {
@@ -1485,6 +1669,10 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    if (await hasSchemaFeature(db, "staffIdentityPurpose")) {
+      const purpose = await db.query("SELECT internal.is_staff_only_identity($1) AS staff_only", [principal.subject]);
+      if (purpose.rows[0]?.staff_only) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+    }
     let id = await tenantForPrincipal(db, principal);
     if (!id && principal.subject !== "local-development") {
       const assigned = await db.query("SELECT internal.has_active_staff_assignment($1) AS assigned", [principal.subject]);
@@ -1795,6 +1983,9 @@ function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
 }
 
+// src/server/adminRoutes.ts
+init_auth();
+
 // src/server/blogDiscovery.ts
 var BLOG_INDEXNOW_KEY = "eda153f3ef2fb48e8fcc2454402be848";
 var BLOG_INDEXNOW_PATH = `/blog/${BLOG_INDEXNOW_KEY}.txt`;
@@ -1822,7 +2013,7 @@ async function notifyBlogDiscovery(slugs, send = fetch) {
 }
 
 // src/server/blogRoutes.ts
-import { createHash as createHash2, randomUUID as randomUUID6, timingSafeEqual } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID6, timingSafeEqual } from "node:crypto";
 
 // src/lib/blog/categories.ts
 var BLOG_CATEGORIES = [
@@ -2056,33 +2247,21 @@ import sharp from "sharp";
 import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/server/blogMedia.ts
-import { createClient } from "@supabase/supabase-js";
+init_betterAuthConfig();
 import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/lib/blog/photo.ts
 var BLOG_PHOTO_MAX_CHARS = 65e4;
 
 // src/server/blogMedia.ts
-var BUCKET = "blog-media";
 function createBlogMediaProvider() {
   return { async upload(bytes, path) {
-    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
-    const signal = AbortSignal.timeout(18e3);
-    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
-    const bucket = await client.storage.getBucket(BUCKET);
-    if (bucket.error) {
-      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
-      if (created.error) {
-        const existing = await client.storage.getBucket(BUCKET);
-        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      }
-    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
-    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
-    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
-    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    if (authProvider() === "neon") {
+      const { createS3BlogMediaProvider: createS3BlogMediaProvider2 } = await Promise.resolve().then(() => (init_s3BlogMedia(), s3BlogMedia_exports));
+      return createS3BlogMediaProvider2().upload(bytes, path);
+    }
+    if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+    else return (await Promise.resolve().then(() => (init_legacyBlogMedia(), legacyBlogMedia_exports))).uploadLegacyBlogMedia(bytes, path);
   } };
 }
 function decodeBlogPhoto(value) {
@@ -2111,7 +2290,7 @@ function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider(
       res.status(201).json({ ok: true, url });
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
-      res.status(code === "BLOG_STORAGE_NOT_CONFIGURED" ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
+      res.status(["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_OBJECT_STORAGE_NOT_CONFIGURED"].includes(code) ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_OBJECT_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
     }
   });
 }
@@ -2614,7 +2793,7 @@ var BlogApiError = class extends Error {
     this.details = details;
   }
 };
-var digest = (value) => createHash2("sha256").update(value).digest();
+var digest = (value) => createHash3("sha256").update(value).digest();
 function apiKeyValid(req) {
   const configured = [
     ...String(process.env.BLOG_API_KEYS || "").split(","),
@@ -2630,7 +2809,7 @@ function apiKeyValid(req) {
 var writeWindow = /* @__PURE__ */ new Map();
 var BLOG_WRITES_PER_HOUR = 120;
 function allowWrite(req) {
-  const key = createHash2("sha256").update(String(req.headers.authorization || req.headers["x-api-key"] || "")).digest("hex").slice(0, 16);
+  const key = createHash3("sha256").update(String(req.headers.authorization || req.headers["x-api-key"] || "")).digest("hex").slice(0, 16);
   const now = Date.now(), entry = writeWindow.get(key);
   if (!entry || entry.resetAt < now) {
     writeWindow.set(key, { count: 1, resetAt: now + 36e5 });
@@ -3309,6 +3488,9 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
   });
 }
 
+// services/mcp/routes.ts
+init_auth();
+
 // services/mcp/tools.ts
 var MCP_SCOPE = "pos:read";
 var annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -3350,7 +3532,7 @@ function mcpConfig() {
 // src/server/adminIntegrations.ts
 function integrationProviders(env = process.env) {
   const configured = (...keys) => keys.every((key) => Boolean(env[key]?.trim()));
-  const neon = env.AUTH_PROVIDER === "neon";
+  const neon = process.env.NEWHOPE_BUILD_TARGET === "neon" || env.AUTH_PROVIDER === "neon";
   const identity = neon ? { id: "neon-auth", name: "New Hope Auth / Neon", purpose: "Autentikasi akun dan sesi", configured: configured("NEWHOPE_AUTH_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_DATABASE_URL") && env.NEWHOPE_NEON_AUTH_STAGING === "1", dashboard: "https://console.neon.tech/", note: "Sesi database dan identitas kanonis; status konfigurasi bukan bukti login atau migrasi produksi." } : { id: "supabase", name: "Supabase", purpose: "Database dan autentikasi akun", configured: configured("DATABASE_URL") && (configured("SUPABASE_URL", "SUPABASE_ANON_KEY") || configured("VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY")), dashboard: "https://supabase.com/dashboard/project/fqxrhumsgigcgjtlbfuo", note: "Provider autentikasi legacy; dipertahankan sampai gate migrasi dan rollback lulus." };
   return [
     identity,
@@ -4453,30 +4635,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 }
 
 // services/pos/registerOperations.ts
-import { createHash as createHash3 } from "node:crypto";
-
-// services/shared/schemaFeatures.ts
-var FEATURES = {
-  cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
-  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
-  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
-  /** migration 0054 / 20261004090200 */
-  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
-    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
-  /** migration 0055 / 20261004090300 */
-  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
-};
-var ABSENT_RECHECK_MS = 6e4;
-var known = /* @__PURE__ */ new Map();
-async function hasSchemaFeature(db, feature, now = Date.now()) {
-  const cached = known.get(feature);
-  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
-  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
-  known.set(feature, { ok, at: now });
-  return ok;
-}
+init_auth();
+init_schemaFeatures();
+import { createHash as createHash4 } from "node:crypto";
 
 // src/platform/modules/registerCapabilities.ts
 var REGISTER_CAPABILITIES = ["outlet_revenue.read", "shift.open", "shift.read", "shift_history.read", "shift.close", "shift_variance.submit", "shift_variance.approve", "register.configure"];
@@ -4484,8 +4645,12 @@ function registerCapabilities(role) {
   if (["OWNER", "ADMIN"].includes(role)) return [...REGISTER_CAPABILITIES];
   if (role === "MANAGER") return REGISTER_CAPABILITIES.filter((c) => c !== "register.configure");
   if (role === "CASHIER") return REGISTER_CAPABILITIES.filter((c) => !["register.configure", "shift_variance.approve"].includes(c));
+  if (role === "ACCOUNTANT") return ["outlet_revenue.read", "shift.read", "shift_history.read"];
   return [];
 }
+
+// services/pos/modules.ts
+init_auth();
 
 // src/modules/fnb/manifest.ts
 var manifest = {
@@ -5049,6 +5214,7 @@ function legacyModuleForSector(sector) {
 }
 
 // services/pos/modules.ts
+init_schemaFeatures();
 var UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ModuleAccessError = class extends Error {
   constructor(status, code) {
@@ -5063,6 +5229,7 @@ var permissionsForModuleRole = (role) => {
     ADMIN: ["overview", "pos", "tables", "inventory", "customers", "labor", "reports", "ai", "settings"],
     MANAGER: ["overview", "pos", "tables", "inventory", "customers", "labor", "reports"],
     CASHIER: ["overview", "pos", "tables", "customers"],
+    ACCOUNTANT: ["overview", "reports"],
     BARISTA: ["overview", "tables"],
     CHEF: ["overview", "tables"],
     WASHER: ["overview", "tables"],
@@ -5074,12 +5241,14 @@ var permissionsForModuleRole = (role) => {
 async function resolveModuleAccess(db, subject2, businessId, outletId) {
   if (typeof businessId !== "string" || !UUID.test(businessId) || typeof outletId !== "string" || !UUID.test(outletId))
     throw new ModuleAccessError(400, "INVALID_MODULE_SCOPE");
+  const managedStaff = await hasSchemaFeature(db, "staffAccounts");
   const { rows } = await db.query(`SELECT t.id AS tenant_id,m.business_sector,t.owner_user_ref=$3 AS tenant_owner,
     CASE WHEN t.owner_user_ref=$3 THEN 'OWNER' ELSE membership.role END AS role,
+    ${managedStaff ? "membership.id AS membership_id,membership.auth_managed," : ""}
     (SELECT count(*)::int FROM internal.outlets ox WHERE ox.merchant_id=m.id) AS outlet_count
     FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=m.tenant_id
-    LEFT JOIN LATERAL (SELECT ms.role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id
+    LEFT JOIN LATERAL (SELECT ms.role${managedStaff ? ",ms.id,ms.auth_managed" : ""} FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id
       WHERE u.id::text=$3 AND u.is_active AND ms.is_active AND ms.tenant_id=t.id
       AND (ms.scope_type='TENANT' OR ms.merchant_id=m.id AND
         (ms.scope_type='MERCHANT' OR ms.scope_type='OUTLET' AND ms.outlet_id=o.id))
@@ -5102,14 +5271,22 @@ async function resolveModuleAccess(db, subject2, businessId, outletId) {
     WHERE mm.tenant_id=$1 AND mm.merchant_id=$2 AND mm.enabled AND COALESCE(om.enabled,true)
       AND e.enabled AND e.expires_at>now() ORDER BY mm.module_id`, [scope.tenant_id, businessId, outletId]);
   const permissions = permissionsForModuleRole(scope.role);
+  const staffRoles = /* @__PURE__ */ new Map();
+  if (managedStaff && scope.auth_managed && !scope.tenant_owner) {
+    const rows2 = await db.query("SELECT module_id,role FROM internal.staff_workspace_assignments WHERE membership_id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4", [scope.membership_id, scope.tenant_id, businessId, outletId]);
+    for (const row of rows2.rows) staffRoles.set(row.module_id, row.role);
+  }
   const modules = [];
   for (const row of assignments.rows) {
     const manifest6 = moduleManifest(row.module_id);
+    const staffRole = scope.auth_managed && !scope.tenant_owner ? staffRoles.get(row.module_id) : void 0;
+    if (scope.auth_managed && !scope.tenant_owner && !staffRole) continue;
+    const role = staffRole || scope.role;
     const operationalModule = { BARISTA: "fnb", CHEF: "fnb", WASHER: "carwash", KAPSTER: "barber" };
-    if (operationalModule[scope.role] && operationalModule[scope.role] !== row.module_id) continue;
+    if (operationalModule[role] && operationalModule[role] !== row.module_id) continue;
     if (Number(row.workspace_version) === 2 && (!isolated || !["retail", "barber"].includes(row.module_id))) continue;
     if (!manifest6 || Number(row.workspace_version) !== 2 && (manifest6.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest6.id, permissions, capabilities: Number(row.workspace_version) === 2 ? registerCapabilities(scope.role) : [], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest6.id, permissions: staffRole ? permissionsForModuleRole(staffRole) : permissions, capabilities: Number(row.workspace_version) === 2 ? registerCapabilities(role) : [], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion: Number(row.workspace_version), expiresAt: new Date(row.expires_at).toISOString(), ...staffRole ? { staffRole } : {} });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -5300,6 +5477,10 @@ async function resolveWorkspaceScope(db, subject2, input, required = []) {
  ORDER BY CASE role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
  ) ms ON true WHERE m.id=$1`, [access.businessId, subject2, access.outletId])).rows[0];
   if (!row?.role) throw new ModuleAccessError(403, "WORKSPACE_MEMBERSHIP_REQUIRED");
+  if (grant.staffRole) {
+    row.role = grant.staffRole;
+    row.membership_scope = "OUTLET";
+  }
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true),set_config('app.actor_role',$6,true)", [row.tenant_id, access.businessId, access.outletId, input.moduleId, subject2, row.role]);
   return { tenantId: row.tenant_id, merchantId: access.businessId, outletId: access.outletId, moduleId: input.moduleId, sector: moduleManifest(input.moduleId).sector, actorRef: subject2, role: row.role, membershipScope: row.membership_scope, transportRef: row.external_ref || access.businessId, namespace: `WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`, permissions: grant.permissions, features: grant.features };
 }
@@ -5308,6 +5489,7 @@ function requireWorkspaceRole(scope, roles) {
 }
 
 // services/pos/activity.ts
+init_schemaFeatures();
 var SECTORS2 = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
 var APP_MODULES2 = [
   "POS",
@@ -5360,7 +5542,7 @@ async function writeActivity(db, a) {
 var UUID2 = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var ID = /^[^\x00-\x1f\x7f]{1,128}$/;
 var round = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
-var hash = (v) => createHash3("sha256").update(JSON.stringify(v)).digest("hex");
+var hash = (v) => createHash4("sha256").update(JSON.stringify(v)).digest("hex");
 var iso = (v) => new Date(String(v)).toISOString();
 var RegisterError = class extends Error {
   constructor(status, code) {
@@ -5660,9 +5842,13 @@ function registerCashierFinanceRoutes(app, db) {
   });
 }
 
+// services/pos/finance.ts
+init_schemaFeatures();
+
 // services/pos/financialAuthorization.ts
-import { createHash as createHash4, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+init_auth();
 init_authProviderOperations();
+import { createHash as createHash5, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve2, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve2(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -5672,8 +5858,8 @@ var FinancialApprovalError = class extends Error {
   }
 };
 var canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "approvalGrant" && v[k] !== void 0).sort().map((k) => [k, canonical(v[k])])) : v;
-var commandHash = (command) => createHash4("sha256").update(JSON.stringify(canonical(command))).digest("hex");
-var digest2 = (token) => createHash4("sha256").update(token).digest("hex");
+var commandHash = (command) => createHash5("sha256").update(JSON.stringify(canonical(command))).digest("hex");
+var digest2 = (token) => createHash5("sha256").update(token).digest("hex");
 function validFinancialPin(pin) {
   return typeof pin === "string" && /^\d{4,8}$/.test(pin) && !/^([0-9])\1+$/.test(pin) && !["1234", "4321", "123456", "654321", "12345678", "87654321"].includes(pin);
 }
@@ -5783,6 +5969,7 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
 }
 
 // services/pos/finance.ts
+init_auth();
 var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID2 = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -6072,6 +6259,9 @@ function sharedPurchaseCashCommand(commandId, moduleId, outletId, sector, amount
   return { sector, outletId, clientEventId: `purchase:${commandId}:${moduleId}`, type: "CASH_OUT", amount, occurredAt, description, category: "BELANJA_BAHAN", recipientOrSource: "Shared purchase " + commandId };
 }
 
+// services/pos/workspaceInventory.ts
+init_auth();
+
 // services/pos/inventoryLocation.ts
 async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
   const existing = await db.query(`SELECT id FROM pos.inventory_locations
@@ -6090,8 +6280,8 @@ async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
 }
 
 // services/pos/workspaceIdentity.ts
-import { createHash as createHash5 } from "node:crypto";
-var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash5("sha256").update(moduleId + "\0" + recordId).digest("hex");
+import { createHash as createHash6 } from "node:crypto";
+var workspaceProductRef = (moduleId, recordId) => "workspace:" + createHash6("sha256").update(moduleId + "\0" + recordId).digest("hex");
 
 // services/pos/workspaceInventory.ts
 async function workspaceProduct(c, s, recordId, lock = false) {
@@ -6184,6 +6374,12 @@ function registerWorkspaceInventoryRoutes(app, db) {
     }
   });
 }
+
+// services/pos/workspaceState.ts
+init_auth();
+
+// services/pos/sharedState.ts
+init_auth();
 
 // src/lib/sync/orderOperations.ts
 var ORDER_OPERATION_FIELDS = [
@@ -6380,6 +6576,7 @@ async function projectLabor(c, scope, sector, op) {
 }
 
 // services/pos/sharedState.ts
+init_schemaFeatures();
 var SECTOR_SET = new Set(SECTORS2);
 var GLOBAL_KINDS = /* @__PURE__ */ new Set(["users", "staff_members"]);
 var SECTOR_KINDS = /* @__PURE__ */ new Set([
@@ -6900,16 +7097,240 @@ function registerWorkspaceStateRoutes(app, db) {
   });
 }
 
+// services/pos/staffAccounts.ts
+init_auth();
+init_betterAuthConfig();
+init_betterAuthEmail();
+init_schemaFeatures();
+import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
+var UUID4 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+var STAFF_ROLES = ["OWNER", "ADMIN", "MANAGER", "CASHIER", "BARISTA", "CHEF", "WASHER", "KAPSTER", "ACCOUNTANT", "STAFF"];
+var StaffAccessError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+  }
+};
+var deny = (code = "STAFF_MANAGEMENT_FORBIDDEN") => {
+  throw new StaffAccessError(403, code);
+};
+var digest3 = (s) => createHash7("sha256").update(s).digest("hex");
+function staffAssignments(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 32) throw new StaffAccessError(400, "STAFF_ASSIGNMENTS_REQUIRED");
+  const seen = /* @__PURE__ */ new Set();
+  return value.map((row) => {
+    if (!row || Object.keys(row).sort().join(",") !== "merchantId,moduleId,outletId,role" || !UUID4.test(row.merchantId) || !UUID4.test(row.outletId) || !["retail", "barber"].includes(row.moduleId) || !STAFF_ROLES.includes(row.role)) throw new StaffAccessError(400, "STAFF_ASSIGNMENT_INVALID");
+    const operational = { BARISTA: "fnb", CHEF: "fnb", WASHER: "carwash", KAPSTER: "barber" };
+    if (operational[row.role] && operational[row.role] !== row.moduleId) throw new StaffAccessError(400, "STAFF_ROLE_MODULE_MISMATCH");
+    const key = [row.merchantId, row.outletId, row.moduleId].join(":");
+    if (seen.has(key)) throw new StaffAccessError(400, "STAFF_ASSIGNMENT_DUPLICATE");
+    seen.add(key);
+    return { merchantId: row.merchantId, outletId: row.outletId, moduleId: row.moduleId, role: row.role };
+  }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+function requireFreshMfa(principal) {
+  const now = Date.now() / 1e3, t = principal.mfaVerifiedAt;
+  if (principal.aal !== "aal2" || !Number.isFinite(t) || t > now + 30 || now - t > 300) deny("STAFF_RECENT_TOTP_REQUIRED");
+}
+var context = async (c, tenant2) => {
+  await c.query("SELECT set_config('app.tenant_id',$1,true)", [tenant2]);
+};
+async function actor(c, p, tenant2, mutate = false) {
+  if (!UUID4.test(tenant2)) throw new StaffAccessError(400, "STAFF_TENANT_REQUIRED");
+  await context(c, tenant2);
+  const t = (await c.query(`SELECT t.id,t.name,t.owner_user_ref FROM internal.tenants t JOIN internal.users u ON u.id::text=$2 AND u.is_active WHERE t.id=$1 AND t.is_active AND t.merged_into IS NULL`, [tenant2, p.subject])).rows[0];
+  if (!t) deny();
+  const owner = t.owner_user_ref === p.subject;
+  if (!owner && !(await c.query(`SELECT 1 FROM internal.memberships WHERE tenant_id=$1 AND user_id::text=$2 AND is_active AND auth_managed AND can_manage_staff`, [tenant2, p.subject])).rows.length) deny();
+  if (mutate) requireFreshMfa(p);
+  return { owner, tenant: t };
+}
+async function validateScopes(c, p, tenant2, assignments, owner, manage = false) {
+  if (manage && (!owner || assignments.some((a) => a.role !== "ADMIN"))) deny("STAFF_DELEGATION_OWNER_REQUIRED");
+  for (const a of assignments) {
+    const allowed = await c.query(`SELECT 1 FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id JOIN internal.merchant_modules mm ON mm.merchant_id=m.id AND mm.tenant_id=m.tenant_id AND mm.module_id=$4 WHERE o.tenant_id=$1 AND m.id=$2 AND o.id=$3 AND o.is_active AND m.is_active AND mm.enabled AND mm.workspace_version=2`, [tenant2, a.merchantId, a.outletId, a.moduleId]);
+    if (!allowed.rows.length) deny("STAFF_ASSIGNMENT_SCOPE_FORBIDDEN");
+    if (!owner) {
+      if (["OWNER", "ADMIN"].includes(a.role)) deny("STAFF_ADMIN_GRANT_OWNER_REQUIRED");
+      const delegated = await c.query(`SELECT 1 FROM internal.staff_workspace_assignments a JOIN internal.memberships ms ON ms.id=a.membership_id AND ms.tenant_id=a.tenant_id WHERE a.tenant_id=$1 AND ms.user_id::text=$2 AND ms.auth_managed AND ms.is_active AND ms.can_manage_staff AND a.merchant_id=$3 AND a.outlet_id=$4 AND a.module_id=$5 AND a.role='ADMIN'`, [tenant2, p.subject, a.merchantId, a.outletId, a.moduleId]);
+      if (!delegated.rows.length) deny("STAFF_ADMIN_SCOPE_FORBIDDEN");
+    }
+  }
+}
+async function audit3(c, p, tenant2, action, subject2, invitation, details = {}) {
+  await c.query("INSERT INTO internal.staff_access_events(tenant_id,actor_id,subject_id,invitation_id,action,details) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [tenant2, p.subject, subject2, invitation, action, JSON.stringify(details)]);
+}
+var readAssignments = async (c, id) => (await c.query('SELECT merchant_id AS "merchantId",outlet_id AS "outletId",module_id AS "moduleId",role FROM internal.staff_workspace_assignments WHERE membership_id=$1 ORDER BY merchant_id,outlet_id,module_id', [id])).rows;
+var staffTransaction = (db, fn) => db.tx(async (c) => {
+  await c.exec("SET LOCAL ROLE svc_staff");
+  return fn(c);
+});
+async function createStaffInvitation(db, p, input, send = sendBetterAuthEmail, baseUrl = getAuthConfig().baseUrl) {
+  const assignments = staffAssignments(input.assignments), email = String(input.email || "").trim().toLowerCase();
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(email) || email.length > 160 || !UUID4.test(input.requestKey) || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_INVITE_INVALID");
+  const token = randomBytes2(32).toString("base64url"), id = randomUUID9();
+  const saved = await staffTransaction(db, async (c) => {
+    const { owner } = await actor(c, p, input.tenantId, true);
+    await validateScopes(c, p, input.tenantId, assignments, owner, input.canManageStaff);
+    const existing = (await c.query("SELECT id,status,email,assignments,can_manage_staff FROM internal.staff_invitations WHERE tenant_id=$1 AND request_key=$2", [input.tenantId, input.requestKey])).rows[0];
+    if (existing) {
+      if (existing.email !== email || JSON.stringify(staffAssignments(existing.assignments)) !== JSON.stringify(assignments) || existing.can_manage_staff !== input.canManageStaff) throw new StaffAccessError(409, "STAFF_REQUEST_KEY_CONFLICT");
+      return { id: existing.id, status: existing.status, replay: true };
+    }
+    if (Number((await c.query("SELECT count(*) AS n FROM internal.staff_invitations WHERE invited_by=$1 AND created_at>now()-interval '1 hour'", [p.subject])).rows[0].n) >= 20) throw new StaffAccessError(429, "STAFF_INVITE_RATE_LIMIT");
+    if ((await c.query("SELECT 1 FROM internal.staff_invitations WHERE tenant_id=$1 AND email=$2 AND status IN('PENDING','SENT')", [input.tenantId, email])).rows.length) throw new StaffAccessError(409, "STAFF_INVITE_EXISTS");
+    await c.query(`INSERT INTO internal.staff_invitations(id,tenant_id,request_key,invited_by,email,token_hash,assignments,can_manage_staff,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now()+interval '24 hours')`, [id, input.tenantId, input.requestKey, p.subject, email, digest3(token), JSON.stringify(assignments), input.canManageStaff]);
+    await audit3(c, p, input.tenantId, "INVITE_CREATED", null, id, { assignments, canManageStaff: input.canManageStaff });
+    return { id, status: "PENDING", replay: false };
+  });
+  if (saved.replay) return { ok: true, ...saved };
+  try {
+    await send({ kind: "STAFF_INVITE", email, url: baseUrl + "/staff-invite#token=" + token, baseUrl });
+  } catch {
+    await staffTransaction(db, async (c) => {
+      await context(c, input.tenantId);
+      await c.query("UPDATE internal.staff_invitations SET status='DELIVERY_FAILED' WHERE id=$1 AND status='PENDING'", [id]);
+      await audit3(c, p, input.tenantId, "INVITE_DELIVERY_FAILED", null, id);
+    });
+    throw new StaffAccessError(503, "STAFF_INVITE_DELIVERY_FAILED");
+  }
+  await staffTransaction(db, async (c) => {
+    await context(c, input.tenantId);
+    await c.query("UPDATE internal.staff_invitations SET status='SENT' WHERE id=$1 AND status='PENDING'", [id]);
+  });
+  return { ok: true, id, status: "SENT" };
+}
+async function acceptStaffInvitation(db, p, token) {
+  if (p.isEmailVerified !== true || !p.email) deny("STAFF_VERIFIED_EMAIL_REQUIRED");
+  if (typeof token !== "string" || !/^[-\w]{43}$/.test(token)) throw new StaffAccessError(400, "STAFF_INVITE_INVALID");
+  return staffTransaction(db, async (c) => {
+    await c.query("SELECT set_config('app.staff_invite_hash',$1,true)", [digest3(token)]);
+    const target = (await c.query("SELECT tenant_id FROM internal.staff_invitations WHERE token_hash=$1", [digest3(token)])).rows[0];
+    if (!target) throw new StaffAccessError(410, "STAFF_INVITE_UNAVAILABLE");
+    await context(c, target.tenant_id);
+    const i = (await c.query("SELECT * FROM internal.staff_invitations WHERE token_hash=$1 FOR UPDATE", [digest3(token)])).rows[0];
+    if (!i || i.status !== "SENT" || new Date(i.expires_at).getTime() <= Date.now()) throw new StaffAccessError(410, "STAFF_INVITE_UNAVAILABLE");
+    if (i.email !== p.email.trim().toLowerCase()) deny("STAFF_INVITE_EMAIL_MISMATCH");
+    await context(c, i.tenant_id);
+    const active = (await c.query("SELECT 1 FROM internal.users WHERE id::text=$1 AND is_active", [p.subject])).rows.length;
+    const tenant2 = (await c.query("SELECT owner_user_ref FROM internal.tenants WHERE id=$1 AND is_active AND merged_into IS NULL", [i.tenant_id])).rows[0];
+    if (!active || !tenant2) deny("STAFF_IDENTITY_INACTIVE");
+    if (tenant2.owner_user_ref === p.subject) throw new StaffAccessError(409, "STAFF_OWNER_ALREADY_ASSIGNED");
+    if ((await c.query("SELECT id FROM internal.memberships WHERE tenant_id=$1 AND user_id::text=$2", [i.tenant_id, p.subject])).rows.length) throw new StaffAccessError(409, "STAFF_EXISTING_MEMBERSHIP_REVIEW_REQUIRED");
+    const grants = staffAssignments(i.assignments);
+    const inviter = { subject: i.invited_by };
+    const { owner } = await actor(c, inviter, i.tenant_id);
+    await validateScopes(c, inviter, i.tenant_id, grants, owner, i.can_manage_staff);
+    const member = (await c.query("INSERT INTO internal.memberships(user_id,tenant_id,scope_type,role,auth_managed,can_manage_staff) VALUES($1,$2,'TENANT','STAFF',true,$3) RETURNING id", [p.subject, i.tenant_id, i.can_manage_staff])).rows[0];
+    for (const a of grants) await c.query("INSERT INTO internal.staff_workspace_assignments(membership_id,tenant_id,merchant_id,outlet_id,module_id,role) VALUES($1,$2,$3,$4,$5,$6)", [member.id, i.tenant_id, a.merchantId, a.outletId, a.moduleId, a.role]);
+    await c.query("UPDATE internal.staff_invitations SET status='ACCEPTED',accepted_by=$2,accepted_at=now() WHERE id=$1", [i.id, p.subject]);
+    await audit3(c, p, i.tenant_id, "INVITE_ACCEPTED", p.subject, i.id, { assignments: grants });
+    return { ok: true, tenantId: i.tenant_id, membershipId: member.id, assignments: grants };
+  });
+}
+async function changeStaffAccess(db, p, input) {
+  const assignments = staffAssignments(input.assignments);
+  if (!UUID4.test(input.membershipId) || !Number.isSafeInteger(input.version) || typeof input.active !== "boolean" || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_ACCESS_INVALID");
+  return staffTransaction(db, async (c) => {
+    const { owner } = await actor(c, p, input.tenantId, true);
+    const member = (await c.query("SELECT id,user_id,is_active,auth_managed,staff_access_version FROM internal.memberships WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [input.membershipId, input.tenantId])).rows[0];
+    if (!member) deny();
+    if (member.user_id === p.subject) deny("STAFF_SELF_CHANGE_FORBIDDEN");
+    if (!member.auth_managed) throw new StaffAccessError(409, "STAFF_LEGACY_MEMBERSHIP_REVIEW_REQUIRED");
+    if (member.staff_access_version !== input.version) throw new StaffAccessError(409, "STAFF_ACCESS_VERSION_CONFLICT");
+    if (!owner) await validateScopes(c, p, input.tenantId, await readAssignments(c, member.id), false);
+    await validateScopes(c, p, input.tenantId, assignments, owner, input.canManageStaff);
+    await c.query("DELETE FROM internal.staff_workspace_assignments WHERE membership_id=$1", [member.id]);
+    for (const a of assignments) await c.query("INSERT INTO internal.staff_workspace_assignments(membership_id,tenant_id,merchant_id,outlet_id,module_id,role) VALUES($1,$2,$3,$4,$5,$6)", [member.id, input.tenantId, a.merchantId, a.outletId, a.moduleId, a.role]);
+    await c.query("UPDATE internal.memberships SET is_active=$2,can_manage_staff=$3,staff_access_version=staff_access_version+1 WHERE id=$1", [member.id, input.active, input.canManageStaff]);
+    await audit3(c, p, input.tenantId, input.active ? "ACCESS_UPDATED" : "ACCESS_REVOKED", member.user_id, null, { assignments, version: input.version + 1, canManageStaff: input.canManageStaff });
+    return { ok: true, version: input.version + 1 };
+  });
+}
+async function staffDirectory(db, p, tenantId) {
+  return staffTransaction(db, async (c) => {
+    const tenants = (await c.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t JOIN internal.users u ON u.id::text=$1 AND u.is_active WHERE t.is_active AND t.merged_into IS NULL AND(t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships m WHERE m.tenant_id=t.id AND m.user_id=u.id AND m.is_active AND m.auth_managed AND m.can_manage_staff)) ORDER BY t.id`, [p.subject])).rows;
+    if (!tenantId) return { ok: true, tenants, tenantId: null };
+    const { owner } = await actor(c, p, String(tenantId));
+    const options = (await c.query(`SELECT m.id AS "merchantId",m.name AS "merchantName",o.id AS "outletId",o.name AS "outletName",mm.module_id AS "moduleId" FROM internal.merchants m JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id JOIN internal.merchant_modules mm ON mm.merchant_id=m.id AND mm.tenant_id=m.tenant_id WHERE m.tenant_id=$1 AND m.is_active AND o.is_active AND mm.enabled AND mm.workspace_version=2 AND mm.module_id IN('barber','retail') ORDER BY m.id,o.id,mm.module_id`, [tenantId])).rows;
+    const members = (await c.query(`SELECT ms.id,ms.user_id AS "userId",u.email,u.full_name AS name,ms.is_active AS active,ms.auth_managed AS managed,ms.staff_access_version AS version,ms.can_manage_staff AS "canManageStaff" FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=$1 ORDER BY ms.id LIMIT 200`, [tenantId])).rows;
+    const visible = [];
+    for (const m of members) {
+      const assignments = await readAssignments(c, m.id);
+      if (!owner) {
+        try {
+          if (!assignments.length) continue;
+          await validateScopes(c, p, String(tenantId), assignments, false);
+        } catch {
+          continue;
+        }
+      }
+      visible.push({ ...m, assignments });
+    }
+    const invites = (await c.query('SELECT id,email,status,expires_at AS "expiresAt",assignments,can_manage_staff AS "canManageStaff" FROM internal.staff_invitations WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100', [tenantId])).rows;
+    const visibleOptions = owner ? options : await filterOptions(c, p, String(tenantId), options);
+    return { ok: true, tenants, tenantId, owner, options: visibleOptions, members: visible, invitations: owner ? invites : invites.filter((i) => i.assignments.every((a) => !["OWNER", "ADMIN"].includes(a.role) && visibleOptions.some((o) => o.merchantId === a.merchantId && o.outletId === a.outletId && o.moduleId === a.moduleId))) };
+  });
+}
+async function filterOptions(c, p, tenant2, options) {
+  const result = [];
+  for (const o of options) {
+    try {
+      await validateScopes(c, p, tenant2, [{ merchantId: o.merchantId, outletId: o.outletId, moduleId: o.moduleId, role: "STAFF" }], false);
+      result.push(o);
+    } catch {
+    }
+  }
+  return result;
+}
+function registerStaffAccountRoutes(app, db, send = sendBetterAuthEmail) {
+  const run = (fn) => async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    try {
+      const p = trustedPrincipal(req);
+      if (!p || p.isEmailVerified !== true) throw new StaffAccessError(401, "AUTHENTICATION_REQUIRED");
+      if (authProvider() !== "neon" || !await hasSchemaFeature(db, "staffAccounts")) throw new StaffAccessError(503, "STAFF_AUTH_NOT_READY");
+      return res.json(await fn(p, req));
+    } catch (e) {
+      return res.status(e instanceof StaffAccessError ? e.status : 503).json({ ok: false, error: e instanceof StaffAccessError ? e.message : "STAFF_ACCESS_UNAVAILABLE" });
+    }
+  };
+  app.get("/api/v1/sync/staff", run((p, req) => staffDirectory(db, p, req.query.tenantId)));
+  app.post("/api/v1/sync/staff/invite", run((p, req) => createStaffInvitation(db, p, req.body, send)));
+  app.post("/api/v1/sync/staff/accept", run((p, req) => acceptStaffInvitation(db, p, req.body?.token)));
+  app.post("/api/v1/sync/staff/access", run((p, req) => changeStaffAccess(db, p, req.body)));
+  app.post("/api/v1/sync/staff/revoke-invite", run((p, req) => staffTransaction(db, async (c) => {
+    const { owner } = await actor(c, p, req.body?.tenantId, true);
+    const i = (await c.query("SELECT id,status,assignments FROM internal.staff_invitations WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [req.body?.invitationId, req.body?.tenantId])).rows[0];
+    if (!i) deny();
+    if (!owner) await validateScopes(c, p, req.body.tenantId, staffAssignments(i.assignments), false);
+    if (["ACCEPTED", "REVOKED"].includes(i.status)) throw new StaffAccessError(409, "STAFF_INVITE_UNAVAILABLE");
+    await c.query("UPDATE internal.staff_invitations SET status='REVOKED' WHERE id=$1", [i.id]);
+    await audit3(c, p, req.body.tenantId, "INVITE_REVOKED", null, i.id);
+    return { ok: true };
+  })));
+}
+
 // services/pos/workspaceDirectory.ts
+init_schemaFeatures();
 async function workspaceDirectory(db, subject2, requestedTenant) {
   if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "workspaceIsolation")) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
+  const managedStaff = await hasSchemaFeature(db, "staffAccounts");
   const tenants = (await db.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject2])).rows;
   const tenantId = typeof requestedTenant === "string" ? tenants.find((t) => t.id === requestedTenant)?.id : tenants.length === 1 ? tenants[0].id : null;
   if (requestedTenant && !tenantId) throw new ModuleAccessError(403, "TENANT_MEMBERSHIP_REQUIRED");
   if (!tenantId) return { ok: true, tenantId: null, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [], workspaceAuth: true };
-  const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR ms.role IS NOT NULL) ORDER BY m.id,o.id`, [tenantId, subject2]);
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
+  const result = await db.query(`SELECT ${managedStaff ? "ms.id AS membership_id,ms.auth_managed," : ""}t.owner_user_ref=$2 AS tenant_owner,m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role${managedStaff ? ",ms.id,ms.auth_managed" : ""} FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR ms.role IS NOT NULL) ORDER BY m.id,o.id`, [tenantId, subject2]);
   const businesses = /* @__PURE__ */ new Map();
   for (const r of result.rows) {
+    if (r.auth_managed && !r.tenant_owner) {
+      await db.query("SELECT set_config('app.merchant_id',$1,true)", [r.id]);
+      const grants = await db.query("SELECT role FROM internal.staff_workspace_assignments WHERE membership_id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4", [r.membership_id, tenantId, r.id, r.outlet_id]);
+      if (!grants.rows.length) continue;
+      r.role = grants.rows[0].role;
+    }
     let b = businesses.get(r.id);
     if (!b) {
       b = { businessId: r.id, tenantId, name: r.name, sector: r.business_sector, status: r.is_active ? "ACTIVE" : "INACTIVE", legacyAlias: r.external_ref === subject2 + "_" + r.business_sector ? r.external_ref : null, transportRef: r.external_ref || r.id, outlets: [] };
@@ -6923,6 +7344,7 @@ async function workspaceDirectory(db, subject2, requestedTenant) {
 }
 
 // services/pos/businessDirectory.ts
+init_auth();
 function registerBusinessDirectory(app, db) {
   app.get("/api/v1/sync/business", async (req, res) => {
     const principal = trustedPrincipal(req);
@@ -6972,7 +7394,8 @@ function registerBusinessDirectory(app, db) {
 }
 
 // services/pos/sync.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
+init_schemaFeatures();
 
 // services/pos/tenders.ts
 async function applyTenders(db, scope, transactionId, tenders) {
@@ -6997,12 +7420,15 @@ async function applyTenders(db, scope, transactionId, tenders) {
   }
 }
 
+// services/pos/privacy.ts
+init_auth();
+
 // src/config/legalNotices.ts
 var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -7031,7 +7457,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID4.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID5.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -7050,8 +7476,12 @@ function registerPrivacyRoutes(app, db) {
   });
 }
 
+// services/pos/sync.ts
+init_auth();
+
 // services/pos/reports.ts
-var UUID5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+init_auth();
+var UUID6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -7078,11 +7508,11 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID5.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID6.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const moduleId = stringQuery(query.moduleId, "MODULE_ID");
   const merchantId = stringQuery(query.merchantId ?? query.businessId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID5.test(merchantId) || tenantId && !UUID5.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID6.test(merchantId) || tenantId && !UUID6.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS2.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -7393,7 +7823,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID5.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID6.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -7555,6 +7985,7 @@ var workspaceSaleHash = (x) => {
 var INVOICE_CONSTRAINTS = /* @__PURE__ */ new Set(["uq_transactions_invoice_number", "uq_txn_invoice_per_tenant"]);
 function registerSyncRoutes(app, db) {
   registerModuleRoutes(app, db);
+  registerStaffAccountRoutes(app, db);
   registerWorkspaceStateRoutes(app, db);
   registerWorkspaceInventoryRoutes(app, db);
   registerPrivacyRoutes(app, db);
@@ -7779,7 +8210,7 @@ function registerSyncRoutes(app, db) {
           if (workspace) {
             if (cashierCache.has(ownerRef)) return cashierCache.get(ownerRef);
             await c.query(`INSERT INTO pos.tenants(id,name,business_sector,owner_user_ref) SELECT id,name,business_sector,owner_user_ref FROM internal.tenants WHERE id=$1 ON CONFLICT(id) DO NOTHING`, [tenantId]);
-            const projection = (await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref) SELECT public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text),$1::uuid,left(u.full_name,100),'ws_'||replace(public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text)::text,'-',''),$3,$4,u.id::text FROM internal.users u WHERE u.id::text=$2 AND is_active ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role RETURNING id`, [tenantId, ownerRef, randomBytes2(32).toString("hex"), workspace.role === "OWNER" ? "ADMIN" : workspace.role])).rows[0];
+            const projection = (await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref) SELECT public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text),$1::uuid,left(u.full_name,100),'ws_'||replace(public.legacy_uuid('workspace-actor:'||$1::text||':'||u.id::text)::text,'-',''),$3,$4,u.id::text FROM internal.users u WHERE u.id::text=$2 AND is_active ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role RETURNING id`, [tenantId, ownerRef, randomBytes3(32).toString("hex"), workspace.role === "OWNER" ? "ADMIN" : workspace.role])).rows[0];
             if (!projection) throw new ModuleAccessError(403, "AUTHENTICATED_STAFF_REQUIRED");
             cashierCache.set(ownerRef, projection.id);
             return projection.id;
@@ -7794,7 +8225,7 @@ function registerSyncRoutes(app, db) {
             const owner = await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING RETURNING id`, [tenantId, free.ownerId, randomBytes3(32).toString("hex")]);
             if (!owner.rows.length) {
               const existing = await c.query(`SELECT p.id FROM pos.users p JOIN internal.users u ON u.id=p.id
                 WHERE p.id::text=$1 AND u.is_active`, [free.ownerId]);
@@ -7813,7 +8244,7 @@ function registerSyncRoutes(app, db) {
             await c.query(`INSERT INTO pos.users(id,tenant_id,name,username,pin,role,external_ref)
               SELECT u.id,$1,left(u.full_name,100),'owner_'||u.id::text,$3,'ADMIN',u.id::text
               FROM internal.users u WHERE u.id::text=$2 AND u.is_active
-              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes2(32).toString("hex")]);
+              ON CONFLICT(id) DO NOTHING`, [tenantId, ownerRef, randomBytes3(32).toString("hex")]);
           }
           const verified2 = await c.query(`SELECT id FROM pos.users
             WHERE tenant_id=$1 AND (id::text=$2 OR external_ref=$2) LIMIT 1`, [tenantId, ref]);
@@ -8341,6 +8772,9 @@ function registerSyncRoutes(app, db) {
   });
 }
 
+// api/_runtime.ts
+init_auth();
+
 // services/billing/store.ts
 async function pastikanPaket(db, paket) {
   for (const p of paket) {
@@ -8387,11 +8821,14 @@ function normalizeVercelUrl(req) {
 }
 
 // src/server/serverlessBoundary.ts
+init_auth();
 import express from "express";
 var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
+  "x-auth-aal",
+  "x-auth-mfa-verified-at",
   "x-internal-user",
   "x-env-override",
   "x-newhope-gateway-token"
@@ -8404,6 +8841,8 @@ function applyPrincipal(req, principal) {
   req.headers["x-auth-sub"] = principal.subject;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+  if (principal.aal) req.headers["x-auth-aal"] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers["x-auth-mfa-verified-at"] = String(principal.mfaVerifiedAt);
 }
 
 // api/_runtime.ts

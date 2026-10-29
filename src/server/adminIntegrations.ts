@@ -7,7 +7,7 @@ import type { InternalCapability } from '../lib/rbac/environments';
 
 export function integrationProviders(env: NodeJS.ProcessEnv = process.env) {
   const configured = (...keys: string[]) => keys.every(key => Boolean(env[key]?.trim()));
-  const neon=env.AUTH_PROVIDER==='neon';
+  const neon=process.env.NEWHOPE_BUILD_TARGET==='neon'||env.AUTH_PROVIDER==='neon';
   const identity=neon?{id:'neon-auth',name:'New Hope Auth / Neon',purpose:'Autentikasi akun dan sesi',configured:configured('NEWHOPE_AUTH_URL','BETTER_AUTH_SECRET','BETTER_AUTH_DATABASE_URL')&&env.NEWHOPE_NEON_AUTH_STAGING==='1',dashboard:'https://console.neon.tech/',note:'Sesi database dan identitas kanonis; status konfigurasi bukan bukti login atau migrasi produksi.'}:
     { id: 'supabase', name: 'Supabase', purpose: 'Database dan autentikasi akun', configured: configured('DATABASE_URL') && (configured('SUPABASE_URL','SUPABASE_ANON_KEY') || configured('VITE_SUPABASE_URL','VITE_SUPABASE_ANON_KEY')), dashboard: 'https://supabase.com/dashboard/project/fqxrhumsgigcgjtlbfuo', note: 'Provider autentikasi legacy; dipertahankan sampai gate migrasi dan rollback lulus.' };
   return [identity,

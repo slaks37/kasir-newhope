@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { prepareBlogPhoto, BLOG_PHOTO_MAX_CHARS } from '../../src/lib/blog/photo';
-import { decodeBlogPhoto, type BlogMediaProvider } from '../../src/server/blogMedia';
+import { createBlogMediaProvider,decodeBlogPhoto, type BlogMediaProvider } from '../../src/server/blogMedia';
 import { registerAdminRoutes } from '../../src/server/adminRoutes';
 import type { Db } from '../../services/shared/db';
 
@@ -18,6 +18,8 @@ assert.deepEqual([canvas.width,canvas.height,released],[1200,600,1]);
 canvas.getContext=()=>null as any;
 await assert.rejects(()=>prepareBlogPhoto({type:'image/png',size:100} as File));assert.equal(released,2);
 const bytes=readFileSync('public/blog/covers/hpp-ingredients-ai.jpg');
+const previousProvider=process.env.AUTH_PROVIDER,capturedFetch=globalThis.fetch;let storageCalls=0;
+try{process.env.AUTH_PROVIDER='neon';globalThis.fetch=async()=>{storageCalls++;throw Error('UNEXPECTED_STORAGE_REQUEST');};await assert.rejects(()=>createBlogMediaProvider().upload(bytes,'fixture/photo.jpg'),/BLOG_OBJECT_STORAGE_NOT_CONFIGURED/);assert.equal(storageCalls,0,'Neon selection never falls back to Supabase Storage');}finally{globalThis.fetch=capturedFetch;if(previousProvider===undefined)delete process.env.AUTH_PROVIDER;else process.env.AUTH_PROVIDER=previousProvider;}
 const photo='data:image/jpeg;base64,'+bytes.toString('base64');
 assert.deepEqual(decodeBlogPhoto(photo),bytes);
 for(const value of [null,'data:image/svg+xml;base64,PHN2Zz4=','data:image/jpeg;base64,AAAA',photo+'!', 'data:image/jpeg;base64,'+Buffer.alloc(500001).toString('base64')])assert.throws(()=>decodeBlogPhoto(value));

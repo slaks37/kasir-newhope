@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {applyPrincipal,stripIdentityHeaders} from '../../src/server/serverlessBoundary';
+import {trustedPrincipal} from '../../services/shared/auth';
+const request = {headers:{'x-auth-sub':'forged','x-auth-aal':'aal2','x-auth-mfa-verified-at':String(Date.now()/1000)}};
+const now = Date.now()/1000;
+applyPrincipal(request,{subject:'verified',isEmailVerified:true,aal:'aal1'});
+assert.equal(trustedPrincipal(request as any)?.aal,'aal1');
+assert.equal(trustedPrincipal(request as any)?.mfaVerifiedAt,undefined);
+applyPrincipal(request,{subject:'verified',isEmailVerified:true,aal:'aal2',mfaVerifiedAt:now});
+assert.equal(trustedPrincipal(request as any)?.mfaVerifiedAt,now);
+assert.equal(trustedPrincipal(request as any)?.aal,'aal2');
+stripIdentityHeaders(request);
+assert.equal(Object.keys(request.headers).length,0);
+console.log('PASS principal assurance: live MFA survives trusted boundary; forged evidence is stripped, never promoted');

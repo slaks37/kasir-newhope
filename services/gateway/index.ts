@@ -205,7 +205,7 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
-        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-auth-aal', 'x-auth-mfa-verified-at', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
       ]);
 
       const headers: Record<string, string> = {};
@@ -228,6 +228,8 @@ app.use('/api', async (req, res, next) => {
         headers['x-auth-sub'] = principal.subject;
         if (principal.email) headers['x-auth-email'] = principal.email;
         if (principal.isEmailVerified) headers['x-auth-email-verified'] = 'true';
+        if (principal.aal) headers['x-auth-aal'] = principal.aal;
+        if (Number.isFinite(principal.mfaVerifiedAt)) headers['x-auth-mfa-verified-at'] = String(principal.mfaVerifiedAt);
       }
       // Service menolak request tanpa token ini, termasuk yang masuk langsung
       // ke port internal dengan x-auth-sub palsu.

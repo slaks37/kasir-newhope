@@ -1,3 +1,4 @@
+import {validateProviderAgreement} from './scripts/release/provider-agreement.mjs';
 import {offlinePublicKey} from './src/lib/auth/offlineIdentity';
 import {defineConfig,loadEnv} from 'vite';
 import react from '@vitejs/plugin-react';
@@ -6,6 +7,7 @@ import {resolve} from 'node:path';
 import {httpsOrigin} from './src/platform/runtime/apiPolicy';
 export default defineConfig(({mode})=>{
  const env={...loadEnv(mode,process.cwd(),'VITE_'),...process.env};
+ validateProviderAgreement(env);
  if(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY)offlinePublicKey(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY);
  const origin=httpsOrigin(env.VITE_NATIVE_API_ORIGIN||'https://unconfigured.invalid');
  const key=env.VITE_SUPABASE_ANON_KEY||'';

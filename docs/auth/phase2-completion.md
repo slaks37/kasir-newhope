@@ -1,0 +1,240 @@
+# Phase 2 continuation and acceptance
+
+Baseline inspected on 2026-10-28: PR27 `12e3d11070f7fa803a8f2e9796f6f5027bcc7474`, PR28 `f6a4bdc2844cd82b9db9504811d4641b45fb584b`, PR29 `03121ae9c5e84b0a0134fb9f782a383c24ada2ea`. This follow-up is stacked on PR29. The agreed four phases are retained.
+
+| Phase | Status |
+|---|---|
+| 1 | COMPLETED within the PR28 documented scope; existing Capacitor, SQLite and verification are retained |
+| 2 | PARTIAL; the new staff contracts and rehearsal are implemented, but the hosted/provider/device/storage gates below remain |
+| 3 | NOT ACCEPTED and not started here; native financial gate stays closed |
+| 4 | NOT ACCEPTED; no signing, store publication or production activation |
+
+## Exact gap and acceptance matrix
+
+Latest implementation: `d07defa6ead01982c67f8965bae4f65e0f4b9ab0` (local/full CI PASS; newest execution evidence at the end); later narrative records earlier failures and their repairs. The current matrix takes precedence over earlier chronological pending notes.
+
+| Phase 2 requirement | Existing evidence / new implementation | Remaining gate |
+|---|---|---|
+| Hosted web auth | PR29 recorded real Google/password/verification/reset/TOTP/backup recovery/revocation and offline browser recovery; the same Better Auth engine is retained | PR30 real Google/TOTP and recipient signup, email verification, password login and invitation acceptance PASS. Staff MFA/recovery and fresh hosted replay with the new purpose marker remain pending |
+| Staff invitations | New owner/delegated-admin UI and private service API; 24-hour random one-use email token, SHA256-only persistence, verified recipient, current inviter authority, idempotency and delivery failure handling | PR30 real delivery, verified-recipient acceptance, wrong-recipient rejection and one-use replay rejection PASS. New-marker signup rehearsal remains pending after the discovered bootstrap defect |
+| Staff administration | Explicit merchant/outlet/module assignments, activation/deactivation, role edits, bounded ADMIN delegation, status review, CAS and immutable audit | Hosted CASHIER scope readback and management denial PASS. Hosted role edits/deactivation, independent simultaneous sessions and operational rollout remain unaccepted |
+| Role isolation | CASHIER/MANAGER/ADMIN/OWNER/ACCOUNTANT/STAFF and Barber KAPSTER tested; OWNER membership never changes tenant ownership; ACCOUNTANT gets read-only report permissions | BARISTA/CHEF/WASHER invitations fail closed because their module v2 workflows are not accepted in the existing foundation |
+| Native auth | PR29 configured staging APK/simulator builds and protocol contracts exist; foundation Android/iOS CI is retained here | Installed Google/password/MFA/PKCE/deep-link/restart/user-switch acceptance needs devices/emulators with actual authorized provider sessions |
+| Identity migration | Reviewed digest-bound existing-account mapping retained; differing-ID tests preserved; new staff never repoint existing mappings or historical actors | Frozen production-source inventory/review is not authorized and is not read or copied |
+| Backup/restore | New PG17 CI rehearsal uses pg_dump17, authenticated encryption, wrong-key/tamper rejection, restore to a new disposable DB and full row/sequence/RLS/helper owner/ACL comparison | PG17 CI run40669605587 PASS: restore compares114 tables/1008 rows plus sequences/security. Synthetic evidence only; production escrow and hosted restore remain pending |
+| Provider rollback | Rehearsal checks explicit mapping revocation, forced reauthentication, wrong-batch failure and preserved business/financial fingerprints | Actual hosted alternate-provider rollback remains pending; legacy production provider is retained |
+| Zero Supabase target | Auth graphs remain isolated; Neon media upload now rejects before loading the legacy Storage SDK or using credentials | S3 adapter implemented with signed conditional writes and SHA256 readback; synthetic HTTP tests pass. Real bucket, approved object inventory, URL mappings, backend release graph and hosted storage acceptance remain unfinished |
+
+Tests must be reported separately: local synthetic HTTP/SQL, actual PG17 service LOGINs, hosted provider/browser, emulator SQLite and physical devices. A green native build is never recorded as installed authentication acceptance. CI evidence for this follow-up is linked in its Draft PR; check the run SHA before using its artifacts.
+
+## Staff account contract
+
+Migration0072 adds private, forced-RLS invitation/assignment/audit tables and optional managed-membership metadata. Existing memberships default to unmanaged and are not rewritten. The new svc_staff NOLOGIN group has no auth credentials, PIN, tenant ownership or financial ledger authority. Every API operation assumes that role in one transaction; an application LOGIN missing its explicit role grant fails closed. The staging provisioning helper includes the role for a fresh empty rehearsal only; existing logins/configuration are not changed by this PR.
+
+The actual active canonical tenant owner may invite and manage staff. ADMIN needs an explicit can_manage_staff delegation and an ADMIN assignment covering every affected outlet/module. Delegated ADMIN cannot grant ADMIN/OWNER, delegate administration, edit itself, or edit another scope. Every mutation requires session-bound TOTP within five minutes, including invitation revocation. User metadata and supplied principal headers do not authorize access.
+
+The recipient signs in or registers through existing Better Auth flows, verifies the exact invited email and explicitly accepts. An invitation does not auto-link a historical identity by email. Existing canonical-email collisions and existing legacy memberships require migration review. The invitation token is kept only in a short-lived browser session during login, removed from the URL, never returned to the inviter and cleared on acceptance. The API rechecks current inviter permission, canonical user activation, tenant activation, expiration and one-use consumption under a row lock.
+
+Managed staff receive only explicitly selected outlet/module roles. The parent TENANT/STAFF membership is not a broad workspace grant: module authorization and workspace directory both filter managed assignments. Revocation affects subsequent server requests immediately, retains the canonical identity and historical financial actor projection, and does not create an owner subscription. Remote revocation cannot be discovered offline; existing bounded leases remain, and replay always rechecks live authorization. No queue is deleted by staff administration.
+
+Eligible v2 modules remain the previously accepted Retail/Barber adapters. Inviting staff does not enable a module, grant a subscription entitlement, activate a rollout flag, or enable native checkout. The UI explicitly reports the operational rollout gate after acceptance. OWNER membership is still distinct from owner_user_ref.
+
+Email transport uses the existing verified sender and staging recipient allowlist. Creation is audited before delivery; only a delivered-to-provider invitation becomes SENT. A transport error produces DELIVERY_FAILED and no usable invitation. Ambiguous delivery requires revocation and a fresh invitation; no token is recovered from logs. Resend delivery is separate from inbox placement.
+
+## Synthetic backup/rollback rehearsal
+
+The rehearsal accepts only the existing disposable loopback PG17 target and refuses an existing restore database. It verifies the Docker service owns the approved port, uses the actual PG17 pg_dump/pg_restore tools, preserves role ownership, and restores into a newly created database. Private fixture bytes are deliberately synthetic and are never treated as working provider credentials. Plaintext and the ephemeral AES-256-GCM key stay in process memory; wrong keys and tampering fail before restore. Only bounded hashes/counts/status JSON leave the test. The restore database is cleaned up after the test; no production URL, default DATABASE_URL, live MFA secret or live user snapshot is accepted.
+
+The reviewed fixture mapping uses actual business fingerprints, then verifies restore, explicit revocation, session removal, wrong-batch refusal and refusal to silently reapply a revoked migration. This is not an approved production backup policy. Durable private key escrow, restore ownership, real provider account/session recovery and a frozen-source rollback window still require review.
+
+## Supabase inventory and object migration path
+
+| Surface | Source inventory | Treatment / gap |
+|---|---|---|
+| Browser legacy Auth | src/lib/supabase.ts, authClient.ts, authRuntime.ts | Legacy production selection retained; Neon web/mobile build graph excludes SDK implementation |
+| Native legacy Auth | legacyNativeAuth.ts; lifecycle/status use the provider-neutral adapter despite legacy variable aliases | Native Neon graph check retained; installed sessions still require acceptance |
+| Gateway/backend legacy Auth | services/shared/auth.ts, legacyAuthOperations.ts, authProviderOperations.ts | Explicit provider dispatch retained; no Neon-to-legacy auth fallback. Separate Neon backend candidate now excludes these modules and passes graph/runtime probes; compatible production artifact remains isolated |
+| Blog object upload | src/server/blogMedia.ts; legacy blog-media public bucket, JPEG max500KB, author UUID/random UUID object path | Neon uses the explicit S3 adapter, or returns BLOG_OBJECT_STORAGE_NOT_CONFIGURED without fallback. Legacy SDK is loaded only on the legacy path |
+| Product/photo/receipt/profile data | Operational JSON, existing photo helpers, receipt-logo route and historical URL fields | No live object inventory or private records read; classify inline data versus approved public/private objects before migration. Do not add bulk blobs to Postgres |
+| Dependency/configuration | @supabase/auth-js and @supabase/supabase-js remain for legacy compatibility; VITE_SUPABASE_*/SUPABASE_* variables and the optional pool remapper remain | Remove from the final target release only after replacement and rollback gates; production variables/resources are untouched |
+| SQL/fixtures | supabase/migrations mirrors and legacy compatibility SQL | Migration history is evidence, not a running Supabase service; do not delete or rename it to claim a zero-dependency release |
+| Jobs/admin | Provider-neutral auth operations exist; integration/configuration text and generated API bundles retain legacy compatibility | Recheck each final target cron/admin entry with a clean environment and no Supabase endpoint access |
+
+Proposed object backend: S3-compatible storage, with Cloudflare R2 as a candidate requiring owner approval of account/bucket/domain/credentials. Its [official S3 compatibility matrix](https://developers.cloudflare.com/r2/api/s3/api/) must govern the adapter; do not assume every AWS ACL/versioning/locking feature is implemented. No R2 resource or credential is provisioned by this PR.
+
+Migration must inventory only approved source buckets/records; record old URL, exact object key, media type, visibility, size and SHA256 in a private manifest. Copy to immutable destination paths, verify readback hashes and access policy, then produce reviewed old→new URL mappings. Keep old public URLs available or implement verified redirects where the old host is controlled; a new host cannot silently redirect an old Supabase hostname. Private attachments require authenticated delivery and a separate policy. Re-fingerprint before any apply, refuse drift, retain the original object until the rollback window closes, and never delete Supabase objects to make a test pass. Live inventory/copy and final URL cutover are NOT RUN.
+
+## Hosted follow-up deployment boundary
+
+The user explicitly approved PR30 synthetic staging on 2026-10-28. Database `newhope_phase2_staff` was created empty on non-production branch `br-plain-snow-azjwwq6u`, with separate auth/application LOGINs and fresh Better Auth secret. Only this database and approved staging Google/Resend keys were sent to Preview branch `codex/phase2-staff-onboarding` on the existing Vercel project. The additional approved callback was saved without changing the PR29 callback. Preview deployment `dpl_5LaWfaF651SV1KDv585HMKmbdU1X` is READY and real Google login succeeded at its protected branch origin. Existing production and PR29 resources remain intact.
+
+One synthetic merchant, two outlets and Retail/Barber assignments were seeded under the actual authenticated staging owner's canonical tenant, with no financial writes. Both rollout flags and native checkout remain OFF. The owner completed authenticator enrollment privately; the real owner session subsequently passed the fresh-TOTP mutation guard and sent one approved CASHIER invitation. Hosted recipient verification and independently authenticated acceptance subsequently passed; reset and additional session/device gates remain pending. No public native alias was created for PR30; its Preview remains SSO protected.
+
+## S3 adapter contract
+
+`src/server/s3BlogMedia.ts` uses the official AWS SDK with explicit server-only credentials, one attempt, an18-second abort signal, immutable conditional PUT and a bounded full GET readback hash. It rejects malformed paths, missing settings, URL credentials and non-HTTPS endpoints (except loopback test fixtures). No bucket, policy, ACL, DNS or source object is created or changed. A failed readback returns no URL and preserves the object for review rather than deleting it automatically.
+
+Required server configuration: `OBJECT_STORAGE_PROVIDER=s3`, `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_PUBLIC_ORIGIN`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`; region defaults to `auto` and can be set with `OBJECT_STORAGE_REGION`. Public origin must serve the same object key; actual public access/CORS and bucket behavior still require hosted acceptance. The synthetic HTTP test exercises SDK signing, duplicate412 rejection, no overwrite and corrupt readback rejection; it is not real R2 evidence. Credentials and bucket provisioning remain unconfigured pending a separately reviewed destination.
+
+## Hosted failure follow-up
+
+The owner reported generic authentication failure and no invitation. Browser observation still showed MFA disabled; after reload the tenant selector was empty, so hosted staff acceptance remains FAIL/PENDING investigation rather than PASS. No successful invitation delivery has been established. A source defect was found: verified MFA assurance was discarded by both gateway and serverless principal forwarding. Both boundaries now strip incoming assurance headers and populate them only from the verified principal. A pure regression checks no forged elevation; the staff HTTP test now includes a real invitation POST and forged aal1 denial.
+
+The client now translates REAUTH_REQUIRED into an explicit instruction to sign out, sign in again and repeat within five minutes; the freshness rule is retained. This explains that error code, but the exact reported hosted error has not yet been captured, so its root cause is not asserted. Latest live-browser access failed with an unavailable browser API; recent Vercel error logs returned no entries, which is not proof of success.
+
+Verification: full `npm run verify` PASS after the S3 change and before the MFA-boundary follow-up. After that follow-up, lint/TypeScript, API rebuild, Neon client tests and pure principal regression PASS. The expanded staff HTTP test cannot bind loopback in the restricted sandbox. The approval reviewer could not execute the staging SQL check because its usage limit was reached; no SQL was executed. Final full/PG17/hosted acceptance must be rerun for the new revision.
+
+## Hosted staff evidence after owner MFA
+
+At baseline revision `eb8b9d7`, actual UI showed authenticator active and session verified. The owner-approved invitation was sent for `stefen@newsystem.space`, CASHIER at Retail / Staff QA Outlet A and Barber / Staff QA Outlet B, without delegation. Database readback confirmed exactly one SENT invitation, no managed membership yet and the existing single owned tenant. Resend message `01a182dd-a6c6-734c-b4d4-b25e77399f94` reports delivered; this is provider delivery evidence, not proof of inbox placement or authenticated recipient acceptance.
+
+The owner Google identity could not accept the invitation addressed to the other email: hosted API/UI returned STAFF_INVITE_EMAIL_MISMATCH and the token remained usable. The owner then signed out using the UI to prepare recipient login. A later readback found no remaining TOTP session proof; that query occurred after logout, and is not used as evidence against the successful earlier MFA-protected invitation mutation.
+
+A real UI gap was found before recipient registration: the invitation's register button led to merchant registration. The new inline StaffRegistrationForm registers only personal name/email/password through Better Auth, without store/sector/outlet defaults, and preserves the pending invitation in the original tab. It does not create an owner tenant or subscription itself. Correct-recipient registration, verification and acceptance subsequently passed. The no-owner-bootstrap invariant failed and is treated separately below; fresh new-marker and lost-invitation recovery still require hosted testing. Credential entry and terms submission must be completed privately by the recipient; do not substitute a synthetic API account for that browser acceptance.
+
+The delegation control now requires ADMIN-only assignments and resets delegation when assignments change. Clear errors explain delegation mismatch, recent TOTP, delivery failure and existing invitations. Server enforcement remains authoritative.
+
+All baseline `eb8b9d7` CI runs are now green, including native foundation: CI40702058206, PostgreSQL17 run40702058159, Native40702058099. The PR29-only configured native artifacts job is skipped for this branch. New UI changes require their own final verification; builds still do not prove installed device authentication.
+
+## Hosted recipient acceptance and bootstrap defect
+
+The recipient completed personal signup. Readback initially showed one registered but unverified identity, and the verification message `01a182ea-ee4f-775a-9ce8-825a87b45b01` was delivered. The approved same-origin verification link changed verified count to1. With the same credential already entered by the recipient, real login and identity endpoints returned200, then invitation acceptance returned200. Database readback confirms one active managed membership, can_manage_staff=false, CASHIER at exactly Retail / Outlet A and Barber / Outlet B. The canonical UUID is explicitly mapped and differs from the provider subject.
+
+**A real acceptance failure was found:** before acceptance, owner bootstrap created an extra tenant and trial for the staff identity. Client invitation state exists only in the original tab, so it cannot protect login in another tab. This is not recorded as a passing no-duplicate workflow.
+
+Migration0073 adds a durable server-owned `internal.users.auth_staff_only` marker for new STAFF-purpose registrations. Better Auth accepts the STAFF purpose only as a restriction and only when the migration is available; canonical enrollment copies that restriction without inferring ownership from email/sector. The billing boolean helper exposes no profile or auth data. Billing checks it before any existing-owner lookup or tenant creation. Existing canonical users defaultfalse; actual owners who also hold staff membership keep their existing ownership behavior. No historical actor is rekeyed. Local real Better Auth tests prove the STAFF marker before invitation acceptance and fail-closed signup when the migration is missing. HTTP billing tests deny staff before membership, including a synthetic erroneous prior owned tenant. PG17 replay/service tests cover the restricted helper.
+
+Migration0073 was applied only to approved PR30 staging. The already-accepted test staff ID was mapped explicitly from the accepted invitation, not inferred by email. The empty erroneous tenant was reversibly deactivated after proving zero merchants/outlets/invoices/transactions/cash/inventory/shift rows. Its synthetic trial and original rows remain preserved, with a private rollback snapshot and append-only staging audit. The first repair attempt rolled back when the owner LOGIN could not SET ROLE svc_billing; no role was expanded. Retry checked the unchanged snapshot and completed. Production/PR29 data were not touched.
+
+The real new-registration-before-acceptance path with the new marker still requires a fresh hosted rehearsal; the existing account was repaired explicitly, and synthetic tests do not replace that evidence. Password recovery, independent simultaneous sessions and installed mobile auth remain separate gates. Error mapping now explains EMAIL_NOT_VERIFIED instead of displaying only a generic authentication failure; regression verifies rejection is preserved and no session/fallback is minted.
+
+## Remaining acceptance execution — 2026-10-29 (Asia/Jakarta)
+
+Baseline `c12d79d0ffd7b8a7c3099fa98fd3da194c5328ac` was rechecked live: [CI PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40710289782), [PostgreSQL17 PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40710289546), [Android/iOS foundation PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40710289738). Configured native auth artifacts were skipped by the existing PR29-only branch guard; these are not installed PR30 auth results.
+
+### Current acceptance status
+
+| Requirement | Status | Exact evidence and remaining dependency |
+|---|---|---|
+| Completely fresh hosted staff sequence | BLOCKED | User selected the existing `stefen@newsystem.space` again. This identity already has a binding, accepted membership and retained historical test trial. It is not fresh. No account is deleted, renamed, repaired or reset to manufacture a fresh PASS. Requires an unused controlled recipient, or separately scoped empty hosted environment using the same mailbox. |
+| Pre-acceptance staff restriction | PARTIAL | Actual Better Auth isolated SQL regression now checks zero tenants, subscriptions and memberships at pristine, registration, verification, login, canonical enrollment and second independent registration milestones. Both new canonical identities have auth_staff_only=true before any invitation acceptance; hosted fresh gate above remains blocked. |
+| Invitation scope, mismatch and replay | PASS (existing hosted account) | Earlier recorded actual recipient acceptance, exact two CASHIER assignments, mismatch denial and one-use replay denial remain valid. This does not certify fresh onboarding. |
+| Staff TOTP enrollment/login and backup recovery | BLOCKED (hosted) | Read-only PR30 database check: original owner MFA enabled=true and verified enrollment=true; accepted staff MFA enabled=false and verified enrollment=false. Both have zero unexpired sessions. Owner enrollment is preserved. User requested no repeated authenticator setup; no credential was reset or replaced. Isolated actual-engine TOTP/recovery regressions PASS. |
+| Password reset / session revocation | PARTIAL | Actual-engine tests exercise reset invalidating browser and independent native bearer, explicit revocation and forced login. PR30 hosted staff reset has not been completed; requires private credential entry and an active test session. |
+| Independent staff sessions | PARTIAL | Added two genuinely distinct identities through signup, verification and password login with independent cookie jars. Canonical/session IDs differ; logout of second leaves first active. No synthetic session insertion is used for this new case. Hosted simultaneous identities remain NOT RUN. |
+| Owner/ADMIN roles, edits, deactivation and immediate denial | PARTIAL | Existing staff HTTP/PG17 acceptance covers bounded delegated ADMIN, CAS, role/scoped access and revocation without owner fallback. Hosted CASHIER management denial was recorded. Hosted owner/delegated ADMIN mutation sequence requires live owner TOTP and separately reviewed expanded test access. |
+| Offline reconnect / cross-merchant, outlet and module denial | PARTIAL | Existing offline identity, workspace isolation and PG17 service-role regressions retained and rerun. No new installed or hosted operational acceptance; rollout flags remain OFF. |
+| Android emulator installed auth | BLOCKED | adb absent from PATH and conventional SDK platform-tools location. No local Android SDK/emulator or connected-device evidence available. Requires SDK/emulator image, installed configured build and authorized actual provider sessions. |
+| iOS simulator installed auth | BLOCKED | xcrun reports simctl unavailable; no Xcode application installed. Requires Xcode with simulator runtime and installed configured build. CI build success does not satisfy device tests. |
+| Physical Android/iOS auth | BLOCKED | No connected authorized physical devices available to this run. Requires device access and private provider login/MFA. Native checkout remains OFF. |
+| Mapping / fingerprint / encrypted restore / rollback | PARTIAL | Existing isolated PG17 real pg_dump/pg_restore rehearsal PASS at baseline above, including data/security/ACL/sequence parity, wrong-key/tamper rejection, canonical mapping, rollback and session revocation. Real alternate-provider hosted session recovery and production key escrow remain NOT RUN; no production identities migrated. |
+| Neon backend runtime dependency elimination | PASS (candidate artifact) | New build:backend:neon compiles all 11 API and 5 service entrypoints separately, rejects legacy inputs, SDK imports, Auth endpoints and credential references, traverses installed production dependencies and emits SHA256 inventory plus exact direct dependency versions. 16 entries / 162 dependency directories passed locally. Compiled runtime probe defaults to Neon, rejects legacy selection, refuses unconfigured Auth/Storage with zero network fallback and disables legacy pool rewrite. Not deployed/cut over. |
+| S3 storage integration | PARTIAL | Existing actual signed SDK/local HTTP immutable PUT and SHA256 GET verification PASS. No approved live staging bucket/credentials/public-origin configuration available. No resource provisioned, no billable storage enabled, no Supabase object removed. |
+
+### Separate Neon backend candidate
+
+`npm run test:backend:neon` builds `build/neon-backend/` without modifying compatible `api/` outputs. Legacy bearer verification and blog storage are isolated in separate source modules. Compile-time target elimination removes those modules and legacy admin operations from the candidate, while the normal build retains existing production dispatch. Candidate provider selection cannot silently switch back to legacy. `evidence.json` contains per-entry source/output hashes and the dependency inventory; CI uploads the candidate after full verification. This is a reviewable build artifact, not a production installation or cutover claim. Its generated direct-dependency manifest is pinned to the installed versions; a target installation lockfile and deployed smoke acceptance remain release work.
+
+Full local `npm run verify` PASS after this implementation, including the new independent identity/pre-acceptance assertions and compiled release probes. No new hosted identity or MFA success is claimed in this continuation. No production settings, database rows, provider enrollment, rollout flags or native checkout switches were modified.
+
+### Cross-tab registration follow-up
+
+The retained browser inventory exposed an older `/register?returnTo=%2Fstaff-invite` page. The generic login/register mode toggle preserved returnTo but selected the merchant form. That path now renders the existing personal StaffRegistrationForm directly in Neon mode, even without original-tab invitation storage; it submits the STAFF restriction and requires the invitation to grant membership later. Exact local return-path parsing rejects external/ambiguous duplicate destinations. No credential is entered or submitted on the user's behalf. Full local verification PASS after this correction.
+
+Backend revision `5f12c86ed35722e8cbd5c2c63138b1ac45f84e31` already passed [PG17 security and restore](https://github.com/slaks37/kasir-newhope/actions/runs/40798543711). Downloaded artifact12864483475 contains PASS for all eight checks,114 tables/1011 rows, data SHA256 `917ec0623e6c369ad536cd58461f4b3eb87fec14710ac7130a2155501479904e`, encrypted backup SHA256 `57e18de1cb5a4b543e2072fbaa309590432aef4e4da663a9216c8851c8cfeb16`. Its revision `3f05d8f2c09d3bc702eefb1f86dd926170ed2a8d` is the Actions PR merge ref for that head, not a production commit. Authorized branch Preview `dpl_2ZtKWfnvH5kzz5P59kxvYCW2rbu7` was READY at code5f12c86. These results precede the small registration-route follow-up; final-head CI is recorded separately.
+
+### Final code evidence
+
+Code SHA `d1ac0996894f6c67f4f14847975afcce48a32732`; later documentation-only revisions do not change the implementation. Full local verification PASS. Hosted Preview `dpl_ARRe47QvLyJpEgqwmADgF8aZFeZj` READY at this SHA. A new unauthenticated browser tab visiting `/register?returnTo=%2Fstaff-invite` visibly renders only personal name/email/password and “Daftar akun staf”; no merchant/outlet fields. Form was not submitted. This is hosted route acceptance, not a fresh identity registration PASS.
+
+[Final-code PostgreSQL17 PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944447), artifact12864588922: all eight encrypted-backup/restore/mapping/rollback checks PASS,114 tables/1011 synthetic rows. Data SHA256 `f5e162b6408ee0aecf43c1ae1be18da218e5756558d85a37000761bfa4668591`; encrypted backup SHA256 `c3d4c42607081c6c5331f1c20ec148bacf899f4fcdeaac4e9325cc57f2bff525`. Artifact revision `06da30083026fef0faea4dc8d58f1325ab07983a` is the Actions merge ref for the recorded code head. No dump or encryption key was published.
+
+Final-code [CI / API parity / web-PWA graph / Neon backend candidate PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944544). Candidate artifact12865122144 archive SHA256 `c29a024d9f42752fe03a7de5940c8c21985fc3eeaf89f06f55eef992c45d6929`. [Native foundation Android and iOS jobs PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40798944628), including existing Android emulator foundation checks; this does not replace configured hosted-provider/device authentication acceptance. Configured staging-artifact workflow remains skipped by its retained PR29 branch gate. Phase2 remains PARTIAL, PR remains Draft, production remains unchanged.
+
+## Acceptance continuation from 266798f — 2026-10-29
+
+No new authorized unused recipient has been supplied. Fresh hosted staff onboarding remains **BLOCKED**: requires one controlled email address absent from PR30 newhope_auth users, canonical identity bindings, membership and owned-tenant history, authorized to receive invitation/verification/reset messages. Existing stefen@newsystem.space cannot meet that prerequisite. No account reset/deletion/credential invention or repaired-account substitution is permitted. The staged recipient must be checked before invitation, then owner/trial counts checked at registration, verification, first login, acceptance and subsequent login. Existing synthetic/regression evidence does not close this gate.
+
+Hosted staff MFA/recovery/session/admin gates remain **BLOCKED/PARTIAL** pending actual active staff and owner sessions with private credential/TOTP participation. Original owner enrollment is preserved. No authenticator is disabled, reset or replaced in this continuation.
+
+`node scripts/mobile/auth-acceptance-preflight.mjs` executed read-only: adb unavailable, zero booted Android emulators; simctl unavailable, zero booted iOS simulators; exit2 with explicit BLOCKED states. Reproducible build/install/restart and human acceptance instructions are in [mobile-hosted-acceptance.md](mobile-hosted-acceptance.md). Its report explicitly identifies the existing configured target as PR29, not PR30 staff staging. Physical-device/provider tests remain NOT RUN/BLOCKED.
+
+Live existing native staging boundary rechecked: capacitor://localhost and https://localhost CORS204, foreign origin403, anonymous identity/subscription/report/finance401 JSON, original canonical Preview SSO302 retained. **PASS for reachability and unauthenticated denial only**; no provider session or installed-device claim.
+
+New provider-agreement guard runs in web/PWA and mobile Vite builds. Unsupported values, explicit backend/frontend mismatch and Neon-only target with legacy frontend now fail before artifact creation. Existing unconfigured legacy production default is retained. Tests cover both accepted selections and mismatch/error cases.
+
+New opt-in API artifact selector permits the audited Neon candidate only for VERCEL_ENV=preview, AUTH_PROVIDER=neon, matching frontend provider, staging-auth gate1 and both rollout flags0. Production/unknown targets and enabled rollout flags fail closed. Normal builds remain compatible and committed API parity remains checked. An isolated deployment can override only its build command with NEWHOPE_BUILD_TARGET=neon; no global project build setting or production environment change is required.
+
+Storage remains **PARTIAL**: immutable S3 adapter/local signed HTTP tests available; no approved destination bucket/credential/public-origin mapping supplied, no paid bucket provisioned and no production object copied. Mapping/backup/restore/rollback retain isolated PG17 acceptance; real alternate-provider hosted session continuity and production cutover remain NOT RUN.
+
+### Latest exact-code acceptance evidence
+
+Code `d07defa6ead01982c67f8965bae4f65e0f4b9ab0`:
+
+- Full local `npm run verify` PASS, including provider agreement and Preview-only artifact selector negative cases.
+- [CI PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830700034): full verification, committed API parity, Neon web/PWA graph and backend artifact.
+- [PostgreSQL17 PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830699946): migrations/RLS/service roles/replay and encrypted restore/rollback. Artifact12878063002:114 tables/1011 synthetic rows, all eight checks PASS. Data digest `ae9a089d660df2742e3af11fe2cabbbbbca67ca8db487a5d4fa13f414136628e`; encrypted backup digest `830fe1c94c7e0b2c7c5d331ce37ccbdb4166c3b6b758ca03186ec588e885bb7d`; Actions merge ref `5bb1ebb5418fee4ddd4054531b2360499f9e12f1` corresponds to this PR head.
+- [Native Android/iOS foundation PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40830700001), including Android emulator foundation recovery. Actual hosted provider/device login remains BLOCKED, not promoted from these results. Configured native workflow remains skipped by its PR29-only guard.
+
+**Neon deployed-candidate smoke gate PASS:** deployment `dpl_AD4SH5WRfNqLejUCvcauVGB86LRs`, exact code above, unique URL `https://kasir-newhope-ntcjo0qky-slaks37s-projects.vercel.app`. Vercel API calls its non-production target `staging`; build-time VERCEL_ENV=preview was required by the selector. Only this deployment's buildCommand override selected `NEWHOPE_BUILD_TARGET=neon npm run build`; no global project/production build setting or environment was changed. Build logs confirmed graph PASS for16 entries/162 dependency directories and actual selection of the audited API files. Production cutover remains prohibited.
+
+The protected-fetch connector could not complete its redirect/authentication flow. Using the existing scoped Vercel CLI credentials, without weakening deployment protection, actual runtime results were:
+
+| Route | Status | App result |
+|---|---|---|
+| /api/auth/identity | 401 | AUTH_SESSION_REQUIRED |
+| /api/v1/subscription/status | 401 | AUTHENTICATION_REQUIRED |
+| /api/v1/sync/business | 401 | AUTHENTICATION_REQUIRED |
+| /api/admin/integrations | 401 | AUTHENTICATION_REQUIRED |
+| /api/cron/daily-insights | 401 | UNAUTHORIZED_CRON; no authorized job execution |
+| /api/v1/subscription/plans | 200 | JSON ok=true |
+
+These results prove the deployed selected runtime serves requests and denies anonymous access. They do not prove authenticated staff flows, MFA, role changes or storage. A later normal documentation deployment may replace the branch alias with the compatible build; use the recorded unique candidate URL/ID for this evidence. Both builds retain Neon provider configuration on approved PR30 staging. No production resources were changed.
+
+| Remaining gate | Current status | Exact external dependency |
+|---|---|---|
+| Fresh hosted staff sequence at every milestone | BLOCKED | One unused controlled recipient authorized for PR30 test email; existing/repaired account cannot qualify |
+| Staff MFA/recovery/reset and simultaneous sessions | BLOCKED | Private staff credential/TOTP/recovery participation and live independently authenticated sessions; owner authenticator preserved |
+| Owner/delegated ADMIN changes and immediate hosted revocation | PARTIAL | Existing isolated authorization tests PASS; live owner TOTP and explicitly scoped delegated test access required for hosted mutations |
+| Android/iOS hosted auth | BLOCKED | SDKs, booted emulator/simulator, appropriate configured target and private provider sessions; PR30 native API scope must be approved before repointing PR29 configuration |
+| Physical devices | NOT RUN / BLOCKED | Authorized connected Android/iOS test devices and private login |
+| Actual storage migration | BLOCKED | Approved staging destination, credentials, public/private URL policy and approved source manifest; no paid provisioning or production copies authorized |
+| Alternate-provider hosted rollback | NOT RUN | Separately authorized isolated alternate-provider identities/environment and real provider sessions; synthetic canonical mapping rollback/restore PASS is retained |
+
+Phase2 remains PARTIAL. Existing owner MFA, canonical IDs, business data, financial actor references and offline journals were not changed. Both rollout flags and native financial checkout remain OFF; DOKU and production authentication untouched.
+
+## Remaining-gates continuation from 3190a8b
+
+New implementation only: PR30 now has a separate public native staging profile, explicit build selector (`node scripts/mobile/build-auth-staging.mjs pr30`) and PR30-enabled Android/iOS configured artifact jobs. Public profile uses exact PR30 issuer, API and offline public key; no private JWK field, provider secret or protection bypass token is accepted. PR29 defaults/configuration/domain are retained. Artifacts include a profile/status manifest and are labeled with pr30 to prevent confusing build output from another identity environment.
+
+The chosen API is the existing protected PR30 Preview. **Installed native login remains BLOCKED by SSO**; preparing an APK/simulator app does not authorize publishing a new API hostname. No domain, security override, production setting, account, owner TOTP or database was changed. Read-only PR30 preflight returned exit2: Android SDK/ADB unavailable, zero booted emulators; simctl unavailable, zero booted iOS simulators. This is prerequisite evidence only.
+
+The exact human actions are collected in [owner-acceptance-checklist.md](owner-acceptance-checklist.md). Reproducible configured builds, installation, restart and per-flow evidence requirements are in [mobile-hosted-acceptance.md](mobile-hosted-acceptance.md). Do not retry fresh identity, private MFA/reset, live storage or alternate-provider recovery gates until the listed prerequisites change.
+
+| Gate | Implementation | Synthetic/local | Hosted | Real device |
+|---|---|---|---|---|
+| PR30 native profile/artifact | Separate issuer/API/public key and CI jobs implemented | Profile tests reject wrong origin, cross-environment config and private-key fields | Native API still BLOCKED by protected Preview; no new provider login claimed | BLOCKED: missing SDKs/devices; configured build is not installed acceptance |
+| Fresh staff registration | Existing durable STAFF restriction retained | Previously verified milestones retained; full verification rerun below | BLOCKED: no genuinely unused authorized recipient/clean environment established | NOT RUN |
+| Staff MFA/recovery/reset/admin/revocation | Existing implementation retained | Existing actual-engine and authorization regressions retained | BLOCKED/PARTIAL: live independent sessions and private user participation required; owner enrollment unchanged | NOT RUN |
+| S3 replacement | Existing immutable adapter retained | Existing signed local compatibility/readback/failure tests retained | BLOCKED: no approved destination/credentials/source manifest | NOT RUN |
+| Migration/rollback | Existing canonical map/revoke/restore implementation retained | PG17 encrypted restore and actor preservation rerun in CI below | NOT RUN: approved restore destination/key custodian/isolated alternate provider required | Offline journals remain untouched |
+
+Only newly executed evidence is added below; prior successful Neon deployment/provider-smoke gates are not repeated or relabeled.
+
+### Configured PR30 artifact evidence — code 020b88e
+
+Verified code: `020b88ee6c997c5dac2b661d753cee2ca68bd9ce`. Full local `npm run verify` PASS. All four exact-code workflows completed successfully:
+
+- [Full CI PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991655).
+- [PostgreSQL17 security/replay/restore rehearsal PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991647). This remains isolated synthetic evidence, not hosted alternate-provider recovery.
+- [Android/iOS foundation PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991678).
+- [Configured PR30 Android/iOS artifacts PASS](https://github.com/slaks37/kasir-newhope/actions/runs/40843991642). Both artifacts were downloaded and their included artifact-config.json inspected: profile pr30, provider neon, exact PR30 API/issuer, module flags OFF, native checkout OFF, provider login NOT RUN, native reachability BLOCKED by protected Preview.
+
+| Artifact | ID | GitHub archive SHA-256 |
+|---|---|---|
+| newhope-pr30-auth-staging-android-debug | 12883409173 | 2527f39b7adda9bbab5af9522581068a3d23f2ceefc6e870c2c36867c7361646 |
+| newhope-pr30-auth-staging-ios-simulator | 12883823235 | 1d765c5817d2c2a56751286b00976cf7f09f148fa7d22129fe42f0d61e1711fc |
+
+Digests above are GitHub-reported archive digests. Artifact retention ends November 5, 2026; rebuild the same commit if expired. Artifact preparation is now PASS. Hosted Google OAuth/PKCE/MFA/session/restart/revocation and physical-device acceptance remain BLOCKED/NOT RUN; compilation does not close those gates. No new hosted identity, staff-security, storage or alternate-provider rollback gate was claimed.
+
+First owner action: provide one genuinely unused controlled staging recipient and authorize invitation/verification/reset email to that address, or specify and authorize a separate empty authentication environment. Do not send passwords, TOTP seeds or recovery codes. The existing repaired recipient cannot qualify. Remaining device, public staging API, storage and recovery prerequisites are listed in owner-acceptance-checklist.md. Phase2 remains PARTIAL.

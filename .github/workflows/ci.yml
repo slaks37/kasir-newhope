@@ -28,3 +28,9 @@ jobs:
         run: |
           VITE_AUTH_PROVIDER=neon VITE_NEWHOPE_AUTH_URL=https://unconfigured.invalid/api/auth npx vite build
           node scripts/mobile/check-neon-auth-bundle.mjs dist
+      - name: Save audited Neon-only backend candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-backend-candidate
+          path: build/neon-backend/
+          retention-days: 14

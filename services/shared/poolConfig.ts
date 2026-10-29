@@ -4,6 +4,7 @@
  * SQL uses unnamed pg queries and transaction-local RLS settings.
  */
 export function serverlessConnectionString(connectionString: string, vercel = process.env.VERCEL): string {
+  if(process.env.NEWHOPE_BUILD_TARGET==='neon')return connectionString;
   if (vercel !== '1') return connectionString;
   try {
     const url = new URL(connectionString);

@@ -10,6 +10,10 @@ var __export = (target, all) => {
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -52,6 +56,7 @@ var init_betterAuthConfig = __esm({
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -105,11 +110,13 @@ import { createHash } from "node:crypto";
 import { Resend } from "resend";
 function authEmailPayload(mail, env = process.env) {
   const origin = new URL(mail.baseUrl), link = new URL(mail.url);
-  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "STAFF_INVITE" ? link.pathname !== "/staff-invite" || link.search !== "" || !/^#token=[\w-]{43}$/.test(link.hash) : mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
   if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
-  const callbacks = link.searchParams.getAll("callbackURL");
-  if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
-  authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  if (mail.kind !== "STAFF_INVITE") {
+    const callbacks = link.searchParams.getAll("callbackURL");
+    if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+    authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  }
   if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
   if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
     throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
@@ -119,7 +126,8 @@ function authEmailPayload(mail, env = process.env) {
     const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
     if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
   }
-  const text = mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const text = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const duration = mail.kind === "STAFF_INVITE" ? "24 jam" : "15 menit";
   const safeUrl = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
   return { payload: {
@@ -127,8 +135,8 @@ function authEmailPayload(mail, env = process.env) {
     to: mail.email,
     replyTo: "stefen@newsystem.space",
     subject: text,
-    text: text + ". Buka tautan ini (berlaku 15 menit): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
-    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text + "</title></head><body><h1>" + text + '</h1><p>Tautan berlaku 15 menit.</p><p><a href="' + safeUrl + '">' + text + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+    text: text + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text + "</title></head><body><h1>" + text + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl + '">' + text + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
   }, idempotencyKey: "newhope-auth-" + key };
 }
 async function sendBetterAuthEmail(mail) {
@@ -140,6 +148,37 @@ var init_betterAuthEmail = __esm({
   "services/shared/betterAuthEmail.ts"() {
     "use strict";
     init_authReturnUrl();
+  }
+});
+
+// services/shared/schemaFeatures.ts
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+var FEATURES, ABSENT_RECHECK_MS, known;
+var init_schemaFeatures = __esm({
+  "services/shared/schemaFeatures.ts"() {
+    "use strict";
+    FEATURES = {
+      staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+      staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
+      cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+      moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+      merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+      /** migration 0054 / 20261004090200 */
+      syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+      /** migration 0055 / 20261004090300 */
+      sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+    };
+    ABSENT_RECHECK_MS = 6e4;
+    known = /* @__PURE__ */ new Map();
   }
 });
 
@@ -216,6 +255,10 @@ function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBette
         if (ctx.path === "/sign-up/email" && ctx.body) {
           const raw = ctx.body.onboarding || {};
           ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+          if (raw.account_purpose === "STAFF") {
+            if (!await hasSchemaFeature(pool, "staffIdentityPurpose")) throw new APIError("SERVICE_UNAVAILABLE", { code: "STAFF_REGISTRATION_NOT_READY", message: "Pendaftaran staf belum tersedia." });
+            ctx.body.onboarding.account_purpose = "STAFF";
+          }
         }
         if (ctx.path === "/sign-in/social" && ctx.body) {
           let target;
@@ -270,6 +313,7 @@ var init_betterAuth = __esm({
     init_poolConfig();
     init_betterAuthEmail();
     init_authReturnUrl();
+    init_schemaFeatures();
   }
 });
 
@@ -377,30 +421,17 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
-// services/shared/auth.ts
-init_betterAuthConfig();
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
-}
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
 function supabaseConfig() {
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
-  if (authProvider() === "neon") {
-    try {
-      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
-    } catch {
-      throw new AuthUnavailableError();
-    }
-  }
+async function authenticateLegacyBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
@@ -439,11 +470,41 @@ async function authenticateBearer(req) {
     return null;
   }
 }
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+});
+
+// services/shared/auth.ts
+function firstHeader2(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
 function trustedPrincipal(req) {
-  const subject2 = firstHeader(req.headers["x-auth-sub"]);
-  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
-  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  const subject2 = firstHeader2(req.headers["x-auth-sub"]);
+  const isEmailVerified = firstHeader2(req.headers["x-auth-email-verified"]) === "true";
+  if (subject2) {
+    const aal = firstHeader2(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader2(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader2(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp) ? { mfaVerifiedAt: timestamp } : {} };
+  }
+  return LOCAL_BYPASS2() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
@@ -456,6 +517,22 @@ async function canAccessBusiness(db, principal, businessId) {
   );
   return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
+var LOCAL_BYPASS2, AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    LOCAL_BYPASS2 = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
+// src/server/assistantHandler.ts
+init_auth();
 
 // services/shared/db.ts
 init_poolConfig();
@@ -2603,30 +2680,8 @@ var INITIAL_BOOKINGS = [
   }
 ];
 
-// services/shared/schemaFeatures.ts
-var FEATURES = {
-  cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
-  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
-  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
-  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
-  /** migration 0054 / 20261004090200 */
-  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
-    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
-  /** migration 0055 / 20261004090300 */
-  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
-};
-var ABSENT_RECHECK_MS = 6e4;
-var known = /* @__PURE__ */ new Map();
-async function hasSchemaFeature(db, feature, now = Date.now()) {
-  const cached = known.get(feature);
-  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
-  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
-  known.set(feature, { ok, at: now });
-  return ok;
-}
-
 // services/ai/snapshotData.ts
+init_schemaFeatures();
 async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE__ */ new Date()) {
   if (!principal?.subject || principal.subject === "local-development") throw new Error("AUTHENTICATION_REQUIRED");
   const merchant = (await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector
@@ -4776,6 +4831,9 @@ function resolveIntentFromAggregates(p, a, insights, ctx) {
   }
 }
 
+// services/ai/routes.ts
+init_auth();
+
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
   if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
@@ -5610,6 +5668,7 @@ function nativeCors(req, res, methods2) {
 }
 
 // src/server/serverlessBoundary.ts
+init_auth();
 import express from "express";
 
 // src/server/vercelUrl.ts
@@ -5647,6 +5706,8 @@ var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
+  "x-auth-aal",
+  "x-auth-mfa-verified-at",
   "x-internal-user",
   "x-env-override",
   "x-newhope-gateway-token"
@@ -5659,6 +5720,8 @@ function applyPrincipal(req, principal) {
   req.headers["x-auth-sub"] = principal.subject;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+  if (principal.aal) req.headers["x-auth-aal"] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers["x-auth-mfa-verified-at"] = String(principal.mfaVerifiedAt);
 }
 var MAX_RAW_BODY = 1048576;
 async function readRawBody(req) {

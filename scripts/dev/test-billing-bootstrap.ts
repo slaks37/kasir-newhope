@@ -12,13 +12,13 @@ import {SAAS_PLANS,TRIAL_PLAN_ID} from '../../src/config/saasPlans';
 const pg=new PGlite();
 for(const file of migrationFiles())await pg.exec(fs.readFileSync(file.path,'utf8'));
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};},exec:async sql=>{await runner.exec(sql);},tx:fn=>pg.transaction(c=>fn(wrap(c))),close:async()=>{}});
-const db=wrap(pg),owner=randomUUID(),staff=randomUUID();
+const db=wrap(pg),owner=randomUUID(),staff=randomUUID(),pendingStaff=randomUUID();
 assert.equal((await db.query('SELECT id FROM billing.plans WHERE id=$1',[TRIAL_PLAN_ID])).rows.length,0,'No test helper preloads the missing canonical trial plan');
 await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,$2,'Bootstrap owner')",[owner,owner+'@fixture.invalid']);
 await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,$2,'Independent staff')",[staff,staff+'@fixture.invalid']);
 await db.query("INSERT INTO billing.plans(id,name,tier_level,billing_cycle,price_idr,product_limit,features) VALUES('historical-plan','Historical',1,'MONTHLY',12345,25,'[]')");
 const historical=await db.query("SELECT row_to_json(p) AS value FROM billing.plans p WHERE id='historical-plan'");
-const app=express();let connections=0;const auth=async(req:any)=>req.headers.authorization==='Bearer verified-fixture'?{subject:owner,isEmailVerified:true}:req.headers.authorization==='Bearer independent-staff'?{subject:staff,isEmailVerified:true}:null;
+const app=express();let connections=0;const auth=async(req:any)=>req.headers.authorization==='Bearer verified-fixture'?{subject:owner,isEmailVerified:true}:req.headers.authorization==='Bearer independent-staff'?{subject:staff,isEmailVerified:true}:req.headers.authorization==='Bearer pending-staff'?{subject:pendingStaff,isEmailVerified:true}:null;
 const attach=()=>createBillingHandler(auth,async()=>{connections++;return db;});app.use(attach());
 const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 const base='http://127.0.0.1:'+(server.address() as any).port,headers={authorization:'Bearer verified-fixture'};
@@ -28,6 +28,15 @@ try{
  assert.equal((await fetch(base+'/api/v1/subscription/status',{headers})).status,200);assert.equal(connections,1,'Warm runtime shares initialization');
  const tenantId=(await db.query('SELECT id FROM internal.tenants WHERE owner_user_ref=$1',[owner])).rows[0].id;
  await db.query("INSERT INTO internal.memberships(user_id,tenant_id,role,scope_type) VALUES($1,$2,'CASHIER','TENANT')",[staff,tenantId]);
+ await db.query("INSERT INTO internal.users(id,email,full_name,auth_staff_only) VALUES($1,$2,'Personal staff intent',true)",[pendingStaff,pendingStaff+'@fixture.invalid']);
+ for(const owned of [false,true]) {
+  if(owned)await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref,is_active) VALUES($1,'Synthetic prior bootstrap bug',$2,true)",[randomUUID(),pendingStaff]);
+  for(const [path,method]of [['status','GET'],['outlets','GET'],['start-trial','POST']]as const) {
+   const r=await fetch(base+'/api/v1/subscription/'+path,{method,headers:{authorization:'Bearer pending-staff'}});
+   assert.equal(r.status,403,'Staff intent before membership, even with erroneous prior tenant, must not bootstrap');
+   assert.equal((await r.json()).error,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+  }
+ }
  const beforeStaff=(await db.query('SELECT count(*)::int AS n FROM internal.tenants')).rows[0].n;
  for(const role of ['CASHIER','MANAGER','ADMIN','OWNER','STAFF','ACCOUNTANT','BARISTA','CHEF','WASHER','KAPSTER']){
   await db.query('UPDATE internal.memberships SET role=$2 WHERE user_id=$1',[staff,role]);

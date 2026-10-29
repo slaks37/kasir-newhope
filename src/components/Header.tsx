@@ -1,5 +1,6 @@
 import React from "react";
 import {isNeonAuth} from "../lib/authRuntime";
+import {navigate} from '../lib/navigation/workspaceRouter';
 const AccountSecurityPanel=React.lazy(()=>import("./auth/AccountSecurityPanel").then(m=>({default:m.AccountSecurityPanel})));
 import { useBusinessModule } from '../platform/modules/ModuleContext';
 import { BrandMark } from "./brand/Brand";
@@ -224,7 +225,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </details>
 
-        {isNeonAuth&&<><button type="button" className="nh-user-button" onClick={()=>setAccountSecurity(true)}>Keamanan akun</button>{accountSecurity&&<div className="fixed inset-0 z-[150] grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-label="Keamanan akun pribadi"><div className="max-h-[90dvh] overflow-y-auto w-full max-w-xl rounded-xl bg-white p-4"><button type="button" onClick={()=>setAccountSecurity(false)} className="border rounded p-2 mb-3">Tutup</button><React.Suspense fallback={<p role="status">Memuat keamanan akun…</p>}><AccountSecurityPanel/></React.Suspense></div></div>}</>}
+        {isNeonAuth&&<><button type="button" className="nh-user-button" onClick={()=>navigate('/staff-access')}>Akun staf</button><button type="button" className="nh-user-button" onClick={()=>setAccountSecurity(true)}>Keamanan akun</button>{accountSecurity&&<div className="fixed inset-0 z-[150] grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-label="Keamanan akun pribadi"><div className="max-h-[90dvh] overflow-y-auto w-full max-w-xl rounded-xl bg-white p-4"><button type="button" onClick={()=>setAccountSecurity(false)} className="border rounded p-2 mb-3">Tutup</button><React.Suspense fallback={<p role="status">Memuat keamanan akun…</p>}><AccountSecurityPanel/></React.Suspense></div></div>}</>}
         {/* Multi-Language Switcher */}
         <LanguageSwitcher mode="compact" />
 
