@@ -10,6 +10,10 @@ var __export = (target, all) => {
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -52,6 +56,7 @@ var init_betterAuthConfig = __esm({
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -416,30 +421,17 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
-// services/shared/auth.ts
-init_betterAuthConfig();
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
-}
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
 function supabaseConfig() {
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
-  if (authProvider() === "neon") {
-    try {
-      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
-    } catch {
-      throw new AuthUnavailableError();
-    }
-  }
+async function authenticateLegacyBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
@@ -478,16 +470,41 @@ async function authenticateBearer(req) {
     return null;
   }
 }
-function trustedPrincipal(req) {
-  const subject2 = firstHeader(req.headers["x-auth-sub"]);
-  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) {
-    const aal = firstHeader(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
-    const rawTime = firstHeader(req.headers["x-auth-mfa-verified-at"]);
-    const timestamp = rawTime ? Number(rawTime) : NaN;
-    return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp) ? { mfaVerifiedAt: timestamp } : {} };
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
   }
-  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+});
+
+// services/shared/auth.ts
+function firstHeader2(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
+function trustedPrincipal(req) {
+  const subject2 = firstHeader2(req.headers["x-auth-sub"]);
+  const isEmailVerified = firstHeader2(req.headers["x-auth-email-verified"]) === "true";
+  if (subject2) {
+    const aal = firstHeader2(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader2(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader2(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp) ? { mfaVerifiedAt: timestamp } : {} };
+  }
+  return LOCAL_BYPASS2() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function canAccessBusiness(db, principal, businessId) {
   if (principal.subject === "local-development") return true;
@@ -500,6 +517,22 @@ async function canAccessBusiness(db, principal, businessId) {
   );
   return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
 }
+var LOCAL_BYPASS2, AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    LOCAL_BYPASS2 = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
+// src/server/assistantHandler.ts
+init_auth();
 
 // services/shared/db.ts
 init_poolConfig();
@@ -4798,6 +4831,9 @@ function resolveIntentFromAggregates(p, a, insights, ctx) {
   }
 }
 
+// services/ai/routes.ts
+init_auth();
+
 // src/config/subscriptionPolicy.ts
 function subscriptionAccess(sub, now = Date.now()) {
   if (isFreePlan(sub, now)) return { accessMode: "FULL", status: "FREE", daysLeft: 0, graceDaysLeft: 0 };
@@ -5632,6 +5668,7 @@ function nativeCors(req, res, methods2) {
 }
 
 // src/server/serverlessBoundary.ts
+init_auth();
 import express from "express";
 
 // src/server/vercelUrl.ts

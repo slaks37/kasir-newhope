@@ -10,6 +10,7 @@ var __export = (target, all) => {
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -40,6 +41,10 @@ var init_poolConfig = __esm({
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -448,16 +453,19 @@ var init_betterAuth = __esm({
 function createAuthProviderOperations(deps = {}) {
   const provider = deps.provider || authProvider();
   if (provider === "supabase") {
-    let operation;
-    const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
-    return {
-      provider,
-      configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
-      ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
-      sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
-      sendReset: async (e) => (await legacy()).sendReset(e),
-      reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
-    };
+    if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthOperationError(503, "AUTH_PROVIDER_UNSUPPORTED");
+    else {
+      let operation;
+      const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
+      return {
+        provider,
+        configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
+        ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
+        sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
+        sendReset: async (e) => (await legacy()).sendReset(e),
+        reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
+      };
+    }
   }
   const config = deps.config || getAuthConfig;
   const runtime2 = deps.runtime || (async () => {

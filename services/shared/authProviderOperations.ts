@@ -32,10 +32,13 @@ const headersFor=(req:Pick<Request,'headers'>)=>{
 export function createAuthProviderOperations(deps:AuthOperationsDependencies={}):AuthProviderOperations {
  const provider=deps.provider||authProvider();
  if(provider==='supabase'){
+  if(process.env.NEWHOPE_BUILD_TARGET==='neon')throw new AuthOperationError(503,'AUTH_PROVIDER_UNSUPPORTED');
+  else {
   let operation:Promise<AuthProviderOperations>|undefined;
   const legacy=()=>operation??=(deps.legacy?deps.legacy():import('./legacyAuthOperations').then(m=>m.createLegacyAuthOperations()));
   return {provider,configured:deps.configured??!!((process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL)&&process.env.SUPABASE_SERVICE_ROLE_KEY),
    ownerIdentity:async s=>(await legacy()).ownerIdentity(s),sendConfirmation:async e=>(await legacy()).sendConfirmation(e),sendReset:async e=>(await legacy()).sendReset(e),reauthenticate:async(...args)=>(await legacy()).reauthenticate(...args)};
+  }
  }
  const config=deps.config||getAuthConfig;
  const runtime:()=>Promise<Runtime>=deps.runtime||(async()=>{const m=await import('./betterAuth'),runtime=m.getBetterAuthRuntime();await runtime.ready;return runtime as unknown as Runtime;});

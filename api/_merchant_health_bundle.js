@@ -11,6 +11,7 @@ function isCronJobEnabled(job) {
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);

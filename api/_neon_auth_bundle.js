@@ -37,6 +37,10 @@ import { randomUUID } from "node:crypto";
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;

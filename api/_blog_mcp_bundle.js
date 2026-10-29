@@ -10,6 +10,7 @@ var __export = (target, all) => {
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -40,6 +41,10 @@ var init_poolConfig = __esm({
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -416,6 +421,90 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
+function supabaseConfig() {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  return { url, apiKey };
+}
+async function authenticateLegacyBearer(req) {
+  const authorization = firstHeader(req.headers.authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  if (!match) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  const { url, apiKey } = supabaseConfig();
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  let upstream;
+  try {
+    upstream = await fetch(`${url}/auth/v1/user`, {
+      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
+      signal: AbortSignal.timeout(5e3)
+    });
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
+    const user = await upstream.json();
+    if (typeof user.id !== "string" || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
+    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
+    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
+    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
+    return {
+      subject: user.id,
+      email: typeof user.email === "string" ? user.email : void 0,
+      isEmailVerified,
+      aal: claims.aal === "aal2" ? "aal2" : "aal1",
+      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
+    };
+  } catch {
+    return null;
+  }
+}
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+});
+
+// services/shared/auth.ts
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
+var AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
 // src/server/blogMcpHandler.ts
 import express from "express";
 
@@ -508,70 +597,11 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
-// services/shared/auth.ts
-init_betterAuthConfig();
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
-}
-function supabaseConfig() {
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-  return { url, apiKey };
-}
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
-  if (authProvider() === "neon") {
-    try {
-      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
-    } catch {
-      throw new AuthUnavailableError();
-    }
-  }
-  const authorization = firstHeader(req.headers.authorization);
-  const match = /^Bearer\s+(.+)$/i.exec(authorization);
-  if (!match) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  let upstream;
-  try {
-    upstream = await fetch(`${url}/auth/v1/user`, {
-      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
-      signal: AbortSignal.timeout(5e3)
-    });
-  } catch {
-    throw new AuthUnavailableError();
-  }
-  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
-  if (!upstream.ok) return null;
-  try {
-    const user = await upstream.json();
-    if (typeof user.id !== "string" || !user.id) return null;
-    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
-    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
-    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
-    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
-    return {
-      subject: user.id,
-      email: typeof user.email === "string" ? user.email : void 0,
-      isEmailVerified,
-      aal: claims.aal === "aal2" ? "aal2" : "aal1",
-      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
-    };
-  } catch {
-    return null;
-  }
-}
+// src/server/blogMcpHandler.ts
+init_auth();
 
 // services/blog-mcp/routes.ts
+init_auth();
 import { createHash as createHash3, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/server/adminSecurity.ts

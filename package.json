@@ -19,7 +19,7 @@
     "test:subscriptions": "node --import tsx scripts/dev/test-billing-bootstrap.ts && node --import tsx scripts/dev/test-subscriptions.ts",
     "test:identity": "node --import tsx scripts/dev/test-tenant-identity-repair.ts",
     "test:runtime": "node --import tsx scripts/dev/test-runtime-reliability.ts",
-    "verify": "npm run db:verify && npm run lint && npm run build && npm run test:runtime && npm test",
+    "verify": "npm run db:verify && npm run lint && npm run build && npm run test:runtime && npm test && npm run test:backend:neon",
     "test:product-photo": "node --import tsx scripts/dev/test-product-photo.ts && node --import tsx scripts/dev/test-blog-photo.ts && node --import tsx scripts/dev/test-s3-blog-media.ts && npm run -s test:blog-cover",
     "test:blog-cover": "node --import tsx scripts/dev/test-blog-cover.ts",
     "test:workspace": "node --import tsx scripts/dev/test-workspace-architecture.ts && node --import tsx scripts/dev/test-offline-workspace.ts",
@@ -64,7 +64,9 @@
     "native:ios:simulator": "npm run native:sync && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO build",
     "test:staff-auth": "node --import tsx scripts/dev/test-principal-assurance.ts && node --import tsx scripts/dev/test-staff-onboarding.ts",
     "test:neon-auth": "npm run -s test:staff-auth && node --import tsx scripts/dev/test-offline-identity.ts && node --import tsx scripts/dev/test-neon-auth-client.ts && node --import tsx scripts/dev/test-neon-auth-identity.ts && node --import tsx scripts/dev/test-neon-auth-schema.ts && node --import tsx scripts/dev/test-provider-auth-operations.ts && node --import tsx scripts/dev/test-neon-auth-runtime.ts",
-    "test:platform": "node --import tsx scripts/dev/test-platform.ts && node --import tsx scripts/dev/test-native-financial-storage.ts"
+    "test:platform": "node --import tsx scripts/dev/test-platform.ts && node --import tsx scripts/dev/test-native-financial-storage.ts",
+    "build:backend:neon": "node scripts/release/build-neon-backend.mjs",
+    "test:backend:neon": "npm run build:backend:neon && node scripts/release/test-neon-backend.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1158.0",

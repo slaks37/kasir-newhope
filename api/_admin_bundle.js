@@ -10,6 +10,7 @@ var __export = (target, all) => {
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -71,6 +72,10 @@ var init_schemaFeatures = __esm({
 
 // services/shared/betterAuthConfig.ts
 function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
   const value = env.AUTH_PROVIDER || "supabase";
   if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
   return value;
@@ -435,6 +440,135 @@ var init_betterAuthPrincipal = __esm({
   }
 });
 
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
+function supabaseConfig() {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  return { url, apiKey };
+}
+async function authenticateLegacyBearer(req) {
+  const authorization = firstHeader(req.headers.authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
+  if (!match) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  const { url, apiKey } = supabaseConfig();
+  if (!url || !apiKey) {
+    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  }
+  let upstream;
+  try {
+    upstream = await fetch(`${url}/auth/v1/user`, {
+      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
+      signal: AbortSignal.timeout(5e3)
+    });
+  } catch {
+    throw new AuthUnavailableError();
+  }
+  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
+  if (!upstream.ok) return null;
+  try {
+    const user = await upstream.json();
+    if (typeof user.id !== "string" || !user.id) return null;
+    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
+    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
+    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
+    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
+    return {
+      subject: user.id,
+      email: typeof user.email === "string" ? user.email : void 0,
+      isEmailVerified,
+      aal: claims.aal === "aal2" ? "aal2" : "aal1",
+      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
+    };
+  } catch {
+    return null;
+  }
+}
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+});
+
+// services/shared/auth.ts
+function firstHeader2(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
+function trustedPrincipal(req) {
+  const subject2 = firstHeader2(req.headers["x-auth-sub"]);
+  const isEmailVerified = firstHeader2(req.headers["x-auth-email-verified"]) === "true";
+  if (subject2) {
+    const aal = firstHeader2(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader2(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp4 = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader2(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp4) ? { mfaVerifiedAt: timestamp4 } : {} };
+  }
+  return LOCAL_BYPASS2() ? { subject: "local-development", isEmailVerified: true } : null;
+}
+async function canAccessBusiness(db, principal, businessId) {
+  if (principal.subject === "local-development") return true;
+  const { rows } = await db.query(
+    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
+       FROM internal.merchants m
+       JOIN internal.tenants t ON t.id = m.tenant_id
+      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
+    [businessId]
+  );
+  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
+}
+async function tenantForPrincipal(db, principal) {
+  const { rows } = await db.query(
+    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
+     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
+    [principal.subject]
+  );
+  if (rows[0]?.id) return rows[0].id;
+  if (principal.subject === "local-development" && LOCAL_BYPASS2()) {
+    const res = await db.query(
+      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
+       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
+       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
+         DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    return res.rows[0]?.id ?? null;
+  }
+  return null;
+}
+var LOCAL_BYPASS2, AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    LOCAL_BYPASS2 = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
 // src/server/s3BlogMedia.ts
 var s3BlogMedia_exports = {};
 __export(s3BlogMedia_exports, {
@@ -503,6 +637,39 @@ function createS3BlogMediaProvider(env = process.env) {
 var init_s3BlogMedia = __esm({
   "src/server/s3BlogMedia.ts"() {
     "use strict";
+  }
+});
+
+// src/server/legacyBlogMedia.ts
+var legacyBlogMedia_exports = {};
+__export(legacyBlogMedia_exports, {
+  uploadLegacyBlogMedia: () => uploadLegacyBlogMedia
+});
+async function uploadLegacyBlogMedia(bytes, path) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
+  const { createClient } = await import("@supabase/supabase-js");
+  const signal = AbortSignal.timeout(18e3);
+  const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
+  const bucket = await client.storage.getBucket(BUCKET);
+  if (bucket.error) {
+    if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
+    const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
+    if (created.error) {
+      const existing = await client.storage.getBucket(BUCKET);
+      if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
+    }
+  } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
+  const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+  if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
+  return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+var BUCKET;
+var init_legacyBlogMedia = __esm({
+  "src/server/legacyBlogMedia.ts"() {
+    "use strict";
+    BUCKET = "blog-media";
   }
 });
 
@@ -581,16 +748,19 @@ var init_legacyAuthOperations = __esm({
 function createAuthProviderOperations(deps = {}) {
   const provider = deps.provider || authProvider();
   if (provider === "supabase") {
-    let operation;
-    const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
-    return {
-      provider,
-      configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
-      ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
-      sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
-      sendReset: async (e) => (await legacy()).sendReset(e),
-      reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
-    };
+    if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthOperationError(503, "AUTH_PROVIDER_UNSUPPORTED");
+    else {
+      let operation;
+      const legacy = () => operation ??= deps.legacy ? deps.legacy() : Promise.resolve().then(() => (init_legacyAuthOperations(), legacyAuthOperations_exports)).then((m) => m.createLegacyAuthOperations());
+      return {
+        provider,
+        configured: deps.configured ?? !!((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY),
+        ownerIdentity: async (s) => (await legacy()).ownerIdentity(s),
+        sendConfirmation: async (e) => (await legacy()).sendConfirmation(e),
+        sendReset: async (e) => (await legacy()).sendReset(e),
+        reauthenticate: async (...args) => (await legacy()).reauthenticate(...args)
+      };
+    }
   }
   const config = deps.config || getAuthConfig;
   const runtime2 = deps.runtime || (async () => {
@@ -782,113 +952,11 @@ async function connectDb(opts) {
 
 // services/billing/routes.ts
 init_schemaFeatures();
+init_auth();
 import { randomUUID as randomUUID3 } from "node:crypto";
 
-// services/shared/auth.ts
-init_betterAuthConfig();
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
-}
-function supabaseConfig() {
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-  return { url, apiKey };
-}
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
-  if (authProvider() === "neon") {
-    try {
-      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
-    } catch {
-      throw new AuthUnavailableError();
-    }
-  }
-  const authorization = firstHeader(req.headers.authorization);
-  const match = /^Bearer\s+(.+)$/i.exec(authorization);
-  if (!match) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  const { url, apiKey } = supabaseConfig();
-  if (!url || !apiKey) {
-    return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-  }
-  let upstream;
-  try {
-    upstream = await fetch(`${url}/auth/v1/user`, {
-      headers: { authorization: `Bearer ${match[1]}`, apikey: apiKey },
-      signal: AbortSignal.timeout(5e3)
-    });
-  } catch {
-    throw new AuthUnavailableError();
-  }
-  if (upstream.status >= 500 || upstream.status === 429) throw new AuthUnavailableError();
-  if (!upstream.ok) return null;
-  try {
-    const user = await upstream.json();
-    if (typeof user.id !== "string" || !user.id) return null;
-    const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
-    const claims = JSON.parse(Buffer.from(match[1].split(".")[1], "base64url").toString("utf8"));
-    if (claims.sub !== user.id || !Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1e3) return null;
-    const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
-    return {
-      subject: user.id,
-      email: typeof user.email === "string" ? user.email : void 0,
-      isEmailVerified,
-      aal: claims.aal === "aal2" ? "aal2" : "aal1",
-      mfaVerifiedAt: times.length ? Math.max(...times) : void 0
-    };
-  } catch {
-    return null;
-  }
-}
-function trustedPrincipal(req) {
-  const subject2 = firstHeader(req.headers["x-auth-sub"]);
-  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject2) {
-    const aal = firstHeader(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
-    const rawTime = firstHeader(req.headers["x-auth-mfa-verified-at"]);
-    const timestamp4 = rawTime ? Number(rawTime) : NaN;
-    return { subject: subject2, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp4) ? { mfaVerifiedAt: timestamp4 } : {} };
-  }
-  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
-}
-async function canAccessBusiness(db, principal, businessId) {
-  if (principal.subject === "local-development") return true;
-  const { rows } = await db.query(
-    `SELECT t.owner_user_ref,t.is_active AS tenant_active,t.merged_into,m.is_active AS merchant_active
-       FROM internal.merchants m
-       JOIN internal.tenants t ON t.id = m.tenant_id
-      WHERE (m.external_ref = $1 OR m.id::text = $1)`,
-    [businessId]
-  );
-  return rows.length === 1 && rows[0].owner_user_ref === principal.subject && rows[0].tenant_active && !rows[0].merged_into && rows[0].merchant_active;
-}
-async function tenantForPrincipal(db, principal) {
-  const { rows } = await db.query(
-    `SELECT id FROM internal.tenants WHERE (owner_user_ref = $1 OR external_ref = $1) AND merged_into IS NULL
-     ORDER BY (external_ref = $1) DESC NULLS LAST, created_at ASC, id LIMIT 1`,
-    [principal.subject]
-  );
-  if (rows[0]?.id) return rows[0].id;
-  if (principal.subject === "local-development" && LOCAL_BYPASS()) {
-    const res = await db.query(
-      `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
-       VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
-       ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL
-         DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`
-    );
-    return res.rows[0]?.id ?? null;
-  }
-  return null;
-}
-
 // services/pos/businessScope.ts
+init_auth();
 var BusinessScopeError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -1915,6 +1983,9 @@ function requiresAudit(cap) {
   return AUDITED_CAPABILITIES.includes(cap);
 }
 
+// src/server/adminRoutes.ts
+init_auth();
+
 // src/server/blogDiscovery.ts
 var BLOG_INDEXNOW_KEY = "eda153f3ef2fb48e8fcc2454402be848";
 var BLOG_INDEXNOW_PATH = `/blog/${BLOG_INDEXNOW_KEY}.txt`;
@@ -2183,31 +2254,14 @@ import { randomUUID as randomUUID4 } from "node:crypto";
 var BLOG_PHOTO_MAX_CHARS = 65e4;
 
 // src/server/blogMedia.ts
-var BUCKET = "blog-media";
 function createBlogMediaProvider() {
   return { async upload(bytes, path) {
     if (authProvider() === "neon") {
       const { createS3BlogMediaProvider: createS3BlogMediaProvider2 } = await Promise.resolve().then(() => (init_s3BlogMedia(), s3BlogMedia_exports));
       return createS3BlogMediaProvider2().upload(bytes, path);
     }
-    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
-    const { createClient } = await import("@supabase/supabase-js");
-    const signal = AbortSignal.timeout(18e3);
-    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
-    const bucket = await client.storage.getBucket(BUCKET);
-    if (bucket.error) {
-      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
-      if (created.error) {
-        const existing = await client.storage.getBucket(BUCKET);
-        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      }
-    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
-    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
-    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
-    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw Error("BLOG_OBJECT_STORAGE_NOT_CONFIGURED");
+    else return (await Promise.resolve().then(() => (init_legacyBlogMedia(), legacyBlogMedia_exports))).uploadLegacyBlogMedia(bytes, path);
   } };
 }
 function decodeBlogPhoto(value) {
@@ -3434,6 +3488,9 @@ function registerSubscriptionAdminRoutes(app, getDb, guard, wrap) {
   });
 }
 
+// services/mcp/routes.ts
+init_auth();
+
 // services/mcp/tools.ts
 var MCP_SCOPE = "pos:read";
 var annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -3475,7 +3532,7 @@ function mcpConfig() {
 // src/server/adminIntegrations.ts
 function integrationProviders(env = process.env) {
   const configured = (...keys) => keys.every((key) => Boolean(env[key]?.trim()));
-  const neon = env.AUTH_PROVIDER === "neon";
+  const neon = process.env.NEWHOPE_BUILD_TARGET === "neon" || env.AUTH_PROVIDER === "neon";
   const identity = neon ? { id: "neon-auth", name: "New Hope Auth / Neon", purpose: "Autentikasi akun dan sesi", configured: configured("NEWHOPE_AUTH_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_DATABASE_URL") && env.NEWHOPE_NEON_AUTH_STAGING === "1", dashboard: "https://console.neon.tech/", note: "Sesi database dan identitas kanonis; status konfigurasi bukan bukti login atau migrasi produksi." } : { id: "supabase", name: "Supabase", purpose: "Database dan autentikasi akun", configured: configured("DATABASE_URL") && (configured("SUPABASE_URL", "SUPABASE_ANON_KEY") || configured("VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY")), dashboard: "https://supabase.com/dashboard/project/fqxrhumsgigcgjtlbfuo", note: "Provider autentikasi legacy; dipertahankan sampai gate migrasi dan rollback lulus." };
   return [
     identity,
@@ -4578,8 +4635,9 @@ function registerAdminRoutes(app, getDb, authenticate = authenticateBearer, supp
 }
 
 // services/pos/registerOperations.ts
-import { createHash as createHash4 } from "node:crypto";
+init_auth();
 init_schemaFeatures();
+import { createHash as createHash4 } from "node:crypto";
 
 // src/platform/modules/registerCapabilities.ts
 var REGISTER_CAPABILITIES = ["outlet_revenue.read", "shift.open", "shift.read", "shift_history.read", "shift.close", "shift_variance.submit", "shift_variance.approve", "register.configure"];
@@ -4590,6 +4648,9 @@ function registerCapabilities(role) {
   if (role === "ACCOUNTANT") return ["outlet_revenue.read", "shift.read", "shift_history.read"];
   return [];
 }
+
+// services/pos/modules.ts
+init_auth();
 
 // src/modules/fnb/manifest.ts
 var manifest = {
@@ -5785,8 +5846,9 @@ function registerCashierFinanceRoutes(app, db) {
 init_schemaFeatures();
 
 // services/pos/financialAuthorization.ts
-import { createHash as createHash5, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+init_auth();
 init_authProviderOperations();
+import { createHash as createHash5, randomBytes, scrypt as derive, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 var scrypt = (pin, salt) => new Promise((resolve2, reject) => derive(pin, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve2(key)));
 var ACTIONS = /* @__PURE__ */ new Set(["VOID", "REFUND", "CASH_OUT", "CASH_REVERSE"]);
 var FinancialApprovalError = class extends Error {
@@ -5907,6 +5969,7 @@ async function consumeFinancialApproval(c, s, action, reference, command, token)
 }
 
 // services/pos/finance.ts
+init_auth();
 var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ID2 = /^[^\x00-\x1f\x7f]{1,128}$/;
 var money = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -6196,6 +6259,9 @@ function sharedPurchaseCashCommand(commandId, moduleId, outletId, sector, amount
   return { sector, outletId, clientEventId: `purchase:${commandId}:${moduleId}`, type: "CASH_OUT", amount, occurredAt, description, category: "BELANJA_BAHAN", recipientOrSource: "Shared purchase " + commandId };
 }
 
+// services/pos/workspaceInventory.ts
+init_auth();
+
 // services/pos/inventoryLocation.ts
 async function ensureInventoryLocation(db, tenantId, merchantId, outletId) {
   const existing = await db.query(`SELECT id FROM pos.inventory_locations
@@ -6308,6 +6374,12 @@ function registerWorkspaceInventoryRoutes(app, db) {
     }
   });
 }
+
+// services/pos/workspaceState.ts
+init_auth();
+
+// services/pos/sharedState.ts
+init_auth();
 
 // src/lib/sync/orderOperations.ts
 var ORDER_OPERATION_FIELDS = [
@@ -7026,10 +7098,11 @@ function registerWorkspaceStateRoutes(app, db) {
 }
 
 // services/pos/staffAccounts.ts
-import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
+init_auth();
 init_betterAuthConfig();
 init_betterAuthEmail();
 init_schemaFeatures();
+import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID9 } from "node:crypto";
 var UUID4 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 var STAFF_ROLES = ["OWNER", "ADMIN", "MANAGER", "CASHIER", "BARISTA", "CHEF", "WASHER", "KAPSTER", "ACCOUNTANT", "STAFF"];
 var StaffAccessError = class extends Error {
@@ -7271,6 +7344,7 @@ async function workspaceDirectory(db, subject2, requestedTenant) {
 }
 
 // services/pos/businessDirectory.ts
+init_auth();
 function registerBusinessDirectory(app, db) {
   app.get("/api/v1/sync/business", async (req, res) => {
     const principal = trustedPrincipal(req);
@@ -7346,6 +7420,9 @@ async function applyTenders(db, scope, transactionId, tenders) {
   }
 }
 
+// services/pos/privacy.ts
+init_auth();
+
 // src/config/legalNotices.ts
 var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
@@ -7399,7 +7476,11 @@ function registerPrivacyRoutes(app, db) {
   });
 }
 
+// services/pos/sync.ts
+init_auth();
+
 // services/pos/reports.ts
+init_auth();
 var UUID6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
@@ -8691,6 +8772,9 @@ function registerSyncRoutes(app, db) {
   });
 }
 
+// api/_runtime.ts
+init_auth();
+
 // services/billing/store.ts
 async function pastikanPaket(db, paket) {
   for (const p of paket) {
@@ -8737,6 +8821,7 @@ function normalizeVercelUrl(req) {
 }
 
 // src/server/serverlessBoundary.ts
+init_auth();
 import express from "express";
 var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
