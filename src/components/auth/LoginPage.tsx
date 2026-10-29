@@ -10,6 +10,8 @@
 
 import React, { useState } from "react";
 import "../../styles/app-theme.css";
+import {StaffRegistrationForm} from './StaffRegistrationForm';
+import {isStaffRegistrationIntent} from '../../lib/auth/staffInvitation';
 import {SecondFactorChallenge} from './SecondFactorChallenge';
 import {authRuntime,isNeonAuth} from '../../lib/authRuntime';
 import { useAuth } from "../../context/AuthContext";
@@ -227,6 +229,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   if(mfaRequired)return <AuthLayout><SecondFactorChallenge onVerified={async()=>{const restored=await authRuntime.auth.getSession();if(restored.error)throw restored.error;}} onCancel={signOut}/></AuthLayout>;
+
+  if(isNeonAuth&&mode==='register'&&isStaffRegistrationIntent(window.location.search)){
+    return <AuthLayout onBack={onBackToLanding}><StaffRegistrationForm onSignIn={()=>setMode('login')}/></AuthLayout>;
+  }
 
   return (
     <AuthLayout register={mode === "register"} onBack={onBackToLanding}>

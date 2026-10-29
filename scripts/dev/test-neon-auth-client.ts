@@ -1,3 +1,4 @@
+import {isStaffRegistrationIntent} from '../../src/lib/auth/staffInvitation';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -61,3 +62,6 @@ nativeState='management-denied';assert.equal((await native.signOut({scope:'globa
 nativeState='identity';assert.equal((await native.signOut({scope:'global'})).error,null);assert(!vault.has(NATIVE_BEARER_KEY));assert(scopeEvents.includes('SIGNED_OUT'));assert.equal(vault.get('financial-outbox-sentinel'),'immutable-payload');
 assert(!readFileSync('src/lib/auth/neonClient.ts','utf8').includes('@supabase/'));
 console.log('PASS Neon client: canonical actor IDs, cookie-only web sessions, isolated native vault/pending MFA relay, Google/password MFA, recovery codes, one-use PKCE exchange, live revocation/outage, no Supabase SDK/fallback and no financial queue deletion. HTTP responses simulated.');
+
+assert.equal(isStaffRegistrationIntent('?returnTo=%2Fstaff-invite'),true,'New tab without token storage must use personal staff signup');
+for(const search of ['', '?returnTo=%2Foverview','?returnTo=https%3A%2F%2Fevil.invalid%2Fstaff-invite','?returnTo=%2Fstaff-invite&returnTo=%2Foverview'])assert.equal(isStaffRegistrationIntent(search),false);

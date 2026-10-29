@@ -7,3 +7,9 @@ export function rememberStaffInvitation(hash:string){
  sessionStorage.setItem(key,JSON.stringify({token:hash.slice(7),savedAt:Date.now()}));return true;
 }
 export function forgetStaffInvitation(){sessionStorage.removeItem(key);}
+
+/** Legacy/new-tab auth links carry intent, not authorization or an invite token. */
+export function isStaffRegistrationIntent(search:string):boolean {
+ const values=new URLSearchParams(search).getAll('returnTo');
+ return values.length===1&&values[0]==='/staff-invite';
+}
