@@ -423,11 +423,11 @@ async function notifyBlogDiscovery(slugs, send = fetch) {
   }
 }
 
+// src/server/blogStorage.ts
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+
 // src/server/blogCover.ts
 import sharp from "sharp";
-
-// src/server/blogMedia.ts
-import { createClient } from "@supabase/supabase-js";
 
 // src/server/blogPages.ts
 function siteUrl() {
@@ -516,6 +516,7 @@ function createBlogAutomation(getDb) {
     const db = await getDb();
     const changedSlugs = [];
     const result = await db.tx(async (c) => {
+      await c.query("SELECT pg_advisory_xact_lock(hashtext('newhope-blog-automation'))");
       const existing = mode === "update" ? (await c.query("SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
       if (mode === "update" && !existing) throw new BlogApiError(404, "POST_NOT_FOUND");
       const clash = (await c.query(
