@@ -48,6 +48,8 @@ export interface TodayMetrics {
 }
 
 export interface ReportScope {
+  role?:string;
+  moduleId?:string;
   tenantId: string;
   merchantId: string;
   outletId: string;
@@ -85,7 +87,7 @@ export interface ServerReportSummary {
 }
 
 export interface ServerTransaction extends Order {
-  recognizedCOGS: number | null;
+  recognizedCOGS?: number | null;
   serverId: string;
   clientTxnId: string | null;
   serverOrderStatus: string;

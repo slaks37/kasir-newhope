@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { lazy, useState } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { Table, Order } from '../../types';
 import { formatRupiah, formatDateTime } from '../../utils/formatters';
@@ -28,10 +28,10 @@ import {
   CreditCard,
   ShoppingCart,
 } from 'lucide-react';
-import { KitchenDisplaySystem } from './KitchenDisplaySystem';
-import { LaundryPipelineView } from './LaundryPipelineView';
-import { CarwashPipelineView } from './CarwashPipelineView';
-import { BarbershopBookingView } from './BarbershopBookingView';
+const KitchenDisplaySystem = lazy(() => import('./KitchenDisplaySystem').then(m => ({default: m.KitchenDisplaySystem})));
+const LaundryPipelineView = lazy(() => import('./LaundryPipelineView').then(m => ({default: m.LaundryPipelineView})));
+const CarwashPipelineView = lazy(() => import('./CarwashPipelineView').then(m => ({default: m.CarwashPipelineView})));
+const BarbershopBookingView = lazy(() => import('./BarbershopBookingView').then(m => ({default: m.BarbershopBookingView})));
 import { CheckoutModal } from '../pos/CheckoutModal';
 
 export const TableManager: React.FC = () => {

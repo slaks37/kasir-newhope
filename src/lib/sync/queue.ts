@@ -50,7 +50,10 @@ export interface SyncPayloadItem {
   totalPrice: number;
 }
 
+export interface FinancialWorkspace {tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string}
+export const financialWorkspaceKey=(w:FinancialWorkspace)=>`workspace:v2:${w.tenantId}:${w.merchantId}:${w.outletId}:${w.moduleId}:${w.actorRef}`;
 export interface SyncPayloadTxn {
+  workspace?:FinancialWorkspace;
   tenders?: Array<{clientPaymentId:string;method:string;amount:number;createdAt:string}>;
   shiftId?: string;
   clientTxnId: string;
@@ -119,6 +122,8 @@ export function requeueQuarantined(businessId: string, clientTxnId: string): boo
 type SyncMeta = Omit<SyncStatus, 'pending' | 'inFlight'>;
 
 export interface SyncTarget {
+  workspace?:FinancialWorkspace;
+  queueId?:string;
   canonicalBusinessId?:string;
   legacyAlias?:string|null;
   businessId: string;
@@ -474,6 +479,8 @@ export async function pullCatalog(
  * baris ini, transaksinya tetap terkirim nanti.
  */
 export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
+  if(businessId.startsWith('workspace:v2:')&&(!txn.workspace||financialWorkspaceKey(txn.workspace)!==businessId||txn.branchId!==txn.workspace.outletId))throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
+  if(txn.workspace&&financialWorkspaceKey(txn.workspace)!==businessId)throw Error('WORKSPACE_QUEUE_MISMATCH');
   const q = readQueue(businessId);
   // Anti-ganda di sisi klien juga. Menekan "bayar" dua kali, atau void yang
   // masuk untuk transaksi yang masih mengantri, tidak boleh menghasilkan dua
@@ -512,7 +519,7 @@ let flushing = new Set<string>();
  * penjualan.
  */
 export async function flush(target: SyncTarget, force = false): Promise<SyncStatus> {
-  const { businessId } = target;
+  const businessId = target.queueId||target.businessId;
 
   // Satu pengiriman per unit usaha pada satu waktu. Dua pengiriman paralel akan
   // sama-sama membaca antrian yang sama lalu saling menimpa saat memangkasnya.
@@ -520,7 +527,7 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
 
   let all: SyncPayloadTxn[];
   let held:Set<string>;
-  try { all = readQueue(businessId); held=new Set(legacyFinancialHolds(businessId).orders); }
+  try { all = readQueue(businessId);if(target.workspace&& (financialWorkspaceKey(target.workspace)!==businessId||all.some(t=>!t.workspace||financialWorkspaceKey(t.workspace)!==businessId||t.branchId!==target.workspace!.outletId)))throw Error('WORKSPACE_QUEUE_MISMATCH');if(!target.workspace&&all.some(t=>t.workspace))throw Error('EXPLICIT_WORKSPACE_REQUIRED'); held=new Set(legacyFinancialHolds(businessId).orders); }
   catch(error) {
     writeMeta(businessId,{lastError:error instanceof Error?error.message:'LOCAL_QUEUE_READ_FAILED',failures:1,lastErrorAt:new Date().toISOString()});
     return getStatus(businessId);
@@ -559,7 +566,8 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         idempotencyKey: await batchKey(`${businessId}:${firstOutlet || 'legacy'}`, batch),
-        businessId,
+        businessId:target.workspace?target.workspace.merchantId:target.businessId,
+        ...(target.workspace?{moduleId:target.workspace.moduleId}:{}),
         outletId: firstOutlet,
         sector: target.sector,
         storeName: target.storeName,

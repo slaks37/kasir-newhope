@@ -1,9 +1,10 @@
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ServerReportSummary, ServerTransactionsResponse, ServerTransaction } from './types';
 import { coalescedRead, refreshCoordinator } from '../sync/refreshCoordinator';
 import type {Shift} from '../../types';
 
-export interface ReportQuery {outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
+export interface ReportQuery {businessId?:string;moduleId?:string;purpose?:string;registerId?:string;outletId?:string;sector:string;from?:string;to?:string;timezone?:string;paymentMethod?:string;search?:string;trend?:string}
 export function reportParams(query:ReportQuery):URLSearchParams{
   return new URLSearchParams(Object.entries(query).filter(([,value])=>value!==undefined&&value!=='').sort(([a],[b])=>a.localeCompare(b)) as [string,string][]);
 }
@@ -32,7 +33,7 @@ export async function fetchFinancialWorkspace(query:ReportQuery,includeRecent:bo
     if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');
     const result=await response.json();
     if(!response.ok||!result.ok)throw Error(result.error||'SHIFT_UNAVAILABLE');
-    return result as {ok:true;shift:Shift|null;history:Shift[];generatedAt?:string};
+    return result as {ok:true;shift:Shift|null;history:Shift[];registers?:any[];generatedAt?:string};
   },signal);
   const [shiftData,transactions]=await Promise.all([shiftRead,includeRecent?fetchRecentServerTransactions(query,signal):Promise.resolve(null)]);
   return {shiftData,transactions};
@@ -45,15 +46,16 @@ export async function fetchServerTransactions(query:ReportQuery,signal?:AbortSig
     cursor=page.nextCursor;if(cursor&&cursors.has(cursor))throw new Error('INVALID_REPORT_CURSOR');if(cursor)cursors.add(cursor);
   }while(cursor);return rows;
 }
-export function calendarDate(zone='Asia/Jakarta',offsetDays=0):string{
-  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+export function calendarDate(zone='Asia/Jakarta',offsetDays=0,now=new Date()):string{
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
   const part=(type:string)=>parts.find(p=>p.type===type)?.value;
   const date=new Date(`${part('year')}-${part('month')}-${part('day')}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+offsetDays);
   return date.toISOString().slice(0,10);
 }
 type ReportState={key:string;summary:ServerReportSummary|null;transactions:ServerTransaction[];nextCursor:string|null;loading:boolean;loadingMore:boolean;error:string|null};
 const empty=(key:string):ReportState=>({key,summary:null,transactions:[],nextCursor:null,loading:true,loadingMore:false,error:null});
-export function useServerReport(query:ReportQuery,includeTransactions=true){
+export function useServerReport(input:ReportQuery,includeTransactions=true){
+  const runtime=useBusinessModule();const query=runtime?.grant.workspaceVersion===2?{...input,businessId:runtime.access.businessId,moduleId:runtime.manifest.id}:input;
   const key=reportParams(query).toString()+':'+includeTransactions;
   const cache=useRef(new Map<string,ReportState>());
   const [state,setState]=useState<ReportState>(()=>empty(key));

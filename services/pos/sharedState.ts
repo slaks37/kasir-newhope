@@ -1,3 +1,4 @@
+import { authorizeNativeModule, moduleStateRequirements } from './modules';
 import type { Express } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal } from '../shared/auth';
@@ -57,7 +58,7 @@ class StateConflict extends Error {
 
 type Operation = { kind: string; recordId: string; baseRevision: number; value: unknown; deleted: boolean;owner?:string;sector?:string };
 
-function validOperations(value: unknown): Operation[] | null {
+export function validOperations(value: unknown,workspace=false): Operation[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
   const seen = new Set<string>();
   const operations: Operation[] = [];
@@ -90,7 +91,7 @@ function validOperations(value: unknown): Operation[] | null {
         'logoUrl' in settings || 'registeredTerminalId' in settings) return null;
     }
     if(r.kind==='order_operations'&&!r.deleted){
-      const allowed=new Set<string>(ORDER_OPERATION_FIELDS);
+      const allowed=new Set<string>([...ORDER_OPERATION_FIELDS,...(workspace?['tenantId','businessId','businessSector','moduleId','outletId','branchId']:[])]);
       if(Object.keys(r.value as object).some(key=>!allowed.has(key)))return null;
       if((r.value as Record<string,unknown>).id!==r.recordId)return null;
     }
@@ -121,6 +122,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
         await c.exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId,scope.merchantId]);
+        await authorizeNativeModule(c,principal.subject,scope.merchantId,req.query.outletId,moduleStateRequirements(kinds));
         const parameters=[scope.tenantId,[sector,'BUSINESS:'+scope.merchantId],scope.merchantId,kinds];
         // Version rows are bumped by trigger on every change (migration 0055): no full scan per poll.
         // Until that migration is applied, fall back to hashing the records themselves.
@@ -168,7 +170,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
         records:rows.slice(0,paged?STATE_PAGE_SIZE:10000).map((r:any)=>({scope:r.scope==='GLOBAL'?'GLOBAL':sector,kind:r.kind,
         recordId:r.record_id,value:r.value,revision:Number(r.revision),deleted:r.deleted,updatedAt:r.updated_at,
         ...(r.recovery_value?{recoveryValue:r.recovery_value,quarantineReason:r.quarantine_reason}:{} )}))});
-    } catch(error) { if(error instanceof BusinessScopeError)return res.status(error.status).json({ok:false,error:error.message});return res.status(503).json({ok:false,error:'STATE_UNAVAILABLE'}); }
+    } catch(error) { if(error instanceof BusinessScopeError||error instanceof BillingError)return res.status(error.status).json({ok:false,error:error.message});return res.status(503).json({ok:false,error:'STATE_UNAVAILABLE'}); }
   });
 
   app.post('/api/v1/sync/state', async (req,res) => {
@@ -187,6 +189,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
         await assertTenantWritable(c,scope.tenantId);
         await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",
           [scope.tenantId,scope.merchantId]);
+        await authorizeNativeModule(c,principal.subject,scope.merchantId,requestedOutletId||undefined,moduleStateRequirements(operations.map(op=>op.kind),true));
         const free=await freePlanState(c,scope.tenantId);
         assertFreeScope(free,sector,[]);
         if(free.free&&!(await c.query('SELECT 1 FROM internal.outlets WHERE id=$1 AND merchant_id=$2 AND tenant_id=$3 AND is_active',
@@ -320,7 +323,7 @@ export function registerSharedStateRoutes(app: Express, db: Db) {
       });
       return res.json({ok:true,...versions});
     } catch(error) {
-      if(error instanceof BusinessScopeError)return res.status(error.status).json({ok:false,error:error.message});
+      if(error instanceof BusinessScopeError||error instanceof BillingError)return res.status(error.status).json({ok:false,error:error.message});
       if(error instanceof StateConflict) return res.status(409).json({ok:false,error:'STATE_CONFLICT',kind:error.kind,recordId:error.recordId});
       if(error instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:error.message});
       if(error instanceof BillingError) return res.status(error.status).json({ok:false,error:error.message});

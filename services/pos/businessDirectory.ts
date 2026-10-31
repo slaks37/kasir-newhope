@@ -1,3 +1,5 @@
+import {workspaceDirectory} from './workspaceDirectory';
+import {ModuleAccessError} from './modules';
 import type {Express} from 'express';
 import type {Db} from '../shared/db';
 import {tenantForPrincipal,trustedPrincipal} from '../shared/auth';
@@ -8,6 +10,8 @@ export function registerBusinessDirectory(app:Express,db:Db){
     const principal=trustedPrincipal(req);
     if(!principal)return res.status(401).json({ok:false,error:'UNAUTHENTICATED'});
     try{
+      res.setHeader('Cache-Control','no-store');
+      if(req.query.workspace==='2')return res.json(await db.tx(c=>workspaceDirectory(c,principal.subject,req.query.tenantId)));
       const tenantId=await tenantForPrincipal(db,principal);
       if(!tenantId)return res.json({ok:true,tenantId:null,businesses:[]});
       const result=await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
@@ -27,6 +31,6 @@ export function registerBusinessDirectory(app:Express,db:Db){
           ...{latitude:row.latitude===null?null:Number(row.latitude),longitude:row.longitude===null?null:Number(row.longitude),radiusMeters:row.radius_meters===null?null:Number(row.radius_meters)}});
       }
       return res.json({ok:true,tenantId,capabilities:{multiBusiness:capabilities},businesses:[...businesses.values()]});
-    }catch{return res.status(503).json({ok:false,error:'BUSINESS_DIRECTORY_UNAVAILABLE'});}
+    }catch(e){return res.status(e instanceof ModuleAccessError?e.status:503).json({ok:false,error:e instanceof ModuleAccessError?e.message:'BUSINESS_DIRECTORY_UNAVAILABLE'});}
   });
 }

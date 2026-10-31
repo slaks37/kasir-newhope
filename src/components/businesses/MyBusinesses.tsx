@@ -3,13 +3,15 @@ import {Building2,MapPin} from 'lucide-react';
 import {usePOSFields} from '../../context/POSDomains';
 import {useWorkspaceBusiness} from '../../context/WorkspaceBusinessContext';
 import type {BusinessSector} from '../../types';
-import {navigate} from '../../lib/navigation/workspaceRouter';
+import {navigate,useWorkspaceRoute} from '../../lib/navigation/workspaceRouter';
+import {isModulePath} from '../../platform/modules/routing';
 import {isFreePlan} from '../../config/freePlanPolicy';
 import {businessAvailability,sectorLabel} from '../../lib/workspace/businessPresentation';
 
 /** Canonical directory; selecting UUIDs remounts isolated durable namespaces. */
 export function MyBusinesses(){
   const {settings}=usePOSFields(['settings']);
+  const currentPath=useWorkspaceRoute();
   const {directory,business:current,select}=useWorkspaceBusiness();
   const [form,setForm]=useState<'business'|'outlet'|null>(null),[name,setName]=useState('');
   const [sector,setSector]=useState<BusinessSector>('FNB'),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -29,7 +31,7 @@ export function MyBusinesses(){
     const result=await response.json();if(!response.ok||!result.ok)throw Error(result.error||'BUSINESS_SAVE_FAILED');
     setForm(null);setName('');requestKey.current=crypto.randomUUID();window.dispatchEvent(new Event('outlets-updated'));
   }catch(error){setError(error instanceof Error?error.message:'BUSINESS_SAVE_FAILED');}finally{setBusy(false);}};
-  const choose=(businessId:string,outletId?:string)=>{try{select(businessId,outletId);setError('');}catch(error){setError(error instanceof Error?error.message:'BUSINESS_SELECTION_FAILED');}};
+  const choose=(businessId:string,outletId?:string)=>{try{select(businessId,outletId);if(isModulePath(currentPath))navigate('/overview');setError('');}catch(error){setError(error instanceof Error?error.message:'BUSINESS_SELECTION_FAILED');}};
   return <section className="flex-1 overflow-auto bg-slate-50 p-4 md:p-8">
     <div className="max-w-5xl mx-auto space-y-5">
       <div><h1 className="text-2xl font-bold text-slate-900">Bisnis & Outlet Saya</h1><p className="text-slate-500 mt-2">Satu akun dan satu paket untuk semua bisnis di bawah ini. Setiap bisnis punya katalog, denah, dan laporan terpisah. Outlet adalah cabang dari sebuah bisnis.</p>

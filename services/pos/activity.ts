@@ -1,3 +1,4 @@
+import {hasSchemaFeature} from '../shared/schemaFeatures';
 /**
  * Penulisan jejak aktivitas merchant.
  *
@@ -50,7 +51,7 @@ export async function writeActivity(db: Db, a: ActivityInput): Promise<string | 
   if (!sector || !mod || !UUID_RE.test(a.merchantId)) return null;
 
   const { rows } = await db.query(
-    `INSERT INTO internal.audit_logs
+    await hasSchemaFeature(db,'merchantActivityAppend')?`SELECT internal.append_merchant_activity($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::uuid,$7::text,$8::text,$9::numeric,$10::text,$11::jsonb,$12::timestamptz) AS id`:`INSERT INTO internal.audit_logs
        (merchant_id, tenant_id, domain,
         event_type, severity, actor_id, actor_name, actor_role,
         amount_idr, summary, detail, occurred_at)

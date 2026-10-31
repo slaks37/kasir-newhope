@@ -3,6 +3,7 @@ import type { AuthPrincipal } from '../shared/auth';
 import type { MerchantSnapshot } from '../../src/lib/assistant/types';
 import type { Order, Product } from '../../src/types';
 import { INITIAL_SETTINGS } from '../../src/data/initialData';
+import { hasSchemaFeature } from '../shared/schemaFeatures';
 
 /** Server-only: principal comes from verified Auth, never request body. The
  * loader enforces ownership itself before ANY transaction/catalog read. */
@@ -12,6 +13,8 @@ export async function loadMerchantSnapshot(db: Db, principal: AuthPrincipal, bus
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`,[businessId,principal.subject])).rows[0];
   if(!merchant)throw new Error('BUSINESS_NOT_OWNED');
+  if(await hasSchemaFeature(db,'moduleScopeGuard') && (await db.query('SELECT internal.requires_module_scope($1::uuid) AS required',[merchant.id])).rows[0]?.required)
+    throw new Error('EXPLICIT_WORKSPACE_REQUIRED');
   // Refuse excessive histories rather than silently truncate financial totals.
   const rows=(await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,
     r.service_charge_amount-COALESCE(f.service,0) AS net_service

@@ -6,7 +6,7 @@ export type OperationalConflict={kind:string;recordId:string;error?:string;local
 export type SharedSyncStatus={ready:boolean;pending:number;error:string|null;conflict?:OperationalConflict;conflicts?:OperationalConflict[];quarantined?:number;inFlight?:boolean;lastSyncedAt?:string|null};
 const keyFor=(kind:string,id:string)=>`${kind}\x00${id}`;
 const outboxKey=(owner:string,sector:string,namespace?:string)=>namespace?`newhope_shared_outbox_v3_${owner}_${namespace}`:`newhope_shared_outbox_${owner}_${sector}`;
-type Identity={businessId:string;transportRef:string;namespace?:string};
+type Identity={businessId:string;transportRef:string;namespace?:string;tenantId?:string;outletId?:string;moduleId?:string;permissions?:string[]};
 const financialKinds=new Set(['orders','cash_movements','shift','shift_history']);
 const globals=new Set(['users','staff_members']);
 const recordJson=(value:unknown):string=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)
@@ -15,6 +15,10 @@ export const recordIdOf=(kind:string,row:object):string=>{const v=row as {id?:un
 
 /** One durable, replaceable operation per owner/sector/kind/id; cloud values are baselines. */
 export class SharedStateSync {
+  private get isolated(){return !!this.identity?.moduleId;}
+  private responseScope(kind:string){return this.isolated?`WORKSPACE:${this.identity!.businessId}:${this.identity!.outletId}:${this.identity!.moduleId}`:globals.has(kind)?'GLOBAL':this.sector;}
+  private get endpoint(){return this.isolated?'/api/v1/sync/modules/state':'/api/v1/sync/state';}
+  private scopedValue(kind:string,value:Record<string,unknown>){return this.isolated&&!globals.has(kind)?{...value,tenantId:value.tenantId??this.identity!.tenantId,businessId:value.businessId??this.identity!.transportRef,businessSector:value.businessSector??this.sector,moduleId:value.moduleId??this.identity!.moduleId,outletId:value.outletId??this.identity!.outletId,branchId:value.branchId??this.identity!.outletId}:value;}
   businessName:string|undefined;
   private remote=new Map<string,SharedRecord>();private pending=new Map<string,Operation>();
   private conflicts=new Map<string,{kind:string;recordId:string;error?:string}>();
@@ -60,7 +64,7 @@ export class SharedStateSync {
             !Number.isSafeInteger(row.revision)||row.revision<1||typeof row.deleted!=='boolean'||
             row.deleted&&row.value!==null||!row.deleted&&(!row.value||typeof row.value!=='object'||Array.isArray(row.value)))throw Error('OFFLINE_BASELINE_INVALID');
           seen.add(row.recordId);
-          const issue=row.scope!==(globals.has(kind)?'GLOBAL':this.sector)?'WRONG_RESPONSE_SCOPE':operationalScopeIssue(this.owner,this.sector,kind,row.recordId,row.value,this.identity?.transportRef);
+          const issue=row.scope!==(this.responseScope(kind))?'WRONG_RESPONSE_SCOPE':operationalScopeIssue(this.owner,this.sector,kind,row.recordId,row.value,this.identity?.transportRef);
           if(issue)discarded.push({kind,recordId:row.recordId,reason:issue});else restored.push(row);
         }
         if(discarded.length){
@@ -103,7 +107,7 @@ export class SharedStateSync {
     this.emit();
   }
   private backup(source:string,raw:string,records:Parameters<typeof backupOperational>[4]){backupOperational(this.owner,this.sector,source,raw,records,this.identity?.namespace);}
-  private scopeIssue(op:Operation){return op.owner&&op.owner!==this.owner?'WRONG_OWNER':op.sector&&op.sector!==this.sector
+  private scopeIssue(op:Operation){if(this.isolated&&op.value&&(['moduleId','outletId','branchId'] as const).some(f=>op.value![f]!==undefined&&op.value![f]!== (f==='moduleId'?this.identity!.moduleId:this.identity!.outletId)))return 'WRONG_WORKSPACE';return op.owner&&op.owner!==this.owner?'WRONG_OWNER':op.sector&&op.sector!==this.sector
     ?`WRONG_SECTOR:${op.sector}`:operationalScopeIssue(this.owner,this.sector,op.kind,op.recordId,op.value,this.identity?.transportRef);}
   private conflictDetails():OperationalConflict[]{return [...this.conflicts.values()].map(c=>{
     const k=keyFor(c.kind,c.recordId),local=this.pending.get(k),server=this.remote.get(k);
@@ -125,7 +129,7 @@ export class SharedStateSync {
     }};
     void tick(true);
   }
-  private visible():SharedRecord[]{const rows=new Map(this.remote);for(const [key,op] of this.pending)rows.set(key,{scope:globals.has(op.kind)?'GLOBAL':this.sector,...op,revision:op.baseRevision});return [...rows.values()];}
+  private visible():SharedRecord[]{const rows=new Map(this.remote);for(const [key,op] of this.pending)rows.set(key,{scope:this.responseScope(op.kind),...op,revision:op.baseRevision});return [...rows.values()];}
   async refresh(_initial:boolean){
     if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
     if(!navigator.onLine){if(this.offlineExpiry)this.restoreOffline(this.offlineExpiry);return;}
@@ -134,7 +138,7 @@ export class SharedStateSync {
       const candidates=[...this.pending.values()].filter(op=>op.origin==='legacy'&&!this.legacyCheckedKeys.has(keyFor(op.kind,op.recordId))).slice(0,100).map(op=>({kind:op.kind,recordId:op.recordId}));
       const requestedKinds=this.kinds?[...new Set([...this.kinds,...[...this.pending.values()].map(op=>op.kind)])]:undefined;
       const versionKey=requestedKinds?[...requestedKinds].sort().join(','):'*',knownVersion=this.versions.get(versionKey);
-      const query=`/api/v1/sync/state?paged=1&sector=${encodeURIComponent(this.sector)}${this.identity?'&businessId='+encodeURIComponent(this.identity.businessId):''}${requestedKinds?'&kinds='+encodeURIComponent(requestedKinds.join(',')):''}${knownVersion?'&knownVersion='+encodeURIComponent(knownVersion):''}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`;
+      const query=`${this.endpoint}?paged=1${this.isolated?'&outletId='+encodeURIComponent(this.identity!.outletId!)+'&moduleId='+encodeURIComponent(this.identity!.moduleId!):''}&sector=${encodeURIComponent(this.sector)}${this.identity?'&businessId='+encodeURIComponent(this.identity.businessId):''}${requestedKinds?'&kinds='+encodeURIComponent(requestedKinds.join(',')):''}${knownVersion?'&knownVersion='+encodeURIComponent(knownVersion):''}${candidates.length?'&legacyCandidates='+encodeURIComponent(JSON.stringify(candidates)):''}`;
       // Large catalogs/CRMs arrive in pages; the snapshot is only used once complete.
       let data:any=null,cursor:string|null=null;const pageRecords:SharedRecord[]=[];
       for(let page=0;;page++){
@@ -160,7 +164,7 @@ export class SharedStateSync {
       const safe:SharedRecord[]=[];
       for(const row of data.records as SharedRecord[]){
         if(row.recoveryValue)this.backup('cloud-quarantine',recordJson(row),[{kind:row.kind,recordId:row.recordId,reason:row.quarantineReason||'CLOUD_RECOVERY'}]);
-        const issue=row.scope!==(globals.has(row.kind)?'GLOBAL':this.sector)?'WRONG_RESPONSE_SCOPE':operationalScopeIssue(this.owner,this.sector,row.kind,row.recordId,row.value,this.identity?.transportRef);
+        const issue=row.scope!==(this.responseScope(row.kind))?'WRONG_RESPONSE_SCOPE':operationalScopeIssue(this.owner,this.sector,row.kind,row.recordId,row.value,this.identity?.transportRef);
         if(issue){this.backup('cloud-response',recordJson(row),[{kind:row.kind,recordId:row.recordId,reason:issue}]);this.quarantinedKeys.add(keyFor(row.kind,row.recordId));continue;}safe.push(row);
       }
       // Complete cloud snapshot: don't keep vanished rows as zombie records.
@@ -192,19 +196,20 @@ export class SharedStateSync {
       if(this.pending.size&&!this.outletBlocked)await this.flush();
     }catch(error){if(!this.stopped&&generation===this.readGeneration){this.error=error instanceof Error?error.message:'STATE_UNAVAILABLE';this.emit();}}
   }
-  prime<T extends object>(kind:string,rows:T[]){this.trackedRows.delete(kind);this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),recordJson(row)])));}
+  prime<T extends object>(kind:string,rows:T[]){this.trackedRows.delete(kind);this.previous.set(kind,new Map(rows.map(row=>[recordIdOf(kind,row),recordJson(this.scopedValue(kind,row as Record<string,unknown>))])));}
   importLegacy<T extends object>(kind:string,rows:T[]){if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;for(const row of rows){const id=recordIdOf(kind,row),key=keyFor(kind,id);if(!this.remote.has(key)&&!this.pending.has(key)&&!this.quarantinedKeys.has(key))this.queue(kind,id,row as Record<string,unknown>,false,0,'legacy');}this.persist();if(this.pending.size)this.schedule();}
   private queue(kind:string,id:string,value:Record<string,unknown>|null,deleted:boolean,base?:number,origin:'edit'|'legacy'='edit'){
     const key=keyFor(kind,id),op:Operation={kind,recordId:id,value,deleted,owner:this.owner,sector:this.sector,origin,baseRevision:base??this.pending.get(key)?.baseRevision??this.remote.get(key)?.revision??0};
     const reason=this.scopeIssue(op);if(reason){this.backup('rejected-edit',recordJson(op),[{kind,recordId:id,reason,name:typeof value?.name==='string'?value.name:undefined}]);return;}this.pending.set(key,op);
   }
   track<T extends object>(kind:string,rows:T[],prune=true){
+    if(this.isolated){if(globals.has(kind)||['stock_items','bundles','inventory_logs'].includes(kind))return;const write:Record<string,string>={store_settings:'settings',products:'inventory',categories:'inventory',stock_items:'inventory',bundles:'inventory',promo_codes:'inventory',inventory_logs:'inventory',commission_rules:'labor',attendance_logs:'labor',payroll_slips:'labor',bookings:'tables',kds_tickets:'tables',carwash_queue:'tables',tables:'tables',held_orders:'pos',order_operations:'pos',customers:'customers',sent_lifecycle_hooks:'customers'};if(this.identity?.permissions&&!this.identity.permissions.includes(write[kind]||'settings'))return;}
     if(this.stopped||this.error?.startsWith('OPERATIONAL_QUEUE'))return;
     // An unloaded collection is not an empty cloud collection. Never turn its
     // cached contents into edits/deletions before its own baseline arrives.
     if(this.kinds&&!this.loadedKinds.has(kind))return;
     if(this.trackedRows.get(kind)===rows)return;
-    try{const next=new Map(rows.filter(row=>recordIdOf(kind,row)!=='undefined').map(row=>[recordIdOf(kind,row),recordJson(row)])),before=this.previous.get(kind);
+    try{const next=new Map(rows.filter(row=>recordIdOf(kind,row)!=='undefined').map(row=>[recordIdOf(kind,row),recordJson(this.scopedValue(kind,row as Record<string,unknown>))])),before=this.previous.get(kind);
       this.trackedRows.set(kind,rows);this.previous.set(kind,next);if(!before||!this.ready)return;
       let changed=false;
       for(const [id,json] of next)if(before.get(id)!==json){this.queue(kind,id,JSON.parse(json),false);changed=true;}
@@ -236,12 +241,12 @@ export class SharedStateSync {
     }
     if(!operations.length){this.persist();return;}
     this.inFlight=true;this.emit();
-    try{const response=await fetch('/api/v1/sync/state',{method:'POST',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,businessId:this.identity?.businessId,outletId:this.outletId,operations})}),data=await response.json();
+    try{const response=await fetch(this.endpoint,{method:'POST',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/json'},body:JSON.stringify({sector:this.sector,businessId:this.identity?.businessId,outletId:this.identity?.outletId||this.outletId,...(this.isolated?{moduleId:this.identity!.moduleId}:{}),operations})}),data=await response.json();
       if(this.stopped)return;
       if(!response.ok||!data.ok){if(data.error==='STATE_CONFLICT'){this.conflicts.set(keyFor(data.kind,data.recordId),{kind:data.kind,recordId:data.recordId});this.persist();await this.refresh(false);return;}
         if(data.error==='OUTLET_SETUP_REQUIRED')this.outletBlocked=true;throw Error(data.error||`HTTP_${response.status}`);}
       for(const version of data.versions||[]){const key=keyFor(version.kind,version.recordId),sent=operations.find(op=>keyFor(op.kind,op.recordId)===key);if(!sent)continue;
-        this.remote.set(key,{scope:globals.has(sent.kind)?'GLOBAL':this.sector,kind:sent.kind,recordId:sent.recordId,value:sent.value,deleted:sent.deleted,revision:version.revision});
+        this.remote.set(key,{scope:this.responseScope(sent.kind),kind:sent.kind,recordId:sent.recordId,value:sent.value,deleted:sent.deleted,revision:version.revision});
         if(this.pending.get(key)===sent)this.pending.delete(key);else{const newer=this.pending.get(key);if(newer)newer.baseRevision=version.revision;}this.conflicts.delete(key);}
       for(const c of data.conflicts||[])this.conflicts.set(keyFor(c.kind,c.recordId),c);
       for(const r of data.rejected||[]){const key=keyFor(r.kind,r.recordId),op=this.pending.get(key);if(!op)continue;

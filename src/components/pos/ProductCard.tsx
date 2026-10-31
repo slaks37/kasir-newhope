@@ -16,8 +16,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const { t } = useTranslation();
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const isLowStock =
-    product.stock <= product.minStockAlert && product.stock > 0;
-  const isOutOfStock = product.stock <= 0;
+    product.inventoryTracked!==false&&product.stock <= product.minStockAlert && product.stock > 0;
+  const isOutOfStock = product.inventoryTracked!==false&&product.stock <= 0;
   const hasVariants =
     (product.variants && product.variants.length > 0) ||
     (product.modifierGroups && product.modifierGroups.length > 0);
@@ -49,7 +49,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <span
           className={`nh-product-stock ${isOutOfStock ? "is-out" : isLowStock ? "is-low" : ""}`}
         >
-          {isOutOfStock
+          {product.inventoryTracked===false?'Layanan':isOutOfStock
             ? t('pos.outOfStock')
             : `${t('inventory.stock')} ${product.stock}`}
         </span>

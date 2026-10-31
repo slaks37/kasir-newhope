@@ -1,3 +1,7 @@
+import {resolveWorkspaceScope} from './workspaceScope';
+import {ModuleAccessError} from './modules';
+import { authorizeNativeModule } from './modules';
+import { BillingError } from '../billing/engine';
 import type { Express, Request } from 'express';
 import type { Db } from '../shared/db';
 import { trustedPrincipal } from '../shared/auth';
@@ -17,6 +21,7 @@ export class ReportRequestError extends Error {
 }
 
 interface ReportFilter {
+  moduleId?:string|null;operational?:boolean;
   outletId: string;
   merchantId: string | null;
   tenantId: string | null;
@@ -50,7 +55,8 @@ function dateQuery(value: unknown, name: string): string | null {
 export function parseReportFilter(query: Request['query']): ReportFilter {
   const outletId = stringQuery(query.outletId, 'OUTLET_ID');
   if (!outletId || !UUID.test(outletId)) throw new ReportRequestError(400, 'INVALID_OUTLET_ID');
-  const merchantId = stringQuery(query.merchantId, 'MERCHANT_ID');
+  const moduleId=stringQuery(query.moduleId,'MODULE_ID');
+  const merchantId = stringQuery(query.merchantId??query.businessId, 'MERCHANT_ID');
   const tenantId = stringQuery(query.tenantId, 'TENANT_ID');
   if ((merchantId && !UUID.test(merchantId)) || (tenantId && !UUID.test(tenantId))) throw new ReportRequestError(400, 'INVALID_SCOPE');
   const sector = stringQuery(query.sector, 'SECTOR');
@@ -72,18 +78,18 @@ export function parseReportFilter(query: Request['query']): ReportFilter {
   const trendRaw = stringQuery(query.trend, 'TREND');
   const trendDays = trendRaw === null ? null : Number(trendRaw);
   if (trendDays !== null && (!Number.isInteger(trendDays) || trendDays < 2 || trendDays > 31)) throw new ReportRequestError(400, 'INVALID_TREND');
-  return { outletId, merchantId, tenantId, sector, from, to, timezone, timezoneExplicit:Boolean(query.timezone),
+  return { moduleId,outletId, merchantId, tenantId, sector, from, to, timezone, timezoneExplicit:Boolean(query.timezone),
     paymentMethod: paymentMethod === 'ALL' ? null : paymentMethod, search, trendDays };
 }
 
 async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<ReportScope> {
+  if(filter.moduleId){const s=await resolveWorkspaceScope(db,subject,{businessId:filter.merchantId,outletId:filter.outletId,moduleId:filter.moduleId},[filter.operational?'pos':'reports']);if(filter.tenantId&&filter.tenantId!==s.tenantId)throw new ReportRequestError(403,'REPORT_SCOPE_FORBIDDEN');return {tenantId:s.tenantId,merchantId:s.merchantId,outletId:s.outletId,moduleId:s.moduleId,role:s.role,sector:s.sector,from:filter.from,to:filter.to,timezone:filter.timezone};}
   // The browser selects a branch; ownership and both parent IDs are resolved in SQL.
   // Historical reports remain readable after a branch is deactivated.
-  const { rows } = await db.query(`SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector,ms.timezone
+  const { rows } = await db.query(`SELECT o.tenant_id,o.merchant_id,o.id AS outlet_id,m.business_sector
     FROM internal.outlets o
     JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=o.tenant_id
-    LEFT JOIN internal.merchant_settings ms ON ms.merchant_id=m.id
     WHERE o.id=$1 AND t.owner_user_ref=$2
       AND ($3::uuid IS NULL OR m.id=$3) AND ($4::uuid IS NULL OR t.id=$4)
       AND ($5::text IS NULL OR m.business_sector=$5)`,
@@ -91,8 +97,11 @@ async function scopeFor(db: Db, subject: string, filter: ReportFilter): Promise<
   if (!rows.length) throw new ReportRequestError(403, 'REPORT_SCOPE_FORBIDDEN');
   const row = rows[0];
   await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)", [row.tenant_id, row.merchant_id]);
+  try { await authorizeNativeModule(db,subject,row.merchant_id,row.outlet_id,[['reports']]); }
+  catch(error) { if(error instanceof BillingError)throw new ReportRequestError(error.status,error.message);throw error; }
+  const timezone=filter.timezoneExplicit?filter.timezone:(await db.query('SELECT timezone FROM internal.merchant_settings WHERE merchant_id=$1',[row.merchant_id])).rows[0]?.timezone||'Asia/Jakarta';
   return { tenantId: row.tenant_id, merchantId: row.merchant_id, outletId: row.outlet_id,
-    sector: row.business_sector, from: filter.from, to: filter.to, timezone: filter.timezoneExplicit?filter.timezone:row.timezone||'Asia/Jakarta' };
+    sector: row.business_sector, from: filter.from, to: filter.to, timezone };
 }
 
 function parameters(scope: ReportScope, filter: ReportFilter) {
@@ -103,6 +112,7 @@ function parameters(scope: ReportScope, filter: ReportFilter) {
 /** Keep the timestamp bare so tenant/outlet/time indexes remain usable. */
 const inPeriod = (alias: string, column = 'created_at') => `
   ${alias}.tenant_id=$1 AND ${alias}.merchant_id=$2 AND ${alias}.outlet_id=$3
+  AND (NULLIF(current_setting('app.module_id',true),'') IS NULL OR to_jsonb(${alias})->>'module_id'=current_setting('app.module_id',true))
   AND ($4::date IS NULL OR ${alias}.${column} >= ($4::date::timestamp AT TIME ZONE $6))
   AND ($5::date IS NULL OR ${alias}.${column} < (($5::date + 1)::timestamp AT TIME ZONE $6))`;
 
@@ -300,7 +310,7 @@ export async function serverTransactions(db: Db, subject: string, filter: Report
         AND ($9::timestamptz IS NULL OR (x.created_at,x.id)<($9::timestamptz,$10::uuid))
       ORDER BY x.created_at DESC,x.id DESC LIMIT $11`,params);
     const page=rows.slice(0,limit);
-    const items=page.length ? (await c.query(`SELECT i.*,COALESCE(i.quantity_exact,i.quantity) AS quantity,p.external_ref AS product_ref,
+    const items=page.length ? (await c.query(`SELECT i.*,COALESCE(i.quantity_exact,i.quantity) AS quantity,COALESCE(to_jsonb(p)->'workspace_payload'->>'id',p.external_ref) AS product_ref,
       COALESCE(ri.quantity,0) AS refunded_quantity FROM pos.transaction_items i
       LEFT JOIN pos.products p ON p.id=i.product_id AND p.tenant_id=i.tenant_id
       LEFT JOIN LATERAL (SELECT sum(ri.quantity) AS quantity FROM pos.transaction_refund_items ri
@@ -319,9 +329,9 @@ export async function serverTransactions(db: Db, subject: string, filter: Report
       ...(tenders.some(t=>t.transaction_id===row.id)?{paymentTenders:tenders.filter(t=>t.transaction_id===row.id).map(t=>({clientPaymentId:t.client_payment_id,method:t.payment_method as PaymentMethod,amount:numeric(t.amount),createdAt:iso(t.created_at)}))}:{}),
       status:['VOIDED','CANCELLED'].includes(row.order_status)?'VOID':['OPEN','PENDING_PAYMENT','IN_FULFILLMENT'].includes(row.order_status)?'HOLD':'COMPLETED',
       serverOrderStatus:row.order_status,refundTotal:numeric(row.refund_total),
-      recognizedRevenue:row.recognized_revenue===null?null:numeric(row.recognized_revenue),recognizedCOGS:row.recognized_cogs===null?null:numeric(row.recognized_cogs),syncedAt:new Date().toISOString(),
+      recognizedRevenue:row.recognized_revenue===null?null:numeric(row.recognized_revenue),...(!scope.moduleId||scope.role!=='CASHIER'?{recognizedCOGS:row.recognized_cogs===null?null:numeric(row.recognized_cogs)}:{}),syncedAt:new Date().toISOString(),
       items:items.filter(i=>i.transaction_id===row.id).map(i=>({id:i.client_item_id || i.id,selectedModifiers:[],productId:i.product_ref || i.product_id,
-        name:i.product_name,unitPrice:numeric(i.unit_price),unitCost:numeric(i.unit_cost),quantity:numeric(i.quantity),
+        name:i.product_name,unitPrice:numeric(i.unit_price),...(!scope.moduleId||scope.role!=='CASHIER'?{unitCost:numeric(i.unit_cost)}:{}),quantity:numeric(i.quantity),
         discountPercent:0,discountAmount:0,totalPrice:numeric(i.total_price),refundedQuantity:numeric(i.refunded_quantity)})),
     }));
     const last=page[page.length-1];
@@ -337,18 +347,19 @@ export function registerReportRoutes(app: Express, db: Db) {
     if (!principal || principal.subject==='local-development') return res.status(401).json({ok:false,error:'AUTHENTICATION_REQUIRED'});
     try {
       const filter=parseReportFilter(req.query);
+      if(route==='transactions'&&req.query.purpose==='pos')filter.operational=true;
       if(route==='summary') return res.json(await serverReportSummary(db,principal.subject,filter));
       const rawLimit=stringQuery(req.query.limit,'LIMIT');
       const limit=rawLimit===null?100:Number(rawLimit);
       if(!Number.isInteger(limit)||limit<1||limit>500)throw new ReportRequestError(400,'INVALID_LIMIT');
       return res.json(await serverTransactions(db,principal.subject,filter,cursorFor(req.query.cursor),limit));
     } catch(error) {
-      if(!(error instanceof ReportRequestError)){
+      if(!(error instanceof ModuleAccessError||error instanceof ReportRequestError)){
         const diagnostic=error as {code?:string;constraint?:string;table?:string;column?:string};
         console.error('[reports] read failed',{route,code:diagnostic.code,constraint:diagnostic.constraint,table:diagnostic.table,column:diagnostic.column});
       }
-      return res.status(error instanceof ReportRequestError?error.status:503).json({ok:false,
-        error:error instanceof ReportRequestError?error.message:'REPORT_UNAVAILABLE'});
+      return res.status(error instanceof ModuleAccessError||error instanceof ReportRequestError?error.status:503).json({ok:false,
+        error:error instanceof ModuleAccessError||error instanceof ReportRequestError?error.message:'REPORT_UNAVAILABLE'});
     }
   });
 }

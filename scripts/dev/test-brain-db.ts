@@ -37,6 +37,11 @@ try {
   await db.exec('SET ROLE svc_ai');
   await loadMerchantSnapshot(db,{subject:'brain-owner'},'brain-test');
   await db.exec('RESET ROLE');
+  await db.query("INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis,workspace_version) VALUES($1,$2,'fnb',true,true,2)",[tenant,merchant]);
+  await db.exec('SET ROLE svc_ai');
+  await assert.rejects(()=>loadMerchantSnapshot(db,{subject:'brain-owner'},'brain-test'),/EXPLICIT_WORKSPACE_REQUIRED/,'Legacy AI cannot merge v2 module records even with rollout disabled');
+  await db.exec('RESET ROLE');
+  await db.query('DELETE FROM internal.merchant_modules WHERE merchant_id=$1',[merchant]);
   assert.equal(snapshot.orders.length,0); assert.equal(snapshot.products.length,0);
   const report=reportAggregates(snapshot,{period:'MONTH'});
   assert.equal(report.revenueTotal,0);assert.equal(report.ordersAnalysed,0);

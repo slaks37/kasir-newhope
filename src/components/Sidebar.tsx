@@ -1,3 +1,5 @@
+import { useBusinessModule } from '../platform/modules/ModuleWorkspaceGate';
+import { ModuleNavigation } from '../platform/modules/ModuleNavigation';
 import React from "react";
 import { usePOSFields } from "../context/POSDomains";
 import { PermissionFeature } from "../types";
@@ -54,6 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     currentUser,
   } = usePOSFields(['activeTab','setActiveTab','products','heldOrders','shift','hasPermission','settings','staffMembers','attendanceLogs','getActiveAttendance','currentUser']);
   const { t } = useTranslation();
+  const runtime = useBusinessModule();
 
   const activePreset =
     BUSINESS_PRESETS[settings?.businessSector || "FNB"] || BUSINESS_PRESETS.FNB;
@@ -133,7 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="nh-sidebar">
       <div>
         <p className="nh-sidebar-caption">RUANG KERJA</p>
-        <nav className="nh-sidebar-nav" aria-label="Navigasi toko">
+        {runtime ? <ModuleNavigation/> : <nav className="nh-sidebar-nav" aria-label="Navigasi toko">
           {filteredNavItems.map((item) => {
             const Icon = item.icon;
             const isAllowed = hasPermission(item.id as PermissionFeature);
@@ -169,11 +172,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             );
           })}
-        </nav>
+        </nav>}
       </div>
       <div className="nh-sidebar-foot">
         <p className="nh-sidebar-caption">{t('header.toolsMenu')}</p>
         <button
+          disabled={runtime?.grant.workspaceVersion===2&&!hasPermission('labor')}
           onClick={() => (isPaymentRequired ? setActiveTab("payment") : onOpenClockIn())}
           className={`nh-sidebar-item ${isPaymentRequired ? "is-locked opacity-60" : ""}`}
           title={isPaymentRequired ? "Payment required" : undefined}

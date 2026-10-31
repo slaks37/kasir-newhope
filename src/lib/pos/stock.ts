@@ -29,8 +29,8 @@ export function stockAfterSale(stock: number, sold: number): number {
 }
 
 /** Item keranjang yang qty-nya melebihi stok tercatat (peringatan, tidak memblokir). */
-export function oversoldCartItems(cart: Pick<CartItem, 'id' | 'productId' | 'quantity'>[], products: Pick<Product, 'id' | 'stock'>[]): Map<string, number> {
-  const stockById = new Map(products.map(product => [product.id, product.stock]));
+export function oversoldCartItems(cart: Pick<CartItem, 'id' | 'productId' | 'quantity'>[], products: Pick<Product, 'id' | 'stock'|'inventoryTracked'>[]): Map<string, number> {
+  const stockById = new Map(products.map(product => [product.id, product.inventoryTracked===false?undefined:product.stock]));
   const inCart = new Map<string, number>();
   for (const item of cart) inCart.set(item.productId, (inCart.get(item.productId) ?? 0) + item.quantity);
   const flagged = new Map<string, number>();

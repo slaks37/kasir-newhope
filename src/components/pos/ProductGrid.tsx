@@ -133,7 +133,7 @@ export const ProductGrid: React.FC<ProductGridProps> = React.memo(({ onSelectPro
       product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       product.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (product.barcode && product.barcode.includes(searchQuery));
-    const matchesLowStock = onlyLowStock ? product.stock <= product.minStockAlert : true;
+    const matchesLowStock = onlyLowStock ? product.inventoryTracked!==false&&product.stock <= product.minStockAlert : true;
 
     return matchesCategory && matchesSearch && matchesLowStock;
   });
@@ -399,9 +399,9 @@ export const ProductGrid: React.FC<ProductGridProps> = React.memo(({ onSelectPro
             {filteredProducts.map((product) => (
               <div
                 key={product.id}
-                onClick={() => product.stock > 0 && onSelectProduct(product)}
+                onClick={() => (product.inventoryTracked===false||product.stock > 0) && onSelectProduct(product)}
                 className={`bg-white border border-slate-200 hover:border-amber-400 p-3 rounded-2xl flex items-center justify-between cursor-pointer transition-all shadow-xs ${
-                  product.stock <= 0 ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''
+                  product.inventoryTracked!==false&&product.stock <= 0 ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''
                 }`}
               >
                 <div className="flex items-center space-x-3">
