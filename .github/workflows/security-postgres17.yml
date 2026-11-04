@@ -37,6 +37,8 @@ jobs:
         run: node scripts/dev/test-rehearsal-target.mjs
       - name: Apply reviewed migrations and exercise rollback with synthetic data
         run: node scripts/dev/rehearse-security-postgres17.mjs
+      - name: Merchant health uses production schema and serializes concurrent workers
+        run: node --import tsx scripts/dev/test-merchant-health.ts --postgres17
       - name: Save bounded evidence even when a rehearsal fails
         if: always()
         uses: actions/upload-artifact@v4

@@ -641,28 +641,41 @@ function registerMcpRoutes(app, db, authenticate = authenticateBearer) {
 function normalizeVercelUrl(req) {
   if (!req || typeof req.url !== "string") return;
   try {
-    const parsed = new URL(req.url, "http://localhost");
-    const customPath = parsed.searchParams.get("__path");
-    if (customPath) {
-      parsed.searchParams.delete("__path");
-      const extraQs = parsed.searchParams.toString();
-      if (customPath.includes("?")) {
-        req.url = customPath + (extraQs ? `&${extraQs}` : "");
-      } else {
-        req.url = customPath + (extraQs ? `?${extraQs}` : "");
+    try {
+      const parsed = new URL(req.url, "http://localhost");
+      const customPath = parsed.searchParams.get("__path");
+      if (customPath) {
+        parsed.searchParams.delete("__path");
+        const extraQs = parsed.searchParams.toString();
+        if (customPath.includes("?")) {
+          req.url = customPath + (extraQs ? `&${extraQs}` : "");
+        } else {
+          req.url = customPath + (extraQs ? `?${extraQs}` : "");
+        }
+        req.originalUrl = req.url;
+        return;
       }
-      req.originalUrl = req.url;
-      return;
+    } catch {
     }
-  } catch {
-  }
-  if (req.url.includes("[...slug]")) {
-    const matched = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || req.headers?.["x-original-url"];
-    if (typeof matched === "string" && matched.startsWith("/") && !matched.includes("[...slug]")) {
-      const qIdx = req.url.indexOf("?");
-      const query = qIdx !== -1 ? req.url.slice(qIdx) : "";
-      req.url = matched.includes("?") ? matched : matched + query;
-      req.originalUrl = req.url;
+    if (req.url.includes("[...slug]")) {
+      const matched = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || req.headers?.["x-original-url"];
+      if (typeof matched === "string" && matched.startsWith("/") && !matched.includes("[...slug]")) {
+        const qIdx = req.url.indexOf("?");
+        const query = qIdx !== -1 ? req.url.slice(qIdx) : "";
+        req.url = matched.includes("?") ? matched : matched + query;
+        req.originalUrl = req.url;
+      }
+    }
+  } finally {
+    const query = /* @__PURE__ */ Object.create(null);
+    try {
+      for (const [key, value] of new URL(req.url, "http://localhost").searchParams) {
+        if (key === "__path") continue;
+        const previous = query[key];
+        query[key] = previous === void 0 ? value : Array.isArray(previous) ? [...previous, value] : [previous, value];
+      }
+      Object.defineProperty(req, "query", { value: query, writable: true, configurable: true, enumerable: true });
+    } catch {
     }
   }
 }
