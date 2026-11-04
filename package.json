@@ -55,7 +55,7 @@
     "test": "npm run -s test:pos && npm run -s test:sync && npm run -s test:workspace && npm run -s test:financial-cloud && npm run -s test:subscriptions && npm run -s test:identity && npm run -s test:product-photo && npm run -s test:doku-client && npm run -s test:billing-reminders && npm run -s test:cron-scope && npm run -s test:admin-security && npm run -s test:client-support && npm run -s test:mcp && npm run -s test:intelligence && npm run -s test:blog-mcp && npm run -s test:agentic && npm run -s test:blog-automation",
     "test:blog-mcp": "node --import tsx scripts/dev/test-blog-mcp.ts",
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
-    "test:blog-automation": "node scripts/dev/test-blog-automation.mjs && node --import tsx scripts/dev/test-blog-storage.ts && npm run test:blog-cover && node --import tsx scripts/dev/test-blog-e2e.mjs"
+    "test:blog-automation": "node scripts/dev/test-blog-automation.mjs && node --import tsx scripts/dev/test-blog-storage.ts && npm run test:blog-cover && node --import tsx scripts/dev/test-blog-e2e.mjs && node scripts/dev/test-blog-worker.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1160.0",

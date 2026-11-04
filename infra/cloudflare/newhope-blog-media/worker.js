@@ -26,7 +26,7 @@ async function handle(request) {
   }
 
   try {
-    const object = await BLOG_BUCKET.get(path);
+    const object = request.method === 'HEAD' ? await BLOG_BUCKET.head(path) : await BLOG_BUCKET.get(path);
     if (!object) {
       return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }
@@ -38,6 +38,11 @@ async function handle(request) {
       'Content-Security-Policy': "default-src 'none'; sandbox",
       ETag: object.httpEtag,
     });
+    const validators = (request.headers.get('If-None-Match') || '').split(',').map(v => v.trim().replace(/^W\//, ''));
+    if (validators.includes('*') || validators.includes(object.httpEtag)) {
+      if (object.body) await object.body.cancel();
+      return new Response(null, { status: 304, headers });
+    }
     headers.set('Content-Length', String(object.size));
     return new Response(request.method === 'HEAD' ? null : object.body, { status: 200, headers });
   } catch (_) {
