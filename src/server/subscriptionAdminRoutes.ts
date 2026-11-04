@@ -1,3 +1,5 @@
+import {externalPayment} from '../../services/billing/externalPayment';
+import {financialReviewHold,providerOrderTerminal} from '../../services/billing/invoicePaymentPolicy';
 import type express from 'express';
 import { subscriptionDetail } from './subscriptionDetail';
 import type { Db } from '../../services/shared/db';
@@ -85,13 +87,14 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
       const reason=String(req.body?.reason || '').trim();
       const action=String(req.body?.action || '');
       if(reason.length<10 || reason.length>2000) throw new BillingError(400,'REASON_MINIMUM_10_CHARACTERS');
-      if(!['NOTE','EXTEND_TRIAL','GRANT_PLAN','PAYMENT_NOTE'].includes(action)) throw new BillingError(400,'INVALID_SUPPORT_ACTION');
+      if(!['NOTE','EXTEND_TRIAL','GRANT_PLAN','PAYMENT_NOTE','ISSUE_EXTERNAL_QUOTE','VERIFY_EXTERNAL_PAYMENT'].includes(action)) throw new BillingError(400,'INVALID_SUPPORT_ACTION');
       if(action!=='NOTE' && req.internal.role!=='ROLE_SUPERADMIN') throw new BillingError(403,'CAPABILITY_DENIED');
       const result=await db.tx(async c=>{
         const tenant=await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[req.params.tenantId]);
         if(!tenant.rowCount) throw new BillingError(404,'TENANT_NOT_FOUND');
         const before=await ensureSubscription(c,req.params.tenantId);
         let invoiceBefore:any=null,invoiceAfter:any=null;
+        const external=['ISSUE_EXTERNAL_QUOTE','VERIFY_EXTERNAL_PAYMENT'].includes(action)?await externalPayment(c,req.params.tenantId,req.internal.id,action,req.body):null;
         if(action==='EXTEND_TRIAL') {
           const days=Number(req.body.days);
           if(!Number.isInteger(days)||days<1||days>14 || before.plan_id!==TRIAL_PLAN_ID) throw new BillingError(400,'INVALID_TRIAL_EXTENSION');
@@ -109,19 +112,23 @@ export function registerSubscriptionAdminRoutes(app:express.Express,getDb:()=>Pr
           const invoice=await c.query('SELECT id,reconciliation_note,reconciliation_status,payment_status FROM billing.invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE',[req.body.invoiceId,req.params.tenantId]);
           if(!invoice.rowCount) throw new BillingError(404,'INVOICE_NOT_FOUND');
           invoiceBefore=invoice.rows[0];
-          await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[req.body.invoiceId,reason]);
-          invoiceAfter={...invoiceBefore,reconciliation_note:reason};
+          // PAYMENT_NOTE is commentary, never financial state resolution.
+          // Keep machine holds/expiry intact; the comment is always retained
+          // in the required immutable support_actions audit below.
+          const protectedState=financialReviewHold(invoiceBefore) || providerOrderTerminal(invoiceBefore) || invoiceBefore.reconciliation_note==='PROVIDER_EXPIRED';
+          if(!protectedState)await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[req.body.invoiceId,reason]);
+          invoiceAfter={...invoiceBefore,reconciliation_note:protectedState?invoiceBefore.reconciliation_note:reason};
         }
         const after=(await c.query('SELECT * FROM billing.subscriptions WHERE id=$1',[before.id])).rows[0];
         // Required audit and mutation share one transaction: audit failure rolls
         // back the grant/extension. There is no best-effort success here.
         await c.query(`INSERT INTO internal.support_actions(tenant_id,internal_user_id,action,reason,before_state,after_state,request_id,ip_address,user_agent)
           VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)`,[req.params.tenantId,req.internal.id,action,reason,
-          JSON.stringify({...before,invoice:invoiceBefore}),JSON.stringify({...after,invoice:invoiceAfter}),req.auditRequestId,
+          JSON.stringify({...before,invoice:invoiceBefore}),JSON.stringify({...after,invoice:invoiceAfter,external}),req.auditRequestId,
           req.ip || null,String(req.headers['user-agent'] || '').slice(0,512)]);
-        return serializeSubscription(after);
+        return {subscription:serializeSubscription(after),external};
       });
-      res.json({ok:true,subscription:result});
+      res.json({ok:true,...result});
     }catch(err){res.status(err instanceof BillingError?err.status:500).json({ok:false,error:err instanceof BillingError?err.message:'SUPPORT_ACTION_FAILED'});}
   });
 }

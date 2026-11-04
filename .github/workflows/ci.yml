@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -17,10 +18,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - name: Product gate (lint, isolated tests, SPA and API build)
         run: npm run verify
       - name: Committed Vercel bundles match source
         run: git diff --exit-code -- api/
+      - name: Install browser for manual branch validation
+        if: github.event_name == 'workflow_dispatch'
+        run: npx playwright install --with-deps chromium
+      - name: Synthetic QRIS browser acceptance
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run test:qris:browser
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && always()
+        with:
+          name: qris-manual-browser
+          path: |
+            build/qris/browser-result.json
+            build/qris/browser-*.png
+            build/qris/browser-fixture.log

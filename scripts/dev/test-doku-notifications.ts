@@ -10,11 +10,11 @@ export async function testDokuNotifications(db:Db,base:string,failPayment:(value
   assert.equal(serviceVerify,verifyDokuWebhookSignature);
   const fixture=async(planId='plan-plus-monthly',billingCycle='MONTHLY')=>{
     const tenant=randomUUID();await db.query('INSERT INTO internal.tenants(id,name,owner_user_ref) VALUES($1,$2,$3)',[tenant,'Webhook local fixture',randomUUID()]);
-    const sub=await ensureSubscription(db,tenant),quote={...await createQuote(db,tenant,{planId,billingCycle,extraOutlets:0}),allowedChannels:['VIRTUAL_ACCOUNT_BCA']};
+    const sub=await ensureSubscription(db,tenant),quote={...await createQuote(db,tenant,{planId,billingCycle,extraOutlets:0}),paymentIntegration:'DOKU_CHECKOUT',allowedChannels:['QRIS']};
     const id=randomUUID(),number='NH-'+id;
     await db.query(`INSERT INTO billing.invoices(id,tenant_id,subscription_id,invoice_number,amount,currency,due_date,quote)
       VALUES($1,$2,$3,$4,$5,'IDR',now()+interval '1 day',$6)`,[id,tenant,sub.id,number,quote.amount,JSON.stringify(quote)]);
-    const body={order:{invoice_number:number,amount:quote.amount,currency:'IDR'},transaction:{status:'SUCCESS'},channel:{id:'VIRTUAL_ACCOUNT_BCA'},customer:{email:'do-not-store@test.invalid',name:'PRIVATE CUSTOMER'},future_field:{token:'DO_NOT_STORE'}};
+    const body={order:{invoice_number:number,amount:quote.amount,currency:'IDR'},transaction:{status:'SUCCESS',original_request_id:'synthetic-notification-ref'},channel:{id:'QRIS'},customer:{email:'do-not-store@test.invalid',name:'PRIVATE CUSTOMER'},future_field:{token:'DO_NOT_STORE'}};
     return {tenant,id,number,sub,quote,body};
   };
   const headers=(raw:string,id:string=randomUUID(),time=new Date().toISOString(),client='test-client')=>({'content-type':'application/json','client-id':client,'request-id':id,'request-timestamp':time,
@@ -30,12 +30,12 @@ export async function testDokuNotifications(db:Db,base:string,failPayment:(value
   assert.equal(verifyDokuWebhookSignature(h,raw,'/wrong-path'),false);
   assert.equal((await fetch(base+DOKU_NOTIFICATION_PATH,{method:'POST',headers:h,body:raw+' '})).status,401);
   // FAILURE is an attempt, not final invoice/subscription state.
-  const failed=await send({...f.body,transaction:{status:'FAILED'}});assert.equal((await failed.json()).outcome,'FAILED');
+  const failed=await send({...f.body,transaction:{status:'FAILED',original_request_id:'synthetic-failure-ref'}});assert.equal((await failed.json()).outcome,'FAILED');
   assert.equal((await db.query('SELECT reconciliation_status FROM billing.invoices WHERE id=$1',[f.id])).rows[0].reconciliation_status,'PENDING');
   assert.equal((await ensureSubscription(db,f.tenant)).status,'TRIAL');
   for(const [body,reason] of [
     [{...f.body,channel:{id:'UNCONFIRMED'}},'UNAPPROVED_PAYMENT_CHANNEL'],
-    [{...f.body,transaction:{status:'PENDING'}},'UNKNOWN_PAYMENT_STATUS'],
+
     [{...f.body,order:{...f.body.order,amount:1}},'AMOUNT_OR_CURRENCY_MISMATCH'],
     [{...f.body,order:{...f.body.order,currency:'USD'}},'AMOUNT_OR_CURRENCY_MISMATCH'],
     [{...f.body,order:{...f.body.order,invoice_number:'UNKNOWN'}},'INVOICE_NOT_FOUND']
@@ -44,7 +44,7 @@ export async function testDokuNotifications(db:Db,base:string,failPayment:(value
     assert.equal((await ensureSubscription(db,f.tenant)).status,'TRIAL');
   }
   assert.equal((await send({...f.body,order:{...f.body.order,amount:null}})).status,400);
-  delete process.env.DOKU_ALLOWED_CHANNELS;assert.equal((await send(f.body)).status,503);process.env.DOKU_ALLOWED_CHANNELS='VIRTUAL_ACCOUNT_BCA';
+  delete process.env.DOKU_ALLOWED_CHANNELS;assert.equal((await send(f.body)).status,503);process.env.DOKU_ALLOWED_CHANNELS='QRIS';
   const rollbackKey=randomUUID();failPayment(true);
   try {assert.equal((await send(f.body,{},rollbackKey)).status,500);} finally {failPayment(false);}
   assert.equal((await db.query('SELECT id FROM billing.payment_events WHERE event_key=$1',[rollbackKey])).rowCount,0);

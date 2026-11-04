@@ -1,3 +1,20 @@
+// services/shared/releaseGates.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidAllowlist(value) {
+  const ids = (value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (ids.some((id) => !UUID.test(id))) throw Error("RELEASE_ALLOWLIST_INVALID");
+  return [...new Set(ids)];
+}
+function betaAccessError(subject, env = process.env) {
+  if (!env.BETA_ACCESS_MODE || env.BETA_ACCESS_MODE === "open") return;
+  if (env.BETA_ACCESS_MODE !== "invite_only") return "BETA_CONFIGURATION_INVALID";
+  try {
+    return uuidAllowlist(env.BETA_ALLOWED_SUBJECTS).includes(subject.toLowerCase()) ? void 0 : "BETA_INVITE_REQUIRED";
+  } catch {
+    return "BETA_CONFIGURATION_INVALID";
+  }
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -5300,6 +5317,8 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
       if (!principal || principal.subject === "local-development") {
         return res.status(401).json({ ok: false, error: "AUTHENTICATION_REQUIRED" });
       }
+      const betaError = betaAccessError(principal.subject);
+      if (betaError) return res.status(betaError === "BETA_INVITE_REQUIRED" ? 403 : 503).json({ ok: false, error: betaError });
       applyPrincipal(req, principal);
     }
     if (rawBodyRoutes.has(path) && req.method === "POST") {

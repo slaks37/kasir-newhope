@@ -1,3 +1,4 @@
+import {checkoutRequestKey,forgetCheckoutRequestKey,isDokuHostedUrl,isVerifiedInvoicePayment} from '../../lib/subscriptionPayment';
 import React,{useEffect,useState} from 'react';
 import {PAID_SAAS_PLANS,annualTotal} from '../../config/saasPlans';
 import {formatRupiah,formatDateTime} from '../../utils/formatters';
@@ -12,18 +13,19 @@ async function billingRequest(path:string,body?:any,token?:string){
 }
 export const SubscriptionBillingTab:React.FC=()=>{
  const {currentUser,setActiveTab}=usePOSFields(["currentUser","setActiveTab"]);
- const {session}=useAuth();
+ const {session,user}=useAuth();
  const token = session?.access_token;
  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [yearly,setYearly]=useState(true),[extras,setExtras]=useState(0),[quote,setQuote]=useState<any>(null);
  const load=async()=>{setLoading(true);setError('');try{const s=await billingRequest('status',undefined,token);setData(s);setExtras(s.outlets.extra);window.dispatchEvent(new Event('subscription-updated'));}catch(e:any){setError(e.message);}finally{setLoading(false);}};
  useEffect(()=>{let active=true;setLoading(true);billingRequest('status',undefined,token).then(s=>{if(active){setData(s);setExtras(s.outlets.extra);}}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[currentUser.id,token]);
- const preview=async(planId:string)=>{setBusy(true);setError('');try{setQuote({...await billingRequest('prorated-upgrade',{planId,billingCycle:yearly?'YEARLY':'MONTHLY',extraOutlets:extras},token),requestKey:crypto.randomUUID()});}catch(e:any){setError(e.message);}finally{setBusy(false);}};
+ const preview=async(planId:string)=>{setBusy(true);setError('');try{setQuote({...await billingRequest('prorated-upgrade',{planId,billingCycle:yearly?'YEARLY':'MONTHLY',extraOutlets:extras},token),requestKey:checkoutRequestKey(user?.id,planId,yearly?'YEARLY':'MONTHLY',extras)});}catch(e:any){setError(e.message);}finally{setBusy(false);}};
  const pay=async()=>{setBusy(true);setError('');try{
    const result=await billingRequest('checkout',{planId:quote.planId,billingCycle:quote.billingCycle,extraOutlets:quote.extraOutlets,requestKey:quote.requestKey},token);
-   if(!result.paymentUrl || !result.paymentUrl.startsWith('https://'))throw new Error('URL pembayaran tidak valid');
+   if(isVerifiedInvoicePayment(result)){forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);await load();setBusy(false);return;}
+   if(!isDokuHostedUrl(result.paymentUrl))throw new Error('URL pembayaran tidak valid');
    window.location.assign(result.paymentUrl);
-  }catch(e:any){setError(e.message);setBusy(false);}
+  }catch(e:any){if(e.message==='CHECKOUT_EXPIRED'){forgetCheckoutRequestKey(user?.id,quote.planId,quote.billingCycle,quote.extraOutlets);setQuote(null);}setError(e.message);setBusy(false);}
  };
  return <div className="space-y-6">
   <section className="rounded-3xl bg-white border border-slate-200 text-slate-900 p-6 shadow-xs">
@@ -84,7 +86,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
     <label className="text-slate-700 text-sm">Periode <select aria-label="Periode langganan" value={yearly?'YEARLY':'MONTHLY'} onChange={e=>{setYearly(e.target.value==='YEARLY');setQuote(null);}} className="border border-slate-300 p-2 rounded-xl ml-2"><option value="MONTHLY">Bulanan</option><option value="YEARLY">Tahunan</option></select></label>
     <label className="text-slate-700 text-sm">Tambahan outlet <input aria-label="Jumlah tambahan outlet" type="number" min="0" max="100" value={extras} onChange={e=>{setExtras(Number(e.target.value));setQuote(null);}} className="border border-slate-300 rounded-xl p-2 w-24 ml-2"/></label>
    </div>
-   <p className="text-sm text-slate-500">Add-on 80% harga Plus: Rp79.200/outlet/bulan, atau Rp760.320/outlet/tahun. Kapasitas bertambah setelah pembayaran terverifikasi.</p>
+   <p className="text-sm text-slate-500">Harga add-on mengikuti konfigurasi paket dan tagihan server. Kapasitas bertambah setelah pembayaran terverifikasi.</p>
    <div className="grid md:grid-cols-2 gap-4">{PAID_SAAS_PLANS.map(p=><div key={p.id} className="border border-slate-200 rounded-2xl p-5 space-y-3 bg-slate-50/50">
     <h4 className="font-bold text-lg text-slate-900">{p.name} · {p.maxOutlets} outlet</h4><p className="text-2xl font-bold text-slate-900">{formatRupiah(yearly?annualTotal(p):p.priceIdr)}<span className="text-sm text-slate-500">/{yearly?'tahun':'bulan'}</span></p>
     <ul className="text-sm space-y-2 text-slate-700">{p.features.map(f=><li key={f}>✓ {f}</li>)}</ul>
@@ -102,7 +104,7 @@ export const SubscriptionBillingTab:React.FC=()=>{
   </section>}
   <section className="rounded-2xl border bg-white p-5 overflow-x-auto"><h3 className="font-bold mb-4">Riwayat tagihan</h3>
    <table className="w-full text-sm text-left"><thead><tr><th>Invoice</th><th>Paket / periode</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody>{data?.invoices.map((i:any)=><tr key={i.id} className="border-t"><td className="py-3">{i.invoiceNumber || i.id}</td><td>{i.planName} · {i.billingCycle || 'legacy'}</td><td>{formatRupiah(i.amount)}</td><td>{i.paymentStatus} / {i.reconciliationStatus}{i.paymentLinkUrl&&i.paymentStatus!=='PAID'&&<a href={i.paymentLinkUrl} className="block underline" target="_blank" rel="noreferrer">Buka tagihan</a>}</td></tr>)}</tbody>
+    <tbody>{data?.invoices.map((i:any)=><tr key={i.id} className="border-t"><td className="py-3">{i.invoiceNumber || i.id}</td><td>{i.planName} · {i.billingCycle || 'legacy'}</td><td>{formatRupiah(i.amount)}</td><td>{i.paymentStatus} / {i.reconciliationStatus}<span className="block text-xs">Batas pembayaran: {formatDateTime(i.dueDate)}</span>{i.reconciliationStatus==='PENDING'&&isDokuHostedUrl(i.paymentLinkUrl)&&!['PAID','EXPIRED','CANCELLED','REFUNDED'].includes(i.paymentStatus)&&<a href={i.paymentLinkUrl} className="block underline" target="_blank" rel="noreferrer">Buka tagihan</a>}</td></tr>)}</tbody>
    </table>{data&&!data.invoices.length&&<p className="text-sm text-slate-500 py-4">Belum ada tagihan.</p>}
   </section>
  </div>;

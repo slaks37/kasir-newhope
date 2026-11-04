@@ -1,3 +1,4 @@
+import {betaAccessError} from '../../services/shared/releaseGates';
 import express from 'express';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import type { Db } from '../../services/shared/db';
@@ -98,6 +99,8 @@ export function createServerlessBoundary(
       if (!principal || principal.subject === 'local-development') {
         return res.status(401).json({ ok: false, error: 'AUTHENTICATION_REQUIRED' });
       }
+      const betaError=betaAccessError(principal.subject);
+      if(betaError)return res.status(betaError==='BETA_INVITE_REQUIRED'?403:503).json({ok:false,error:betaError});
       applyPrincipal(req, principal);
     }
 
