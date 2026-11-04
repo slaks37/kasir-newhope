@@ -153,7 +153,7 @@ export function registerFinanceRoutes(app:Express,db:Db){
   registerFinancialApprovalRoutes(app,db,scopeFor);
   registerCashierFinanceRoutes(app,db);
   const route=(path:string,run:(c:Db,s:FinancialScope,req:Request)=>Promise<unknown>)=>app.post(path,async(req,res)=>{
-    try{const result=await db.tx(async c=>run(c,await scopeFor(c,req),req));res.json({ok:true,...result as object});}
+    try{const result=await db.tx(async c=>run(c,await scopeFor(c,req),req));res.json({ok:true,...result as object,clientEventId:req.body.clientEventId});}
     catch(error){const known=error instanceof RegisterError||error instanceof RegisterError||error instanceof ModuleAccessError||error instanceof FinanceError||error instanceof BillingError||error instanceof FinancialApprovalError;
       if(!known&&!(error instanceof FreePlanAccessError)){
         const diagnostic=error as {code?:string;constraint?:string;column?:string};

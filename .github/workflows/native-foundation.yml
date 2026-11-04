@@ -1,0 +1,55 @@
+name: Native foundation
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 21}
+      - run: npm ci
+      - run: npm run test:platform
+      - run: npm run native:sync
+      - run: ./gradlew assembleDebug bundleRelease lintDebug
+        working-directory: android
+      - name: Enable emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash scripts/mobile/test-android-recovery.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-android-unconfigured-preview
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+          retention-days: 14
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: xcodebuild -version
+      - run: npm run native:ios:simulator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: newhope-ios-simulator-unconfigured-preview
+          path: build/ios/Build/Products/Debug-iphonesimulator/App.app
+          retention-days: 14

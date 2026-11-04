@@ -11,8 +11,8 @@ function subscribe(listener:()=>void){
   return()=>{window.removeEventListener('popstate',listener);window.removeEventListener(event,listener);window.removeEventListener('hashchange',legacy);};
 }
 export function navigate(path:string,replace=false){
-  const target=new URL(path,window.location.origin);
-  if(target.origin!==window.location.origin)throw new Error('EXTERNAL_NAVIGATION_DENIED');
+  const target=new URL(path,window.location.href);
+  if(target.protocol!==window.location.protocol||target.host!==window.location.host)throw new Error('EXTERNAL_NAVIGATION_DENIED');
   if(target.pathname+target.search+target.hash===snapshot()+window.location.hash)return;
   window.history[replace?'replaceState':'pushState']({},'',target.pathname+target.search+target.hash);
   window.dispatchEvent(new Event(event));

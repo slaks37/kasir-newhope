@@ -1,3 +1,4 @@
+import {isNative,authRedirect} from '../platform/runtime/platform';
 /**
  * AuthContext — sesi Supabase Auth sebagai React context.
  *
@@ -129,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
+      if(isNative()){setLoading(false);return;}
       try {
         const saved = localStorage.getItem(LOCAL_SESSION_KEY);
         if (saved) {
@@ -155,6 +157,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    if(isNative())return (await import('../platform/runtime/nativeLifecycle')).nativeGoogleLogin();
     if (!isSupabaseConfigured) {
       const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
@@ -165,13 +168,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: authRedirect(),
       },
     });
     return { error };
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
+    if(isNative()&&!isSupabaseConfigured)return {error:{message:'Konfigurasi autentikasi native belum tersedia.'} as AuthError};
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !password) {
       return { error: { message: 'Email dan password wajib diisi.' } as AuthError };
@@ -244,7 +248,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUpWithEmail = useCallback(
     async (email: string, password: string, options?: string | SignUpOptions) => {
-      const cleanEmail = email.trim().toLowerCase();
+      if(isNative()&&!isSupabaseConfigured)return {error:{message:'Konfigurasi autentikasi native belum tersedia.'} as AuthError};
+    const cleanEmail = email.trim().toLowerCase();
       const opts: SignUpOptions = typeof options === 'string' ? { storeName: options } : options || {};
       const fullName = opts.fullName?.trim() || opts.storeName?.trim() || cleanEmail.split('@')[0];
       const storeName = opts.storeName?.trim() || 'Toko Baru';
@@ -258,7 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: cleanEmail, password, fullName, storeName, sector,
           firstOutletName: opts.firstOutletName?.trim() || `${storeName} — Cabang Utama`,
           secondOutletName: opts.secondOutletName?.trim() || '',
-          redirectTo: window.location.origin,
+          redirectTo: authRedirect(),
         });
         if (result.session) {
           setSession(result.session);

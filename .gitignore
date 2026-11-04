@@ -25,3 +25,10 @@ scratch-*
 
 # Secret JWT auth lokal (services/dev-auth). Khusus pengembangan.
 .dev-auth-secret
+
+# Native generated web assets and private signing material
+dist-mobile/
+*.keystore
+*.jks
+*.p12
+*.mobileprovision

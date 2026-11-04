@@ -846,7 +846,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         return { replayed: false, accepted, duplicates, voided, rejected, renumbered, tenantId };
       });
 
-      res.json({ ok: true, ...out });
+      res.json({ ok: true, ...out, idempotencyKey:req.body.idempotencyKey });
     } catch (err) {
       if(err instanceof ModuleAccessError||err instanceof FinanceError) return res.status(err.status).json({ok:false,error:err.message});
       if (err instanceof FreePlanAccessError) return res.status(403).json({ok:false,error:err.message});

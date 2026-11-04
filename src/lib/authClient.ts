@@ -1,3 +1,5 @@
+import {isNative} from '../platform/runtime/platform';
+import {secureSessionStorage} from '../platform/runtime/secureSession';
 import { AuthClient } from '@supabase/auth-js';
 
 /**
@@ -18,7 +20,8 @@ export function createAuthClient(url: string, key: string) {
     // Auto-refresh token sebelum kedaluwarsa.
     autoRefreshToken: true,
     // Deteksi session dari URL fragment setelah OAuth redirect / tautan reset.
-    detectSessionInUrl: true,
-    flowType: 'implicit',
+    detectSessionInUrl: !isNative(),
+    flowType: isNative()?'pkce':'implicit',
+    ...(isNative()?{storage:secureSessionStorage}:{}),
   });
 }

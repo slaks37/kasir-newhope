@@ -1,3 +1,4 @@
+import {isNative} from '../../platform/runtime/platform';
 import {SharedPurchaseForm} from '../../platform/modules/SharedPurchaseForm';
 import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import {WorkspaceInventoryCommands} from '../../platform/modules/WorkspaceInventoryCommands';
@@ -172,6 +173,13 @@ export const InventoryManager: React.FC = () => {
     const request=++imageRequest.current;setImageBusy(true);setImageError('');
     try{const image=await productThumbnail(file);if(request===imageRequest.current)setFormImage(image);}
     catch(error){if(request===imageRequest.current)setImageError(error instanceof Error?error.message:'Foto tidak dapat dibaca.');}
+    finally{if(request===imageRequest.current)setImageBusy(false);}
+  };
+
+  const handleNativePhoto = async () => {
+    const request=++imageRequest.current;setImageBusy(true);setImageError('');
+    try{const {captureProductPhoto}=await import('../../platform/runtime/devices');const blob=await captureProductPhoto();const image=await productThumbnail(new File([blob],'product.jpg',{type:blob.type||'image/jpeg'}));if(request===imageRequest.current)setFormImage(image);}
+    catch{if(request===imageRequest.current)setImageError('Foto belum tersedia. Periksa izin kamera atau pilih berkas foto.');}
     finally{if(request===imageRequest.current)setImageBusy(false);}
   };
 
@@ -1384,6 +1392,7 @@ export const InventoryManager: React.FC = () => {
                   <div className="flex items-start gap-3">
                     {formImage?<img src={formImage} alt="Pratinjau foto produk" className="w-24 h-24 rounded-xl border object-cover"/>:<div className="w-24 h-24 rounded-xl bg-slate-100 flex items-center justify-center"><Image aria-hidden="true" className="text-slate-400"/></div>}
                     <div className="flex-1 space-y-2">
+                      {isNative()&&<button type="button" disabled={imageBusy} onClick={()=>void handleNativePhoto()} className="rounded-lg border p-3">Ambil / pilih foto</button>}
                       <input id="product-photo" type="file" accept="image/jpeg,image/png,image/webp" disabled={imageBusy} onChange={event=>void handleProductImageUpload(event)} className="block w-full text-xs file:rounded-lg file:border-0 file:bg-amber-100 file:px-3 file:py-2 file:font-bold"/>
                       <p className="text-slate-500">JPG, PNG, WebP · maksimal 5 MB. Foto diperkecil dan disimpan bersama produk ke cloud saat produk disimpan.</p>
                       {formImage&&<button type="button" disabled={imageBusy} onClick={()=>setFormImage('')} className="underline text-slate-600">Hapus foto dari produk</button>}

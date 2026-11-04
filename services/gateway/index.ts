@@ -1,3 +1,4 @@
+import {nativeCors} from '../shared/nativeCors';
 /**
  * gateway — satu-satunya pintu yang terlihat dari luar.
  *
@@ -152,6 +153,7 @@ function pickRoute(url: string) {
 const bolehDiulang = (metode: string) => metode === 'GET' || metode === 'HEAD';
 
 app.use('/api', async (req, res, next) => {
+  if(/^\/api\/v1\/(sync|reports|finance|subscription)(\/|$)/.test(req.originalUrl)&&nativeCors(req,res,['GET','POST','PUT']))return;
   const route = pickRoute(req.originalUrl);
   if (!route) return next();
 

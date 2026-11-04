@@ -5,7 +5,7 @@ import {useWorkspaceBusiness} from '../../context/WorkspaceBusinessContext';
 import {useAuth} from '../../context/AuthContext';
 import {requestFinancialApproval} from '../../lib/auth/financialApprovalClient';
 import {sharedPurchaseCashCommand} from '../../lib/pos/workspacePurchase';
-import {pendingWorkspaceInventory,submitWorkspaceInventory,flushWorkspaceInventory,renewWorkspacePurchaseApprovals,type InventoryCommand} from '../../lib/sync/workspaceInventoryQueue';
+import {pendingWorkspaceInventory,submitWorkspaceInventory,flushWorkspaceInventory,renewWorkspacePurchaseApprovalsDurable,type InventoryCommand} from '../../lib/sync/workspaceInventoryQueue';
 import type {Product} from '../../types';
 type Line={key:string;moduleId:string;productRef:string;quantity:number;amount:number};
 export function SharedPurchaseForm(){
@@ -22,7 +22,7 @@ export function SharedPurchaseForm(){
  let pending:InventoryCommand|null=null;try{pending=pendingWorkspaceInventory(identity);}catch{}
  const approve=async(command:InventoryCommand)=>{if(!command.purchase)throw Error('PURCHASE_REQUIRED');const tokens:Record<string,string>={};for(const allocation of command.purchase.allocations){const manifest=moduleManifest(allocation.moduleId);if(!manifest||!grants.some(g=>g.id===manifest.id))throw Error('WORKSPACE_PERMISSION_DENIED');const cash=sharedPurchaseCashCommand(command.commandId,allocation.moduleId,command.outletId,manifest.sector,allocation.amount,command.purchase.occurredAt,command.purchase.description);tokens[allocation.moduleId]=await requestFinancialApproval({businessId:command.businessId,moduleId:allocation.moduleId,outletId:command.outletId,sector:manifest.sector,action:'CASH_OUT',reference:cash.clientEventId,reason:command.purchase.description,command:cash});}return tokens;};
  const submit=async(retry=false)=>{setBusy(true);setError('');try{
-  if(retry){const original=pendingWorkspaceInventory(identity);if(!original?.purchase)throw Error('Pembelian tersimpan tidak ditemukan');const tokens=await approve(original);renewWorkspacePurchaseApprovals(identity,original.commandId,tokens);await flushWorkspaceInventory(identity);}
+  if(retry){const original=pendingWorkspaceInventory(identity);if(!original?.purchase)throw Error('Pembelian tersimpan tidak ditemukan');const tokens=await approve(original);await renewWorkspacePurchaseApprovalsDurable(identity,original.commandId,tokens);await flushWorkspaceInventory(identity);}
   else{
    if(pendingWorkspaceInventory(identity))throw Error('Selesaikan perintah tersimpan terlebih dahulu');
    if(!description.trim()||!lines.length||lines.some(l=>!l.productRef||!grants.some(g=>g.id===l.moduleId)||!catalog[l.moduleId]?.some(p=>p.id===l.productRef)||!Number.isFinite(l.quantity)||l.quantity<=0||!Number.isFinite(l.amount)||l.amount<=0||Math.abs(l.amount*100-Math.round(l.amount*100))>0.001)||!Number.isFinite(total)||total<=0||lines.reduce((n,l)=>n+Math.round(l.amount*100),0)!==Math.round(total*100))throw Error('Periksa barang, jumlah dan alokasi; total alokasi harus sama dengan nilai tagihan.');
