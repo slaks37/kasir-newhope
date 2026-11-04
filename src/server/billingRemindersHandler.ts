@@ -2,6 +2,7 @@ import { connectDb, type Db } from '../../services/shared/db';
 import { runBillingReminders, type ReminderDependencies } from '../../services/billing/reminders';
 import { createReminderProvider } from '../../services/billing/reminderProvider';
 import { isCronJobEnabled } from '../../services/shared/cron';
+import {runScheduledDokuRecovery} from '../../services/billing/recovery';
 
 let database: Promise<Db> | undefined;
 const dryProvider: ReminderDependencies = {
@@ -20,10 +21,13 @@ export default async function handler(req: any, res: any) {
     const dryRun = process.env.BILLING_REMINDERS_ENABLED !== '1';
     const provider = dryRun ? dryProvider : createReminderProvider();
     database ??= connectDb({ schema: 'billing', max: 2 }).catch(err => { database = undefined; throw err; });
-    const result = await runBillingReminders(await database, provider, {
+    const db=await database;
+    const recovery=await runScheduledDokuRecovery(db);
+    const result = await runBillingReminders(db, provider, {
       dryRun, from: process.env.BILLING_EMAIL_FROM, appUrl: process.env.PUBLIC_APP_URL,
     });
-    return res.status(result.failed || result.review ? 503 : 200).json({ ok: !result.failed && !result.review, ...result });
+    const unhealthy=result.failed||result.review||(!recovery.skipped&&('unavailable' in recovery&&recovery.unavailable||'review' in recovery&&recovery.review));
+    return res.status(unhealthy ? 503 : 200).json({ ok: !unhealthy, ...result, paymentRecovery:recovery });
   } catch {
     return res.status(503).json({ ok: false, error: 'BILLING_REMINDERS_UNAVAILABLE' });
   }
