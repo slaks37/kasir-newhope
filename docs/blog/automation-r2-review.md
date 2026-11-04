@@ -1,8 +1,8 @@
-# Blog automation — audit 30 Oktober, staging diperbarui 3 November 2026
+# Blog automation — audit 30 Oktober, staging diperbarui 4 November 2026
 
 ## A. Penyebab dan bukti
 
-Workflow `LY2WqUqboTtPgBSE` aktif, versi draft/live `c8993641-7af1-4575-b8ff-2a5a4f806ab2`, jadwal `0 0 * * * *`, timezone Asia/Jakarta. Scheduler bekerja. Tidak ada manual execution/replay, aktivasi, perubahan flag LIVE, merge, atau deployment production selama pekerjaan ini.
+Workflow `LY2WqUqboTtPgBSE` aktif, versi draft/live `c8993641-7af1-4575-b8ff-2a5a4f806ab2`, jadwal `0 0 * * * *`, timezone Asia/Jakarta. Scheduler bekerja. Tidak ada manual execution/replay pada workflow production, aktivasi, merge, atau deployment production selama pekerjaan ini. Tes manual terisolasi dijalankan pada staging.
 
 - **P1:** execution 16446, 12.00 WIB, berhenti di `Store Cover - New Hope API`, HTTP 500/`INTERNAL_ERROR`. `src/server/blogMedia.ts` di base main masih membutuhkan Supabase Storage configuration. Error provider lolos ke catch generik `src/server/blogRoutes.ts`. Pesan Vercel `BLOG_STORAGE_NOT_CONFIGURED` berasal dari laporan pemilik; log pukul 12.00 tidak dapat diambil ulang karena retensi Hobby. Query 50 menit terakhir tidak menemukan pesan itu; itu tidak membantah log lama.
 - **P2:** execution 16445, 11.00 WIB, score 93, 934 kata, empat H2, kategori artikel tidak ada; `opportunity.category` = `Tips Bisnis & Strategi`. Menjalankan data node asli pada parser lokal menunjukkan sebelum `qualified:false`, sesudah `qualified:true`, dengan score/kata/H2 tetap. Ini uji parser lokal, bukan replay n8n. Execution 16447 pukul 13.00 juga hijau tetapi audit `rejected_quality` (score 94, 1500 kata, lima H2).
@@ -77,8 +77,18 @@ Untuk rebuild kandidat: ambil export live yang baru, lalu jalankan `node scripts
 | Retry/overlap/ambiguous timeout | PARTIAL | Bounded validation/SDK, local overlap PASS; hosted Neon overlap PASS; durable receipts belum tersedia |
 | Notifikasi kegagalan eksternal | BLOCKED | Tujuan penerima belum dikonfigurasi/diotorisasi |
 | Qualified article E2E terisolasi | PASS | Real local API/PGlite, AI/R2 transport mocked |
-| Agnes + R2 + publish sekali hosted test | BLOCKED | n8n 16548: Vercel Protected deployment 401; fixture hosted PASS terpisah |
+| Agnes + R2 + publish sekali hosted test | PASS | n8n 16571, 4 November: Agnes text/image nyata, upload 201, publish 201; Neon satu artikel, halaman 200 |
 | Lint/build/tests | PASS | Full verify + targeted akhir |
 | Production tidak diubah | PASS | Hanya read-only checks; tanpa deploy/merge/live replay |
 
-**NO-GO — BLOCKERS REMAIN.** R2 dan hosted fixture staging terbukti; real Agnes E2E, audit staging dan akses n8n ke protected Preview belum selesai. Production belum diotorisasi.
+**STAGING E2E PASS; PRODUCTION NO-GO.** Jalur Agnes → R2 → publish → audit sudah terbukti pada staging. Production belum diotorisasi; tujuan notifikasi, domain media production dan konfigurasi production tetap perlu disiapkan sebelum release.
+
+## G. Bukti hosted nyata — 4 November 2026
+
+- Execution n8n `16571`, 08:03:34–08:04:50 WIB, success. Agnes `agnes-2.5-flash` dan `agnes-image-2.1-flash` nyata; skor VPC 92, 789 kata, 5 H2. Validasi 200, R2 upload 201, publication 201.
+- Artikel: **Kenapa Margin F&B Menipis Tanpa Disadari Padahal Omzet Tetap Naik**. Slug `kenapa-margin-f-dan-b-menipis-tanpa-disadari-padahal-omzet-tetap-naik`. Query Neon staging menemukan tepat satu row published. Halaman Preview HTTP 200, cover dan OG image sesuai, header `x-robots-tag: noindex`.
+- Cover `https://pub-88b5153a648842cbb9a1665b3b98add6.r2.dev/automation/generated/cb77e75d-5703-4367-8eb0-7856db59d4fc.jpg`: GET tanpa credential dari n8n `16572` HTTP 200, image/jpeg, 95,268 bytes, immutable cache. TLS lokal tetap terhalang sertifikat jaringan; tidak memakai bypass TLS.
+- Audit staging terisolasi pada DataTable `tPJiTcXzFvZkDp6o`: status published dengan execution ID, URL artikel dan cover. Run ini menemukan discovery tercatat sesudah publication akibat fan-out. Kandidat dan staging sekarang menyerialkan discovery → audit → restore parsed article → quality gate. Regression graph dan payload restoration PASS; generation berbayar tidak diulang untuk perubahan urutan audit.
+- Workflow staging `oufylAxin0FNtDFz` tetap inactive, tanpa schedule, guard dikunci setelah tes. Credential sementara Preview dibatasi satu host dan akan kedaluwarsa; tes berikutnya perlu refresh akses secara terkontrol. Live `LY2WqUqboTtPgBSE` tidak diubah.
+- RSS kosong belum mempunyai terminal audit khusus; kegagalan sebelum normalizer perlu error workflow dan tujuan notifikasi yang disetujui. Tidak mengklaim semua failure path sudah hosted-tested.
+- Biaya Agnes aktual belum tersedia. Pemakaian R2 pengujian kecil; tagihan total mengikuti sisa free allowance dan pemakaian akun. Subscription tetap aktif sesuai persetujuan pemilik.

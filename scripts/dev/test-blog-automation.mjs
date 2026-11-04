@@ -33,6 +33,12 @@ for(const response of [{},{statusCode:200,body:{ok:true}},{statusCode:201,body:{
 assert.equal(audit('Normalize Publish Result',{statusCode:409,body:{error:'SLUG_ALREADY_EXISTS'}}).status,'duplicate_skipped');
 assert.equal(audit('Normalize Validation Error',{}, {...good,qualified:false,generationStatus:'rejected_quality'}).status,'rejected_quality');
 assert.equal(w.active,false);assert.equal(w.settings.timezone,'Asia/Jakarta');
+// A terminal audit must never be followed by a stale discovery event.
+for (const [from,to] of [['Parse Agnes - Validate VPC','Normalize Discovered'],['Normalize Discovered','Append Discovery Audit'],['Append Discovery Audit','Restore Parsed Article'],['Restore Parsed Article','Score >= 70 & Grounded?']]) {
+ assert.deepEqual(w.connections[from].main[0].map(e=>e.node),[to]);
+}
+const parsedItems=[{json:good}];
+assert.equal(new Function('$',code('Restore Parsed Article'))(()=>({all:()=>parsedItems})),parsedItems);
 assert.equal(w.nodes.find(n=>n.name==='Schedule Hourly WIB').parameters.rule.interval[0].expression,'0 0 * * * *');
 for(const name of ['Agnes AI - Generate Cover','Publish - New Hope API','Store Cover - New Hope API'])assert.equal(w.nodes.find(n=>n.name===name).retryOnFail,false);
 for(const n of w.nodes.filter(n=>n.type==='n8n-nodes-base.code'))new Function('$input','$','$execution',n.parameters.jsCode);

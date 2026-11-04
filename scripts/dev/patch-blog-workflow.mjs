@@ -36,8 +36,15 @@ const recovery=stage==='discovery'||published||quality?undefined:{execution_id:$
 // A provider output URL may bear a temporary access token. Keep it only in saved node execution data.
 return [{json:{discovered_at:timestamp,source_title:o.source_title||'',source_url:o.source_url||'',source_published_at:o.source_published_at||'',radar:o.radar||'',customer_segment:o.customer_segment||'',customer_job:o.customer_job||'',pain:o.pain||'',business_impact:o.business_impact||'',desired_gain:o.desired_gain||'',newhope_capability:o.newhope_capability||'',pain_reliever:o.pain_reliever||'',gain_creator:o.gain_creator||'',score_problem_relevance:o.score_problem_relevance||0,score_newhope_fit:o.score_newhope_fit||0,score_umkm_relevance:o.score_umkm_relevance||0,score_business_impact:o.score_business_impact||0,score_content_potential:o.score_content_potential||0,total_score:src.totalScore||0,content_angle:o.content_angle||'',focus_keyword:o.focus_keyword||'',category:src.article?.category||o.category||'',status,blog_url:published?body.post.url:'',reason:errorCode,raw_analysis:JSON.stringify({opportunity:o,execution_id:$execution.id,timestamp_wib:timestamp,article_title:src.article?.title||'',vpc_score:src.totalScore||0,validation:stage==='discovery'?'pending':quality?'rejected':stage==='quality_validation'?'failed':'passed',cover_upload:stage==='publication'?'passed':stage==='cover_upload'?'failed':'not_completed',publication:published?'published':stage==='publication'?'failed_or_ambiguous':'not_attempted',cover_url:stored.article?.coverImage||'',published_url:published?body.post.url:'',error_code:errorCode,failure_stage:stage==='discovery'||published?'':stage,generation_status:src.generationStatus,quality_reason:quality?String(src.reason||'').slice(0,1800):undefined,recovery})}}];`;
 addCode('Normalize Discovered',auditCode('discovery'));
-w.connections['Parse Agnes - Validate VPC'].main[0].push(edge('Normalize Discovered'));
-w.connections['Normalize Discovered']={main:[[edge('Append Opportunities Audit')]]};
+// Serialize discovery before terminal outcomes; parallel branches can log it after publication.
+const discoveryAudit=structuredClone(node('Append Opportunities Audit'));
+discoveryAudit.id='append-discovery-audit'; discoveryAudit.name='Append Discovery Audit';
+discoveryAudit.position=[3700,2200]; w.nodes.push(discoveryAudit);
+addCode('Restore Parsed Article', "return $('Parse Agnes - Validate VPC').all();");
+w.connections['Parse Agnes - Validate VPC'].main[0]=[edge('Normalize Discovered')];
+w.connections['Normalize Discovered']={main:[[edge('Append Discovery Audit')]]};
+w.connections['Append Discovery Audit']={main:[[edge('Restore Parsed Article')]]};
+w.connections['Restore Parsed Article']={main:[[edge('Score >= 70 & Grounded?')]]};
 node('Normalize Publish Result').parameters.jsCode=auditCode('publication');
 node('Normalize Validation Error').parameters.jsCode=auditCode('quality_validation');
 addCode('Normalize Cover Generation Failure',auditCode('cover_generation'));
