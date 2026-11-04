@@ -122,6 +122,11 @@ try {
   assert.equal(created.status, 201, JSON.stringify(created.body));
   assert.equal(created.body.ok, true, 'Publisher must check the API acknowledgement, not only Make execution status');
   assert.deepEqual([created.body.post.slug, created.body.post.isPublished], ['cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil', true]);
+  const overlapInput=article({title:'Panduan Meninjau Biaya Usaha Kecil Setiap Akhir Pekan',slug:'overlap-blog-test'});
+  const overlap=await Promise.all([call('POST','/api/v1/blog-automation/posts',overlapInput),call('POST','/api/v1/blog-automation/posts',overlapInput)]);
+  assert.deepEqual(overlap.map(r=>r.status).sort(),[201,409]);
+  assert.equal((await db.query('SELECT id FROM public.blog_posts WHERE slug=$1',['overlap-blog-test'])).rows.length,1);
+  await db.query('DELETE FROM public.blog_posts WHERE slug=$1',['overlap-blog-test']);
   assert.equal((await call('POST', '/api/v1/blog-automation/posts', article())).body.error, 'SLUG_ALREADY_EXISTS');
   assert.equal((await call('POST', '/api/v1/blog-automation/posts', article({ slug: 'lain' }))).body.error, 'TITLE_ALREADY_EXISTS');
   page = await get('/blog/cara-menghitung-hpp-kopi-susu-untuk-kedai-kecil');

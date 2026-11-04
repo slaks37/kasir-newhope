@@ -21,7 +21,9 @@ export function coverUrl(value: unknown): URL {
 export function createCoverImporter(provider: BlogMediaProvider = createBlogMediaProvider(), fetchImage: typeof fetch = fetch) {
   return async (input: { imageUrl?: unknown; alt?: unknown }) => {
     const url = coverUrl(input.imageUrl);
-    const response = await fetchImage(url, { redirect: 'error', signal: AbortSignal.timeout(20000) });
+    let response: Response;
+    try { response = await fetchImage(url, { redirect: 'error', signal: AbortSignal.timeout(20000) }); }
+    catch { throw new CoverError(502, 'COVER_DOWNLOAD_FAILED'); }
     if (!response.ok || !/^image\/(png|jpeg|webp)(;|$)/i.test(response.headers.get('content-type') || '') ||
       Number(response.headers.get('content-length') || 0) > 8_000_000 || !response.body) throw new CoverError(422, 'COVER_DOWNLOAD_REJECTED');
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
@@ -37,8 +39,10 @@ export function createCoverImporter(provider: BlogMediaProvider = createBlogMedi
     } finally { await reader.cancel(); }
     let bytes: Buffer;
     try {
-      bytes = await sharp(Buffer.concat(chunks), { limitInputPixels: 20_000_000, animated: false })
-        .rotate().resize(1200, 675, { fit: 'cover' }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+      const image = sharp(Buffer.concat(chunks), { limitInputPixels: 20_000_000, animated: false });
+      const metadata = await image.metadata();
+      if (!['jpeg', 'png', 'webp'].includes(metadata.format || '')) throw Error('Unsupported image');
+      bytes = await image.rotate().resize(1200, 675, { fit: 'cover' }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
     } catch { throw new CoverError(422, 'INVALID_COVER_IMAGE'); }
     if (bytes.length > 500000) throw new CoverError(422, 'COVER_TOO_LARGE');
     const coverImage = await provider.upload(bytes, `automation/generated/${randomUUID()}.jpg`);

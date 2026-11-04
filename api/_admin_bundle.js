@@ -1485,40 +1485,81 @@ function generatedBlogCover(title) {
 }
 var GENERATED_COVER_CAPTION = "Ilustrasi dibuat dengan AI; bukan foto kejadian dalam berita.";
 
+// src/server/blogStorage.ts
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { isIP } from "node:net";
+var BlogStorageError = class extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+};
+function blogStorageConfig(env = process.env) {
+  const names = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL"];
+  if (names.some((name) => !env[name]?.trim())) throw new BlogStorageError(503, "BLOG_STORAGE_NOT_CONFIGURED");
+  let base;
+  try {
+    base = new URL(env.R2_PUBLIC_BASE_URL);
+  } catch {
+    throw new BlogStorageError(503, "BLOG_STORAGE_INVALID_CONFIG");
+  }
+  if (!/^[a-f0-9]{32}$/.test(env.R2_ACCOUNT_ID) || !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.R2_BUCKET_NAME) || base.protocol !== "https:" || base.username || base.password || base.port || base.search || base.hash || isIP(base.hostname.replace(/^\[|\]$/g, "")) || !base.hostname.includes(".") || base.hostname.endsWith(".localhost") || base.hostname.endsWith(".cloudflarestorage.com")) throw new BlogStorageError(503, "BLOG_STORAGE_INVALID_CONFIG");
+  return {
+    account: env.R2_ACCOUNT_ID,
+    bucket: env.R2_BUCKET_NAME,
+    base: base.href.replace(/\/$/, ""),
+    credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY }
+  };
+}
+var writeObject = async (config, input) => {
+  const client = new S3Client({
+    region: "auto",
+    endpoint: `https://${config.account}.r2.cloudflarestorage.com`,
+    credentials: config.credentials,
+    maxAttempts: 3,
+    requestChecksumCalculation: "WHEN_REQUIRED"
+  });
+  try {
+    return await client.send(new PutObjectCommand(input), { abortSignal: AbortSignal.timeout(18e3) });
+  } finally {
+    client.destroy();
+  }
+};
+function createR2BlogMediaProvider(env = process.env, write = writeObject) {
+  return { async upload(bytes, path) {
+    const config = blogStorageConfig(env);
+    if (!/^(?:automation\/generated|[a-zA-Z0-9_-]+)\/[a-f0-9-]{36}\.jpg$/.test(path)) throw new BlogStorageError(400, "INVALID_BLOG_MEDIA_PATH");
+    if (bytes.length < 100 || bytes.length > 5e5) throw new BlogStorageError(400, "INVALID_BLOG_PHOTO");
+    try {
+      await write(config, {
+        Bucket: config.bucket,
+        Key: path,
+        Body: bytes,
+        ContentType: "image/jpeg",
+        CacheControl: "public, max-age=31536000, immutable",
+        IfNoneMatch: "*"
+      });
+    } catch (error) {
+      const status = error?.$metadata?.httpStatusCode;
+      throw new BlogStorageError(status === 412 ? 409 : 502, status === 412 ? "BLOG_MEDIA_ALREADY_EXISTS" : "BLOG_PHOTO_UPLOAD_FAILED");
+    }
+    return `${config.base}/${path}`;
+  } };
+}
+
 // src/server/blogCover.ts
 import sharp from "sharp";
 import { randomUUID as randomUUID4 } from "node:crypto";
 
 // src/server/blogMedia.ts
-import { createClient } from "@supabase/supabase-js";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // src/lib/blog/photo.ts
 var BLOG_PHOTO_MAX_CHARS = 65e4;
 
 // src/server/blogMedia.ts
-var BUCKET = "blog-media";
-function createBlogMediaProvider() {
-  return { async upload(bytes, path) {
-    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!url || !key) throw Error("BLOG_STORAGE_NOT_CONFIGURED");
-    const signal = AbortSignal.timeout(18e3);
-    const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, signal }) } });
-    const bucket = await client.storage.getBucket(BUCKET);
-    if (bucket.error) {
-      if (!/bucket not found/i.test(bucket.error.message)) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      const created = await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 5e5, allowedMimeTypes: ["image/jpeg"] });
-      if (created.error) {
-        const existing = await client.storage.getBucket(BUCKET);
-        if (existing.error || !existing.data.public) throw Error("BLOG_STORAGE_UNAVAILABLE");
-      }
-    } else if (!bucket.data.public) throw Error("BLOG_STORAGE_BUCKET_PRIVATE");
-    const uploaded = await client.storage.from(BUCKET).upload(path, bytes, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
-    if (uploaded.error) throw Error("BLOG_PHOTO_UPLOAD_FAILED");
-    return client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-  } };
-}
+var createBlogMediaProvider = createR2BlogMediaProvider;
 function decodeBlogPhoto(value) {
   if (typeof value !== "string" || value.length > BLOG_PHOTO_MAX_CHARS) throw Error("INVALID_BLOG_PHOTO");
   const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
@@ -1544,6 +1585,10 @@ function registerBlogMediaRoutes(app, guard, provider = createBlogMediaProvider(
       const url = await provider.upload(bytes, `${req.internal.id}/${randomUUID3()}.jpg`);
       res.status(201).json({ ok: true, url });
     } catch (error) {
+      if (error instanceof BlogStorageError) {
+        res.status(error.status).json({ ok: false, error: error.code });
+        return;
+      }
       const code = error instanceof Error ? error.message : "";
       res.status(code === "BLOG_STORAGE_NOT_CONFIGURED" ? 503 : 502).json({ ok: false, error: ["BLOG_STORAGE_NOT_CONFIGURED", "BLOG_STORAGE_BUCKET_PRIVATE"].includes(code) ? code : "BLOG_PHOTO_UPLOAD_FAILED" });
     }
@@ -1573,7 +1618,12 @@ function coverUrl(value) {
 function createCoverImporter(provider = createBlogMediaProvider(), fetchImage = fetch) {
   return async (input) => {
     const url = coverUrl(input.imageUrl);
-    const response = await fetchImage(url, { redirect: "error", signal: AbortSignal.timeout(2e4) });
+    let response;
+    try {
+      response = await fetchImage(url, { redirect: "error", signal: AbortSignal.timeout(2e4) });
+    } catch {
+      throw new CoverError(502, "COVER_DOWNLOAD_FAILED");
+    }
     if (!response.ok || !/^image\/(png|jpeg|webp)(;|$)/i.test(response.headers.get("content-type") || "") || Number(response.headers.get("content-length") || 0) > 8e6 || !response.body) throw new CoverError(422, "COVER_DOWNLOAD_REJECTED");
     const reader = response.body.getReader(), chunks = [];
     let length = 0;
@@ -1590,7 +1640,10 @@ function createCoverImporter(provider = createBlogMediaProvider(), fetchImage = 
     }
     let bytes;
     try {
-      bytes = await sharp(Buffer.concat(chunks), { limitInputPixels: 2e7, animated: false }).rotate().resize(1200, 675, { fit: "cover" }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
+      const image2 = sharp(Buffer.concat(chunks), { limitInputPixels: 2e7, animated: false });
+      const metadata = await image2.metadata();
+      if (!["jpeg", "png", "webp"].includes(metadata.format || "")) throw Error("Unsupported image");
+      bytes = await image2.rotate().resize(1200, 675, { fit: "cover" }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
     } catch {
       throw new CoverError(422, "INVALID_COVER_IMAGE");
     }
@@ -2160,6 +2213,7 @@ function createBlogAutomation(getDb) {
     const db = await getDb();
     const changedSlugs = [];
     const result = await db.tx(async (c) => {
+      await c.query("SELECT pg_advisory_xact_lock(hashtext('newhope-blog-automation'))");
       const existing = mode === "update" ? (await c.query("SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE", [pathSlug])).rows[0] : void 0;
       if (mode === "update" && !existing) throw new BlogApiError(404, "POST_NOT_FOUND");
       const clash = (await c.query(
@@ -2261,7 +2315,7 @@ function registerBlogAutomation(app, getDb, importCover) {
       if (write) allowWrite(req);
       res.status(status).json({ ok: true, ...await fn(req) });
     } catch (error) {
-      if (error instanceof CoverError) return res.status(error.status).json({ ok: false, error: error.code });
+      if (error instanceof CoverError || error instanceof BlogStorageError) return res.status(error.status).json({ ok: false, error: error.code });
       if (error instanceof BlogApiError) return res.status(error.status).json({ ok: false, error: error.code, ...error.details ? { details: error.details } : {} });
       console.error("[blog-automation]", req.method, req.path, error.message, error.code ?? "");
       res.status(isMissingStore(error) ? 503 : 500).json({ ok: false, error: isMissingStore(error) ? "BLOG_STORE_UNAVAILABLE" : "INTERNAL_ERROR" });
@@ -2364,7 +2418,7 @@ function registerPrivacySupport(app, getDb, guard) {
 }
 
 // src/server/clientSupport.ts
-import { createClient as createClient2 } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
 // src/config/accountSubscription.ts
 function accountSubscription(tenant2, stored, used, now = Date.now()) {
@@ -2420,7 +2474,7 @@ var SupportError = class extends Error {
 function createClientSupportProvider() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const auth = url && key ? createClient2(url, key, {
+  const auth = url && key ? createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5e3) }) }
   }) : null;

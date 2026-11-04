@@ -4,6 +4,7 @@ import express from 'express';
 import sharp from 'sharp';
 import { createCoverImporter, coverUrl } from '../../src/server/blogCover';
 import { registerBlogRoutes } from '../../src/server/blogRoutes';
+import { BlogStorageError } from '../../src/server/blogStorage';
 import type { Db } from '../../services/shared/db';
 
 const fixture=readFileSync('public/blog/covers/hpp-ingredients-ai.jpg');
@@ -15,7 +16,7 @@ const importer=createCoverImporter({async upload(bytes,path){uploaded++;const me
 await assert.rejects(()=>importer({imageUrl:'https://localhost/x'}));assert.equal(fetched,0);
 const result=await importer({imageUrl:validUrl,alt:'Ilustrasi\n biaya bahan'});assert.equal(result.coverGenerated,true);assert.equal(result.coverAlt,'Ilustrasi biaya bahan');
 await importer({imageUrl:validUrl});assert.equal(uploaded,2);
-for(const response of [new Response('x',{status:302}),new Response('x',{headers:{'content-type':'text/html'}}),new Response('x',{headers:{'content-type':'image/png','content-length':'8000001'}}),new Response('broken',{headers:{'content-type':'image/png'}})]) {
+for(const response of [new Response('x',{status:302}),new Response('x',{headers:{'content-type':'text/html'}}),new Response('x',{headers:{'content-type':'image/png','content-length':'8000001'}}),new Response('broken',{headers:{'content-type':'image/png'}}),new Response('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',{headers:{'content-type':'image/png'}})]) {
  const bad=createCoverImporter({async upload(){throw Error('Must not upload');}},async()=>response);
  await assert.rejects(()=>bad({imageUrl:validUrl}));
 }
@@ -24,14 +25,14 @@ await assert.rejects(()=>createCoverImporter({async upload(){throw Error('Must n
 
 // Actual API guard + compare-and-set maintenance. Covers only: no content/status write.
 process.env.BLOG_API_KEYS='test-cover-key-01234567890123456789';
-let changed=false,updates=0,imports=0;
+let changed=false,updates=0,imports=0,storageFailure=false;
 const oldCover='https://kasir.example/blog/covers/cash-reconciliation-ai.jpg';
 const db={async query(sql:string,params:unknown[]){
  if(sql.startsWith('SELECT id'))return {rows:changed?[]:[{id:'post'}],rowCount:changed?0:1};
  assert.match(sql,/UPDATE public.blog_posts SET cover_image=/);assert.ok(!sql.includes('content=')&&!sql.includes('is_published='));
  assert.equal(params[2],'existing-post');assert.equal(params[3],oldCover);updates++;return {rows:[{slug:'existing-post'}],rowCount:1};
 }} as unknown as Db;
-const app=express();app.use(express.json());registerBlogRoutes(app,async()=>db,async input=>{imports++;return importer(input);});
+const app=express();app.use(express.json());registerBlogRoutes(app,async()=>db,async input=>{imports++;if(storageFailure)throw new BlogStorageError(503,'BLOG_STORAGE_NOT_CONFIGURED');return importer(input);});
 const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 const base='http://127.0.0.1:'+(server.address() as any).port;
 const call=async(body:unknown,key=process.env.BLOG_API_KEYS)=>{const r=await fetch(base+'/api/v1/blog-automation/covers',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+key},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
@@ -42,5 +43,6 @@ try{
  changed=false;const repair=await call({imageUrl:validUrl,slug:'existing-post',expectedCover:oldCover});assert.equal(repair.status,201);assert.equal(repair.body.repairedSlug,'existing-post');assert.equal(updates,1);
  const created=await call({imageUrl:validUrl});assert.equal(created.status,201);assert.equal(created.body.coverGenerated,true);assert.equal(updates,1);
  assert.equal((await call({imageUrl:'https://localhost/secret'})).status,400);
+ storageFailure=true;const unavailable=await call({imageUrl:validUrl});assert.equal(unavailable.status,503);assert.equal(unavailable.body.error,'BLOG_STORAGE_NOT_CONFIGURED');
  console.log('PASS: cover URL boundary, bounded download, real JPEG normalization, immutable upload, API key guard, concurrent/manual cover protection, cover-only repair');
 }finally{await new Promise<void>(r=>server.close(()=>r()));}

@@ -18,6 +18,7 @@ import { ARTICLE_RULES, checkArticle, type ArticleInput, type ArticleRecord } fr
 import { BLOG_CATEGORIES, categoryFromSlug } from '../lib/blog/categories';
 import { generatedBlogCover } from '../lib/blog/covers';
 import { BLOG_INDEXNOW_KEY, BLOG_INDEXNOW_PATH, notifyBlogDiscovery } from './blogDiscovery';
+import { BlogStorageError } from './blogStorage';
 import { CoverError, createCoverImporter } from './blogCover';
 import { BLOG_PAGE_SIZE, renderBlogIndex, renderBlogPost, renderNotFound, renderRss, renderSitemap, siteUrl, type PublicPost } from './blogPages';
 
@@ -219,6 +220,8 @@ export function createBlogAutomation(getDb: () => Promise<Db>) {
     const db = await getDb();
     const changedSlugs: string[] = [];
     const result = await db.tx(async c => {
+      // Serialize automation writes before checking slug/title; overlapping runs cannot both insert.
+      await c.query("SELECT pg_advisory_xact_lock(hashtext('newhope-blog-automation'))");
       const existing = mode === 'update'
         ? (await c.query('SELECT id, seo, slug, is_published FROM public.blog_posts WHERE slug = $1 FOR UPDATE', [pathSlug])).rows[0]
         : undefined;
@@ -314,7 +317,7 @@ function registerBlogAutomation(app: express.Express, getDb: () => Promise<Db>, 
         if (write) allowWrite(req);
         res.status(status).json({ ok: true, ...(await fn(req) as object) });
       } catch (error) {
-        if (error instanceof CoverError) return res.status(error.status).json({ ok: false, error: error.code });
+        if (error instanceof CoverError || error instanceof BlogStorageError) return res.status(error.status).json({ ok: false, error: error.code });
         if (error instanceof BlogApiError) return res.status(error.status).json({ ok: false, error: error.code, ...(error.details ? { details: error.details } : {}) });
         console.error('[blog-automation]', req.method, req.path, (error as Error).message, (error as { code?: string }).code ?? '');
         res.status(isMissingStore(error) ? 503 : 500).json({ ok: false, error: isMissingStore(error) ? 'BLOG_STORE_UNAVAILABLE' : 'INTERNAL_ERROR' });
