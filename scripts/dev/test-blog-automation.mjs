@@ -9,6 +9,7 @@ function parse(a=article,o=opportunity,market={marketSignals:[source],publishedT
  const input={choices:[{message:{content:JSON.stringify({qualified:true,article:a,opportunity:o})},finish_reason:'stop'}]};
  return new Function('$input','$',code('Parse Agnes - Validate VPC'))({first:()=>({json:input})},()=>({first:()=>({json:market})}))[0].json;
 }
+assert.equal(parse({...article,content:article.content+' 调整配方使用更经济的材料'}).qualified,false);
 const good=parse();assert.equal(good.qualified,true,good.reason);assert.equal(good.article.category,opportunity.category);
 for(const cat of [undefined,null,'','   '])assert.equal(parse({...article,category:cat}).qualified,true);
 assert.equal(parse({...article,category:'Kuliner & F&B'}).article.category,'Kuliner & F&B');

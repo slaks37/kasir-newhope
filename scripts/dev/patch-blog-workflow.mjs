@@ -15,6 +15,7 @@ if (a && typeof a === 'object' && !Array.isArray(a)
   metadataRepairs.push('category recovered from approved opportunity.category');
 }
 ${anchor}`);
+parser.parameters.jsCode=parser.parameters.jsCode.replace('const safe = qualifiedByAI', `const languageOK = !/[\\u3400-\\u9fff\\u3040-\\u30ff\\uac00-\\ud7af]/u.test(JSON.stringify({title:a?.title,excerpt:a?.excerpt,content:a?.content,faq:a?.faq,seo:a?.seo}));\nconst safe = languageOK && qualifiedByAI`).replace('JSON.stringify({stale, hasEvidence, basicOK,','JSON.stringify({languageOK, stale, hasEvidence, basicOK,');
 const addCode=(name,jsCode)=>{w.nodes.push({id:name.toLowerCase().replace(/[^a-z0-9]+/g,'-'),name,type:'n8n-nodes-base.code',typeVersion:2,position:[3500,2200],parameters:{jsCode}});};
 const edge=name=>({node:name,type:'main',index:0});
 const auditCode=(stage)=>`let src={};try{src=$('Parse Agnes - Validate VPC').first().json;}catch{}
