@@ -22,7 +22,7 @@ public class FinancialDiskPlugin extends Plugin {
   }return db;
  }
  @Override protected synchronized void handleOnDestroy(){if(db!=null){db.close();db=null;}}
- private boolean allowed(String k){return k!=null&&k.length()<1024&&(k.startsWith("newhope_sync_queue_workspace:v2:")||k.startsWith("newhope_sync_quarantine_workspace:v2:")||k.startsWith("newhope_cash_outbox_workspace:v2:")||k.startsWith("newhope_refund_ack_workspace:v2:")||k.startsWith("newhope_inventory_outbox_v1_workspace:v2:")||k.startsWith("newhope_shift_close_v1_"));}
+ private boolean allowed(String k){return k!=null&&k.length()<1024&&(k.startsWith("newhope_sync_queue_workspace:v2:")||k.startsWith("newhope_sync_quarantine_workspace:v2:")||k.startsWith("newhope_cash_outbox_workspace:v2:")||k.startsWith("newhope_refund_ack_workspace:v2:")||k.startsWith("newhope_recipe_outbox_v1_workspace:v2:")||k.startsWith("newhope_inventory_outbox_v1_workspace:v2:")||k.startsWith("newhope_shift_close_v1_"));}
  @PluginMethod public synchronized void load(PluginCall call){try{
   SQLiteDatabase d=database();JSArray entries=new JSArray();String device;
   try(Cursor c=d.rawQuery("SELECT device_id FROM identity WHERE id=1",null)){c.moveToFirst();device=c.getString(0);}

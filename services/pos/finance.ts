@@ -1,3 +1,4 @@
+import {restoreWorkspaceRecipe} from './workspaceRecipes';
 import {RegisterError,bindRegisterCash,registerCashierFinanceRoutes,openRegisterShift,readRegisterShifts,closeRegisterShift} from './registerOperations';
 import type {WorkspaceScope} from './workspaceScope';
 import {hasSchemaFeature} from '../shared/schemaFeatures';
@@ -109,6 +110,7 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
     [scope.tenantId,scope.merchantId,scope.outletId,transactionId,command.clientRefundId,amount,subtotal,discount,tax,service,command.refundMethod,normalized.reason,scope.actorRef,occurredAt,JSON.stringify(normalized)])).rows[0];
   for(const {line,quantity,amount:lineAmount} of lines){
     await db.query('INSERT INTO pos.transaction_refund_items(refund_id,transaction_item_id,quantity,amount) VALUES($1,$2,$3,$4)',[refund.id,line.id,quantity,lineAmount]);
+    if(scope.moduleId)await restoreWorkspaceRecipe(db,line.id,refund.id);
     // Stock restoration uses the same original sale location and immutable deltas.
     await db.query(`INSERT INTO pos.inventory_transactions(id,tenant_id,merchant_id,outlet_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason)
       SELECT uuidv7(),s.tenant_id,s.merchant_id,s.outlet_id,s.location_id,s.inventory_item_id,$2,'REFUND_RESTORE',$3,'Retur POS'

@@ -1,3 +1,4 @@
+import {hasSchemaFeature} from '../shared/schemaFeatures';
 import {applyCashEvent,FinanceError} from './finance';
 import {FinancialApprovalError} from './financialAuthorization';
 import {sharedPurchaseCashCommand} from '../../src/lib/pos/workspacePurchase';
@@ -20,6 +21,7 @@ export async function workspaceProduct(c:Db,s:WorkspaceScope,recordId:string,loc
 /** Explicit catalog projection; no stock value from an operational JSON document is authoritative. */
 export async function attachWorkspaceInventory(c:Db,s:WorkspaceScope,productId:string,stockable:boolean){
  if(!stockable)return;
+ if(await hasSchemaFeature(c,'workspaceRecipes')&&(await c.query('SELECT id FROM pos.recipes WHERE output_product_id=$1 AND module_id=$2 AND is_active',[productId,s.moduleId])).rows.length)throw new ModuleAccessError(409,'FINISHED_STOCK_AND_RECIPE_ARE_EXCLUSIVE');
  const p=(await c.query('SELECT * FROM pos.products WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND module_id=$4 FOR UPDATE',[productId,s.tenantId,s.merchantId,s.moduleId])).rows[0];
  if(!p)throw new ModuleAccessError(404,'WORKSPACE_PRODUCT_NOT_FOUND');
  if(!p.inventory_item_id){

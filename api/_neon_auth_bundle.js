@@ -144,6 +144,7 @@ async function sendBetterAuthEmail(mail) {
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
   staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
   staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
   cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,

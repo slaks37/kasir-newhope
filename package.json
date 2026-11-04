@@ -57,7 +57,7 @@
     "test:security-database": "node scripts/dev/test-rehearsal-target.mjs && node --import tsx scripts/dev/test-security-database.ts",
     "test:blog-automation": "node scripts/dev/test-blog-automation.mjs && node --import tsx scripts/dev/test-blog-storage.ts && npm run test:blog-cover && node --import tsx scripts/dev/test-blog-e2e.mjs && node scripts/dev/test-blog-worker.mjs",
     "test:cashier": "node --import tsx scripts/dev/test-cashier-operations.ts && node --import tsx scripts/dev/test-register-close-queue.ts",
-    "test:modules": "node --import tsx scripts/dev/test-modules.ts && node --import tsx scripts/dev/test-workspace-isolation.ts && node --import tsx scripts/dev/test-workspace-client-isolation.ts",
+    "test:modules": "node --import tsx scripts/dev/test-modules.ts && node --import tsx scripts/dev/test-workspace-isolation.ts && node --import tsx scripts/dev/test-workspace-client-isolation.ts && node --import tsx scripts/dev/test-workspace-recipe-queue.ts",
     "build:mobile": "vite build --config vite.mobile.config.ts && node scripts/mobile/check-bundle.mjs",
     "native:sync": "npm run build:mobile && cap sync",
     "native:android:debug": "npm run native:sync && cd android && ./gradlew assembleDebug",

@@ -1,3 +1,4 @@
+import {WorkspaceRecipes} from '../../platform/modules/WorkspaceRecipes';
 import {isNative} from '../../platform/runtime/platform';
 import {SharedPurchaseForm} from '../../platform/modules/SharedPurchaseForm';
 import {useBusinessModule} from '../../platform/modules/ModuleContext';
@@ -646,7 +647,7 @@ export const InventoryManager: React.FC = () => {
 
   return (
     <div className="nh-page flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
-      <WorkspaceInventoryCommands/><SharedPurchaseForm/>
+      <WorkspaceInventoryCommands/><SharedPurchaseForm/><WorkspaceRecipes/>
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

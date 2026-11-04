@@ -136,7 +136,7 @@ function authEmailPayload(mail, env = process.env) {
     const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
     if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
   }
-  const text2 = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const text3 = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
   const duration = mail.kind === "STAFF_INVITE" ? "24 jam" : "15 menit";
   const safeUrl = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
@@ -144,9 +144,9 @@ function authEmailPayload(mail, env = process.env) {
     from: env.AUTH_EMAIL_FROM,
     to: mail.email,
     replyTo: "stefen@newsystem.space",
-    subject: text2,
-    text: text2 + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
-    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text2 + "</title></head><body><h1>" + text2 + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl + '">' + text2 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+    subject: text3,
+    text: text3 + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text3 + "</title></head><body><h1>" + text3 + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl + '">' + text3 + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
   }, idempotencyKey: "newhope-auth-" + key };
 }
 async function sendBetterAuthEmail(mail) {
@@ -174,6 +174,7 @@ var init_schemaFeatures = __esm({
   "services/shared/schemaFeatures.ts"() {
     "use strict";
     FEATURES = {
+      workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
       staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
       staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
       cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
@@ -857,10 +858,9 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
-// services/pos/registerOperations.ts
+// services/pos/workspaceRecipes.ts
 init_auth();
 init_schemaFeatures();
-import { createHash as createHash2 } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -1924,6 +1924,14 @@ function requireWorkspaceRole(scope, roles) {
   if (!roles.includes(scope.role)) throw new ModuleAccessError(403, "WORKSPACE_ROLE_FORBIDDEN");
 }
 
+// services/pos/workspaceInventory.ts
+init_schemaFeatures();
+
+// services/pos/registerOperations.ts
+init_auth();
+init_schemaFeatures();
+import { createHash as createHash2 } from "node:crypto";
+
 // services/pos/activity.ts
 init_schemaFeatures();
 var SECTORS = ["FNB", "LAUNDRY", "RETAIL", "CARWASH", "BARBERSHOP"];
@@ -2506,6 +2514,7 @@ async function applyRefund(db, scope, transactionId, command) {
   )).rows[0];
   for (const { line, quantity, amount: lineAmount } of lines) {
     await db.query("INSERT INTO pos.transaction_refund_items(refund_id,transaction_item_id,quantity,amount) VALUES($1,$2,$3,$4)", [refund.id, line.id, quantity, lineAmount]);
+    if (scope.moduleId) await restoreWorkspaceRecipe(db, line.id, refund.id);
     await db.query(`INSERT INTO pos.inventory_transactions(id,tenant_id,merchant_id,outlet_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason)
       SELECT uuidv7(),s.tenant_id,s.merchant_id,s.outlet_id,s.location_id,s.inventory_item_id,$2,'REFUND_RESTORE',$3,'Retur POS'
       FROM pos.inventory_transactions s JOIN pos.products p ON p.inventory_item_id=s.inventory_item_id
@@ -2727,6 +2736,7 @@ async function workspaceProduct(c, s, recordId, lock = false) {
 }
 async function attachWorkspaceInventory(c, s, productId, stockable) {
   if (!stockable) return;
+  if (await hasSchemaFeature(c, "workspaceRecipes") && (await c.query("SELECT id FROM pos.recipes WHERE output_product_id=$1 AND module_id=$2 AND is_active", [productId, s.moduleId])).rows.length) throw new ModuleAccessError(409, "FINISHED_STOCK_AND_RECIPE_ARE_EXCLUSIVE");
   const p = (await c.query("SELECT * FROM pos.products WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND module_id=$4 FOR UPDATE", [productId, s.tenantId, s.merchantId, s.moduleId])).rows[0];
   if (!p) throw new ModuleAccessError(404, "WORKSPACE_PRODUCT_NOT_FOUND");
   if (!p.inventory_item_id) {
@@ -2809,6 +2819,125 @@ function registerWorkspaceInventoryRoutes(app, db) {
       return res.status(known2 ? e.status : 503).json({ ok: false, error: known2 ? e.message : "WORKSPACE_INVENTORY_UNAVAILABLE" });
     }
   });
+}
+
+// services/pos/workspaceRecipes.ts
+var UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var positive = (n) => typeof n === "number" && Number.isFinite(n) && n > 0 && n <= 999999 && Math.abs(n * 1e4 - Math.round(n * 1e4)) < 1e-3;
+var text = (n, max) => typeof n === "string" && !!n.trim() && n.length <= max && !/[\x00-\x1f\x7f]/.test(n);
+var manager = (s) => {
+  requireWorkspaceRole(s, ["OWNER", "ADMIN", "MANAGER"]);
+  if (!["TENANT", "MERCHANT"].includes(s.membershipScope)) throw new ModuleAccessError(403, "MODULE_CATALOG_MANAGER_REQUIRED");
+};
+async function prepareWorkspaceRecipe(c, s, productId, quantity) {
+  if (!await hasSchemaFeature(c, "workspaceRecipes")) return null;
+  const recipe = (await c.query(`SELECT * FROM pos.recipes WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND output_product_id=$4 AND is_active FOR SHARE`, [s.tenantId, s.merchantId, s.moduleId, productId])).rows[0];
+  if (!recipe) return null;
+  const inputs = (await c.query(`SELECT ri.*,i.id AS inventory_item_id,i.module_id,i.tenant_id,i.merchant_id,i.base_unit,i.is_stockable,i.cost_per_unit FROM pos.recipe_items ri JOIN pos.inventory_items i ON i.id=ri.inventory_item_id WHERE recipe_id=$1 ORDER BY i.id FOR SHARE OF ri,i`, [recipe.id])).rows;
+  if (!inputs.length) throw new ModuleAccessError(409, "RECIPE_EMPTY_REVIEW_REQUIRED");
+  const planned = [];
+  for (const input of inputs) {
+    if (input.tenant_id !== s.tenantId || input.merchant_id !== s.merchantId || input.module_id !== s.moduleId || !input.is_stockable || input.unit !== input.base_unit) throw new ModuleAccessError(409, "RECIPE_INGREDIENT_SCOPE_OR_UNIT_MISMATCH");
+    const qty = Number((await c.query("SELECT round($1::numeric*$2::numeric/$3::numeric*(1+$4::numeric/100),3) AS qty", [quantity, input.quantity, recipe.yield_quantity, input.wastage_percentage])).rows[0].qty);
+    if (qty <= 0 || qty > 99999999) throw new ModuleAccessError(409, "RECIPE_QUANTITY_OUT_OF_RANGE");
+    const stock = await lockWorkspaceStock(c, s, input);
+    if (!stock || stock.quantity < qty) throw new ModuleAccessError(409, "INSUFFICIENT_INGREDIENT_STOCK_REQUIRES_REVIEW");
+    planned.push({ inventoryItemId: input.inventory_item_id, location: stock.location, quantity: qty, unitCost: input.cost_per_unit });
+  }
+  const cost = planned.reduce((sum, i) => sum + i.quantity * Number(i.unitCost), 0);
+  return { recipe, inputs: planned, unitCost: Math.round((cost / quantity + Number.EPSILON) * 100) / 100 };
+}
+async function consumeWorkspaceRecipe(c, s, lineId, transactionId, plan) {
+  if (!plan) return;
+  for (const input of plan.inputs) {
+    const snapshot = (await c.query(`INSERT INTO pos.workspace_recipe_consumption(tenant_id,merchant_id,outlet_id,module_id,transaction_item_id,recipe_id,recipe_revision,inventory_item_id,location_id,quantity,unit_cost) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [s.tenantId, s.merchantId, s.outletId, s.moduleId, lineId, plan.recipe.id, plan.recipe.workspace_revision, input.inventoryItemId, input.location, input.quantity, input.unitCost])).rows[0];
+    await c.query(`INSERT INTO pos.inventory_transactions(tenant_id,merchant_id,outlet_id,module_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason,recipe_consumption_id) VALUES($1,$2,$3,$4,$5,$6,$7,'SALE_RECIPE_DEDUCT',$8,'Canonical recipe consumption',$9)`, [s.tenantId, s.merchantId, s.outletId, s.moduleId, input.location, input.inventoryItemId, -input.quantity, transactionId, snapshot.id]);
+  }
+}
+async function restoreWorkspaceRecipe(c, lineId, reference, voided = false) {
+  if (!await hasSchemaFeature(c, "workspaceRecipes")) return;
+  const rows = (await c.query(`SELECT s.*,COALESCE(li.quantity_exact,li.quantity) AS sold_quantity,COALESCE((SELECT SUM(ri.quantity) FROM pos.transaction_refund_items ri WHERE ri.transaction_item_id=li.id),0) AS returned_quantity,COALESCE((SELECT SUM(m.quantity_delta) FROM pos.inventory_transactions m WHERE m.recipe_consumption_id=s.id),0) AS net FROM pos.workspace_recipe_consumption s JOIN pos.transaction_items li ON li.id=s.transaction_item_id WHERE s.transaction_item_id=$1 ORDER BY s.inventory_item_id`, [lineId])).rows;
+  for (const row of rows) {
+    const delta = (await c.query(`SELECT GREATEST(0,LEAST(-$1::numeric,round($2::numeric*LEAST($3::numeric,$4::numeric)/$4::numeric,3)-($2::numeric+$1::numeric))) AS qty`, [row.net, row.quantity, voided ? row.sold_quantity : row.returned_quantity, row.sold_quantity])).rows[0].qty;
+    if (Number(delta) > 0) await c.query(`INSERT INTO pos.inventory_transactions(tenant_id,merchant_id,outlet_id,module_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason,recipe_consumption_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'Restore original recipe snapshot',$10)`, [row.tenant_id, row.merchant_id, row.outlet_id, row.module_id, row.location_id, row.inventory_item_id, delta, voided ? "VOID_RECIPE_RESTORE" : "REFUND_RECIPE_RESTORE", reference, row.id]);
+  }
+}
+function registerWorkspaceRecipeRoutes(app, db) {
+  app.get("/api/v1/sync/modules/recipes", async (req, res) => {
+    const p = trustedPrincipal(req);
+    if (!p) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    try {
+      const result = await db.tx(async (c) => {
+        const s = await resolveWorkspaceScope(c, p.subject, req.query, ["inventory"]);
+        manager(s);
+        if (!await hasSchemaFeature(c, "workspaceRecipes")) throw new ModuleAccessError(503, "WORKSPACE_RECIPES_SCHEMA_REQUIRED");
+        const ingredients = (await c.query(`SELECT i.id,i.item_name AS name,i.base_unit AS unit,i.cost_per_unit AS cost,COALESCE(b.quantity,0) AS quantity FROM pos.inventory_items i LEFT JOIN LATERAL(SELECT SUM(current_stock) quantity FROM pos.inventory_balances WHERE inventory_item_id=i.id AND outlet_id=$4) b ON true WHERE i.tenant_id=$1 AND i.merchant_id=$2 AND i.module_id=$3 AND i.item_type IN('RAW_MATERIAL','CONSUMABLE','PACKAGING') ORDER BY i.item_name,i.id`, [s.tenantId, s.merchantId, s.moduleId, s.outletId])).rows;
+        const recipes = (await c.query(`SELECT r.id,r.output_product_id AS product_id,p.external_ref,p.workspace_payload->>'id' AS product_ref,r.workspace_revision AS revision,r.is_active,r.yield_quantity,COALESCE(jsonb_agg(jsonb_build_object('ingredientId',ri.inventory_item_id,'quantity',ri.quantity,'unit',ri.unit,'wastagePercentage',ri.wastage_percentage)) FILTER(WHERE ri.id IS NOT NULL),'[]'::jsonb) AS lines FROM pos.recipes r JOIN pos.products p ON p.id=r.output_product_id LEFT JOIN pos.recipe_items ri ON ri.recipe_id=r.id WHERE r.tenant_id=$1 AND r.merchant_id=$2 AND r.module_id=$3 GROUP BY r.id,p.external_ref,p.workspace_payload ORDER BY r.id`, [s.tenantId, s.merchantId, s.moduleId])).rows;
+        return { ingredients, recipes };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      return failure3(res, e);
+    }
+  });
+  app.post("/api/v1/sync/modules/recipes", async (req, res) => {
+    const p = trustedPrincipal(req);
+    if (!p) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
+    const b = req.body;
+    if (!b || !text(b.commandId, 128) || !["CREATE_INGREDIENT", "RECEIVE_INGREDIENT", "SET_RECIPE"].includes(b.action)) return res.status(400).json({ ok: false, error: "INVALID_RECIPE_COMMAND" });
+    try {
+      const result = await db.tx(async (c) => {
+        const s = await resolveWorkspaceScope(c, p.subject, b, ["inventory"]);
+        manager(s);
+        if (!await hasSchemaFeature(c, "workspaceRecipes")) throw new ModuleAccessError(503, "WORKSPACE_RECIPES_SCHEMA_REQUIRED");
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [s.tenantId + ":" + b.commandId]);
+        const hash2 = commandHash(b), prior = (await c.query("SELECT * FROM pos.workspace_commands WHERE tenant_id=$1 AND command_id=$2", [s.tenantId, b.commandId])).rows[0];
+        if (prior) {
+          if (prior.actor_ref !== p.subject || prior.merchant_id !== s.merchantId || prior.request_hash !== hash2) throw new ModuleAccessError(409, "RECIPE_COMMAND_ID_CONFLICT");
+          return { ...prior.result, replayed: true };
+        }
+        let entityId, revision;
+        if (b.action === "CREATE_INGREDIENT") {
+          if (!text(b.name, 100) || !text(b.unit, 20) || !text(b.sku, 50) || typeof b.cost !== "number" || !Number.isFinite(b.cost) || b.cost < 0 || b.cost > 999999) throw new ModuleAccessError(400, "INVALID_INGREDIENT");
+          entityId = (await c.query(`INSERT INTO pos.inventory_items(tenant_id,merchant_id,module_id,item_name,sku,base_unit,item_type,cost_per_unit,is_stockable) VALUES($1,$2,$3,$4,$5,$6,'RAW_MATERIAL',$7,true) RETURNING id`, [s.tenantId, s.merchantId, s.moduleId, b.name.trim(), s.moduleId + ":" + b.sku, b.unit.trim(), b.cost])).rows[0].id;
+        } else if (b.action === "RECEIVE_INGREDIENT") {
+          if (!UUID4.test(b.ingredientId) || (!positive(b.quantity) || Math.abs(b.quantity * 1e3 - Math.round(b.quantity * 1e3)) > 1e-3)) throw new ModuleAccessError(400, "INVALID_INGREDIENT_RECEIPT");
+          const input = (await c.query(`SELECT id AS inventory_item_id FROM pos.inventory_items WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND module_id=$4 AND item_type IN('RAW_MATERIAL','CONSUMABLE','PACKAGING') AND is_stockable FOR UPDATE`, [b.ingredientId, s.tenantId, s.merchantId, s.moduleId])).rows[0];
+          if (!input) throw new ModuleAccessError(404, "WORKSPACE_INGREDIENT_NOT_FOUND");
+          const stock = await lockWorkspaceStock(c, s, input);
+          await c.query(`INSERT INTO pos.inventory_transactions(tenant_id,merchant_id,outlet_id,module_id,location_id,inventory_item_id,quantity_delta,reference_type,reference_id,reason) VALUES($1,$2,$3,$4,$5,$6,$7,'PURCHASE',$8,'Ingredient receipt')`, [s.tenantId, s.merchantId, s.outletId, s.moduleId, stock.location, input.inventory_item_id, b.quantity, b.commandId]);
+          entityId = input.inventory_item_id;
+        } else {
+          if (typeof b.productRef !== "string" || !Number.isSafeInteger(b.baseRevision) || b.baseRevision < 0 || !positive(b.yieldQuantity) || !Array.isArray(b.lines) || !b.lines.length || b.lines.length > 100 || new Set(b.lines.map((l) => l?.ingredientId)).size !== b.lines.length || b.lines.some((l) => !l || !UUID4.test(l.ingredientId) || !positive(l.quantity) || typeof l.wastagePercentage !== "number" || !Number.isFinite(l.wastagePercentage) || l.wastagePercentage < 0 || l.wastagePercentage > 100)) throw new ModuleAccessError(400, "INVALID_RECIPE");
+          const product = await workspaceProduct(c, s, b.productRef, true);
+          if (product.inventory_item_id) throw new ModuleAccessError(409, "FINISHED_STOCK_AND_RECIPE_ARE_EXCLUSIVE");
+          const existing = (await c.query(`SELECT * FROM pos.recipes WHERE merchant_id=$1 AND output_product_id=$2 FOR UPDATE`, [s.merchantId, product.id])).rows[0];
+          if (existing && (existing.module_id !== s.moduleId || Number(existing.workspace_revision) !== b.baseRevision) || !existing && b.baseRevision !== 0) throw new ModuleAccessError(409, "RECIPE_REVISION_CONFLICT");
+          const recipe = (await c.query(`INSERT INTO pos.recipes(tenant_id,merchant_id,module_id,output_product_id,recipe_name,yield_quantity,yield_unit) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(merchant_id,output_product_id) DO UPDATE SET yield_quantity=excluded.yield_quantity,workspace_revision=pos.recipes.workspace_revision+1,is_active=true,updated_at=now() RETURNING id,workspace_revision`, [s.tenantId, s.merchantId, s.moduleId, product.id, product.name, b.yieldQuantity, product.unit || "portion"])).rows[0];
+          await c.query("DELETE FROM pos.recipe_items WHERE recipe_id=$1", [recipe.id]);
+          for (const l of [...b.lines].sort((a, z) => a.ingredientId.localeCompare(z.ingredientId))) {
+            const input = (await c.query(`SELECT * FROM pos.inventory_items WHERE id=$1 AND tenant_id=$2 AND merchant_id=$3 AND module_id=$4 AND item_type IN('RAW_MATERIAL','CONSUMABLE','PACKAGING') AND is_stockable FOR SHARE`, [l.ingredientId, s.tenantId, s.merchantId, s.moduleId])).rows[0];
+            if (!input) throw new ModuleAccessError(404, "WORKSPACE_INGREDIENT_NOT_FOUND");
+            await c.query(`INSERT INTO pos.recipe_items(recipe_id,inventory_item_id,quantity,unit,wastage_percentage) VALUES($1,$2,$3,$4,$5)`, [recipe.id, input.id, l.quantity, input.base_unit, l.wastagePercentage]);
+          }
+          entityId = recipe.id;
+          revision = Number(recipe.workspace_revision);
+        }
+        const result2 = { commandId: b.commandId, action: b.action, entityId, revision, workspace: { tenantId: s.tenantId, merchantId: s.merchantId, outletId: s.outletId, moduleId: s.moduleId, actorRef: s.actorRef }, replayed: false };
+        await c.query("INSERT INTO pos.workspace_commands(tenant_id,merchant_id,command_id,actor_ref,request_hash,result) VALUES($1,$2,$3,$4,$5,$6)", [s.tenantId, s.merchantId, b.commandId, p.subject, hash2, result2]);
+        return result2;
+      });
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({ ok: true, ...result });
+    } catch (e) {
+      return failure3(res, e);
+    }
+  });
+}
+function failure3(res, e) {
+  const known2 = e instanceof ModuleAccessError || e instanceof BillingError;
+  return res.status(known2 ? e.status : 503).json({ ok: false, error: known2 ? e.message : "WORKSPACE_RECIPES_UNAVAILABLE" });
 }
 
 // services/pos/workspaceState.ts
@@ -2940,7 +3069,7 @@ function operationalScopeIssue(owner, sector, kind, id, value, businessId = `${o
 }
 
 // services/pos/laborProjection.ts
-var text = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+var text2 = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
 var timestamp2 = (value, optional = false) => {
   if (optional && (value === void 0 || value === null || value === "")) return null;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new BillingError(422, "INVALID_LABOR_DATE");
@@ -2962,7 +3091,7 @@ async function projectLabor(c, scope, sector, op) {
     return;
   }
   const value = op.value;
-  if (value.id !== op.recordId || !text(value.staffId, 96) || !text(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
+  if (value.id !== op.recordId || !text2(value.staffId, 96) || !text2(value.staffName, 120)) throw new BillingError(422, "INVALID_LABOR_RECORD");
   if (attendance) {
     if (!["CLOCKED_IN", "CLOCKED_OUT"].includes(String(value.status))) throw new BillingError(422, "INVALID_ATTENDANCE_STATUS");
     const started = timestamp2(value.clockInTime), ended = timestamp2(value.clockOutTime, true);
@@ -2972,7 +3101,7 @@ async function projectLabor(c, scope, sector, op) {
     if (!outlet) throw new BillingError(403, "ATTENDANCE_OUTLET_NOT_OWNED");
     if (existing && (existing.staff_id !== value.staffId || existing.outlet_id !== outlet.id || new Date(existing.clock_in_at).toISOString() !== started)) throw new BillingError(409, "ATTENDANCE_IDENTITY_IMMUTABLE");
     if (existing?.clock_out_at && (!ended || new Date(existing.clock_out_at).toISOString() !== ended)) throw new BillingError(409, "CLOSED_ATTENDANCE_IMMUTABLE");
-    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
+    if (existing && existing.status === value.status && (existing.clock_out_at ? new Date(existing.clock_out_at).toISOString() : null) === ended && existing.shift_notes === (text2(value.shiftNotes, 500) || null) && JSON.stringify(existing.clock_out_geo) === JSON.stringify(value.clockOutGeo || null)) return;
     const saved2 = await c.query(
       `INSERT INTO pos.staff_attendances
       (tenant_id,merchant_id,outlet_id,client_attendance_id,staff_id,staff_name,staff_role,clock_in_at,clock_out_at,
@@ -2988,13 +3117,13 @@ async function projectLabor(c, scope, sector, op) {
         outlet.id,
         op.recordId,
         value.staffId,
-        text(value.staffName, 120),
-        text(value.staffRole, 64) || "STAFF",
+        text2(value.staffName, 120),
+        text2(value.staffRole, 64) || "STAFF",
         started,
         ended,
-        text(value.shiftNotes, 500) || null,
+        text2(value.shiftNotes, 500) || null,
         value.status,
-        text(value.branchName, 100),
+        text2(value.branchName, 100),
         JSON.stringify(value.clockInGeo || null),
         JSON.stringify(value.clockOutGeo || null),
         sector
@@ -3010,7 +3139,7 @@ async function projectLabor(c, scope, sector, op) {
   const amounts = fields.map((field) => money2(value[field]));
   const columns = ["base_salary", "allowance", "individual_commission", "team_pool_commission", "daily_target_bonus", "gross_earnings", "deductions", "net_salary"];
   if (existing?.status === "PAID") {
-    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
+    if (value.status !== "PAID" || existing.staff_id !== value.staffId || existing.period_month !== value.periodMonth || new Date(existing.period_start).toISOString().slice(0, 10) !== start.slice(0, 10) || new Date(existing.period_end).toISOString().slice(0, 10) !== end.slice(0, 10) || new Date(existing.paid_at).toISOString() !== paid || existing.payment_method !== (text2(value.paymentMethod, 64) || null) || Number(existing.days_attended) !== Number(value.daysAttended) || columns.some((column, index) => Number(existing[column]) !== amounts[index]))
       throw new BillingError(409, "PAID_PAYROLL_IMMUTABLE");
     return;
   }
@@ -3033,8 +3162,8 @@ async function projectLabor(c, scope, sector, op) {
       scope.merchantId,
       op.recordId,
       value.staffId,
-      text(value.staffName, 120),
-      text(value.staffRole, 64) || "STAFF",
+      text2(value.staffName, 120),
+      text2(value.staffRole, 64) || "STAFF",
       value.periodMonth,
       start.slice(0, 10),
       end.slice(0, 10),
@@ -3042,8 +3171,8 @@ async function projectLabor(c, scope, sector, op) {
       ...amounts,
       value.status,
       paid,
-      text(value.paymentMethod, 64) || null,
-      text(value.notes, 500) || null,
+      text2(value.paymentMethod, 64) || null,
+      text2(value.notes, 500) || null,
       sector
     ]
   );
@@ -3578,7 +3707,7 @@ init_betterAuthConfig();
 init_betterAuthEmail();
 init_schemaFeatures();
 import { createHash as createHash5, randomBytes as randomBytes2, randomUUID as randomUUID3 } from "node:crypto";
-var UUID4 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+var UUID5 = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 var STAFF_ROLES = ["OWNER", "ADMIN", "MANAGER", "CASHIER", "BARISTA", "CHEF", "WASHER", "KAPSTER", "ACCOUNTANT", "STAFF"];
 var StaffAccessError = class extends Error {
   constructor(status, code) {
@@ -3594,7 +3723,7 @@ function staffAssignments(value) {
   if (!Array.isArray(value) || !value.length || value.length > 32) throw new StaffAccessError(400, "STAFF_ASSIGNMENTS_REQUIRED");
   const seen = /* @__PURE__ */ new Set();
   return value.map((row) => {
-    if (!row || Object.keys(row).sort().join(",") !== "merchantId,moduleId,outletId,role" || !UUID4.test(row.merchantId) || !UUID4.test(row.outletId) || !["retail", "barber"].includes(row.moduleId) || !STAFF_ROLES.includes(row.role)) throw new StaffAccessError(400, "STAFF_ASSIGNMENT_INVALID");
+    if (!row || Object.keys(row).sort().join(",") !== "merchantId,moduleId,outletId,role" || !UUID5.test(row.merchantId) || !UUID5.test(row.outletId) || !["retail", "barber"].includes(row.moduleId) || !STAFF_ROLES.includes(row.role)) throw new StaffAccessError(400, "STAFF_ASSIGNMENT_INVALID");
     const operational = { BARISTA: "fnb", CHEF: "fnb", WASHER: "carwash", KAPSTER: "barber" };
     if (operational[row.role] && operational[row.role] !== row.moduleId) throw new StaffAccessError(400, "STAFF_ROLE_MODULE_MISMATCH");
     const key = [row.merchantId, row.outletId, row.moduleId].join(":");
@@ -3611,7 +3740,7 @@ var context = async (c, tenant) => {
   await c.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
 };
 async function actor(c, p, tenant, mutate = false) {
-  if (!UUID4.test(tenant)) throw new StaffAccessError(400, "STAFF_TENANT_REQUIRED");
+  if (!UUID5.test(tenant)) throw new StaffAccessError(400, "STAFF_TENANT_REQUIRED");
   await context(c, tenant);
   const t = (await c.query(`SELECT t.id,t.name,t.owner_user_ref FROM internal.tenants t JOIN internal.users u ON u.id::text=$2 AND u.is_active WHERE t.id=$1 AND t.is_active AND t.merged_into IS NULL`, [tenant, p.subject])).rows[0];
   if (!t) deny();
@@ -3642,7 +3771,7 @@ var staffTransaction = (db, fn) => db.tx(async (c) => {
 });
 async function createStaffInvitation(db, p, input, send = sendBetterAuthEmail, baseUrl = getAuthConfig().baseUrl) {
   const assignments = staffAssignments(input.assignments), email = String(input.email || "").trim().toLowerCase();
-  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(email) || email.length > 160 || !UUID4.test(input.requestKey) || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_INVITE_INVALID");
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(email) || email.length > 160 || !UUID5.test(input.requestKey) || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_INVITE_INVALID");
   const token = randomBytes2(32).toString("base64url"), id = randomUUID3();
   const saved = await staffTransaction(db, async (c) => {
     const { owner } = await actor(c, p, input.tenantId, true);
@@ -3705,7 +3834,7 @@ async function acceptStaffInvitation(db, p, token) {
 }
 async function changeStaffAccess(db, p, input) {
   const assignments = staffAssignments(input.assignments);
-  if (!UUID4.test(input.membershipId) || !Number.isSafeInteger(input.version) || typeof input.active !== "boolean" || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_ACCESS_INVALID");
+  if (!UUID5.test(input.membershipId) || !Number.isSafeInteger(input.version) || typeof input.active !== "boolean" || typeof input.canManageStaff !== "boolean") throw new StaffAccessError(400, "STAFF_ACCESS_INVALID");
   return staffTransaction(db, async (c) => {
     const { owner } = await actor(c, p, input.tenantId, true);
     const member = (await c.query("SELECT id,user_id,is_active,auth_managed,staff_access_version FROM internal.memberships WHERE id=$1 AND tenant_id=$2 FOR UPDATE", [input.membershipId, input.tenantId])).rows[0];
@@ -3903,7 +4032,7 @@ var LEGAL_NOTICE_VERSION = "2026-10-12-review-v1";
 
 // services/pos/privacy.ts
 var TYPES = /* @__PURE__ */ new Set(["ACCESS", "CORRECTION", "DELETION", "EXPORT", "CONSENT_WITHDRAWAL"]);
-var UUID5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PrivacyError = class extends Error {
   constructor(status, message) {
     super(message);
@@ -3932,7 +4061,7 @@ function registerPrivacyRoutes(app, db) {
   route("get", "/api/v1/privacy/requests", async (c, s) => ({ requests: (await c.query("SELECT id,client_request_id,request_type,message,status,created_at,updated_at FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 ORDER BY created_at DESC LIMIT 50", [s.tenantId, s.actor])).rows }));
   route("post", "/api/v1/privacy/requests", async (c, s, req) => {
     const { clientRequestId, type, message } = req.body || {};
-    if (!UUID5.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
+    if (!UUID6.test(clientRequestId || "") || !TYPES.has(type) || typeof message !== "string" || !message.trim() || message.length > 1e3) throw new PrivacyError(400, "INVALID_PRIVACY_REQUEST");
     const previous = (await c.query("SELECT id,status,request_type,message FROM internal.privacy_requests WHERE tenant_id=$1 AND actor_ref=$2 AND client_request_id=$3", [s.tenantId, s.actor, clientRequestId])).rows[0];
     if (previous) {
       if (previous.request_type !== type || previous.message !== message.trim()) throw new PrivacyError(409, "PRIVACY_REQUEST_ID_CONFLICT");
@@ -3956,7 +4085,7 @@ init_auth();
 
 // services/pos/reports.ts
 init_auth();
-var UUID6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DATE = /^\d{4}-\d{2}-\d{2}$/;
 var PAYMENT_METHODS = /* @__PURE__ */ new Set(["CASH", "QRIS", "QRIS_DYNAMIC", "QRIS_STATIC", "DEBIT", "CREDIT", "DEBIT_CARD", "CREDIT_CARD", "CARD", "TRANSFER", "E_WALLET", "EWALLET", "OTHER", "SHOPEEPAY", "GOPAY", "OVO", "DANA", "SPLIT"]);
 var numeric = (value) => Number(value ?? 0);
@@ -3983,11 +4112,11 @@ function dateQuery(value, name) {
 }
 function parseReportFilter(query) {
   const outletId = stringQuery(query.outletId, "OUTLET_ID");
-  if (!outletId || !UUID6.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
+  if (!outletId || !UUID7.test(outletId)) throw new ReportRequestError(400, "INVALID_OUTLET_ID");
   const moduleId = stringQuery(query.moduleId, "MODULE_ID");
   const merchantId = stringQuery(query.merchantId ?? query.businessId, "MERCHANT_ID");
   const tenantId = stringQuery(query.tenantId, "TENANT_ID");
-  if (merchantId && !UUID6.test(merchantId) || tenantId && !UUID6.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
+  if (merchantId && !UUID7.test(merchantId) || tenantId && !UUID7.test(tenantId)) throw new ReportRequestError(400, "INVALID_SCOPE");
   const sector = stringQuery(query.sector, "SECTOR");
   if (sector && !SECTORS.includes(sector)) throw new ReportRequestError(400, "INVALID_SECTOR");
   const from = dateQuery(query.from, "FROM_DATE");
@@ -4298,7 +4427,7 @@ function cursorFor(value) {
   try {
     if (raw.length > 300) throw new Error();
     const cursor = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (!UUID6.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
+    if (!UUID7.test(cursor.id) || typeof cursor.createdAt !== "string" || !Number.isFinite(Date.parse(cursor.createdAt))) throw new Error();
     return { createdAt: new Date(cursor.createdAt).toISOString(), id: cursor.id };
   } catch {
     throw new ReportRequestError(400, "INVALID_CURSOR");
@@ -4463,6 +4592,7 @@ function registerSyncRoutes(app, db) {
   registerStaffAccountRoutes(app, db);
   registerWorkspaceStateRoutes(app, db);
   registerWorkspaceInventoryRoutes(app, db);
+  registerWorkspaceRecipeRoutes(app, db);
   registerPrivacyRoutes(app, db);
   registerBusinessDirectory(app, db);
   registerSharedStateRoutes(app, db);
@@ -4785,11 +4915,13 @@ function registerSyncRoutes(app, db) {
         const rejected = [];
         const renumbered = [];
         const syncOne = async (x, clientId) => {
+          let recordedWorkspace = false;
           if (workspace) {
             if (x.branchId && x.branchId !== workspace.outletId || x.workspace && ["tenantId", "merchantId", "outletId", "moduleId", "actorRef"].some((f) => x.workspace[f] !== workspace[f])) throw new FinanceError(403, "IMMUTABLE_WORKSPACE_MISMATCH");
             if (await hasSchemaFeature(c, "cashierRegisters")) {
               await clearRegisterBinding(c);
               const recorded = (await c.query("SELECT id,client_shift_id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4", [tenantId, merchantId, outletId, clientId])).rows[0];
+              recordedWorkspace = !!recorded;
               if (x.shiftId && !recorded) await bindRegisterSale(c, workspace, x.shiftId);
               if (!x.shiftId && !recorded) throw new RegisterError(409, "EXPLICIT_REGISTER_SHIFT_REQUIRED");
               if (recorded && x.shiftId && recorded.client_shift_id !== x.shiftId) throw new FinanceError(409, "TRANSACTION_SHIFT_IMMUTABLE");
@@ -4860,7 +4992,7 @@ function registerSyncRoutes(app, db) {
           const invoiceNumber = str(x.invoiceNumber, 32);
           await c.exec("SAVEPOINT sync_invoice");
           try {
-            ins = await insertSale(invoiceNumber);
+            ins = recordedWorkspace ? { rows: [] } : await insertSale(invoiceNumber);
             await c.exec("RELEASE SAVEPOINT sync_invoice");
           } catch (error) {
             await c.exec("ROLLBACK TO SAVEPOINT sync_invoice");
@@ -4900,6 +5032,10 @@ function registerSyncRoutes(app, db) {
                   `UPDATE pos.payments SET payment_status = 'REFUNDED' WHERE transaction_id = $1`,
                   [voidedTxnId]
                 );
+                if (workspace) {
+                  const recipeLines = await c.query("SELECT id FROM pos.transaction_items WHERE transaction_id=$1 ORDER BY id", [voidedTxnId]);
+                  for (const line of recipeLines.rows) await restoreWorkspaceRecipe(c, line.id, voidedTxnId, true);
+                }
                 const voidedItems = await c.query(
                   `SELECT ti.product_id, GREATEST(COALESCE(ti.quantity_exact,ti.quantity)-COALESCE((SELECT SUM(ri.quantity) FROM pos.transaction_refund_items ri WHERE ri.transaction_item_id=ti.id),0),0) AS quantity,
                           p.inventory_item_id, p.merchant_id, tx.outlet_id
@@ -4975,14 +5111,15 @@ function registerSyncRoutes(app, db) {
             if (!productId) continue;
             const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
-            const unitCost = workspace ? Number((await c.query("SELECT cost_price FROM pos.products WHERE id=$1", [productId])).rows[0].cost_price) : Math.max(0, num(i.unitCost));
+            const recipePlan = workspace && !isVoid ? await prepareWorkspaceRecipe(c, workspace, productId, qty) : null;
+            const unitCost = recipePlan ? recipePlan.unitCost : workspace ? Number((await c.query("SELECT cost_price FROM pos.products WHERE id=$1", [productId])).rows[0].cost_price) : Math.max(0, num(i.unitCost));
             const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
-            await c.query(
+            const insertedLine = await c.query(
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
                   quantity, total_price, business_sector, category_name, unit_cost,
                   product_description,client_item_id,quantity_exact)
-               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6)`,
+               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6) RETURNING id`,
               [
                 txnId,
                 tenantId,
@@ -4999,6 +5136,7 @@ function registerSyncRoutes(app, db) {
               ]
             );
             if (!isVoid) {
+              if (workspace) await consumeWorkspaceRecipe(c, workspace, insertedLine.rows[0].id, txnId, recipePlan);
               if (workspace) {
                 const p = await workspaceProduct(c, workspace, i.productRef || "", true);
                 const stock = await lockWorkspaceStock(c, workspace, p);
@@ -5441,6 +5579,7 @@ var allowedMethods = {
   "/api/v1/sync/staff/revoke-invite": ["POST"],
   "/api/v1/sync/modules/access": ["GET"],
   "/api/v1/sync/modules/inventory": ["POST"],
+  "/api/v1/sync/modules/recipes": ["GET", "POST"],
   "/api/v1/sync/modules/state": ["GET", "POST"],
   "/api/v1/sync/modules/dashboard": ["GET"],
   "/api/v1/sync/modules/revenue": ["GET"],

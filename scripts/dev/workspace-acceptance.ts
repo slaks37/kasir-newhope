@@ -1,3 +1,4 @@
+import {recipeAcceptance} from './recipe-acceptance';
 import {sharedPurchaseCashCommand} from '../../src/lib/pos/workspacePurchase';
 import {enqueue,flush,getStatus,financialWorkspaceKey,type SyncPayloadTxn} from '../../src/lib/sync/queue';
 import assert from 'node:assert/strict';
@@ -130,12 +131,13 @@ export async function workspaceAcceptance(admin:Db,pos:Db){
    network='online';await flush({...target,workspace:{...w,moduleId:'barber'}},true);assert.equal(getStatus(queueId).pending,1,'Another selected module cannot drain the original queue');
    await flush(target,true);assert.equal(getStatus(queueId).pending,0);assert.equal(await count(),1,'Reopen and recovery never duplicate the canonical sale');assert.equal(disk.get(legacyKey),'legacy source bytes preserved');
   }finally{globalThis.fetch=nativeFetch;if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as any).localStorage;}
+  const recipes=await recipeAcceptance(admin,request,scope,save,sale);
   await admin.query('UPDATE internal.memberships SET is_active=false WHERE user_id=$1',[ids.cashierB]);assert.equal((await request('/api/v1/sync/transactions',delivery,'cashierB')).status,403,'A prior receipt never bypasses membership revalidation');
   await admin.query("UPDATE billing.module_entitlements SET expires_at=now()-interval '1 second' WHERE merchant_id=$1 AND module_id='barber'",[ids.merchant]);assert.equal((await state(scope('barber'))).status,403);
   await admin.exec('ALTER TABLE pos.products RENAME COLUMN workspace_payload TO workspace_payload_not_ready');resetSchemaFeatureCache();assert.equal((await state()).status,403,'Partially applied workspace schema cannot fall back to a legacy adapter');await admin.exec('ALTER TABLE pos.products RENAME COLUMN workspace_payload_not_ready TO workspace_payload');resetSchemaFeatureCache();
   process.env.NEW_HOPE_MODULE_WORKSPACES='0';assert.equal((await state()).status,403,'Disabled rollout denies v2 writes and reads');
   for(const path of ['/api/v1/sync/state','/api/v1/reports/summary'])assert.equal((await request(path+'?'+new URLSearchParams({businessId:ids.merchant,outletId:ids.a,sector:'BARBERSHOP',kinds:'products'}))).status,403,'Flag rollback cannot restore a sector-wide legacy path');
   assert.equal((await request('/api/v1/sync/transactions',{...sale(scope('barber')),moduleId:undefined})).status,403,'Flag rollback cannot accept an unscoped legacy checkout');
-  return {twoModules:true,twoMerchants:true,twoTenants:true,multipleOutlets:true,independentStaff:true,serverRbac:true,stockReceiveTransfer:true,checkoutRefundReports:true,sharedPurchaseFinancialAttribution:true,lostAckReplay:true,networkInterruptionRecovery:true,immutableOfflineQueue:true,revocation:true};
+  return {recipes,twoModules:true,twoMerchants:true,twoTenants:true,multipleOutlets:true,independentStaff:true,serverRbac:true,stockReceiveTransfer:true,checkoutRefundReports:true,sharedPurchaseFinancialAttribution:true,lostAckReplay:true,networkInterruptionRecovery:true,immutableOfflineQueue:true,revocation:true};
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));delete process.env.NEW_HOPE_MODULE_WORKSPACES;}
 }

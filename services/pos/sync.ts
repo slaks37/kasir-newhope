@@ -1,3 +1,4 @@
+import {registerWorkspaceRecipeRoutes,prepareWorkspaceRecipe,consumeWorkspaceRecipe,restoreWorkspaceRecipe} from './workspaceRecipes';
 import {RegisterError,bindRegisterSale,clearRegisterBinding} from './registerOperations';
 import {registerWorkspaceInventoryRoutes,workspaceProduct,lockWorkspaceStock} from './workspaceInventory';
 import {resolveWorkspaceScope} from './workspaceScope';
@@ -152,6 +153,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerStaffAccountRoutes(app,db);
   registerWorkspaceStateRoutes(app,db);
   registerWorkspaceInventoryRoutes(app,db);
+  registerWorkspaceRecipeRoutes(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -495,12 +497,14 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
         const renumbered: Array<{ clientTxnId: string; invoiceNumber: string }> = [];
 
         const syncOne = async (x: SyncTxn, clientId: string) => {
+          let recordedWorkspace=false;
 
           if(workspace){
             if(x.branchId&&x.branchId!==workspace.outletId||x.workspace&&(['tenantId','merchantId','outletId','moduleId','actorRef'] as const).some(f=>x.workspace![f]!==workspace[f]))throw new FinanceError(403,'IMMUTABLE_WORKSPACE_MISMATCH');
             if(await hasSchemaFeature(c,'cashierRegisters')){
               await clearRegisterBinding(c);
               const recorded=(await c.query('SELECT id,client_shift_id FROM pos.transactions WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND client_txn_id=$4',[tenantId,merchantId,outletId,clientId])).rows[0];
+              recordedWorkspace=!!recorded;
               if(x.shiftId&&!recorded)await bindRegisterSale(c,workspace,x.shiftId);
               if(!x.shiftId&&!recorded)throw new RegisterError(409,'EXPLICIT_REGISTER_SHIFT_REQUIRED');
               if(recorded&&x.shiftId&&recorded.client_shift_id!==x.shiftId)throw new FinanceError(409,'TRANSACTION_SHIFT_IMMUTABLE');
@@ -576,7 +580,9 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           let ins;
           const invoiceNumber = str(x.invoiceNumber, 32);
           await c.exec('SAVEPOINT sync_invoice');
-          try { ins = await insertSale(invoiceNumber); await c.exec('RELEASE SAVEPOINT sync_invoice'); }
+          // Existing workspace rows take the duplicate/void path without firing
+          // INSERT register triggers with a deliberately cleared sale binding.
+          try { ins = recordedWorkspace?{rows:[]}:await insertSale(invoiceNumber); await c.exec('RELEASE SAVEPOINT sync_invoice'); }
           catch (error) {
             await c.exec('ROLLBACK TO SAVEPOINT sync_invoice'); await c.exec('RELEASE SAVEPOINT sync_invoice');
             if ((error as { code?: string }).code !== '23505' || !INVOICE_CONSTRAINTS.has(String((error as { constraint?: string }).constraint)) || !invoiceNumber) throw error;
@@ -645,6 +651,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                  * mensyaratkan order_status <> 'VOIDED' — kiriman kedua tidak
                  * menghasilkan baris RETURNING, jadi blok ini tidak dimasuki.
                  */
+                if(workspace){const recipeLines=await c.query('SELECT id FROM pos.transaction_items WHERE transaction_id=$1 ORDER BY id',[voidedTxnId]);for(const line of recipeLines.rows)await restoreWorkspaceRecipe(c,line.id,voidedTxnId,true);}
                 const voidedItems = await c.query(
                   `SELECT ti.product_id, GREATEST(COALESCE(ti.quantity_exact,ti.quantity)-COALESCE((SELECT SUM(ri.quantity) FROM pos.transaction_refund_items ri WHERE ri.transaction_item_id=ti.id),0),0) AS quantity,
                           p.inventory_item_id, p.merchant_id, tx.outlet_id
@@ -721,14 +728,15 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
             if (!productId) continue;
             const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
-            const unitCost = workspace?Number((await c.query('SELECT cost_price FROM pos.products WHERE id=$1',[productId])).rows[0].cost_price):Math.max(0, num(i.unitCost));
+            const recipePlan=workspace&&!isVoid?await prepareWorkspaceRecipe(c,workspace,productId,qty):null;
+            const unitCost = recipePlan?recipePlan.unitCost:workspace?Number((await c.query('SELECT cost_price FROM pos.products WHERE id=$1',[productId])).rows[0].cost_price):Math.max(0, num(i.unitCost));
             const totalPrice = Math.max(0, num(i.totalPrice, unitPrice * qty));
-            await c.query(
+            const insertedLine=await c.query(
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
                   quantity, total_price, business_sector, category_name, unit_cost,
                   product_description,client_item_id,quantity_exact)
-               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6)`,
+               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6) RETURNING id`,
               [
                 txnId,
                 tenantId,
@@ -760,6 +768,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
              *    pos.transactions (L280), loop ini tidak dimasuki sama sekali
              */
             if (!isVoid) {
+              if(workspace)await consumeWorkspaceRecipe(c,workspace,insertedLine.rows[0].id,txnId,recipePlan);
               if(workspace){const p=await workspaceProduct(c,workspace,i.productRef||'',true);const stock=await lockWorkspaceStock(c,workspace,p);if(stock&&stock.quantity<qty)throw new FinanceError(409,'INSUFFICIENT_STOCK_REQUIRES_REVIEW');}
               await c.query(
                 `INSERT INTO pos.inventory_transactions
