@@ -1,3 +1,25 @@
+// src/server/growth/db.ts
+import pg from "pg";
+function growthEnabled(env = process.env) {
+  const staging = env.VERCEL_ENV === "preview" || env.VERCEL_ENV === "development" || !env.VERCEL_ENV && env.NODE_ENV !== "production";
+  return env.GROWTH_ENGINE_ENABLED === "1" && staging && env.APP_ENV !== "production";
+}
+
+// src/server/growth/businessConnection.ts
+function growthBusinessConnection(env = process.env) {
+  if (!growthEnabled(env) || !env.GROWTH_BUSINESS_DATABASE_URL)
+    return void 0;
+  const u = new URL(env.GROWTH_BUSINESS_DATABASE_URL);
+  if (!u.hostname.endsWith(".neon.tech") && !["localhost", "127.0.0.1"].includes(u.hostname))
+    throw Error("UNAPPROVED_GROWTH_BUSINESS_HOST");
+  if (u.hostname.endsWith(".neon.tech")) {
+    for (const k of ["sslcert", "sslkey", "sslrootcert", "uselibpqcompat"])
+      u.searchParams.delete(k);
+    u.searchParams.set("sslmode", "verify-full");
+  }
+  return u.toString();
+}
+
 // services/shared/auth.ts
 var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
 function firstHeader(value) {
@@ -43,6 +65,8 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0, ...claims.amr.filter((a) => ["password", "otp", "totp", "oauth"].includes(a.method) && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp)) : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",
@@ -80,7 +104,7 @@ async function tenantForPrincipal(db, principal) {
 
 // services/shared/db.ts
 import fs from "node:fs";
-import pg from "pg";
+import pg2 from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
@@ -124,8 +148,8 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
 }
 
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
@@ -139,7 +163,7 @@ async function connectDb(opts) {
   const connectionString = serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
   );
-  const pool = new pg.Pool({
+  const pool = new pg2.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -1251,7 +1275,7 @@ var BILLING_ROUTES = {
   "/api/v1/subscription/verify": ["GET"],
   [DOKU_NOTIFICATION_PATH]: ["POST"]
 };
-function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "billing", max: 2 })) {
+function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "billing", max: 2, connectionString: growthBusinessConnection() })) {
   return createServerlessBoundary({
     name: "billing",
     routes: BILLING_ROUTES,

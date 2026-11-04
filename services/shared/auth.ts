@@ -14,6 +14,8 @@ export interface AuthPrincipal {
   isEmailVerified?: boolean;
   aal?: 'aal1' | 'aal2';
   mfaVerifiedAt?: number;
+  authCreatedAt?: string;
+  reauthenticatedAt?: number;
 }
 
 const LOCAL_BYPASS = () => process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
@@ -69,6 +71,7 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
       email?: unknown;
       email_confirmed_at?: unknown;
       confirmed_at?: unknown;
+      created_at?: unknown;
     };
     if (typeof user.id !== 'string' || !user.id) return null;
     const isEmailVerified = Boolean(user.email_confirmed_at || user.confirmed_at);
@@ -80,6 +83,8 @@ export async function authenticateBearer(req: Request): Promise<AuthPrincipal | 
       Number.isFinite(a.timestamp) && a.timestamp<=Date.now()/1000+30).map((a:any)=>a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at==='string'?user.created_at:undefined,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0,...claims.amr.filter((a:any)=>['password','otp','totp','oauth'].includes(a.method)&&Number.isFinite(a.timestamp)&&a.timestamp<=Date.now()/1000+30).map((a:any)=>a.timestamp)) : undefined,
       email: typeof user.email === 'string' ? user.email : undefined,
       isEmailVerified,
       aal: claims.aal === 'aal2' ? 'aal2' : 'aal1',

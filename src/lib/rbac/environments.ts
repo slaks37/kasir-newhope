@@ -148,6 +148,7 @@ export function landingEnvironment(role: PlatformRole): AppEnvironment | null {
 /* -------------------------------------------------------------------------- */
 
 export type InternalCapability =
+  | 'MANAGE_GROWTH'
   | 'MANAGE_SUPPORT'
   | 'VIEW_MERCHANT_HEALTH'
   | 'VIEW_CHURN_COHORT'
@@ -172,6 +173,7 @@ export type InternalCapability =
 
 const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   ROLE_SUPERADMIN: [
+    'MANAGE_GROWTH',
     'MANAGE_SUPPORT',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
@@ -192,6 +194,7 @@ const INTERNAL_CAPABILITIES: Record<InternalRole, InternalCapability[]> = {
   // VIEW_MERCHANT_DETAIL: analysing retention does not require reading one
   // named merchant's books.
   ROLE_INTERNAL_GROWTH: [
+    'MANAGE_GROWTH',
     'VIEW_MERCHANT_HEALTH',
     'VIEW_CHURN_COHORT',
     'VIEW_PLATFORM_REVENUE',
@@ -224,6 +227,7 @@ export function hasInternalCapability(role: string, cap: InternalCapability): bo
  * MUST write an `internal_access_log` row.
  */
 export const AUDITED_CAPABILITIES: InternalCapability[] = [
+  'MANAGE_GROWTH',
   'MANAGE_INTEGRATIONS',
   'MANAGE_SUPPORT',
   'VIEW_MERCHANT_DETAIL',

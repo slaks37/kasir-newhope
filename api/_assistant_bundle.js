@@ -43,6 +43,8 @@ async function authenticateBearer(req) {
     const times = Array.isArray(claims.amr) ? claims.amr.filter((a) => a.method === "totp" && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp) : [];
     return {
       subject: user.id,
+      authCreatedAt: typeof user.created_at === "string" ? user.created_at : void 0,
+      reauthenticatedAt: Array.isArray(claims.amr) ? Math.max(0, ...claims.amr.filter((a) => ["password", "otp", "totp", "oauth"].includes(a.method) && Number.isFinite(a.timestamp) && a.timestamp <= Date.now() / 1e3 + 30).map((a) => a.timestamp)) : void 0,
       email: typeof user.email === "string" ? user.email : void 0,
       isEmailVerified,
       aal: claims.aal === "aal2" ? "aal2" : "aal1",

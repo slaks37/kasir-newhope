@@ -31,6 +31,7 @@ import {
 import { ErrorBox, Loading } from "./ui";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { Brand } from "../components/brand/Brand";
+const GrowthEngine=lazy(()=>import('./pages/GrowthEngine'));
 const Overview=lazy(()=>import('./pages/Overview'));
 const Merchants=lazy(()=>import('./pages/Merchants'));
 const Transactions=lazy(()=>import('./pages/Transactions'));
@@ -47,6 +48,7 @@ const BlogConnections=lazy(()=>import('./pages/BlogConnections'));
 import AdminMfa from './AdminMfa';
 
 type PageId =
+  | "growth"
   | "overview"
   | "merchants"
   | "subscriptions"
@@ -67,6 +69,7 @@ type PageId =
  * menghalangi siapa pun memanggil endpointnya langsung.
  */
 const NAV: Array<{ id: PageId; label: string; icon: any; cap: string }> = [
+  {id:"growth",label:"Growth Engine",icon:Activity,cap:"MANAGE_GROWTH"},
   {id:'integrations',label:'Integrasi, API & MCP',icon:Plug,cap:'MANAGE_INTEGRATIONS'},
   {
     id: "overview",
@@ -286,7 +289,7 @@ export default function AdminApp() {
   const [error, setError] = useState<{ code?: string; message: string } | null>(
     null,
   );
-  const [page, setPage] = useState<PageId>("overview");
+  const [page, setPage] = useState<PageId>(()=>new URLSearchParams(window.location.search).get("module")==="growth"?"growth":"overview");
   // Filter sektor hidup di sini, bukan di tiap halaman: berpindah dari
   // "Ringkasan" ke "Log Transaksi" harus mempertahankan sektor yang sedang
   // ditelusuri, bukan mengembalikannya ke semua.
@@ -351,7 +354,7 @@ export default function AdminApp() {
         setSession(s);
         setError(null);
         setBooting(false);
-        const allowed = NAV.filter((n) => s.capabilities.includes(n.cap));
+        const allowed = NAV.filter((n) => (n.id!=="growth"||s.growthEnabled)&&s.capabilities.includes(n.cap));
         if (allowed.length && !allowed.some((n) => n.id === page))
           setPage(allowed[0].id);
       },
@@ -386,7 +389,7 @@ export default function AdminApp() {
           onLoginSuccess={(s) => {
             setSession(s);
             setError(null);
-            const allowed = NAV.filter((n) => s.capabilities.includes(n.cap));
+            const allowed = NAV.filter((n) => (n.id!=="growth"||s.growthEnabled)&&s.capabilities.includes(n.cap));
             if (allowed.length && !allowed.some((n) => n.id === page))
               setPage(allowed[0].id);
           }}
@@ -400,7 +403,7 @@ export default function AdminApp() {
   if (['/admin/blog-connect','/admin/blog-connections'].includes(window.location.pathname))
     return <Suspense fallback={<Loading />}><BlogConnections consent={window.location.pathname==='/admin/blog-connect'} /></Suspense>;
 
-  const menu = NAV.filter((n) => session.capabilities.includes(n.cap));
+  const menu = NAV.filter((n) => (n.id!=="growth"||session.growthEnabled)&&session.capabilities.includes(n.cap));
   const currentNavItem = NAV.find((n) => n.id === page);
   const hasAccess = currentNavItem ? session.capabilities.includes(currentNavItem.cap) : true;
 
@@ -521,6 +524,7 @@ export default function AdminApp() {
             />
           ) : (
             <Suspense fallback={<Loading/>}>
+              {page === "growth" && <GrowthEngine superadmin={session.user.role==="ROLE_SUPERADMIN"} onContent={()=>setPage("blog")} />}
               {page === "overview" && <Overview onOpenSector={openSector} />}
               {page === "merchants" && (
                 <Merchants sector={sector} onSector={setSector} />

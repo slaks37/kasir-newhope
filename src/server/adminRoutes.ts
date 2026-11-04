@@ -33,6 +33,8 @@ import {registerClientSupportRoutes,type ClientSupportProvider} from './clientSu
 import { registerSubscriptionAdminRoutes } from './subscriptionAdminRoutes';
 import { registerAdminIntegrationRoutes } from './adminIntegrations';
 import * as repo from './repo';
+import {registerGrowthRoutes} from './growth/routes';
+import {growthEnabled} from './growth/db';
 
 interface InternalIdentity {
   id: string;
@@ -85,7 +87,7 @@ async function recordAccess(db: Db, who: InternalIdentity, action: string, resou
     [who.id,who.role,merchantId,action,resource,justification,ip,req.auditRequestId,String(req.headers['user-agent'] || '').slice(0,512)]);
 }
 
-export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider, blogMediaProvider?: BlogMediaProvider): void {
+export function registerAdminRoutes(app: express.Express, getDb: () => Promise<Db>, authenticate = authenticateBearer, supportProvider?:ClientSupportProvider, blogMediaProvider?: BlogMediaProvider, growthProvider?:()=>Promise<Db>): void {
   registerBlogRoutes(app, getDb);
   app.use('/api/admin',(req:AdminRequest,res,next)=>{
     const forwarded=String(req.headers['x-request-id'] || '');
@@ -201,7 +203,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
 
   // Identitas dan menu hanya tersedia setelah token dan membership diverifikasi.
   app.get('/api/admin/me',guard('VIEW_MERCHANT_HEALTH',true),(req:AdminRequest,res)=>{
-    res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO',mfaRequired:req.mfaRequired});
+    res.json({ok:true,user:req.internal,capabilities:internalCapabilities(req.internal!.role),environment:'PROVIDER_BO',growthEnabled:growthEnabled(),mfaRequired:req.mfaRequired});
   });
   app.get('/api/admin/identities',guard('VIEW_ACCESS_AUDIT'),wrap(async(_req,res,db)=>{
     const {rows}=await db.query('SELECT email,full_name,role FROM internal.internal_users WHERE is_active ORDER BY role');
@@ -255,6 +257,7 @@ export function registerAdminRoutes(app: express.Express, getDb: () => Promise<D
   registerClientSupportRoutes(app,getDb,guard,supportProvider);
   registerPrivacySupport(app,getDb,guard);
   registerAdminIntegrationRoutes(app,getDb,guard);
+  registerGrowthRoutes(app,getDb,guard,growthProvider);
   registerBlogMediaRoutes(app, guard, blogMediaProvider);
   app.get('/api/admin/staff-commissions',guard('VIEW_TRANSACTION_LOG'),wrap(async(req,res,db)=>{
     const f=repo.cleanFilter(req.query);

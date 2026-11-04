@@ -1,9 +1,13 @@
+import {growthBusinessConnection} from './growth/businessConnection';
 import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerSyncRoutes } from '../../services/pos/sync';
 import { createServerlessBoundary } from './serverlessBoundary';
 
 const allowedMethods: Record<string, readonly string[]> = {
+  '/api/v1/sync/growth/session':['POST'],
+  '/api/v1/sync/growth/claim':['POST'],
+  '/api/v1/sync/growth/withdraw':['POST'],
   '/api/v1/privacy/requests':['GET','POST'],
   '/api/v1/privacy/notices':['POST'],
   '/api/v1/sync/business': ['GET','POST'],
@@ -32,7 +36,7 @@ const allowedMethods: Record<string, readonly string[]> = {
 /** POS-only runtime. No admin, billing, webhook or anonymous routes mounted. */
 export function createSyncHandler(
   authenticate=authenticateBearer,
-  connect=()=>connectDb({schema:'pos',max:2}),
+  connect=()=>connectDb({schema:'pos',max:2,connectionString:growthBusinessConnection()}),
 ) {
   return createServerlessBoundary({
     name:'sync',routes:allowedMethods,bodyLimit:'10mb',register:registerSyncRoutes,
