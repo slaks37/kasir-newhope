@@ -1,6 +1,7 @@
 import { useServerReport,calendarDate } from '../../lib/reports/client';
 import React, { useState, useMemo } from 'react';
 import { FirstSaleGuide } from './FirstSaleGuide';
+import {useOnline} from '../../lib/workspace/useOnline';
 import { BusinessBrief } from '../ai/BusinessBrief';
 import { usePOSFields } from '../../context/POSDomains';
 import { formatRupiah } from '../../utils/formatters';
@@ -59,6 +60,7 @@ interface OverviewPageProps {
 }
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
+  const online=useOnline();
   const {
     setActiveTab,
     products,
@@ -133,8 +135,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onBackToHome }) => {
   const activeCashierName = currentUser?.name || shift.cashierName || 'Kasir';
 
   if(!financialMetrics)return <div className="p-8 space-y-4" role={report.error?'alert':'status'}>
-    <h1 className="text-2xl font-black">Ringkasan Usaha</h1><p>{report.error||'Memuat data cloud…'}</p>
-    <button onClick={report.retry} className="rounded-xl bg-amber-400 p-3 font-bold">Muat ulang</button>
+    <h1 className="text-2xl font-black">Ringkasan Usaha</h1><p>{!online?'Ringkasan cloud memerlukan jaringan. Data perangkat dan antrean tetap tersimpan; sambungkan kembali untuk memuat angka terverifikasi.':report.error||'Memuat data cloud…'}</p>
+    <button disabled={!online} onClick={report.retry} className="rounded-xl bg-amber-400 p-3 font-bold disabled:opacity-50">Muat ulang</button>
   </div>;
   return (
     <div className="nh-overview flex-1 min-w-0 overflow-y-auto bg-slate-50/70 p-4 lg:p-8 space-y-6 animate-fade-in">

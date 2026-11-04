@@ -1,19 +1,447 @@
-// services/shared/auth.ts
-var LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
-function firstHeader(value) {
-  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// services/shared/betterAuthConfig.ts
+function authProvider(env = process.env) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") {
+    if (env.AUTH_PROVIDER && env.AUTH_PROVIDER !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+    return "neon";
+  }
+  const value = env.AUTH_PROVIDER || "supabase";
+  if (value !== "supabase" && value !== "neon") throw Error("AUTH_PROVIDER_UNSUPPORTED");
+  return value;
 }
+function getAuthConfig(env = process.env) {
+  const production = env.VERCEL_ENV === "production" || env.NODE_ENV === "production" && env.VERCEL_ENV !== "preview" && env.APP_ENV !== "staging";
+  if (production || env.NEWHOPE_NEON_AUTH_STAGING !== "1") throw Error("NEON_AUTH_PRODUCTION_CUTOVER_DISABLED");
+  const base = new URL(env.NEWHOPE_AUTH_URL || "");
+  if (base.username || base.password || base.pathname !== "/" || base.search || base.hash || base.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(base.hostname))) throw Error("AUTH_HTTPS_ORIGIN_REQUIRED");
+  const databaseUrl = env.BETTER_AUTH_DATABASE_URL || "", db = new URL(databaseUrl), app = new URL(env.DATABASE_URL || databaseUrl);
+  const host = db.hostname.replace("-pooler", ""), expected = env.NEWHOPE_AUTH_NEON_HOST;
+  const testLocal = env.NODE_ENV === "test" && local(db.hostname);
+  if (!["postgres:", "postgresql:"].includes(db.protocol) || db.hash || db.port && db.port !== "5432" && !testLocal || [...db.searchParams.keys()].some((k) => !["sslmode", "channel_binding", "application_name"].includes(k))) throw Error("AUTH_DATABASE_TARGET_REJECTED");
+  if (!testLocal && (!expected || host !== expected || !/^br-/.test(env.NEWHOPE_AUTH_NEON_BRANCH_ID || "") || !host.endsWith(".neon.tech"))) throw Error("AUTH_STAGING_BRANCH_REQUIRED");
+  if (app.hostname.replace("-pooler", "") !== host || app.pathname !== db.pathname) throw Error("AUTH_APPLICATION_BRANCH_MISMATCH");
+  if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 48) throw Error("AUTH_SECRET_REQUIRED");
+  const allowedOrigins = [.../* @__PURE__ */ new Set([base.origin, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").filter(Boolean)])];
+  for (const origin of allowedOrigins) {
+    const u = new URL(origin);
+    if (u.origin !== origin || u.protocol !== "https:" && !(env.NODE_ENV !== "production" && local(u.hostname))) throw Error("AUTH_ORIGIN_REJECTED");
+  }
+  const nativeOrigins = (env.NEW_HOPE_NATIVE_ORIGINS || "").split(",").filter(Boolean);
+  if (nativeOrigins.some((o) => !["capacitor://localhost", "https://localhost"].includes(o))) throw Error("AUTH_NATIVE_ORIGIN_REJECTED");
+  const google = env.NEWHOPE_GOOGLE_CLIENT_ID && env.NEWHOPE_GOOGLE_CLIENT_SECRET ? { clientId: env.NEWHOPE_GOOGLE_CLIENT_ID, clientSecret: env.NEWHOPE_GOOGLE_CLIENT_SECRET } : void 0;
+  return { databaseUrl, baseUrl: base.origin, secret: env.BETTER_AUTH_SECRET, allowedOrigins, nativeOrigins, google };
+}
+function authDatabaseOptions(value) {
+  const u = new URL(value);
+  u.searchParams.delete("sslmode");
+  u.searchParams.delete("channel_binding");
+  return { connectionString: u.href, ssl: local(u.hostname) ? false : { rejectUnauthorized: true } };
+}
+var local;
+var init_betterAuthConfig = __esm({
+  "services/shared/betterAuthConfig.ts"() {
+    "use strict";
+    local = (host) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  }
+});
+
+// services/shared/poolConfig.ts
+function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
+  if (vercel !== "1") return connectionString;
+  try {
+    const url = new URL(connectionString);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
+    url.port = "6543";
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+function databasePoolLimits(max, vercel = process.env.VERCEL) {
+  return {
+    // Each warm function owns a pool; keep the per-instance budget small.
+    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
+    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
+    connectionTimeoutMillis: 1e4
+  };
+}
+function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+function verifiedNeonConnectionString(value) {
+  try {
+    const url = new URL(value);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname.endsWith(".neon.tech")) return value;
+    url.searchParams.set("sslmode", "verify-full");
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+var init_poolConfig = __esm({
+  "services/shared/poolConfig.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/authReturnUrl.ts
+function authReturnUrl(kind, value, baseUrl, allowedOrigins = [baseUrl]) {
+  const path = kind === "RESET" ? "/reset-password" : "/login";
+  if (value === void 0 || value === null || value === "") return baseUrl + path;
+  if (typeof value !== "string") throw Error("AUTH_CALLBACK_REJECTED");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw Error("AUTH_CALLBACK_REJECTED");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== path || !allowedOrigins.includes(url.origin) || url.href !== url.origin + path) throw Error("AUTH_CALLBACK_REJECTED");
+  return url.href;
+}
+var init_authReturnUrl = __esm({
+  "services/shared/authReturnUrl.ts"() {
+    "use strict";
+  }
+});
+
+// services/shared/betterAuthEmail.ts
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+function authEmailPayload(mail, env = process.env) {
+  const origin = new URL(mail.baseUrl), link = new URL(mail.url);
+  if (origin.origin !== mail.baseUrl || link.origin !== mail.baseUrl || (mail.kind === "STAFF_INVITE" ? link.pathname !== "/staff-invite" || link.search !== "" || !/^#token=[\w-]{43}$/.test(link.hash) : mail.kind === "RESET" ? !/^\/api\/auth\/reset-password\/[^/]+$/.test(link.pathname) : link.pathname !== "/api/auth/verify-email")) throw Error("AUTH_EMAIL_URL_REJECTED");
+  if (link.protocol !== "https:") throw Error("AUTH_EMAIL_HTTPS_REQUIRED");
+  if (mail.kind !== "STAFF_INVITE") {
+    const callbacks = link.searchParams.getAll("callbackURL");
+    if (callbacks.length !== 1) throw Error("AUTH_CALLBACK_REJECTED");
+    authReturnUrl(mail.kind, callbacks[0], mail.baseUrl, [mail.baseUrl, ...(env.NEWHOPE_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean)]);
+  }
+  if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(mail.email)) throw Error("AUTH_EMAIL_RECIPIENT_REJECTED");
+  if (env.AUTH_EMAIL_ENABLED !== "1" || !env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM || !env.AUTH_EMAIL_VERIFIED_DOMAIN)
+    throw Error("AUTH_EMAIL_PROVIDER_NOT_CONFIGURED");
+  const sender = env.AUTH_EMAIL_FROM.match(/^(?:[^<>\r\n]+<)?([^<>\s@,;]+@[^<>\s@,;]+)(?:>)?$/)?.[1];
+  if (!sender || sender.split("@")[1].toLowerCase() !== env.AUTH_EMAIL_VERIFIED_DOMAIN.toLowerCase()) throw Error("AUTH_EMAIL_SENDER_REJECTED");
+  if (env.VERCEL_ENV === "preview" || env.APP_ENV === "staging") {
+    const allowed = (env.AUTH_EMAIL_ALLOWED_RECIPIENTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(mail.email.toLowerCase())) throw Error("AUTH_EMAIL_STAGING_RECIPIENT_NOT_APPROVED");
+  }
+  const text = mail.kind === "STAFF_INVITE" ? "Undangan akses staf New Hope" : mail.kind === "RESET" ? "Atur password New Hope Anda" : "Verifikasi email New Hope Anda";
+  const duration = mail.kind === "STAFF_INVITE" ? "24 jam" : "15 menit";
+  const safeUrl = mail.url.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const key = createHash("sha256").update(mail.kind + ":" + mail.email + ":" + mail.url).digest("hex");
+  return { payload: {
+    from: env.AUTH_EMAIL_FROM,
+    to: mail.email,
+    replyTo: "stefen@newsystem.space",
+    subject: text,
+    text: text + ". Buka tautan ini (berlaku " + duration + "): " + mail.url + "\nJika Anda tidak meminta ini, abaikan email dan hubungi dukungan.",
+    html: '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>' + text + "</title></head><body><h1>" + text + "</h1><p>Tautan berlaku " + duration + '.</p><p><a href="' + safeUrl + '">' + text + "</a></p><p>Jika Anda tidak meminta ini, abaikan email dan hubungi stefen@newsystem.space.</p></body></html>"
+  }, idempotencyKey: "newhope-auth-" + key };
+}
+async function sendBetterAuthEmail(mail) {
+  const { payload, idempotencyKey } = authEmailPayload(mail);
+  const response = await new Resend(process.env.RESEND_API_KEY).emails.send(payload, { idempotencyKey });
+  if (response.error || !response.data?.id) throw Error("AUTH_EMAIL_DELIVERY_FAILED");
+}
+var init_betterAuthEmail = __esm({
+  "services/shared/betterAuthEmail.ts"() {
+    "use strict";
+    init_authReturnUrl();
+  }
+});
+
+// services/shared/schemaFeatures.ts
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+var FEATURES, ABSENT_RECHECK_MS, known;
+var init_schemaFeatures = __esm({
+  "services/shared/schemaFeatures.ts"() {
+    "use strict";
+    FEATURES = {
+      staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+      staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
+      cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+      moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+      merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+      moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+      /** migration 0054 / 20261004090200 */
+      syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+      /** migration 0055 / 20261004090300 */
+      sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+    };
+    ABSENT_RECHECK_MS = 6e4;
+    known = /* @__PURE__ */ new Map();
+  }
+});
+
+// services/shared/betterAuth.ts
+import { betterAuth } from "better-auth";
+import { bearer, twoFactor } from "better-auth/plugins";
+import { createAuthMiddleware, APIError } from "better-auth/api";
+import { PostgresDialect } from "kysely";
+import pg from "pg";
+import { randomUUID } from "node:crypto";
+function createBetterAuthRuntime(config = getAuthConfig(), sendEmail = sendBetterAuthEmail) {
+  const pool = new pg.Pool({ ...authDatabaseOptions(config.databaseUrl), ...databasePoolLimits(2) });
+  const auth = betterAuth({
+    appName: "New Hope POS",
+    baseURL: config.baseUrl,
+    basePath: "/api/auth",
+    secret: config.secret,
+    database: { dialect: new PostgresDialect({ pool }), type: "postgres", schemaName: "newhope_auth" },
+    trustedOrigins: config.allowedOrigins || [config.baseUrl],
+    telemetry: { enabled: false },
+    logger: { disabled: true },
+    advanced: { database: { generateId: () => randomUUID() }, useSecureCookies: config.baseUrl.startsWith("https://") },
+    user: { additionalFields: { isActive: { type: "boolean", defaultValue: true, required: true, input: false }, onboarding: { type: "json", required: false, input: true } } },
+    socialProviders: config.google ? { google: config.google } : {},
+    account: { accountLinking: { enabled: false } },
+    databaseHooks: { user: { create: { after: async (user) => {
+      await pool.query("INSERT INTO newhope_auth.registration_intents(user_id) VALUES($1) ON CONFLICT DO NOTHING", [user.id]);
+    } } } },
+    session: { expiresIn: 3600, updateAge: 900, cookieCache: { enabled: false }, freshAge: 300 },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      resetPasswordTokenExpiresIn: 900,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => sendEmail({ kind: "RESET", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      expiresIn: 900,
+      sendVerificationEmail: async ({ user, url }) => sendEmail({ kind: "VERIFY", email: user.email, url, baseUrl: config.baseUrl })
+    },
+    rateLimit: {
+      enabled: true,
+      storage: "database",
+      window: 60,
+      max: 100,
+      customRules: {
+        "/sign-in/email": { window: 60, max: 5 },
+        "/two-factor/verify-totp": { window: 60, max: 5 },
+        "/two-factor/verify-backup-code": { window: 60, max: 5 },
+        "/request-password-reset": { window: 3600, max: 3 },
+        "/send-verification-email": { window: 3600, max: 3 }
+      }
+    },
+    plugins: [bearer({ requireSignature: true }), twoFactor({
+      issuer: "New Hope POS",
+      skipVerificationOnEnable: false,
+      allowPasswordless: true,
+      accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 }
+    })],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (["/request-password-reset", "/sign-up/email", "/send-verification-email"].includes(ctx.path) && ctx.body) {
+          const reset = ctx.path === "/request-password-reset", field = reset ? "redirectTo" : "callbackURL";
+          try {
+            ctx.body[field] = authReturnUrl(reset ? "RESET" : "VERIFY", ctx.body[field], config.baseUrl, config.allowedOrigins);
+          } catch {
+            throw new APIError("BAD_REQUEST", { message: "Tautan kembali autentikasi tidak valid.", code: "AUTH_CALLBACK_REJECTED" });
+          }
+        }
+        if (ctx.path === "/sign-up/email" && ctx.body) {
+          const raw = ctx.body.onboarding || {};
+          ctx.body.onboarding = Object.fromEntries(["full_name", "store_name", "business_sector", "first_outlet_name", "second_outlet_name"].filter((k) => typeof raw[k] === "string" && raw[k].length <= 100).map((k) => [k, raw[k]]));
+          if (raw.account_purpose === "STAFF") {
+            if (!await hasSchemaFeature(pool, "staffIdentityPurpose")) throw new APIError("SERVICE_UNAVAILABLE", { code: "STAFF_REGISTRATION_NOT_READY", message: "Pendaftaran staf belum tersedia." });
+            ctx.body.onboarding.account_purpose = "STAFF";
+          }
+        }
+        if (ctx.path === "/sign-in/social" && ctx.body) {
+          let target;
+          try {
+            target = new URL(ctx.body.callbackURL || config.baseUrl + "/overview");
+          } catch {
+            throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          }
+          if (target.origin !== config.baseUrl || target.hash || target.username || target.password || !(["/overview", "/login"].includes(target.pathname) && !target.search || target.pathname === "/api/auth/native/complete" && target.searchParams.size === 1 && /^[-_A-Za-z0-9]{43}$/.test(target.searchParams.get("transaction") || ""))) throw new APIError("BAD_REQUEST", { code: "AUTH_CALLBACK_REJECTED" });
+          ctx.body.callbackURL = target.href;
+        }
+        if (ctx.path.startsWith("/two-factor/") && ctx.body) ctx.body.trustDevice = false;
+        if (["/two-factor/enable", "/two-factor/disable", "/two-factor/generate-backup-codes", "/two-factor/get-totp-uri", "/change-password", "/revoke-session", "/revoke-sessions", "/revoke-other-sessions", "/list-sessions"].includes(ctx.path)) {
+          const current = await auth.api.getSession({ headers: ctx.headers || new Headers(), query: { disableCookieCache: true } });
+          if (ctx.path === "/two-factor/enable" && current?.user && !current.user.twoFactorEnabled && Date.now() - new Date(current.session.createdAt).getTime() > 3e5) throw new APIError("FORBIDDEN", { message: "Masuk kembali sebelum menyiapkan autentikator.", code: "REAUTH_REQUIRED" });
+          if (current?.user.twoFactorEnabled) {
+            const fresh = (await pool.query(`SELECT 1 FROM newhope_auth.mfa_session_proofs
+              WHERE session_id=$1 AND user_id=$2 AND method='totp' AND verified_at>now()-interval '10 minutes' AND verified_at<=now()+interval '30 seconds'`, [current.session.id, current.user.id])).rowCount;
+            if (!fresh) throw new APIError("FORBIDDEN", { message: "Verifikasi ulang autentikator sebelum mengubah MFA.", code: "REAUTH_REQUIRED" });
+          }
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (!["/two-factor/verify-totp", "/two-factor/verify-backup-code"].includes(ctx.path) || ctx.context.returned instanceof APIError) return;
+        const result = ctx.context.returned;
+        if (!result?.token || !result.user?.id) return;
+        const fresh = ctx.context.newSession;
+        const sessionToken = fresh?.session.token || result.token;
+        const userId = fresh?.user.id || result.user.id;
+        await pool.query(`INSERT INTO newhope_auth.mfa_session_proofs(session_id,user_id,method,verified_at)
+          SELECT id,"userId",$3,now() FROM newhope_auth.session WHERE token=$1 AND "userId"=$2 AND "expiresAt">now()
+          ON CONFLICT(session_id) DO UPDATE SET method=EXCLUDED.method,verified_at=EXCLUDED.verified_at`, [sessionToken, userId, ctx.path === "/two-factor/verify-totp" ? "totp" : "recovery"]);
+      })
+    }
+  });
+  const ready = process.env.NODE_ENV === "test" ? Promise.resolve() : pool.query(`SELECT r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,pg_has_role(current_user,'svc_auth','MEMBER') AS auth_role,EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pos' AND c.relname='transactions' AND has_table_privilege(current_user,c.oid,'SELECT')) AS ledger_access,has_table_privilege(current_user,'internal.auth_identity_bindings','INSERT') AS mapping_write FROM pg_roles r WHERE r.rolname=current_user`).then((result) => {
+    const role = result.rows[0];
+    if (!role || role.rolsuper || role.rolbypassrls || role.rolcreaterole || role.rolcreatedb || !role.auth_role || role.ledger_access || role.mapping_write) throw Error("AUTH_DATABASE_ROLE_REJECTED");
+  });
+  void ready.catch(() => {
+  });
+  return { auth, pool, ready, close: () => pool.end() };
+}
+function getBetterAuthRuntime() {
+  return runtime ??= createBetterAuthRuntime();
+}
+var runtime;
+var init_betterAuth = __esm({
+  "services/shared/betterAuth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    init_poolConfig();
+    init_betterAuthEmail();
+    init_authReturnUrl();
+    init_schemaFeatures();
+  }
+});
+
+// services/shared/authIdentity.ts
+function issuer(value) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    return fail("AUTH_IDENTITY_ISSUER_INVALID");
+  }
+  if (u.protocol !== "https:" || u.origin !== value || u.username || u.password) fail("AUTH_IDENTITY_ISSUER_INVALID");
+  return value;
+}
+function subject(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 255 || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value)) fail("AUTH_IDENTITY_SUBJECT_INVALID");
+  return value;
+}
+function verified(input) {
+  if (input.provider !== "better-auth" || input.isEmailVerified !== true || typeof input.email !== "string" || input.email.length > 320 || !/^\S+@\S+\.\S+$/.test(input.email)) return false;
+  try {
+    issuer(input.issuer);
+    subject(input.subject);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function resolveAuthIdentity(db, input) {
+  if (!verified(input)) return null;
+  const rows = (await db.query(`SELECT b.canonical_user_id FROM internal.auth_identity_bindings b
+  JOIN internal.users u ON u.id=b.canonical_user_id AND u.is_active
+  WHERE b.provider=$1 AND b.issuer=$2 AND b.provider_subject=$3 AND b.is_active`, [input.provider, input.issuer, input.subject])).rows;
+  return rows.length === 1 ? rows[0].canonical_user_id : null;
+}
+var fail;
+var init_authIdentity = __esm({
+  "services/shared/authIdentity.ts"() {
+    "use strict";
+    fail = (code) => {
+      throw Error(code);
+    };
+  }
+});
+
+// services/shared/betterAuthPrincipal.ts
+var betterAuthPrincipal_exports = {};
+__export(betterAuthPrincipal_exports, {
+  NeonIdentityError: () => NeonIdentityError,
+  authenticateNeonRequest: () => authenticateNeonRequest,
+  neonSession: () => neonSession,
+  resolveNeonSession: () => resolveNeonSession
+});
+async function neonSession(headers, runtime2 = getBetterAuthRuntime(), capture) {
+  await runtime2.ready;
+  const checked = new Headers(headers);
+  if (checked.has("authorization")) checked.delete("cookie");
+  const result = await runtime2.auth.api.getSession({ headers: checked, query: { disableCookieCache: true }, returnHeaders: true });
+  capture?.(result.headers);
+  return result.response;
+}
+async function resolveNeonSession(headers, options = {}, runtime2 = getBetterAuthRuntime()) {
+  let refreshHeaders = new Headers();
+  const config = getAuthConfig(), session = await neonSession(headers, runtime2, (h) => {
+    refreshHeaders = h;
+  });
+  if (!session?.user.emailVerified || !session.user.isActive) return null;
+  const db = runtime2.pool;
+  let subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  if (!subject2 && options.enroll) {
+    await db.query("SELECT newhope_auth.enroll_new_identity($1,$2)", [session.user.id, config.baseUrl]);
+    subject2 = await resolveAuthIdentity(db, { provider: "better-auth", issuer: config.baseUrl, subject: session.user.id, email: session.user.email, isEmailVerified: true });
+  }
+  if (!subject2) throw new NeonIdentityError("IDENTITY_MAPPING_REQUIRED");
+  const proof = (await db.query(`SELECT method,verified_at FROM newhope_auth.mfa_session_proofs WHERE session_id=$1 AND user_id=$2 AND method IN ('totp','recovery') AND verified_at<=now()+interval '30 seconds'`, [session.session.id, session.user.id])).rows[0];
+  if (session.user.twoFactorEnabled && !proof && options.requireMfa !== false) throw new NeonIdentityError("MFA_REQUIRED");
+  const principal = { subject: subject2, email: session.user.email, isEmailVerified: true, aal: proof?.method === "totp" ? "aal2" : "aal1", ...proof?.method === "totp" ? { mfaVerifiedAt: new Date(proof.verified_at).getTime() / 1e3 } : {} };
+  return { session, principal, refreshHeaders };
+}
+async function authenticateNeonRequest(req) {
+  const config = getAuthConfig(), headers = new Headers();
+  for (const name of ["authorization", "cookie"]) if (typeof req.headers[name] === "string") headers.set(name, req.headers[name]);
+  if (!headers.has("authorization") && !headers.has("cookie")) return null;
+  if (!headers.has("authorization") && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET") && !config.allowedOrigins.includes(String(req.headers.origin || ""))) return null;
+  try {
+    return (await resolveNeonSession(headers))?.principal || null;
+  } catch (error) {
+    if (error instanceof NeonIdentityError) return null;
+    throw error;
+  }
+}
+var NeonIdentityError;
+var init_betterAuthPrincipal = __esm({
+  "services/shared/betterAuthPrincipal.ts"() {
+    "use strict";
+    init_betterAuth();
+    init_betterAuthConfig();
+    init_authIdentity();
+    NeonIdentityError = class extends Error {
+      constructor(code) {
+        super(code);
+        this.code = code;
+      }
+    };
+  }
+});
+
+// services/shared/legacyBearer.ts
+var legacyBearer_exports = {};
+__export(legacyBearer_exports, {
+  authenticateLegacyBearer: () => authenticateLegacyBearer
+});
 function supabaseConfig() {
   const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const apiKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
   return { url, apiKey };
 }
-var AuthUnavailableError = class extends Error {
-  constructor() {
-    super("AUTH_UNAVAILABLE");
-  }
-};
-async function authenticateBearer(req) {
+async function authenticateLegacyBearer(req) {
   const authorization = firstHeader(req.headers.authorization);
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) {
@@ -52,11 +480,41 @@ async function authenticateBearer(req) {
     return null;
   }
 }
+var LOCAL_BYPASS, firstHeader;
+var init_legacyBearer = __esm({
+  "services/shared/legacyBearer.ts"() {
+    "use strict";
+    init_auth();
+    LOCAL_BYPASS = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    firstHeader = (value) => Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+});
+
+// services/shared/auth.ts
+function firstHeader2(value) {
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+async function authenticateBearer(req) {
+  if (authProvider() === "neon") {
+    try {
+      return await (await Promise.resolve().then(() => (init_betterAuthPrincipal(), betterAuthPrincipal_exports))).authenticateNeonRequest(req);
+    } catch {
+      throw new AuthUnavailableError();
+    }
+  }
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") throw new AuthUnavailableError();
+  else return (await Promise.resolve().then(() => (init_legacyBearer(), legacyBearer_exports))).authenticateLegacyBearer(req);
+}
 function trustedPrincipal(req) {
-  const subject = firstHeader(req.headers["x-auth-sub"]);
-  const isEmailVerified = firstHeader(req.headers["x-auth-email-verified"]) === "true";
-  if (subject) return { subject, email: firstHeader(req.headers["x-auth-email"]) || void 0, isEmailVerified };
-  return LOCAL_BYPASS() ? { subject: "local-development", isEmailVerified: true } : null;
+  const subject2 = firstHeader2(req.headers["x-auth-sub"]);
+  const isEmailVerified = firstHeader2(req.headers["x-auth-email-verified"]) === "true";
+  if (subject2) {
+    const aal = firstHeader2(req.headers["x-auth-aal"]) === "aal2" ? "aal2" : "aal1";
+    const rawTime = firstHeader2(req.headers["x-auth-mfa-verified-at"]);
+    const timestamp = rawTime ? Number(rawTime) : NaN;
+    return { subject: subject2, email: firstHeader2(req.headers["x-auth-email"]) || void 0, isEmailVerified, aal, ...Number.isFinite(timestamp) ? { mfaVerifiedAt: timestamp } : {} };
+  }
+  return LOCAL_BYPASS2() ? { subject: "local-development", isEmailVerified: true } : null;
 }
 async function tenantForPrincipal(db, principal) {
   const { rows } = await db.query(
@@ -65,7 +523,7 @@ async function tenantForPrincipal(db, principal) {
     [principal.subject]
   );
   if (rows[0]?.id) return rows[0].id;
-  if (principal.subject === "local-development" && LOCAL_BYPASS()) {
+  if (principal.subject === "local-development" && LOCAL_BYPASS2()) {
     const res = await db.query(
       `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
        VALUES (uuidv7(), 'Toko Lokal', 'local-development', 'local-development', true)
@@ -77,35 +535,27 @@ async function tenantForPrincipal(db, principal) {
   }
   return null;
 }
+var LOCAL_BYPASS2, AuthUnavailableError;
+var init_auth = __esm({
+  "services/shared/auth.ts"() {
+    "use strict";
+    init_betterAuthConfig();
+    LOCAL_BYPASS2 = () => process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
+    AuthUnavailableError = class extends Error {
+      constructor() {
+        super("AUTH_UNAVAILABLE");
+      }
+    };
+  }
+});
+
+// src/server/billingHandler.ts
+init_auth();
 
 // services/shared/db.ts
+init_poolConfig();
 import fs from "node:fs";
-import pg from "pg";
-
-// services/shared/poolConfig.ts
-function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
-  if (vercel !== "1") return connectionString;
-  try {
-    const url = new URL(connectionString);
-    if (!["postgres:", "postgresql:"].includes(url.protocol) || !/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/i.test(url.hostname) || url.port !== "5432") return connectionString;
-    url.port = "6543";
-    return url.toString();
-  } catch {
-    return connectionString;
-  }
-}
-function databasePoolLimits(max, vercel = process.env.VERCEL) {
-  return {
-    // Each warm function owns a pool; keep the per-instance budget small.
-    max: vercel === "1" ? Math.min(Math.max(1, max), 2) : max,
-    idleTimeoutMillis: vercel === "1" ? 5e3 : 3e4,
-    connectionTimeoutMillis: 1e4
-  };
-}
-function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
-  const value = Number(raw);
-  return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
-}
+import pg2 from "pg";
 
 // services/shared/databaseStartup.ts
 async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
@@ -124,22 +574,23 @@ async function waitForDatabase(probe, vercel = process.env.VERCEL, sleep = (ms) 
 }
 
 // services/shared/db.ts
-pg.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
-pg.types.setTypeParser(20, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(1700, (v) => v === null ? null : Number(v));
+pg2.types.setTypeParser(20, (v) => v === null ? null : Number(v));
 function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
+  if (new URL(connectionString).hostname.endsWith(".neon.tech")) return { rejectUnauthorized: true };
   if (process.env.PGSSLROOTCERT) {
     return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
-  const connectionString = serverlessConnectionString(
+  const connectionString = verifiedNeonConnectionString(serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
-  );
-  const pool = new pg.Pool({
+  ));
+  const pool = new pg2.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
     // Kecil dengan sengaja. Di pengembangan, keempat service berbagi satu
@@ -191,8 +642,11 @@ async function connectDb(opts) {
   return wrap(pool);
 }
 
+// services/billing/routes.ts
+init_schemaFeatures();
+
 // services/billing/paymentReadiness.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 
 // api/_doku.ts
 import crypto from "node:crypto";
@@ -472,7 +926,7 @@ function checkoutPilotAllowed(tenantId, env = process.env) {
   return ids.length > 0 && ids.every((x) => UUID.test(x)) && ids.includes(tenantId.toLowerCase());
 }
 function dokuCredentialFingerprint() {
-  return createHash("sha256").update(JSON.stringify([getDokuApiUrl(), getDokuClientId(), getDokuSecretKey()])).digest("hex");
+  return createHash2("sha256").update(JSON.stringify([getDokuApiUrl(), getDokuClientId(), getDokuSecretKey()])).digest("hex");
 }
 async function assertDokuReadiness(db, tenantId) {
   if (process.env.DOKU_PAYMENTS_ENABLED !== "1") throw Error("PAYMENTS_PAUSED");
@@ -523,13 +977,14 @@ function invoicePaymentUrl(i, currentRevision) {
 }
 
 // services/billing/routes.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+init_auth();
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // services/billing/recovery.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // services/billing/engine.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // src/config/freePlanPolicy.ts
 var FREE_PLAN_ID = "plan-free-lifetime";
@@ -757,7 +1212,7 @@ async function ensureSubscription(db, tenantId) {
   await db.query(`INSERT INTO billing.subscriptions
     (id,tenant_id,plan_id,status,billing_cycle,current_period_start,current_period_end,grace_period_end,trial_started_at,trial_ends_at,has_used_trial)
     SELECT $1,id,$3,'TRIAL','MONTHLY',created_at,created_at+interval '45 days',created_at+interval '59 days',created_at,created_at+interval '45 days',true
-    FROM internal.tenants WHERE id=$2 ON CONFLICT(tenant_id) DO NOTHING`, [randomUUID(), tenantId, TRIAL_PLAN_ID]);
+    FROM internal.tenants WHERE id=$2 ON CONFLICT(tenant_id) DO NOTHING`, [randomUUID2(), tenantId, TRIAL_PLAN_ID]);
   const { rows } = await db.query("SELECT * FROM billing.subscriptions WHERE tenant_id=$1", [tenantId]);
   if (!rows[0]) throw new BillingError(404, "TENANT_NOT_FOUND");
   return rows[0];
@@ -1012,7 +1467,7 @@ async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatu
     const anchor = Math.max(new Date(fresh.created_at).getTime(), last ? new Date(last).getTime() : 0);
     if (last && (options.observeOnly || !Number.isFinite(anchor) || now - anchor < INQUIRY_COOLDOWN_MS)) return false;
     await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,outcome,reason,payload,created_at)
-   VALUES($1,$2,'UNVERIFIED','STATUS_INQUIRY_ATTEMPT','{"source":"INQUIRY_PROBE"}'::jsonb,$3)`, ["probe-" + randomUUID2(), fresh.invoice_number, new Date(now).toISOString()]);
+   VALUES($1,$2,'UNVERIFIED','STATUS_INQUIRY_ATTEMPT','{"source":"INQUIRY_PROBE"}'::jsonb,$3)`, ["probe-" + randomUUID3(), fresh.invoice_number, new Date(now).toISOString()]);
     return Boolean(last);
   });
   if (!claimed) return { ok: true, outcome: "DEFERRED" };
@@ -1042,16 +1497,17 @@ async function reconcileInvoiceByInquiry(db, inv, provider = checkDokuOrderStatu
 }
 
 // services/pos/businessScope.ts
+init_auth();
 var BusinessScopeError = class extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
   }
 };
-async function resolveBusinessScope(db, subject, sector, businessId) {
+async function resolveBusinessScope(db, subject2, sector, businessId) {
   if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
     throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject });
+  const tenantId = await tenantForPrincipal(db, { subject: subject2 });
   if (!tenantId) {
     if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
     return null;
@@ -1061,10 +1517,10 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
     WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
       AND m.business_sector=$3 AND m.is_active
       AND ($4::text IS NULL OR m.id::text=$4 OR m.external_ref=$4)
-    ORDER BY m.id`, [tenantId, subject, sector, businessId ?? null]);
+    ORDER BY m.id`, [tenantId, subject2, sector, businessId ?? null]);
   const rows = result.rows;
   if (businessId !== void 0 && rows.length !== 1) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
-  const aliases = rows.filter((row) => row.external_ref === `${subject}_${sector}`);
+  const aliases = rows.filter((row) => row.external_ref === `${subject2}_${sector}`);
   const selected = businessId !== void 0 ? rows[0] : aliases.length === 1 ? aliases[0] : rows.length === 1 ? rows[0] : null;
   if (!selected) {
     if (rows.length) throw new BusinessScopeError(409, "BUSINESS_SELECTION_REQUIRED");
@@ -1075,7 +1531,7 @@ async function resolveBusinessScope(db, subject, sector, businessId) {
     merchantId: selected.merchant_id,
     businessName: selected.business_name,
     transportRef: selected.external_ref || selected.merchant_id,
-    legacyAlias: selected.external_ref === `${subject}_${sector}` ? selected.external_ref : null
+    legacyAlias: selected.external_ref === `${subject2}_${sector}` ? selected.external_ref : null
   };
 }
 
@@ -1103,8 +1559,16 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    if (await hasSchemaFeature(db, "staffIdentityPurpose")) {
+      const purpose = await db.query("SELECT internal.is_staff_only_identity($1) AS staff_only", [principal.subject]);
+      if (purpose.rows[0]?.staff_only) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+    }
     let id = await tenantForPrincipal(db, principal);
     if (!id && allowProvision && principal.subject !== "local-development") {
+      if (await hasSchemaFeature(db, "staffAccounts")) {
+        const assigned = await db.query("SELECT internal.has_active_staff_assignment($1) AS assigned", [principal.subject]);
+        if (assigned.rows[0]?.assigned) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+      }
       const name = principal.email ? principal.email.split("@")[0] : "Toko Utama";
       const res = await db.query(
         `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)
@@ -1166,7 +1630,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       }
       if (!scope || scope.tenantId !== tenantId) throw new BillingError(409, "BUSINESS_SETUP_REQUIRED");
       const merchant = { id: scope.merchantId };
-      const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID3();
+      const id = /^[0-9a-f-]{36}$/i.test(b.id || "") ? b.id : randomUUID4();
       const existing = (await c.query("SELECT * FROM internal.outlets WHERE id=$1", [id])).rows[0];
       if (existing && (existing.tenant_id !== tenantId || existing.merchant_id !== merchant.id)) throw new BillingError(403, "OUTLET_NOT_OWNED");
       if (b.isActive !== false) await assertOutletCapacity(c, tenantId, id);
@@ -1213,7 +1677,7 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
     if (quote.amount <= 0) throw new BillingError(409, "ZERO_CHARGE_REQUIRES_SUPPORT");
     const origin = process.env.PUBLIC_APP_URL;
     if (!origin || !/^https:\/\/[^/?#@]+\/?$/.test(origin)) throw new BillingError(503, "PUBLIC_APP_URL_NOT_CONFIGURED");
-    const id = randomUUID3(), invoiceNumber = `NH-${id}`;
+    const id = randomUUID4(), invoiceNumber = `NH-${id}`;
     const result = await db.tx(async (c) => {
       await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
       const current = (await c.query("SELECT revision FROM billing.subscriptions WHERE tenant_id=$1 FOR UPDATE", [tenantId])).rows[0];
@@ -1355,7 +1819,50 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   app.all(DOKU_NOTIFICATION_PATH, (_req, res) => res.set("Allow", "POST").status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" }));
 }
 
+// services/billing/store.ts
+async function pastikanPaket(db, paket) {
+  for (const p of paket) {
+    await db.query(
+      `INSERT INTO billing.plans (id, name, tier_level, billing_cycle, price_idr, product_limit, features)
+       VALUES ($1, $2, $3, 'MONTHLY', $4, $5, $6::jsonb)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name, tier_level = EXCLUDED.tier_level,
+         price_idr = EXCLUDED.price_idr, product_limit = EXCLUDED.product_limit, features = EXCLUDED.features,
+         updated_at = CURRENT_TIMESTAMP`,
+      [p.id, p.name, p.tierLevel, p.priceIdr, p.productLimit, JSON.stringify(p.features)]
+    );
+  }
+}
+
+// services/shared/nativeCors.ts
+function nativeCors(req, res, methods) {
+  const origin = String(req.headers.origin || "");
+  const native = ["capacitor://localhost", "https://localhost"].includes(origin);
+  if (!native) return false;
+  const enabled = (process.env.NEW_HOPE_NATIVE_ORIGINS || "").split(",").map((v) => v.trim()).includes(origin);
+  if (!enabled) {
+    res.status(403).json({ ok: false, error: "NATIVE_ORIGIN_DISABLED" });
+    return true;
+  }
+  const requested = String(req.headers["access-control-request-method"] || req.method).toUpperCase();
+  const requestedHeaders = String(req.headers["access-control-request-headers"] || "").toLowerCase().split(",").map((v) => v.trim()).filter(Boolean);
+  if (!methods.includes(requested) || requestedHeaders.some((h) => !["authorization", "content-type"].includes(h))) {
+    res.status(403).json({ ok: false, error: "NATIVE_CORS_DENIED" });
+    return true;
+  }
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", methods.join(", "));
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return true;
+  }
+  return false;
+}
+
 // src/server/serverlessBoundary.ts
+init_auth();
 import express from "express";
 
 // src/server/vercelUrl.ts
@@ -1406,6 +1913,8 @@ var TRUSTED_IDENTITY_HEADERS = [
   "x-auth-sub",
   "x-auth-email",
   "x-auth-email-verified",
+  "x-auth-aal",
+  "x-auth-mfa-verified-at",
   "x-internal-user",
   "x-env-override",
   "x-newhope-gateway-token"
@@ -1418,6 +1927,8 @@ function applyPrincipal(req, principal) {
   req.headers["x-auth-sub"] = principal.subject;
   if (principal.email) req.headers["x-auth-email"] = principal.email;
   if (principal.isEmailVerified) req.headers["x-auth-email-verified"] = "true";
+  if (principal.aal) req.headers["x-auth-aal"] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers["x-auth-mfa-verified-at"] = String(principal.mfaVerifiedAt);
 }
 var MAX_RAW_BODY = 1048576;
 async function readRawBody(req) {
@@ -1451,12 +1962,13 @@ function setParsedBody(req, raw) {
 function createServerlessBoundary(options, authenticate = authenticateBearer, connect) {
   const publicRoutes = new Set(options.publicRoutes ?? []);
   const rawBodyRoutes = new Set(options.rawBodyRoutes ?? []);
-  let runtime;
+  let runtime2;
   return async (req, res) => {
     normalizeVercelUrl(req);
     res.setHeader("Cache-Control", "no-store");
     const path = String(req.url || "").split("?")[0].replace(/\/+$/, "");
     if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    if ((options.name === "sync" || options.name === "billing" && path.startsWith("/api/v1/subscription/")) && nativeCors(req, res, options.routes[path])) return;
     if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
     if (publicRoutes.has(path)) {
       stripIdentityHeaders(req);
@@ -1486,7 +1998,7 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
       }
     }
     try {
-      runtime ??= connect().then((db) => {
+      runtime2 ??= connect().then((db) => {
         const app = express();
         const parse = express.json({ limit: options.bodyLimit });
         app.use((request, response, next) => request.body !== void 0 ? next() : parse(request, response, next));
@@ -1495,10 +2007,10 @@ function createServerlessBoundary(options, authenticate = authenticateBearer, co
         app.use((error, _request, response, _next) => response.status(error?.type === "entity.too.large" ? 413 : 400).json({ ok: false, error: options.invalidRequestError }));
         return app;
       }).catch((error) => {
-        runtime = void 0;
+        runtime2 = void 0;
         throw error;
       });
-      (await runtime)(req, res);
+      (await runtime2)(req, res);
     } catch (error) {
       const diagnostic = error;
       console.error(`[${options.name}] runtime unavailable`, { name: diagnostic.name, code: diagnostic.code || diagnostic.cause?.code, frames: diagnostic.stack?.split("\n").slice(1, 4) });
@@ -1520,6 +2032,17 @@ var BILLING_ROUTES = {
   [DOKU_NOTIFICATION_PATH]: ["POST"]
 };
 function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: "billing", max: 2 })) {
+  const readyDatabase = async () => {
+    const db = await connect();
+    try {
+      await pastikanPaket(db, SAAS_PLANS);
+      return db;
+    } catch (error) {
+      await db.close().catch(() => {
+      });
+      throw error;
+    }
+  };
   return createServerlessBoundary({
     name: "billing",
     routes: BILLING_ROUTES,
@@ -1529,7 +2052,7 @@ function createBillingHandler(authenticate = authenticateBearer, connect = () =>
     register: (app, db) => registerBillingRoutes(app, db, true),
     unavailableError: "BILLING_UNAVAILABLE",
     invalidRequestError: "INVALID_REQUEST"
-  }, authenticate, connect);
+  }, authenticate, readyDatabase);
 }
 var billingHandler_default = createBillingHandler();
 export {

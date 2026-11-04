@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from '../../services/shared/poolConfig';
+import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs, verifiedNeonConnectionString } from '../../services/shared/poolConfig';
 
 const session = 'postgresql://svc_pos.project:p%40ss%3Aword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require';
 const transaction = serverlessConnectionString(session, '1');
@@ -23,3 +23,14 @@ assert.equal(databasePoolLimits(10,'0').max, 10);
 assert.equal(statementTimeoutMs(undefined),8000);assert.equal(statementTimeoutMs('15000'),15000);
 for(const bad of ['0','999','abc','999999','-5'])assert.equal(statementTimeoutMs(bad),8000,bad);
 console.log('PASS serverless transaction pool: endpoint, credentials, local/provider isolation, bounded connections, bounded statement timeout');
+
+for(const mode of ['require','prefer','verify-ca','disable','verify-full']){
+ const raw='postgresql://app:p%40ss@ep-synthetic-pooler.ap-southeast-1.aws.neon.tech/neondb?channel_binding=require&sslmode='+mode;
+ const before=new URL(raw),after=new URL(verifiedNeonConnectionString(raw));
+ assert.equal(after.searchParams.get('sslmode'),'verify-full');
+ assert.equal(after.searchParams.get('channel_binding'),'require');
+ for(const field of ['hostname','username','password','pathname'] as const)assert.equal(after[field],before[field]);
+}
+assert.equal(verifiedNeonConnectionString(session),session);
+assert.equal(verifiedNeonConnectionString('not-a-url'),'not-a-url');
+console.log('PASS: Neon peer verification is explicit, identity and channel binding preserved, legacy targets unchanged');

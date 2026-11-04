@@ -14,7 +14,7 @@
 
 import fs from 'node:fs';
 import pg from 'pg';
-import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs } from './poolConfig';
+import { databasePoolLimits, serverlessConnectionString, statementTimeoutMs, verifiedNeonConnectionString } from './poolConfig';
 import { waitForDatabase } from './databaseStartup';
 
 // NUMERIC pulang sebagai string agar presisi tidak hilang. Untuk rupiah dan
@@ -59,6 +59,8 @@ function konfigurasiSsl(connectionString: string) {
     url.includes('@127.0.0.1') || url.includes('@localhost') || url.includes('sslmode=disable');
   if (lokal) return undefined;
 
+  if (new URL(connectionString).hostname.endsWith('.neon.tech')) return { rejectUnauthorized: true };
+
   if (process.env.PGSSLROOTCERT) {
     return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8'), rejectUnauthorized: true };
   }
@@ -66,8 +68,8 @@ function konfigurasiSsl(connectionString: string) {
 }
 
 export async function connectDb(opts: DbOptions): Promise<Db> {
-  const connectionString = serverlessConnectionString(
-    opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres');
+  const connectionString = verifiedNeonConnectionString(serverlessConnectionString(
+    opts.connectionString || process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres'));
 
   const pool = new pg.Pool({
     connectionString,

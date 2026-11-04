@@ -4,7 +4,7 @@
  * Membaca API server yang memverifikasi identitas, role, dan audit akses.
  */
 
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import {authRuntime,isAuthConfigured,isNeonAuth,authHeaders,authSessionKey} from '../lib/authRuntime';
 import {coalescedRead} from '../lib/sync/refreshCoordinator';
 import {withRequestDeadline,RequestDeadlineError} from '../lib/requestDeadline';
 
@@ -198,15 +198,17 @@ export const sejak = (iso: unknown): string => {
 
 
 async function request(path:string,params?:Record<string,unknown>,body?:any,method?:string):Promise<any>{
-  if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi Supabase belum dikonfigurasi.');
-  const {data}=await supabase.auth.getSession();
-  if(!data.session?.access_token) throw new ApiError(401,'UNAUTHORIZED','Silakan masuk kembali.');
+  if(!isAuthConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');
+  const {data,error}=await authRuntime.auth.getSession();
+  if(error)throw new ApiError(error.status||503,error.code||'AUTH_UNAVAILABLE',error.message);
+  if(!data.session) throw new ApiError(401,'UNAUTHORIZED','Silakan masuk kembali.');
+  const session=data.session;
   const query=new URLSearchParams();
   for(const [key,value] of Object.entries(params || {})) if(value!==undefined && value!==null && value!=='') query.set(key,String(value));
   const target='/api/admin/'+path+(query.size?'?'+query:'');
   const run=()=>withRequestDeadline(async signal=>{
   const response=await fetch(target,
-    {signal,method:method || (body?'POST':'GET'),headers:{Authorization:'Bearer '+data.session.access_token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    {signal,method:method || (body?'POST':'GET'),credentials:'same-origin',headers:{...authHeaders(session),'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   const contentType=response.headers.get('content-type') || '';
   let result:any=null;
   if(contentType.includes('application/json')) {
@@ -241,7 +243,7 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
       PASSWORD_RESET_PROVIDER_REJECTED:'Layanan email reset belum menerima permintaan. Periksa riwayat support sebelum mencoba lagi.',
       SUPPORT_AUTH_NOT_CONFIGURED:'Layanan Auth untuk bantuan akun belum dikonfigurasi di server.',
       SUPPORT_REDIRECT_NOT_CONFIGURED:'Alamat kembali untuk reset password belum dikonfigurasi dengan aman.',
-      OWNER_AUTH_NOT_LINKED:'Akun SaaS belum terhubung ke identitas owner Supabase yang valid.',
+      OWNER_AUTH_NOT_LINKED:'Akun SaaS belum terhubung ke identitas owner yang valid.',
       OWNER_EMAIL_NOT_VERIFIED:'Email owner belum terverifikasi. Reset tidak dikirim ke alamat lain.',
       CLIENT_SUPPORT_FAILED:'Bantuan akun belum berhasil. Tidak ada transaksi yang diubah; periksa riwayat sebelum mencoba lagi.',
     };
@@ -259,23 +261,23 @@ async function request(path:string,params?:Record<string,unknown>,body?:any,meth
   // session isolation also prevents an MFA refresh from joining an old read.
   // Nothing persists; writes/justified private reads are never coalesced.
   return !body&&(!method||method==='GET')&&!params?.justification
-    ?coalescedRead('admin:'+data.session.access_token+':'+target,run):run();
+    ?coalescedRead('admin:'+authSessionKey(session)+':'+target,run):run();
 }
 export const api={
   integrations:(offset=0)=>request('integrations',{offset}),
   updateMcpSettings:(body:{enabled:boolean;expectedUpdatedAt:string|null;reason:string})=>request('integrations/mcp',undefined,body,'PUT'),
   revokeMcpConnection:(id:string,reason:string)=>request('integrations/mcp/connections/'+encodeURIComponent(id)+'/revoke',undefined,{reason},'POST'),
-  logout:async()=>{await supabase.auth.signOut();setIdentity(null);},
+  logout:async()=>{const {error}=await authRuntime.auth.signOut();if(error)throw new ApiError(error.status||503,error.code||'AUTH_UNAVAILABLE',error.message);setIdentity(null);},
   login:async(email:string,password:string):Promise<Session>=>{
-    if(!isSupabaseConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');
-    const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
-    if(error) throw new ApiError(401,'INVALID_CREDENTIALS','Email atau kata sandi salah.');
+    if(!isAuthConfigured) throw new ApiError(503,'AUTH_NOT_CONFIGURED','Autentikasi belum dikonfigurasi.');
+    const {error}=await authRuntime.auth.signInWithPassword({email:email.trim(),password});
+    if(error)throw new ApiError(error.status||401,error.code||'INVALID_CREDENTIALS',error.code==='MFA_REQUIRED'?error.message:'Email atau kata sandi salah.');
     try{const session=await api.me();setIdentity(email);return session;}
     catch(err: any){
-      await supabase.auth.signOut();
+      await authRuntime.auth.signOut();
       setIdentity(null);
       if (err?.code === 'INTERNAL_MEMBERSHIP_REQUIRED' || err?.message === 'INTERNAL_MEMBERSHIP_REQUIRED') {
-        throw new ApiError(403, 'INTERNAL_MEMBERSHIP_REQUIRED', 'Akun terdaftar di Supabase Auth, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di database internal.');
+        throw new ApiError(403, 'INTERNAL_MEMBERSHIP_REQUIRED', 'Akun terdaftar di penyedia autentikasi, namun belum memiliki hak akses Administrator (ROLE_SUPERADMIN) di database internal.');
       }
       throw err;
     }

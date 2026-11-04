@@ -15,29 +15,14 @@
  * =============================================================================
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 import 'dotenv/config';
 
 const ROOT = process.cwd();
-const MIGRATION_DIR = join(ROOT, 'migrations');
 
-/** Base schemas first, then numbered migrations in order. */
-// Same order as services/db-server/migrate.ts: compat shim, then base schemas.
-const ORDER = ['migrations/0001_compat.sql', 'schema.sql', 'schema_hybrid_pos.sql'];
-
-function migrationFiles() {
-  const numbered = readdirSync(MIGRATION_DIR)
-    .filter((f) => /^\d{4}_.*\.sql$/.test(f) && f !== '0001_compat.sql')
-    .sort();
-  return [
-    ...ORDER.map((f) => ({ name: f, path: join(ROOT, f) })),
-    ...numbered.map((f) => ({ name: f, path: join(MIGRATION_DIR, f) })),
-    ...['free-plan-selection.sql','free-plan-ai-credit-access.sql','restrict-browser-rls-policies.sql','intelligence-cache.sql','intelligence-wallet.sql'].map(f=>({name:f,path:join(ROOT,'docs/security',f)})),
-    ...readdirSync(join(ROOT,'supabase/migrations')).filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort().map(f=>({name:'supabase/migrations/'+f,path:join(ROOT,'supabase/migrations',f)})),
-  ];
-}
+import {migrationFiles} from './migration-files.mjs';
 
 const log = (...a) => console.log(...a);
 
@@ -52,7 +37,7 @@ const HEALTH_SQL = readFileSync(join(ROOT,'scripts/db/verification-health.sql'),
 
 async function run(exec, query) {
   const applied = [];
-  for (const m of migrationFiles()) {
+  for (const m of migrationFiles(ROOT)) {
     let sql;
     try {
       sql = readFileSync(m.path, 'utf8');

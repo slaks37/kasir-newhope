@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  VITE_AUTH_PROVIDER: neon
+  VITE_NEWHOPE_AUTH_URL: https://unconfigured.invalid/api/auth
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -17,6 +20,7 @@ jobs:
       - run: npm ci
       - run: npm run test:platform
       - run: npm run native:sync
+      - run: node scripts/mobile/check-neon-auth-bundle.mjs
       - run: ./gradlew assembleDebug bundleRelease lintDebug
         working-directory: android
       - name: Enable emulator KVM
@@ -48,6 +52,7 @@ jobs:
       - run: npm ci
       - run: xcodebuild -version
       - run: npm run native:ios:simulator
+      - run: node scripts/mobile/check-neon-auth-bundle.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: newhope-ios-simulator-unconfigured-preview

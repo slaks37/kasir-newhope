@@ -14,6 +14,7 @@ import pg from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -35,6 +36,16 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
 function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+function verifiedNeonConnectionString(value) {
+  try {
+    const url = new URL(value);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname.endsWith(".neon.tech")) return value;
+    url.searchParams.set("sslmode", "verify-full");
+    return url.href;
+  } catch {
+    return value;
+  }
 }
 
 // services/shared/databaseStartup.ts
@@ -60,15 +71,16 @@ function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
+  if (new URL(connectionString).hostname.endsWith(".neon.tech")) return { rejectUnauthorized: true };
   if (process.env.PGSSLROOTCERT) {
     return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
-  const connectionString = serverlessConnectionString(
+  const connectionString = verifiedNeonConnectionString(serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
-  );
+  ));
   const pool = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
@@ -304,6 +316,8 @@ var INITIAL_BOOKINGS = [
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+  staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
   cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
   moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
   merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,

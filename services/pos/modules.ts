@@ -18,6 +18,7 @@ export const permissionsForModuleRole = (role: string): string[] => {
     ADMIN: ['overview','pos','tables','inventory','customers','labor','reports','ai','settings'],
     MANAGER: ['overview','pos','tables','inventory','customers','labor','reports'],
     CASHIER: ['overview','pos','tables','customers'],
+    ACCOUNTANT: ['overview','reports'],
     BARISTA: ['overview','tables'], CHEF: ['overview','tables'],
     WASHER: ['overview','tables'], KAPSTER: ['overview','tables'], STAFF: ['overview','tables'],
   };
@@ -27,13 +28,15 @@ export const permissionsForModuleRole = (role: string): string[] => {
 export async function resolveModuleAccess(db: Db, subject: string, businessId: unknown, outletId: unknown) {
   if (typeof businessId !== 'string' || !UUID.test(businessId) || typeof outletId !== 'string' || !UUID.test(outletId))
     throw new ModuleAccessError(400, 'INVALID_MODULE_SCOPE');
+  const managedStaff=await hasSchemaFeature(db,'staffAccounts');
   // Browser cashierRole/permission/sector/tenantId fields are deliberately ignored.
   const { rows } = await db.query(`SELECT t.id AS tenant_id,m.business_sector,t.owner_user_ref=$3 AS tenant_owner,
     CASE WHEN t.owner_user_ref=$3 THEN 'OWNER' ELSE membership.role END AS role,
+    ${managedStaff?'membership.id AS membership_id,membership.auth_managed,':''}
     (SELECT count(*)::int FROM internal.outlets ox WHERE ox.merchant_id=m.id) AS outlet_count
     FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id
     JOIN internal.tenants t ON t.id=m.tenant_id
-    LEFT JOIN LATERAL (SELECT ms.role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id
+    LEFT JOIN LATERAL (SELECT ms.role${managedStaff?',ms.id,ms.auth_managed':''} FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id
       WHERE u.id::text=$3 AND u.is_active AND ms.is_active AND ms.tenant_id=t.id
       AND (ms.scope_type='TENANT' OR ms.merchant_id=m.id AND
         (ms.scope_type='MERCHANT' OR ms.scope_type='OUTLET' AND ms.outlet_id=o.id))
@@ -57,14 +60,22 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
     WHERE mm.tenant_id=$1 AND mm.merchant_id=$2 AND mm.enabled AND COALESCE(om.enabled,true)
       AND e.enabled AND e.expires_at>now() ORDER BY mm.module_id`, [scope.tenant_id, businessId, outletId]);
   const permissions = permissionsForModuleRole(scope.role);
+  const staffRoles=new Map<string,string>();
+  if(managedStaff&&scope.auth_managed&&!scope.tenant_owner){
+    const rows=await db.query('SELECT module_id,role FROM internal.staff_workspace_assignments WHERE membership_id=$1 AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4',[scope.membership_id,scope.tenant_id,businessId,outletId]);
+    for(const row of rows.rows)staffRoles.set(row.module_id,row.role);
+  }
   const modules: ModuleGrant[] = [];
   for (const row of assignments.rows) {
     const manifest = moduleManifest(row.module_id);
-    const operationalModule:Record<string,string>={BARISTA:'fnb',CHEF:'fnb',WASHER:'carwash',KAPSTER:'barber'};if(operationalModule[scope.role]&&operationalModule[scope.role]!==row.module_id)continue;
+    const staffRole=scope.auth_managed&&!scope.tenant_owner?staffRoles.get(row.module_id):undefined;
+    if(scope.auth_managed&&!scope.tenant_owner&&!staffRole)continue;
+    const role=staffRole||scope.role;
+    const operationalModule:Record<string,string>={BARISTA:'fnb',CHEF:'fnb',WASHER:'carwash',KAPSTER:'barber'};if(operationalModule[role]&&operationalModule[role]!==row.module_id)continue;
     if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)))continue;
     // Until sector adapters and legacy outlet caches are disentangled, fail closed.
     if (!manifest || Number(row.workspace_version)!==2 && (manifest.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest.id, permissions, capabilities:Number(row.workspace_version)===2?registerCapabilities(scope.role):[], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString() });
+    modules.push({ id: manifest.id, permissions:staffRole?permissionsForModuleRole(staffRole):permissions, capabilities:Number(row.workspace_version)===2?registerCapabilities(role):[], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString(),...(staffRole?{staffRole}:{}) });
   }
   return { enabled: true, businessId, outletId, modules };
 }

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import {forbiddenMerchantAsset} from '../mobile/asset-policy.mjs';
+assert.equal(forbiddenMerchantAsset('assets/HoldOrdersModal-WgEOwBSW.js'),false,'A real Vite content hash ending in SW is a merchant chunk');
+for(const file of ['sw.js','assets/sw.js','assets/sw-AbCd1234.js','admin.html','assets/AdminPanel-12345678.js','landing.html','assets/main.js.map','.env.local'])assert.equal(forbiddenMerchantAsset(file),true,'Forbidden mobile asset: '+file);
 import 'fake-indexeddb/auto';
 import {apiTarget,httpsOrigin,parseAuthCallback} from '../../src/platform/runtime/apiPolicy';
 import {openCommandStore,type CommandScope} from '../../src/platform/runtime/commandStore';

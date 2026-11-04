@@ -3,7 +3,8 @@ import {Browser} from '@capacitor/browser';
 import {Network} from '@capacitor/network';
 import {isNative} from './platform';
 import {parseAuthCallback} from './apiPolicy';
-import {supabase} from '../../lib/supabase';
+import {authRuntime as supabase,isNeonAuth,NATIVE_PKCE_KEY} from '../../lib/authRuntime';
+import {secureSessionStorage} from './secureSession';
 import {navigate} from '../../lib/navigation/workspaceRouter';
 export const nativeCallback='space.newhope.kasir://auth/callback';
 export const authRedirect=()=>isNative()?nativeCallback:window.location.origin;
@@ -31,9 +32,11 @@ export async function installNativeLifecycle(){
  supabase.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY')navigate('/reset-password',true);});
 }
 export async function nativeGoogleLogin(){
- const {data,error}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:nativeCallback,skipBrowserRedirect:true}});
- if(error)return {error};if(!data.url)throw Error('OAUTH_URL_MISSING');
- const url=new URL(data.url),auth=new URL(import.meta.env.VITE_SUPABASE_URL);
- if(url.protocol!=='https:'||url.origin!==auth.origin||url.pathname!=='/auth/v1/authorize')throw Error('UNTRUSTED_AUTH_URL');
- await Browser.open({url:url.href});return {error:null};
+ if(isNeonAuth){
+  const auth=new URL(import.meta.env.VITE_NEWHOPE_AUTH_URL||'');if(auth.protocol!=='https:'||auth.pathname.replace(/\/$/,'')!=='/api/auth'||auth.username||auth.password||auth.search||auth.hash)throw Error('UNTRUSTED_AUTH_URL');
+  const bytes=crypto.getRandomValues(new Uint8Array(32));const encode=(v:Uint8Array)=>btoa(String.fromCharCode(...v)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+  const verifier=encode(bytes),challenge=encode(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));
+  await secureSessionStorage.setItem(NATIVE_PKCE_KEY,verifier);await Browser.open({url:auth.href.replace(/\/$/,'')+'/native/start?challenge='+challenge});return {error:null};
+ }
+ return (await import('./legacyNativeAuth')).legacyNativeGoogleLogin();
 }

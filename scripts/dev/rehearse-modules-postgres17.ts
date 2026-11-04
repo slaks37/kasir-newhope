@@ -1,3 +1,4 @@
+import {staffAcceptance} from './staff-acceptance';
 import {cashierAcceptance} from './cashier-acceptance';
 import {workspaceAcceptance} from './workspace-acceptance';
 import assert from 'node:assert/strict';
@@ -34,11 +35,23 @@ try{
  const before=await fingerprint();
  for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql','0068_cashier_register_operations.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
+ for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql'])await apply('migrations/'+name);
+ assert.equal(await fingerprint(),before,'Staff billing guard replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
  await admin.query("INSERT INTO billing.plans(id,name,tier_level,billing_cycle,price_idr,features) VALUES('plan-pro-monthly','Fixture',3,'MONTHLY',299000,'[]')");
  await admin.query("INSERT INTO billing.subscriptions(id,tenant_id,plan_id,status,current_period_start,current_period_end) VALUES($1,$2,'plan-pro-monthly','ACTIVE',now(),now()+interval '30 days')",[randomUUID(),tenant]);
  const internal=await asService('svc_internal'),billing=await asService('svc_billing'),pos=await asService('svc_pos'),ai=await asService('svc_ai');
+ assert.equal((await billing.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[staff])).rows[0].assigned,true);
+ assert.equal((await billing.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[owner])).rows[0].assigned,false);
+ const preInviteStaff=randomUUID();await admin.query("INSERT INTO internal.users(id,email,full_name,auth_staff_only) VALUES($1,$2,'Pre-invitation staff',true)",[preInviteStaff,preInviteStaff+'@fixture.invalid']);
+ assert.equal((await billing.query('SELECT internal.is_staff_only_identity($1) AS blocked',[preInviteStaff])).rows[0].blocked,true);
+ assert.equal((await billing.query('SELECT internal.is_staff_only_identity($1) AS blocked',[owner])).rows[0].blocked,false);
+ await assert.rejects(()=>pos.query('SELECT internal.is_staff_only_identity($1)',[preInviteStaff]),(e:any)=>e.code==='42501');
+ await assert.rejects(()=>billing.query('SELECT pin FROM internal.memberships'),(e:any)=>e.code==='42501');
+ await assert.rejects(()=>billing.query('UPDATE internal.memberships SET is_active=false'),(e:any)=>e.code==='42501');
+ await assert.rejects(()=>pos.query('SELECT internal.has_active_staff_assignment($1)',[staff]),(e:any)=>e.code==='42501');
+ assert.equal((await billing.query("SELECT pg_has_role(current_user,'svc_membership_probe','MEMBER') AS member")).rows[0].member,false);
  for(const service of [internal,billing,pos,ai])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
  await assert.rejects(()=>ai.query('SELECT * FROM internal.merchant_modules'),(e:any)=>e.code==='42501','AI receives only the narrow scope guard');
  assert.equal((await pos.query("SELECT has_sequence_privilege(current_user,'public.uuidv7_counter','USAGE') AS usage,has_sequence_privilege(current_user,'public.uuidv7_counter','UPDATE') AS reset")).rows[0].reset,false,'POS cannot reset the UUID counter');
@@ -63,6 +76,7 @@ try{
  await assert.rejects(()=>loadMerchantSnapshot(ai,{subject:isolatedMerchant.owner_user_ref},isolatedMerchant.id),/EXPLICIT_WORKSPACE_REQUIRED/,'Actual AI service cannot use legacy snapshots for mixed modules');
  evidence.workspaceWorkflows=workflows;
  evidence.cashierWorkflows=await cashierAcceptance(wrap(admin),pos,await asService('svc_pos'));
+ evidence.staffOnboarding=await staffAcceptance(wrap(admin),await asService('svc_staff'),pos,await asService('svc_staff'));
  evidence.checks={postgres17:'PASS',migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log('PASS: PostgreSQL17 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards');
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}
 finally{delete process.env.NEW_HOPE_MODULE_WORKSPACES;fs.mkdirSync('build/module-rehearsal',{recursive:true});fs.writeFileSync('build/module-rehearsal/postgres17.json',JSON.stringify(evidence,null,2)+'\n');await Promise.all(connections.map(c=>c.end()));await admin.end();}

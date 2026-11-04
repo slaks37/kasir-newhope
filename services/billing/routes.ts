@@ -1,3 +1,4 @@
+import {hasSchemaFeature} from '../shared/schemaFeatures';
 import {assertDokuReadiness} from './paymentReadiness';
 import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import type express from 'express';
@@ -37,8 +38,16 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
     const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
     if (!principal || (principal.subject==='local-development' && !allowLocal)) throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    if(await hasSchemaFeature(db,'staffIdentityPurpose')) {
+      const purpose=await db.query('SELECT internal.is_staff_only_identity($1) AS staff_only',[principal.subject]);
+      if(purpose.rows[0]?.staff_only)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+    }
     let id=await tenantForPrincipal(db,principal);
     if (!id && allowProvision && principal.subject!=='local-development') {
+      if(await hasSchemaFeature(db,'staffAccounts')) {
+        const assigned=await db.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[principal.subject]);
+        if(assigned.rows[0]?.assigned)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+      }
       const name = principal.email ? principal.email.split('@')[0] : 'Toko Utama';
       const res = await db.query(
         `INSERT INTO internal.tenants (id, name, external_ref, owner_user_ref, is_active)

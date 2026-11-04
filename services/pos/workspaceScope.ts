@@ -17,6 +17,7 @@ export async function resolveWorkspaceScope(db:Db,subject:string,input:Record<st
  ORDER BY CASE role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1
  ) ms ON true WHERE m.id=$1`,[access.businessId,subject,access.outletId])).rows[0];
  if(!row?.role)throw new ModuleAccessError(403,'WORKSPACE_MEMBERSHIP_REQUIRED');
+ if(grant.staffRole){row.role=grant.staffRole;row.membership_scope='OUTLET';}
  await db.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true),set_config('app.outlet_id',$3,true),set_config('app.module_id',$4,true),set_config('app.actor_ref',$5,true),set_config('app.actor_role',$6,true)",[row.tenant_id,access.businessId,access.outletId,input.moduleId,subject,row.role]);
  return {tenantId:row.tenant_id,merchantId:access.businessId,outletId:access.outletId,moduleId:input.moduleId,sector:moduleManifest(input.moduleId)!.sector,actorRef:subject,role:row.role,membershipScope:row.membership_scope,transportRef:row.external_ref||access.businessId,namespace:`WORKSPACE:${access.businessId}:${access.outletId}:${input.moduleId}`,permissions:grant.permissions,features:grant.features};
 }

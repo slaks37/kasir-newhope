@@ -14,6 +14,7 @@ import pg from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -35,6 +36,16 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
 function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+function verifiedNeonConnectionString(value) {
+  try {
+    const url = new URL(value);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname.endsWith(".neon.tech")) return value;
+    url.searchParams.set("sslmode", "verify-full");
+    return url.href;
+  } catch {
+    return value;
+  }
 }
 
 // services/shared/databaseStartup.ts
@@ -60,15 +71,16 @@ function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
+  if (new URL(connectionString).hostname.endsWith(".neon.tech")) return { rejectUnauthorized: true };
   if (process.env.PGSSLROOTCERT) {
     return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
-  const connectionString = serverlessConnectionString(
+  const connectionString = verifiedNeonConnectionString(serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
-  );
+  ));
   const pool = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
