@@ -30,6 +30,8 @@ assert.equal(validateProviderAgreement({}),'supabase');
 assert.equal(validateProviderAgreement({VITE_AUTH_PROVIDER:'neon'}),'neon');
 assert.equal(validateProviderAgreement({VITE_AUTH_PROVIDER:'neon',AUTH_PROVIDER:'neon'}),'neon');
 for(const env of [{AUTH_PROVIDER:'neon'},{VITE_AUTH_PROVIDER:'neon',AUTH_PROVIDER:'supabase'},{VITE_AUTH_PROVIDER:'other'},{AUTH_PROVIDER:'other'},{NEWHOPE_BUILD_TARGET:'neon'}])assert.throws(()=>validateProviderAgreement(env),/AUTH_PROVIDER_/);
+assert.equal(validateProviderAgreement({VERCEL_ENV:'production',AUTH_PROVIDER:'supabase',VITE_AUTH_PROVIDER:'supabase'}),'supabase');
+assert.throws(()=>validateProviderAgreement({VERCEL_ENV:'production',AUTH_PROVIDER:'neon',VITE_AUTH_PROVIDER:'neon'}),/AUTH_PRODUCTION_CUTOVER_DISABLED/);
 console.log('PASS provider agreement: inconsistent or unsupported web/mobile/backend build intent rejected');
 
 const preview={NEWHOPE_BUILD_TARGET:'neon',VERCEL_ENV:'preview',AUTH_PROVIDER:'neon',VITE_AUTH_PROVIDER:'neon',NEWHOPE_NEON_AUTH_STAGING:'1',NEW_HOPE_MODULE_WORKSPACES:'0',VITE_MODULE_WORKSPACES:'0'};
