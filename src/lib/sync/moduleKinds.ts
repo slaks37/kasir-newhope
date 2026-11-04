@@ -10,4 +10,13 @@ const kinds:Record<WorkspaceModule,string[]>={
   labor:['staff_members','attendance_logs','commission_rules','payroll_slips'],
   settings:['staff_members'],payment:[],businesses:[],
 };
-export function kindsForModule(module:WorkspaceModule){return [...core,...kinds[module]];}
+const operationalKinds:Record<string,string[]>={
+  FNB:['tables','order_operations','kds_tickets'],
+  RETAIL:['tables'],
+  LAUNDRY:['tables','order_operations','customers'],
+  CARWASH:['tables','carwash_queue','staff_members'],
+  BARBERSHOP:['tables','bookings','staff_members','products','categories'],
+};
+export function kindsForModule(module:WorkspaceModule,sector?:string){
+  return [...core,...(module==='tables'&&sector?operationalKinds[sector]||kinds[module]:kinds[module])];
+}

@@ -1,3 +1,4 @@
+import { calendarDate } from '../../lib/reports/client';
 import React, { useState } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { AppointmentBooking, BookingStatus } from '../../types';
@@ -42,7 +43,7 @@ export const BarbershopBookingView: React.FC = () => {
   } = usePOSFields(["bookings","saveBooking","deleteBooking","updateBookingStatus","sendBookingWaReminder","staffMembers","setSelectedStaff","products","addToCart","setActiveTab"]);
 
   const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    () => calendarDate('Asia/Jakarta')
   );
   const [selectedStylistId, setSelectedStylistId] = useState<string>('ALL');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -53,7 +54,7 @@ export const BarbershopBookingView: React.FC = () => {
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
   const [serviceName, setServiceName] = useState('Gentleman Haircut + Wash');
-  const [staffId, setStaffId] = useState(staffMembers[0]?.id || 'staff-1');
+  const [staffId, setStaffId] = useState(staffMembers[0]?.id || '');
   const [startTime, setStartTime] = useState('10:00');
   const [notes, setNotes] = useState('');
 
@@ -84,6 +85,7 @@ export const BarbershopBookingView: React.FC = () => {
     if (!custName) return;
 
     const staff = staffMembers.find((s) => s.id === staffId);
+    if (!staff) { notify('Pilih staf terdaftar sebelum membuat janji temu.'); return; }
     saveBooking({
       id: newId('book'),
       customerName: custName.trim(),

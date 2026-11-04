@@ -1,3 +1,12 @@
+import {readRegisterPreference,enqueueRegisterClose,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
+import {moduleManifest} from '../platform/modules/registry';
+import {pendingWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
+import {submitWorkspaceInventory} from '../lib/sync/workspaceInventoryQueue';
+import {modulePath} from '../platform/modules/routing';
+import {navigate} from '../lib/navigation/workspaceRouter';
+const navigateModuleRoute=(businessId:string,outletId:string,moduleId:Parameters<typeof modulePath>[2])=>navigate(modulePath(businessId,outletId,moduleId,'dashboard'));
+import {useBusinessModule} from '../platform/modules/ModuleContext';
+import {financialWorkspaceKey} from '../lib/sync/queue';
 import {requestFinancialApproval,financeRequest} from '../lib/auth/financialApprovalClient';
 import React, { useState, useEffect, ReactNode } from 'react';
 import { orderOperations,mergeOrderOperations } from '../lib/sync/orderOperations';
@@ -372,8 +381,8 @@ export interface POSContextType {
   deleteTable: (tableId: string) => void;
   updateSettings: (newSettings: StoreSettings) => void;
   activateBusinessSector: (sector: BusinessSector, customStoreName?: string) => void;
-  startShift: (cashierName: string, initialCash: number) => Promise<Shift>;
-  endShift: (actualCash: number, notes?: string) => Promise<Shift>;
+  startShift: (cashierName: string, initialCash: number, registerId?:string) => Promise<Shift>;
+  endShift: (actualCash: number, notes?: string, drawerShift?:Shift) => Promise<Shift>;
   
   // Cash Movements & Petty Cash Management
   cashMovements: CashMovement[];
@@ -453,9 +462,16 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const { user: authUser, session: authSession } = useAuth();
   const workspaceBusiness=useWorkspaceBusiness();
   const online=useOnline();
-  const selectedBusiness=workspaceBusiness.business;
+  const moduleRuntime=useBusinessModule();
+  const isolated=moduleRuntime?.grant.workspaceVersion===2;
+  const selectedBusiness=isolated?{...workspaceBusiness.business,sector:moduleRuntime.manifest.sector}:workspaceBusiness.business;
+  const workspace=isolated?{tenantId:selectedBusiness.tenantId,merchantId:selectedBusiness.businessId,outletId:workspaceBusiness.outletId!,moduleId:moduleRuntime.manifest.id,actorRef:authUser!.id}:undefined;
+  const financialId=workspace?financialWorkspaceKey(workspace):selectedBusiness.transportRef!;
+  const workspaceApi=workspace?{businessId:workspace.merchantId,outletId:workspace.outletId,moduleId:workspace.moduleId}:{};
+  const workspaceOrderPayload=(order:Order,role:UserRole)=>({...orderToPayload(order,role),...(workspace?{workspace}:{})});
+  const enqueueWorkspaceCash=(command:Parameters<typeof enqueueCashCommand>[1])=>enqueueCashCommand(financialId,{...command,...(workspace?{workspace}:{})});
   const storageId=selectedBusiness.transportRef!;
-  const operationalNamespace=selectedBusiness.legacyAlias?undefined:selectedBusiness.businessId;
+  const operationalNamespace=isolated?financialId:selectedBusiness.legacyAlias?undefined:selectedBusiness.businessId;
   const cache=React.useRef<WorkspaceCache|null>(null);
   if(!cache.current)cache.current=new WorkspaceCache(authUser!.id,selectedBusiness.sector,storageId,operationalNamespace);
   // These closures belong to this immutable provider instance. A second
@@ -463,7 +479,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const getScopedKey=(entity:string,_owner:string,_sector:BusinessSector)=>cache.current!.key(entity);
   const safeSetLocalStorage=(key:string,value:string)=>{try{cache.current!.write(key,value);}catch(error){console.warn('[storage] Cache write failed; original data retained',error);}};
   const loadScopedData=<T,>(entity:string,owner:string,sector:BusinessSector,fallback:T):T=>{
-    try{return cache.current!.load(entity,fallback,kindsForModule(activeTab));
+    try{return cache.current!.load(entity,fallback,kindsForModule(activeTab,selectedBusiness.sector));
     }catch{return fallback;}
   };
   // Store identity is independent of the local cashier profile.
@@ -483,7 +499,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     id: authUser?.id || 'usr-owner',
     name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.store_name || authUser?.email?.split('@')[0] || 'Pemilik Toko',
     username: authUser?.email?.split('@')[0] || 'owner',
-    role: 'ADMIN',
+    role: (isolated?(selectedBusiness.outlets.find(o=>o.outletId===workspaceBusiness.outletId)?.role==='OWNER'?'ADMIN':selectedBusiness.outlets.find(o=>o.outletId===workspaceBusiness.outletId)?.role||'CASHIER'):'ADMIN') as UserRole,
     pin: '',
     email: authUser?.email || '',
     phone: '',
@@ -497,7 +513,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Users & RBAC state
   const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem(`newhope_users_${storeOwnerId}`) || localStorage.getItem('newhope_users');
+    const saved = !isolated&&(localStorage.getItem(`newhope_users_${storeOwnerId}`) || localStorage.getItem('newhope_users'));
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -512,7 +528,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem(`newhope_current_user_${storeOwnerId}`);
+    const saved = !isolated&&localStorage.getItem(`newhope_current_user_${storeOwnerId}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -611,7 +627,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         notify('Langganan belum aktif atau belum terverifikasi. Periksa Pengaturan → Langganan. Data tetap dapat diekspor.');
         throw new Error('SUBSCRIPTION_READ_ONLY');
       }
-      if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
+      if(!sharedSync.current?.hasLoadedKinds(kindsForModule(activeTab,selectedBusiness.sector)))throw Error('MODULE_CLOUD_STATE_NOT_READY');
       if(!navigator.onLine&&(!workspaceBusiness.offlineExpiresAt||Date.now()>=workspaceBusiness.offlineExpiresAt))throw Error('OFFLINE_VERIFICATION_EXPIRED');
       return fn(...args);
     }) as T;
@@ -627,7 +643,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const loadLogo = async () => {
       try {
         const businessId = storageId;
-        const response = await fetch(`/api/v1/sync/receipt-logo?businessId=${encodeURIComponent(businessId)}`);
+        const response = await fetch(`/api/v1/sync/receipt-logo?${new URLSearchParams(workspace?{businessId:workspace.merchantId,outletId:workspace.outletId,moduleId:workspace.moduleId}:{businessId})}`);
         const data = await response.json();
         if (active && response.ok && data.ok) {
           try{saveReceiptLogo(storeOwnerId,selectedBusiness.businessId,data.logoUrl||null);}catch{console.warn('[workspace] Logo offline cache unavailable; cloud logo unchanged');}
@@ -671,7 +687,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Seluruh mekanismenya ada di lib/sync/queue.ts.
 
   const syncTarget: SyncTarget = {
-    businessId: tenant.businessId,
+    businessId: financialId,
+    workspace,
     outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
     sector: activeSector,
     storeName: settings.storeName,
@@ -680,9 +697,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const [cloudState,setCloudState]=useState<{scope:string;ready:boolean;error:string|null}>({scope:'',ready:false,error:null});
-  const financialScopeKey=tenant.businessId+':'+(syncTarget.outletId||'');
+  const financialScopeKey=financialId+':'+(syncTarget.outletId||'');
   const offlineFinancialReady=!online&&!!workspaceBusiness.offlineExpiresAt&&!!syncTarget.outletId&&
-    hasVerifiedFinancialScope(storeOwnerId,selectedBusiness.businessId,syncTarget.outletId,workspaceBusiness.offlineExpiresAt);
+    hasVerifiedFinancialScope(storeOwnerId,isolated?financialId:selectedBusiness.businessId,syncTarget.outletId,workspaceBusiness.offlineExpiresAt);
   const cloudReady=cloudState.scope===financialScopeKey&&cloudState.ready||offlineFinancialReady;
   const cloudError=cloudState.scope===financialScopeKey?cloudState.error:null;
   const [legacyMigrationStatus,setLegacyMigrationStatus]=useState<LegacyMigrationResult|null>(null);
@@ -707,8 +724,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     getSyncStatus(storageId)
   );
-  const activeSyncBusinessId=React.useRef(tenant.businessId);
-  activeSyncBusinessId.current=tenant.businessId;
+  const activeSyncBusinessId=React.useRef(financialId);
+  activeSyncBusinessId.current=financialId;
   const runningFinancialSync=React.useRef(new Set<string>());
 
   /**
@@ -725,12 +742,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const mappingKey='newhope_legacy_outlet_mappings_'+target.businessId;
         let mappings:Record<string,string>={};try{mappings=JSON.parse(localStorage.getItem(mappingKey)||'{}');}catch{}
-        const migration=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        const migration=target.workspace?null:migrateLegacyFinancialData(target,{outletMappings:mappings});
         if(activeSyncBusinessId.current===target.businessId){
           setLegacyMigrationStatus(migration);
           setSyncStatus(financialStatus(target.businessId,true));
         }
-        if(migration.error){
+        if(migration?.error){
           if(activeSyncBusinessId.current===target.businessId)setSyncStatus(previous=>({...previous,
             inFlight:false,lastError:migration.error,failures:Math.max(1,previous.failures)}));
           return;
@@ -740,7 +757,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const cashBefore=getCashSyncStatus(target.businessId);
         const after = await flushSync(target, force);
         const cash=await flushCashQueue(target,force);
-        const recovered=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        const recovered=target.workspace?migration:migrateLegacyFinancialData(target,{outletMappings:mappings});
         if(activeSyncBusinessId.current===target.businessId){
           setLegacyMigrationStatus(recovered);
           setSyncStatus(combineFinancialSyncStatus(after,cash));
@@ -754,12 +771,12 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     []
   );
 
-  const bizId = tenant.businessId;
+  const bizId = financialId;
   const storeNameForSync = settings.storeName;
 
   useEffect(() => {
     const target: SyncTarget = {
-      businessId: bizId,
+      businessId: bizId,workspace,
       outletId: /^[0-9a-f-]{36}$/i.test(settings.activeBranchId || '') ? settings.activeBranchId : undefined,
       sector: activeSector,
       storeName: storeNameForSync,
@@ -848,7 +865,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const {cart,setCart,selectedCustomer,setSelectedCustomer,selectedTable,setSelectedTable,selectedStaff,setSelectedStaff,
     orderType,setOrderType,selectedCategory,setSelectedCategory,searchQuery,setSearchQuery,soundEnabled,
     addToCart,removeFromCart,updateCartQuantity,updateCartItemNotes,applyCartItemDiscount,clearCart,toggleSound}=useCartState({
-      key:partitionKey(storageId,'cart_draft_'+(workspaceBusiness.outletId||'unselected')),
+      key:cache.current!.key('cart_draft_'+(workspaceBusiness.outletId||'unselected')),
       registerSwitchGuard:workspaceBusiness.registerSwitchGuard,
       onPersistenceError:()=>setSyncStatus(previous=>({...previous,lastError:'CART_DRAFT_NOT_SAVED',failures:Math.max(1,previous.failures)})),
       canAdd:product=>{
@@ -862,7 +879,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     attendanceLogs,setAttendanceLogs,clockInStaff,clockOutStaff,getActiveAttendance,commissionRules,setCommissionRules,
     payrollSlips,setPayrollSlips,saveCommissionRule,savePayrollSlip,deletePayrollSlip}=useLaborState({
       tenant,free:isFreePlan(settings.subscription),load:(kind,fallback)=>loadScopedData(kind,storeOwnerId,activeSector,fallback),
-      loadRoster:()=>cache.current!.loadRoster(kindsForModule(activeTab)),
+      loadRoster:()=>cache.current!.loadRoster(kindsForModule(activeTab,selectedBusiness.sector)),
       outlet:()=>activeBranch,sound:kind=>{if(soundEnabled)playPOSSound(kind);},
     });
   const {stockItems,setStockItems,bundles,setBundles,saveStockItem,deleteStockItem,saveBundle,deleteBundle,toggleBundleAvailability,adjustStockItemQuantity}=useInventoryState(
@@ -918,7 +935,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     remoteOrderOperations.current=new Map();
     const importMarker=`newhope_operational_import_v2_${storageId}`;
     const hydratedKinds=new Set<string>();
-    const needsImport=(kind:string)=>!hydratedKinds.has(kind)&&!localStorage.getItem(importMarker)&&!localStorage.getItem(`${importMarker}:${kind}`);
+    const needsImport=(kind:string)=>!isolated&&!hydratedKinds.has(kind)&&!localStorage.getItem(importMarker)&&!localStorage.getItem(`${importMarker}:${kind}`);
     const store=new SharedStateSync(authUser.id,activeSector,(records,initial,loadedKinds)=>{
       if(sharedSync.current!==store)return;
       const grouped=new Map<string,SharedRecord[]>();
@@ -928,7 +945,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const apply=<T extends object>(kind:string,current:T[],set:React.Dispatch<React.SetStateAction<T[]>>) => {
         if(loadedKinds&&!loadedKinds.includes(kind))return;
         const rows=grouped.get(kind)||[];
-        const fromServer=rows.filter(row=>!row.deleted&&row.value).map(row=>row.value as T);
+        const fromServer=rows.filter(row=>!row.deleted&&row.value).map(row=>{if(isolated&&kind==='products'){const p=row.value as unknown as Product;if(p.inventoryTracked!==false){const reserved=getPendingTransactions(financialId).filter(t=>t.paymentStatus!=='CANCELLED'&&!orders.find(o=>o.id===t.clientTxnId)?.syncedAt).flatMap(t=>t.items).filter(i=>i.productRef===p.id).reduce((n,i)=>n+i.quantity,0);return {...p,stock:p.stock-reserved} as unknown as T;}}return row.value as T;});
         const known=new Set(rows.map(row=>row.recordId));
         const legacyKey=kind==='staff_members' ? getGlobalUserKey(kind,authUser.id)
           : getScopedKey(kind,authUser.id,activeSector);
@@ -997,7 +1014,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers(previous=>{
         const importedUsers=initial&&legacyKeys.current?.has(`newhope_users_${authUser.id}`)
           ? previous.filter(user=>user.id!==authUser.id&&user.role!=='ADMIN'&&user.pin.startsWith('sha256$')&&!userIds.has(user.id)) : [];
-        const combined=[previous.find(user=>user.id===authUser.id)||defaultOwnerUser,...remoteUsers,...importedUsers];
+        const combined=isolated?remoteUsers:[previous.find(user=>user.id===authUser.id)||defaultOwnerUser,...remoteUsers,...importedUsers];
         return JSON.stringify(previous)===JSON.stringify(combined)?previous:combined;
       });
       // One-time migration for accounts whose catalog was synced before the
@@ -1029,9 +1046,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         hydratedKinds.add(kind);
         if(!(needsCatalogFallback&&['products','categories'].includes(kind)))localStorage.setItem(`${importMarker}:${kind}`,'queued-v2');
       }
-    },status=>{const error=operationalCacheError(authUser.id,activeSector,storageId);setSharedSyncStatus(error?{...status,ready:false,error}:status);},{businessId:selectedBusiness.businessId,transportRef:storageId,namespace:operationalNamespace});
+    },status=>{const error=operationalCacheError(authUser.id,activeSector,storageId);setSharedSyncStatus(error?{...status,ready:false,error}:status);},{businessId:selectedBusiness.businessId,transportRef:storageId,namespace:operationalNamespace,...(workspace?{tenantId:workspace.tenantId,outletId:workspace.outletId,moduleId:workspace.moduleId,permissions:moduleRuntime!.grant.permissions.filter(p=>moduleRuntime!.grant.features.includes(p))}:{})});
     sharedSync.current=store;
-    store.setKinds(kindsForModule(activeTab));
+    store.setKinds(kindsForModule(activeTab,selectedBusiness.sector));
     const prime=<T extends object>(kind:string,rows:T[])=>store.prime(kind,rows);
     prime('categories',categories);prime('products',syncProducts);prime('tables',tables);prime('customers',customers);
     prime('held_orders',heldOrders);prime('inventory_logs',inventoryLogs);
@@ -1053,7 +1070,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(()=>{
     const store=sharedSync.current;if(!store)return;
-    if(store.setKinds(kindsForModule(activeTab)))void store.refresh(false);
+    if(store.setKinds(kindsForModule(activeTab,selectedBusiness.sector)))void store.refresh(false);
   },[activeTab,activeSector]);
 
   useEffect(()=>{
@@ -1104,15 +1121,15 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try{
         // Capture original laptop data before any cloud replacement.
         const mappings=JSON.parse(localStorage.getItem('newhope_legacy_outlet_mappings_'+target.businessId)||'{}');
-        const migration=migrateLegacyFinancialData(target,{outletMappings:mappings});
+        const migration=target.workspace?null:migrateLegacyFinancialData(target,{outletMappings:mappings});
         setLegacyMigrationStatus(migration);
-        if(migration.error)throw new Error(migration.error);
-        const query={outletId:target.outletId,sector:target.sector};
+        if(migration?.error)throw new Error(migration.error);
+        const query={outletId:target.outletId,sector:target.sector,...(target.workspace?{businessId:target.workspace.merchantId,moduleId:target.workspace.moduleId,purpose:'pos',registerId:readRegisterPreference(target.workspace)}:{})};
         const {transactions:remote,shiftData:initialShift}=await fetchFinancialWorkspace(query,activeTab!=='reports',controller.signal);
         let shiftData=initialShift;
-        if(activeTab==='pos'&&!shiftData.shift&&!shiftData.history?.length){
+        if(activeTab==='pos'&&!shiftData.shift&&!shiftData.history?.length&&(!shiftData.registers||shiftData.registers.length<=1)){
           const shiftResponse=await fetch('/api/v1/finance/shift/open',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
+            body:JSON.stringify({...workspaceApi,...(target.workspace?{registerId:readRegisterPreference(target.workspace)}:{}),sector:target.sector,outletId:target.outletId,clientShiftId:newId('shift'),cashierName:currentUser.name,initialCash:0})});
           const opened=await shiftResponse.json();if(!shiftResponse.ok||!opened.ok)throw new Error(opened.error||'SHIFT_OPEN_FAILED');
           shiftData={...shiftData,shift:opened.shift};
         }
@@ -1133,7 +1150,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if(nextShift)setShift(previous=>JSON.stringify(previous)===JSON.stringify(nextShift)?previous:nextShift);
         setShiftHistory(previous=>JSON.stringify(previous)===JSON.stringify(shiftData.history||[])?previous:shiftData.history||[]);
         markCloudRead(target.businessId,shiftData.generatedAt);
-        try{saveVerifiedFinancialScope(storeOwnerId,selectedBusiness.businessId,target.outletId!);}catch{console.warn('[workspace] Offline financial scope cache unavailable; ledger unchanged');}
+        try{saveVerifiedFinancialScope(storeOwnerId,isolated?financialId:selectedBusiness.businessId,target.outletId!);}catch{console.warn('[workspace] Offline financial scope cache unavailable; ledger unchanged');}
         setSyncStatus(financialStatus(target.businessId));
         setCloudState({scope:financialScopeKey,ready:true,error:null});
       }catch(error){if(!controller.signal.aborted){
@@ -1195,7 +1212,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Never truncate/replace the old cache if its recovery snapshot failed.
     let mappings:Record<string,string>={};
     try{mappings=JSON.parse(localStorage.getItem('newhope_legacy_outlet_mappings_'+tenant.businessId)||'{}');}catch{return;}
-    if(migrateLegacyFinancialData(syncTarget,{outletMappings:mappings}).error)return;
+    if(!isolated&&migrateLegacyFinancialData(syncTarget,{outletMappings:mappings}).error)return;
     safeSetLocalStorage(getScopedKey('orders', uId, sec), JSON.stringify(orders.slice(0, 50)));
   }, [orders, storeOwnerId, settings.businessSector]);
 
@@ -1304,15 +1321,17 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!branches.some(branch => branch.id === branchId && branch.isActive && branch.businessId===selectedBusiness.businessId)) throw new Error('OUTLET_NOT_ACTIVE_FOR_BUSINESS');
     if (isFreePlan(settings.subscription) && branchId !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LOCKED');
     workspaceBusiness.select(selectedBusiness.businessId,branchId);
+    if(isolated)navigateModuleRoute(selectedBusiness.businessId,branchId,moduleRuntime!.manifest.id);
   };
 
   const saveBranch = async (branchToSave: StoreBranch) => {
     if (isFreePlan(settings.subscription) && branchToSave.id !== settings.subscription?.freeSelection?.branchId) throw new Error('FREE_BRANCH_LIMIT');
     const originalId = branchToSave.id;
-    const business=await prepareOutletBusiness(branchToSave.businessSector || activeSector, settings.storeName,branchToSave.businessId||selectedBusiness.businessId);
+    const identitySector=isolated?workspaceBusiness.business.sector:branchToSave.businessSector||activeSector;
+    const business=await prepareOutletBusiness(identitySector, isolated?workspaceBusiness.business.name:settings.storeName,branchToSave.businessId||selectedBusiness.businessId);
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branchToSave,businessId:business.merchantId, businessSector: branchToSave.businessSector || activeSector }),
+      body: JSON.stringify({ ...branchToSave,businessId:business.merchantId, businessSector: identitySector }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || 'Outlet gagal disimpan');
@@ -1338,7 +1357,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!branch) return;
     const response = await fetch('/api/v1/subscription/outlets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: branch.businessSector || activeSector, isActive: false }),
+      body: JSON.stringify({ ...branch,businessId:branch.businessId||selectedBusiness.businessId, businessSector: isolated?workspaceBusiness.business.sector:branch.businessSector||activeSector, isActive: false }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) { notify(result.error || 'Outlet gagal dinonaktifkan'); return; }
@@ -1487,8 +1506,8 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setPromoCodes((prev) => [newPromo, ...prev]);
     if (soundEnabled) playPOSSound('click');
   };
-  useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_users_${authUser.id}`, JSON.stringify(users)); }, [users,authUser?.id]);
-  useEffect(() => { if(authUser?.id)safeSetLocalStorage(`newhope_current_user_${authUser.id}`, JSON.stringify(currentUser)); }, [currentUser,authUser?.id]);
+  useEffect(() => { if(authUser?.id&&!isolated)safeSetLocalStorage(`newhope_users_${authUser.id}`, JSON.stringify(users)); }, [users,authUser?.id]);
+  useEffect(() => { if(authUser?.id&&!isolated)safeSetLocalStorage(`newhope_current_user_${authUser.id}`, JSON.stringify(currentUser)); }, [currentUser,authUser?.id]);
   useEffect(() => {
     safeSetLocalStorage(
       getScopedKey('cash_movements', storeOwnerId, activeSector),
@@ -1497,6 +1516,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [cashMovements, authUser?.id, storeOwnerId, activeSector]);
 
   const switchUser = (user: User) => {
+    if(isolated&&user.id!==authUser?.id)throw Error('INDEPENDENT_AUTHENTICATION_REQUIRED');
     if (isFreePlan(settings.subscription) && user.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
     if (!users.some(candidate => candidate.id === user.id && candidate.status === 'ACTIVE')) {
       throw new Error('USER_NOT_ACTIVE');
@@ -1510,6 +1530,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const saveUser = async (userToSave: User) => {
+    if(isolated)throw Error('AUTHENTICATED_MEMBERSHIP_REQUIRED');
     if (isFreePlan(settings.subscription) && userToSave.id !== authUser?.id) throw new Error('FREE_OWNER_ONLY');
     const safePin = userToSave.pin.startsWith('sha256$')
       ? userToSave.pin
@@ -1528,6 +1549,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deleteUser = (userId: string) => {
+    if(isolated)throw Error('AUTHENTICATED_MEMBERSHIP_REQUIRED');
     if (userId === currentUser.id) {
       notify('Tidak dapat menghapus akun yang sedang digunakan!');
       return;
@@ -1536,6 +1558,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const hasPermission = (feature: PermissionFeature): boolean => {
+    if(isolated)return moduleRuntime!.grant.permissions.includes(feature)&&moduleRuntime!.grant.features.includes(feature);
     const allowed = ROLE_PERMISSIONS[currentUser.role] || [];
     return allowed.includes(feature);
   };
@@ -1647,6 +1670,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       skipClearCart?: boolean;
     }
   ): Order | null => {
+    if(isolated&&(shift.status!=='OPEN'||shift.canClose===false))throw Error('OWN_OPEN_REGISTER_SHIFT_REQUIRED');
     if (cart.length === 0) return null;
     const priorSplit=extraOptions?.paymentTender&&extraOptions.parentOrderId?orders.find(order=>order.id===extraOptions.parentOrderId):null;
     if(priorSplit&&extraOptions?.paymentTender){
@@ -1656,9 +1680,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const collected=paymentTenders.reduce((sum,payment)=>sum+payment.amount,0);
       if(collected>priorSplit.total+0.01)throw new Error('TENDER_EXCEEDS_BALANCE');
       const updated:Order={...priorSplit,paymentTenders,paymentStatus:collected>=priorSplit.total-0.01?'PAID':'PENDING'};
-      enqueueSync(tenant.businessId,orderToPayload(updated,currentUser.role));
+      enqueueSync(financialId,workspaceOrderPayload(updated,currentUser.role));
       setOrders(previous=>previous.map(order=>order.id===updated.id?updated:order));
-      setSyncStatus(financialStatus(tenant.businessId));void runSync(syncTarget);
+      setSyncStatus(financialStatus(financialId));void runSync(syncTarget);
       if(!extraOptions.skipClearCart)clearCart();
       return updated;
     }
@@ -1744,9 +1768,9 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Persist the financial event before changing any visible POS state. If
     // the browser cannot store the outbox, do not present a completed sale.
-    try { enqueueSync(tenant.businessId, orderToPayload(newOrder, currentUser.role)); }
+    try { enqueueSync(financialId, workspaceOrderPayload(newOrder, currentUser.role)); }
     catch (error) {
-      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
+      setSyncStatus({...getSyncStatus(financialId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
       notify('Transaksi belum disimpan. Ruang penyimpanan browser bermasalah; jangan tutup halaman dan hubungi admin.');
       return null;
     }
@@ -1826,7 +1850,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     products.forEach((p) => {
       const totalQtySold = soldQtyByProduct.get(p.id);
-      if (!totalQtySold) return;
+      if (!totalQtySold||p.inventoryTracked===false) return;
 
       newLogs.push({
         id: newId('log'),
@@ -1898,7 +1922,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts((prevProducts) =>
       prevProducts.map((p) => {
         const totalQtySold = soldQtyByProduct.get(p.id);
-        return totalQtySold ? { ...p, stock: stockAfterSale(p.stock, totalQtySold) } : p;
+        return totalQtySold&&p.inventoryTracked!==false ? { ...p, stock: stockAfterSale(p.stock, totalQtySold) } : p;
       })
     );
 
@@ -1955,7 +1979,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders((prevOrders) => [newOrder, ...prevOrders]);
 
     // The durable outbox was written before any local sale effects above.
-    setSyncStatus(getSyncStatus(tenant.businessId));
+    setSyncStatus(getSyncStatus(financialId));
     void runSync(syncTarget);
 
     if (soundEnabled) playPOSSound('payment_success');
@@ -1973,10 +1997,10 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     if(!online)throw new Error('Void memerlukan persetujuan server saat online.');
     await runSync(syncTarget,true);
-    const command={...orderToPayload({...targetOrder,status:'VOID',paymentStatus:'CANCELLED'},currentUser.role),voidReason:reason};
-    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:targetOrder.branchId||'',action:'VOID',reference:targetOrder.id,reason,command});
+    const command={...workspaceOrderPayload({...targetOrder,status:'VOID',paymentStatus:'CANCELLED'},currentUser.role),voidReason:reason};
+    const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:targetOrder.branchId||'',action:'VOID',reference:targetOrder.id,reason,command});
     const response=await fetch('/api/v1/sync/transactions',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(15000),
-      body:JSON.stringify({businessId:tenant.businessId,sector:activeSector,outletId:targetOrder.branchId,transactions:[{...command,approvalGrant}]})});
+      body:JSON.stringify({...workspaceApi,businessId:isolated?selectedBusiness.businessId:tenant.businessId,sector:activeSector,outletId:targetOrder.branchId,transactions:[{...command,approvalGrant}]})});
     const result=await response.json().catch(()=>null);
     if(!response.ok||!result?.ok||result.rejected?.length)throw new Error(result?.rejected?.[0]?.error||result?.error||'Void belum dikonfirmasi server. Periksa riwayat sebelum mengulang.');
 
@@ -2003,7 +2027,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // memperlakukan tabrakan berstatus CANCELLED sebagai pembaruan, bukan
     // duplikat — kalau tidak, uang yang sudah dikembalikan ke pelanggan akan
     // terus terhitung sebagai omzet di admin panel.
-    setSyncStatus(getSyncStatus(tenant.businessId));
+    setSyncStatus(getSyncStatus(financialId));
     void runSync(syncTarget);
 
     // 2. Restore Product Stock & Raw Materials, and Create Inventory Refund Log.
@@ -2117,7 +2141,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Promise<OrderRefund | null> => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'VOID' || refundItems.length === 0) return null;
-    if(pendingRefund(tenant.businessId,orderId)){
+    if(pendingRefund(financialId,orderId)){
       void runSync(syncTarget,true);
       throw new Error('Refund sebelumnya masih menunggu konfirmasi cloud. Tunggu sinkronisasi sebelum membuat refund baru.');
     }
@@ -2171,11 +2195,11 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       reason:refundItems.map(item=>item.reason).filter(Boolean).join(', ')||'Retur item',
       items:orderRefundItems.map(item=>({clientItemId:item.cartItemId,quantity:item.quantity}))};
     if(!online)throw new Error('Refund memerlukan persetujuan server saat online.');
-    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:targetOrder.branchId||'',action:'REFUND',reference:targetOrder.id,reason:command.reason,command});
-    enqueueCashCommand(tenant.businessId,{action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
+    const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:targetOrder.branchId||'',action:'REFUND',reference:targetOrder.id,reason:command.reason,command});
+    enqueueWorkspaceCash({action:'refund',body:{sector:activeSector,outletId:targetOrder.branchId||'',
       clientEventId:refundId,clientTxnId:targetOrder.id,refund:{...command,approvalGrant}}});
     await runSync(syncTarget,true);
-    const acknowledged=refundAcknowledgment(tenant.businessId,refundId);
+    const acknowledged=refundAcknowledgment(financialId,refundId);
     if(!acknowledged)throw new Error('Refund menunggu konfirmasi cloud; perintah tersimpan dan akan dicoba kembali dengan ID yang sama.');
     subtotalRefund=Number(acknowledged.subtotal);
     const authoritativeTax=Number(acknowledged.tax),authoritativeService=Number(acknowledged.service);
@@ -2535,13 +2559,13 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       qrisRef: paymentMethod === 'QRIS' ? (qrisRef || `QRIS-${Math.floor(10000000 + Math.random() * 90000000)}`) : undefined,
     };
 
-    try { enqueueSync(tenant.businessId,orderToPayload(updatedOrder,currentUser.role)); }
+    try { enqueueSync(financialId,workspaceOrderPayload(updatedOrder,currentUser.role)); }
     catch (error) {
-      setSyncStatus({...getSyncStatus(tenant.businessId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
+      setSyncStatus({...getSyncStatus(financialId),lastError:error instanceof Error?error.message:'LOCAL_QUEUE_WRITE_FAILED',failures:1});
       notify('Pembayaran belum disimpan. Periksa penyimpanan browser sebelum mencoba lagi.');
       return null;
     }
-    setSyncStatus(getSyncStatus(tenant.businessId));
+    setSyncStatus(getSyncStatus(financialId));
     void runSync(syncTarget);
 
     // Update in orders
@@ -2583,7 +2607,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Catalog CRUD belongs to the catalog domain; stock adjustment coordinates domains below.
 
-  const adjustStock = (
+  const adjustStock = async (
     productId: string,
     quantityChange: number,
     type: 'IN' | 'OUT' | 'ADJUSTMENT',
@@ -2592,6 +2616,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const target = products.find((p) => p.id === productId);
     if (!target) return;
 
+    if(workspace){if(!hasPermission('inventory'))throw Error('WORKSPACE_PERMISSION_DENIED');if(!online)throw Error('Penerimaan stok memerlukan verifikasi server.');if(quantityChange<0)throw Error('INVALID_STOCK_QUANTITY');await submitWorkspaceInventory(workspace,{action:type==='IN'?'RECEIVE':'ADJUST',reason,lines:[{productRef:productId,quantity:type==='IN'?quantityChange:type==='OUT'?target.stock-quantityChange:quantityChange,expectedQuantity:target.stock}]});await sharedSync.current?.refresh(false);return;}
     const oldStock = target.stock;
     let newStock = oldStock;
     if (type === 'IN') newStock += quantityChange;
@@ -2649,15 +2674,32 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     else navigateModule("businesses");
   };
 
-  const startShift = async (cashierName:string,initialCash:number):Promise<Shift> => {
+  const startShift = async (cashierName:string,initialCash:number,registerId?:string):Promise<Shift> => {
     const response=await fetch('/api/v1/finance/shift/open',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({sector:activeSector,outletId:syncTarget.outletId,clientShiftId:newId('shift'),cashierName,initialCash})});
+      body:JSON.stringify({...workspaceApi,sector:activeSector,outletId:syncTarget.outletId,clientShiftId:newId('shift'),cashierName,initialCash,registerId})});
     const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'SHIFT_OPEN_FAILED');
     setShift(data.shift);window.dispatchEvent(new Event('financial-updated'));return data.shift;
   };
-  const endShift = async (actualCash:number,notes?:string):Promise<Shift> => {
+  const endShift = async (actualCash:number,notes?:string,drawerShift?:Shift):Promise<Shift> => {
+    if(workspace){
+      const target=drawerShift||shift;
+      if(!target.registerId||!target.version||!Number.isFinite(actualCash)||actualCash<0)throw Error('REGISTER_SHIFT_SNAPSHOT_REQUIRED');
+      let pending=pendingRegisterClose(workspace,target.registerId);
+      if(pending&&(pending.command.actualCash!==actualCash||pending.command.notes!==String(notes||'').trim()))throw Error('SHIFT_CLOSE_PENDING_RETRY_REQUIRED');
+      if(!pending){enqueueRegisterClose(workspace,{...workspaceApi,businessId:workspace.merchantId,moduleId:workspace.moduleId,outletId:workspace.outletId,registerId:target.registerId,clientShiftId:target.id,clientCloseId:crypto.randomUUID(),expectedVersion:target.version,actualCash,notes:String(notes||'').trim()});pending=pendingRegisterClose(workspace,target.registerId);}
+      for(const moduleId of target.moduleIds||[workspace.moduleId]){
+        const module=moduleManifest(moduleId);if(!module)throw Error('WORKSPACE_MODULE_REQUIRED');
+        const moduleWorkspace={...workspace,moduleId},id=financialWorkspaceKey(moduleWorkspace);
+        await runSync({...syncTarget,workspace:moduleWorkspace,businessId:id,sector:module.sector},true);
+        const status=financialStatus(id);
+        if(status.pending||status.inFlight||status.quarantined||status.lastError)throw Error('PENDING_FINANCIAL_SYNC');
+        if(pendingWorkspaceInventory(moduleWorkspace)?.purchase)throw Error('PENDING_PURCHASE_SYNC');
+      }
+      const closed=await flushRegisterClose(workspace,target.registerId);if(!closed)throw Error('SHIFT_CLOSE_NOT_CONFIRMED');
+      setShift(closed);setShiftHistory(previous=>[closed,...previous.filter(row=>row.id!==closed.id)]);return closed;
+    }
     await runSync(syncTarget,true);
-    const status=financialStatus(tenant.businessId);
+    const status=financialStatus(financialId);
     if(status.pending||status.lastError)throw new Error('PENDING_FINANCIAL_SYNC');
     const response=await fetch('/api/v1/finance/shift/close',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({sector:activeSector,outletId:syncTarget.outletId,clientShiftId:shift.id,actualCash,notes})});
@@ -2672,18 +2714,18 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       branchId:syncTarget.outletId,recipientOrSource:recipientOrSource?.trim()};
     const command=cashMovementToCommand(activeSector,movement,syncTarget.outletId!);
     if(type==='CASH_OUT'){
-      const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_OUT',reference:movement.id,reason:description,command:command.body});
+      const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_OUT',reference:movement.id,reason:description,command:command.body});
       await financeRequest('cash',{...command.body,approvalGrant});
-    }else enqueueCashCommand(tenant.businessId,command);
-    setCashMovements(previous=>[movement,...previous]);setSyncStatus(financialStatus(tenant.businessId));
+    }else enqueueWorkspaceCash(command);
+    setCashMovements(previous=>[movement,...previous]);setSyncStatus(financialStatus(financialId));
     void runSync(syncTarget);return movement;
   };
   const deleteCashMovement = async (id:string)=>{
     const body={sector:activeSector,outletId:syncTarget.outletId!,clientEventId:'reverse:'+id,originalEventId:id,reason:'Koreksi mutasi kas oleh owner'};
-    const approvalGrant=await requestFinancialApproval({sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_REVERSE',reference:id,reason:body.reason,command:body});
+    const approvalGrant=await requestFinancialApproval({...workspaceApi,sector:activeSector,outletId:syncTarget.outletId!,action:'CASH_REVERSE',reference:id,reason:body.reason,command:body});
     await financeRequest('cash/reverse',{...body,approvalGrant});
     window.dispatchEvent(new Event('financial-updated'));
-    setSyncStatus(financialStatus(tenant.businessId));void runSync(syncTarget);
+    setSyncStatus(financialStatus(financialId));void runSync(syncTarget);
   };
   const setInitialCash = async (amount:number)=>{
     if(!Number.isFinite(amount)||amount<0)throw new Error('INVALID_CASH_AMOUNT');

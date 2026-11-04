@@ -1,4 +1,5 @@
 import React from "react";
+import { useBusinessModule } from '../platform/modules/ModuleContext';
 import { BrandMark } from "./brand/Brand";
 import { usePOSFields } from "../context/POSDomains";
 import {
@@ -64,7 +65,9 @@ export const Header: React.FC<HeaderProps> = ({
     bookings,
     carwashQueue,
     sentLifecycleHookIds,
-  } = usePOSFields(['settings','shift','cart','heldOrders','soundEnabled','toggleSound','searchQuery','setSearchQuery','setActiveTab','currentUser','syncCenter','openSyncCenter','customers','orders','bookings','carwashQueue','sentLifecycleHookIds']);
+    hasPermission,
+  } = usePOSFields(['settings','shift','cart','heldOrders','soundEnabled','toggleSound','searchQuery','setSearchQuery','setActiveTab','currentUser','syncCenter','openSyncCenter','customers','orders','bookings','carwashQueue','sentLifecycleHookIds','hasPermission']);
+  const isolated=useBusinessModule()?.grant.workspaceVersion===2;
   const { t } = useTranslation();
 
   const [showLifecycleCenter, setShowLifecycleCenter] = React.useState(false);
@@ -189,10 +192,11 @@ export const Header: React.FC<HeaderProps> = ({
               <PauseCircle size={17} /> {t('header.heldOrders')}{" "}
               <small>{heldOrders.length}</small>
             </button>
-            <button onClick={() => onOpenClockIn?.()}>
+            <button disabled={isolated&&!hasPermission('labor')} onClick={() => onOpenClockIn?.()}>
               <UserCheck size={17} /> {t('header.staffAttendance')}
             </button>
             <button
+              disabled={isolated&&!hasPermission('ai')}
               onClick={() =>
                 onOpenAiCopilot ? onOpenAiCopilot() : setActiveTab("ai")
               }

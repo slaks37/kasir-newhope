@@ -1,3 +1,6 @@
+import { ModuleWorkspaceGate, useBusinessModule } from './platform/modules/ModuleWorkspaceGate';
+import { moduleScreens } from './platform/modules/screens';
+import { parseModuleRoute } from './platform/modules/routing';
 import React, { Suspense, lazy, useState } from 'react';
 import './styles/app-theme.css';
 import { POSProvider } from './context/POSContext';
@@ -42,6 +45,7 @@ import { Lock, ShieldAlert, KeyRound, ArrowLeft, RefreshCw, Loader2, ShoppingBag
  * needs to take the first order. React.lazy needs a default export, hence the
  * .then() shim around each named export.
  */
+const ConsolidatedRevenue = lazy(() => import('./platform/modules/ConsolidatedRevenue'));
 const InventoryManager = lazy(() =>
   import('./components/inventory/InventoryManager').then((m) => ({ default: m.InventoryManager }))
 );
@@ -143,8 +147,16 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   React.useEffect(() => {
     if (navOverride && (navOverride.tab !== activeTab || navOverride.userId !== currentUser.id)) setNavOverride(null);
   }, [activeTab, currentUser.id, navOverride]);
-  const isTabAllowed = hasPermission(activeTab as PermissionFeature) ||
-    (navOverride?.tab === activeTab && navOverride.userId === currentUser.id);
+  const runtime = useBusinessModule();
+  const moduleRoute = parseModuleRoute(useWorkspaceRoute());
+  const ModuleDashboard = runtime && moduleScreens[runtime.manifest.id].dashboard;
+  const ModuleOperations = runtime && moduleScreens[runtime.manifest.id].operations;
+  const operationsTab = runtime?.manifest.pages.find(page => page.id === 'operations')?.tab;
+  const isOperations = !!runtime && (moduleRoute?.page.id === 'operations' || !moduleRoute && activeTab === operationsTab);
+  const groupReport = moduleRoute?.page.id === 'group-reports';
+  const moduleAllowed = !runtime || runtime.grant.permissions.includes(activeTab) && runtime.grant.features.includes(activeTab) && (!groupReport || runtime.grant.tenantOwner);
+  const isTabAllowed = moduleAllowed && (hasPermission(activeTab as PermissionFeature) ||
+    (!runtime && navOverride?.tab === activeTab && navOverride.userId === currentUser.id));
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const totalCartAmount = cart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -248,13 +260,13 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                     <span>Kembali ke Overview</span>
                   </button>
 
-                  <button
+                  {!runtime && <button
                     onClick={() => setShowNavAuthModal(true)}
                     className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5"
                   >
                     <KeyRound className="w-4 h-4" />
                     <span>PIN Manager Override</span>
-                  </button>
+                  </button>}
                 </div>
               </div>
             </div>
@@ -264,7 +276,9 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                 <Suspense fallback={<TabLoading/>}><OverviewPage onBackToHome={onGoToHome} /></Suspense>
               )}
 
-              {activeTab === 'overview' && (
+              {runtime && activeTab === 'overview' && ModuleDashboard && <Suspense fallback={<TabLoading/>}><ModuleDashboard/></Suspense>}
+              {isOperations && ModuleOperations && <Suspense fallback={<TabLoading/>}><div className="flex-1 overflow-auto p-4"><ModuleOperations/></div></Suspense>}
+              {!runtime && activeTab === 'overview' && (
                 <Suspense fallback={<TabLoading/>}><OverviewPage onBackToHome={onGoToHome} /></Suspense>
               )}
 
@@ -305,9 +319,9 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
                 </>
               )}
 
-              {activeTab === 'tables' && <Suspense fallback={<TabLoading/>}><TableManager /></Suspense>}
+              {activeTab === 'tables' && !isOperations && <Suspense fallback={<TabLoading/>}><TableManager /></Suspense>}
 
-              {activeTab === 'inventory' && (
+              {activeTab === 'inventory' && !isOperations && (
                 <Suspense fallback={<TabLoading />}>
                   <InventoryManager />
                 </Suspense>
@@ -315,7 +329,8 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
 
               {activeTab === 'customers' && <Suspense fallback={<TabLoading/>}><CustomerManager /></Suspense>}
 
-              {activeTab === 'reports' && (
+              {groupReport && <Suspense fallback={<TabLoading/>}><ConsolidatedRevenue/></Suspense>}
+              {activeTab === 'reports' && !groupReport && (
                 <Suspense fallback={<TabLoading />}>
                   <ReportsDashboard />
                 </Suspense>
@@ -458,9 +473,9 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
 };
 
 export function Workspace({userId,onGoToHome,onLogout}:{userId:string;onGoToHome:()=>void;onLogout:()=>void}){
-  return <WorkspaceBusinessProvider key={userId}><SelectedWorkspace onGoToHome={onGoToHome} onLogout={onLogout}/></WorkspaceBusinessProvider>;
+  return <WorkspaceBusinessProvider key={userId}><ModuleWorkspaceGate><SelectedWorkspace onGoToHome={onGoToHome} onLogout={onLogout}/></ModuleWorkspaceGate></WorkspaceBusinessProvider>;
 }
 function SelectedWorkspace({onGoToHome,onLogout}:{onGoToHome:()=>void;onLogout:()=>void}){
-  const {business,outletId}=useWorkspaceBusiness();
-  return <POSProvider key={business.businessId+':'+(outletId||'')}><Suspense fallback={<TabLoading/>}><POSAppContent onGoToHome={onGoToHome} onLogout={onLogout}/></Suspense></POSProvider>;
+  const {business,outletId}=useWorkspaceBusiness();const runtime=useBusinessModule();
+  return <POSProvider key={business.businessId+':'+(outletId||'')+':'+(runtime?.grant.workspaceVersion===2?runtime.manifest.id:'legacy')}><Suspense fallback={<TabLoading/>}><POSAppContent onGoToHome={onGoToHome} onLogout={onLogout}/></Suspense></POSProvider>;
 }

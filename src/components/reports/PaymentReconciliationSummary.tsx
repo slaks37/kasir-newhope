@@ -1,13 +1,16 @@
 import React from 'react';
 import {usePOSFields} from '../../context/POSDomains';
 import {formatRupiah} from '../../utils/formatters';
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
 export function PaymentReconciliationSummary(){
  const {settings,activeBranch}=usePOSFields(['settings','activeBranch']);
+ const runtime=useBusinessModule(),businessId=runtime?.grant.workspaceVersion===2?runtime.access.businessId:undefined,moduleId=businessId?runtime!.manifest.id:undefined;
  const [data,setData]=React.useState<any>(null),[error,setError]=React.useState(''),[refresh,setRefresh]=React.useState(0);
  React.useEffect(()=>{let alive=true;setData(null);setError('');if(!activeBranch?.id)return;
   const q=new URLSearchParams({sector:settings.businessSector||'FNB',outletId:activeBranch.id});
+  if(businessId&&moduleId){q.set('businessId',businessId);q.set('moduleId',moduleId);}
   void fetch('/api/v1/finance/reconciliation?'+q,{cache:'no-store',signal:AbortSignal.timeout(15000)}).then(async r=>{const d=await r.json();if(!r.ok||!d.ok)throw new Error('Rekonsiliasi server belum tersedia.');if(alive)setData(d);}).catch(e=>{if(alive)setError(e.message);});return()=>{alive=false;};
- },[settings.businessSector,activeBranch?.id,refresh]);
+ },[settings.businessSector,activeBranch?.id,businessId,moduleId,refresh]);
  const labels:Record<string,string>={CASHIER_RECORDED:'Dicatat kasir',PROVIDER_VERIFIED:'Diverifikasi penyedia',LEGACY_UNVERIFIED:'Historis belum diverifikasi'};
  return <section className="rounded-2xl border bg-white p-4 space-y-3">
   <h2 className="font-bold">Asal verifikasi pembayaran</h2>
