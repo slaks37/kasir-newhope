@@ -9,6 +9,18 @@
 export function normalizeVercelUrl(req: any): void {
   if (!req || typeof req.url !== 'string') return;
 
+  // Materialize the query without invoking Vercel's deprecated url.parse getter.
+  // Duplicate keys retain Node querystring's string[] semantics.
+  const query: Record<string, string | string[]> = Object.create(null);
+  try {
+    for (const [key,value] of new URL(req.url,'http://localhost').searchParams) {
+      if (key === '__path') continue;
+      const previous=query[key];
+      query[key]=previous===undefined?value:Array.isArray(previous)?[...previous,value]:[previous,value];
+    }
+    Object.defineProperty(req,'query',{value:query,writable:true,configurable:true,enumerable:true});
+  } catch { /* Invalid request URL is still rejected by the route boundary. */ }
+
   // 1. Check if __path query parameter was passed from vercel.json rewrite
   try {
     const parsed = new URL(req.url, 'http://localhost');
