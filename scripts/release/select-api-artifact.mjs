@@ -1,3 +1,4 @@
+import {validateIsolatedAcceptance} from './isolated-acceptance-target.mjs';
 import fs from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
@@ -7,7 +8,8 @@ export function selectedNeonPreview(env){
  if(env.NEWHOPE_BUILD_TARGET!=='neon')throw Error('BACKEND_BUILD_TARGET_UNSUPPORTED');
  if(env.VERCEL_ENV!=='preview'||env.AUTH_PROVIDER!=='neon'||env.NEWHOPE_NEON_AUTH_STAGING!=='1')throw Error('NEON_ARTIFACT_PREVIEW_ONLY');
  validateProviderAgreement(env);
- if(env.NEW_HOPE_MODULE_WORKSPACES!=='0'||env.VITE_MODULE_WORKSPACES!=='0')throw Error('ROLLOUT_FLAGS_MUST_STAY_OFF');
+ if(env.NEWHOPE_ISOLATED_DOMAIN_ACCEPTANCE)validateIsolatedAcceptance(env);
+ else if(env.NEW_HOPE_MODULE_WORKSPACES!=='0'||env.VITE_MODULE_WORKSPACES!=='0')throw Error('ROLLOUT_FLAGS_MUST_STAY_OFF');
  return true;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href&&selectedNeonPreview(process.env)){
