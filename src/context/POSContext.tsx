@@ -1,3 +1,4 @@
+import {pendingWorkspaceAdjustment} from '../lib/sync/workspaceAdjustmentQueue';
 import {pendingWorkspaceLabor} from '../lib/sync/workspaceLaborQueue';
 import {assertNativeFinancialReady} from '../platform/runtime/platform';
 import {readRegisterPreference,enqueueRegisterCloseDurable,pendingRegisterClose,flushRegisterClose} from '../lib/sync/registerCloseQueue';
@@ -2697,6 +2698,7 @@ export const POSProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const status=financialStatus(id);
         if(status.pending||status.inFlight||status.quarantined||status.lastError)throw Error('PENDING_FINANCIAL_SYNC');
         if(pendingWorkspaceInventory(moduleWorkspace)?.purchase)throw Error('PENDING_PURCHASE_SYNC');
+        if(pendingWorkspaceAdjustment(moduleWorkspace))throw Error('PENDING_FINANCIAL_SYNC');
         if(pendingWorkspaceLabor(moduleWorkspace)?.action==='PAY')throw Error('PENDING_PAYROLL_SYNC');
       }
       const closed=await flushRegisterClose(workspace,target.registerId);if(!closed)throw Error('SHIFT_CLOSE_NOT_CONFIRMED');

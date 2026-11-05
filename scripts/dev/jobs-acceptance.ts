@@ -580,6 +580,74 @@ export async function jobsAcceptance(
         0,
         "Refunds do not silently rebill the original intake",
       );
+      // Use only the canonical receipt fields exposed to the operational screen.
+      const receipt = refundedJob.receipts.find(
+        (r: any) => r.client_txn_id === first.transactions[0].clientTxnId,
+      );
+      assert.equal(receipt.items[0].id, line.id);
+      assert.equal(receipt.items[0].productRef, productRef);
+      assert.equal(Number(receipt.items[0].returned), 1);
+      const voidCommand = {
+        clientTxnId: receipt.client_txn_id,
+        operationalJobId: intake.jobId,
+        shiftId: receipt.client_shift_id,
+        createdAt: new Date(receipt.created_at).toISOString(),
+        subtotal: Number(receipt.subtotal),
+        discountAmount: Number(receipt.discount_amount),
+        taxAmount: Number(receipt.tax_amount),
+        serviceChargeAmount: Number(receipt.service_charge_amount),
+        totalAmount: Number(receipt.total_amount),
+        paymentMethod: receipt.payment_method,
+        paymentStatus: "CANCELLED",
+        voidReason: "Synthetic full refund then void",
+        voidedAt: new Date().toISOString(),
+        items: receipt.items.map((l: any) => ({
+          clientItemId: l.id,
+          productRef: l.productRef,
+          productName: l.name,
+          unitPrice: Number(l.unitPrice),
+          unitCost: 0,
+          quantity: Number(l.quantity),
+          totalPrice: Number(l.unitPrice) * Number(l.quantity),
+        })),
+      };
+      const va = await request(
+        "/api/v1/finance/approve",
+        {
+          ...s,
+          action: "VOID",
+          reference: voidCommand.clientTxnId,
+          reason: voidCommand.voidReason,
+          command: voidCommand,
+          pin: "5926",
+        },
+        "manager",
+      );
+      assert.equal(va.status, 200, JSON.stringify(va));
+      const voidBatch = {
+        ...s,
+        sector: sectors[moduleId],
+        idempotencyKey: randomUUID(),
+        transactions: [
+          { ...voidCommand, approvalGrant: va.data.approvalGrant },
+        ],
+      };
+      const vr = await request(
+        "/api/v1/sync/transactions",
+        voidBatch,
+        "manager",
+      );
+      assert.equal(vr.data.voided, 1, JSON.stringify(vr));
+      assert.equal(
+        (await request("/api/v1/sync/transactions", voidBatch, "manager")).data
+          .replayed,
+        true,
+      );
+      assert.equal(
+        (await request(laborQuery, undefined, "manager")).data.quote.commission,
+        -commission,
+        "Void after full refund must not reverse the same commission twice",
+      );
       r = await request(
         path,
         {
@@ -630,6 +698,84 @@ export async function jobsAcceptance(
         );
         result.concurrentIndependentConnections = true;
       }
+      // Exercise keyset history beyond the first page through the actual scoped HTTP route.
+      const olderIds = [];
+      for (const day of [2, 3]) {
+        const extra = {
+          ...intake,
+          commandId: randomUUID(),
+          jobId: randomUUID(),
+          scheduledStart: `2031-03-0${day}T10:00:00Z`,
+          scheduledEnd: `2031-03-0${day}T11:00:00Z`,
+        };
+        const created = await request(path, extra, "cashierA");
+        assert.equal(created.status, 200, JSON.stringify(created));
+        olderIds.push(extra.jobId);
+        assert.equal(
+          (
+            await request(
+              path,
+              {
+                ...s,
+                action: "TRANSITION",
+                commandId: randomUUID(),
+                jobId: extra.jobId,
+                baseRevision: 1,
+                status: "CANCELLED",
+              },
+              "manager",
+            )
+          ).status,
+          200,
+        );
+      }
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const page: any = await request(
+          path +
+            "?" +
+            new URLSearchParams({
+              ...s,
+              limit: "1",
+              ...(cursor ? { cursor } : {}),
+            }),
+          undefined,
+          "owner",
+        );
+        assert.equal(page.status, 200, JSON.stringify(page));
+        assert(page.data.jobs.length <= 1);
+        for (const j of page.data.jobs) {
+          assert(!seen.has(j.id), "Cursor must not repeat rows");
+          seen.add(j.id);
+        }
+        cursor = page.data.nextCursor;
+        assert(seen.size < 100, "Pagination must terminate");
+      } while (cursor);
+      assert(
+        [intake.jobId, ...olderIds].every((id) => seen.has(id)),
+        "All history remains reachable",
+      );
+      assert.equal(
+        (
+          await request(
+            path + "?" + new URLSearchParams({ ...s, cursor: "bad" }),
+            undefined,
+            "owner",
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(
+            path + "?" + new URLSearchParams({ ...s, limit: "101" }),
+            undefined,
+            "owner",
+          )
+        ).status,
+        400,
+      );
       const effects = (
         await admin.query(
           "SELECT count(*)::int n FROM pos.workspace_job_receipts WHERE job_id=$1",
@@ -652,6 +798,7 @@ export async function jobsAcceptance(
       );
       result[moduleId] = {
         intake: true,
+        paginatedHistory: true,
         moduleFields: true,
         canonicalCatalogueOptions: true,
         stages: true,

@@ -1,3 +1,6 @@
+import WorkspaceReceiptActions, {
+  type ServiceReceipt,
+} from "./WorkspaceReceiptActions";
 import { jobCheckoutAmounts, type JobPricing } from "./jobAmounts";
 import React, { useEffect, useState } from "react";
 import { useBusinessModule } from "./ModuleWorkspaceGate";
@@ -52,15 +55,7 @@ type Job = {
       }
     >;
   };
-  receipts: Array<{
-    client_txn_id: string;
-    invoice_number: string;
-    total_amount: string;
-    payment_method: string;
-    order_status: string;
-    created_at: string;
-    items: Array<{ name: string; quantity: number; unitPrice: number }>;
-  }>;
+  receipts: ServiceReceipt[];
 };
 const money = (x: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -96,6 +91,7 @@ export default function WorkspaceOperations() {
     >([]),
     [resourceName, setResourceName] = useState(""),
     [capacity, setCapacity] = useState(1);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]),
     [status, setStatus] = useState(""),
     [busy, setBusy] = useState(false),
@@ -128,14 +124,29 @@ export default function WorkspaceOperations() {
   const manager = runtime.grant.capabilities?.includes("workflow.manage");
   const product = products.find((p) => p.id === productRef),
     stages = workflowStages[runtime.manifest.id];
-  const load = async (signal?: AbortSignal) => {
-    const response = await fetch("/api/v1/sync/modules/jobs?" + query, {
-      signal,
-    });
+  const load = async (signal?: AbortSignal, cursor?: string) => {
+    const response = await fetch(
+      "/api/v1/sync/modules/jobs?" +
+        query +
+        (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
+      {
+        signal,
+      },
+    );
     const data = await response.json();
     if (!response.ok || !data.ok)
       throw Error(data.error || "Order belum dapat dimuat");
-    setJobs(data.jobs);
+    setJobs((previous) =>
+      cursor
+        ? [
+            ...previous,
+            ...data.jobs.filter(
+              (j: Job) => !previous.some((p) => p.id === j.id),
+            ),
+          ]
+        : data.jobs,
+    );
+    setNextCursor(data.nextCursor || null);
     setResources(data.resources || []);
   };
   useEffect(() => {
@@ -727,6 +738,28 @@ export default function WorkspaceOperations() {
                     {money(l.unitPrice * l.quantity)}
                   </li>
                 ))}
+                {nextCursor && (
+                  <button
+                    disabled={busy}
+                    className="border rounded p-3"
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await load(undefined, nextCursor);
+                      } catch (e) {
+                        setStatus(
+                          e instanceof Error
+                            ? e.message
+                            : "Order belum dapat dimuat",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Muat order lebih lama
+                  </button>
+                )}
               </ul>
               {manager && j.status === stages[0] && (
                 <label>
@@ -812,6 +845,13 @@ export default function WorkspaceOperations() {
                   >
                     Cetak struk server
                   </button>
+                )}
+                {manager && j.receipts.length > 0 && (
+                  <WorkspaceReceiptActions
+                    receipts={j.receipts}
+                    jobId={j.id}
+                    onRefresh={() => load()}
+                  />
                 )}
                 {manager && j.status !== "CANCELLED" && (
                   <button

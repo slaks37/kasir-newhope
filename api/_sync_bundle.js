@@ -3555,22 +3555,54 @@ function registerWorkspaceJobRoutes(app, db) {
     if (!p)
       return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     try {
+      const limit = req.query.limit === void 0 ? 50 : Number(req.query.limit);
+      let cursor = null;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+        throw new ModuleAccessError(400, "INVALID_JOB_PAGE");
+      if (req.query.cursor !== void 0) {
+        try {
+          if (typeof req.query.cursor !== "string" || req.query.cursor.length > 512)
+            throw Error();
+          cursor = JSON.parse(
+            Buffer.from(req.query.cursor, "base64url").toString("utf8")
+          );
+          if (!cursor || typeof cursor.time !== "string" || cursor.time.length > 64 || !Number.isFinite(Date.parse(cursor.time)) || !UUID6.test(cursor.id))
+            throw Error();
+        } catch {
+          throw new ModuleAccessError(400, "INVALID_JOB_CURSOR");
+        }
+      }
       const result = await db.tx(async (c) => {
         const s = await resolveWorkspaceScope(c, p.subject, req.query, [
           "tables"
         ]);
         await ready2(c);
         const jobs = (await c.query(
-          `SELECT id,job_number,status,resource_name,assigned_staff_id,workspace_revision AS revision,workspace_payload AS intake,started_at,completed_at,created_at FROM pos.operational_jobs WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 ORDER BY created_at DESC,id DESC LIMIT 200`,
-          [s.tenantId, s.merchantId, s.outletId, s.moduleId]
+          `SELECT id,job_number,status,resource_name,assigned_staff_id,workspace_revision AS revision,workspace_payload AS intake,started_at,completed_at,created_at,created_at::text AS page_time FROM pos.operational_jobs WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND ($5::timestamptz IS NULL OR (created_at,id)<($5::timestamptz,$6::uuid)) ORDER BY created_at DESC,id DESC LIMIT $7`,
+          [
+            s.tenantId,
+            s.merchantId,
+            s.outletId,
+            s.moduleId,
+            cursor?.time ?? null,
+            cursor?.id ?? null,
+            limit + 1
+          ]
         )).rows;
+        const hasMore = jobs.length > limit;
+        if (hasMore) jobs.pop();
+        const last = jobs.at(-1);
+        const nextCursor = hasMore ? Buffer.from(
+          JSON.stringify({ time: last.page_time, id: last.id })
+        ).toString("base64url") : null;
+        for (const j of jobs) delete j.page_time;
         const balances = await jobBalances(
           c,
           jobs.map((j) => j.id)
         );
         for (const j of jobs) Object.assign(j, balances(j));
         const receipts = s.permissions.includes("pos") ? (await c.query(
-          `SELECT r.job_id,t.client_txn_id,t.invoice_number,t.total_amount,t.payment_method,t.order_status,t.created_at,(SELECT jsonb_agg(jsonb_build_object('name',ti.product_name,'quantity',COALESCE(ti.quantity_exact,ti.quantity),'unitPrice',ti.unit_price,'options',ti.workspace_options) ORDER BY ti.id) FROM pos.transaction_items ti WHERE ti.transaction_id=t.id) AS items FROM pos.workspace_job_receipts r JOIN pos.transactions t ON t.id=r.transaction_id WHERE r.job_id=ANY($1::uuid[]) ORDER BY t.created_at`,
+          `SELECT r.job_id,t.client_txn_id,t.invoice_number,t.total_amount,t.subtotal,t.discount_amount,t.tax_amount,t.service_charge_amount,t.client_shift_id,t.payment_method,t.order_status,t.created_at,(SELECT jsonb_agg(jsonb_build_object('id',ti.client_item_id,'productRef',p.workspace_payload->>'id','returned',COALESCE((SELECT sum(ri.quantity) FROM pos.transaction_refund_items ri WHERE ri.transaction_item_id=ti.id),0),'name',ti.product_name,'quantity',COALESCE(ti.quantity_exact,ti.quantity),'unitPrice',ti.unit_price,'options',ti.workspace_options) ORDER BY ti.id) FROM pos.transaction_items ti LEFT JOIN pos.products p ON p.id=ti.product_id WHERE ti.transaction_id=t.id) AS items FROM pos.workspace_job_receipts r JOIN pos.transactions t ON t.id=r.transaction_id WHERE r.job_id=ANY($1::uuid[]) ORDER BY t.created_at`,
           [jobs.map((j) => j.id)]
         )).rows : [];
         for (const j of jobs)
@@ -3579,7 +3611,7 @@ function registerWorkspaceJobRoutes(app, db) {
           `SELECT record_id AS id,value->>'name' AS name FROM pos.shared_state_records WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND kind='tables' AND NOT deleted ORDER BY record_id`,
           [s.tenantId, s.merchantId, s.outletId, s.moduleId]
         )).rows;
-        return { jobs, resources };
+        return { jobs, resources, nextCursor };
       });
       res.setHeader("Cache-Control", "no-store");
       return res.json({ ok: true, ...result });

@@ -57,6 +57,7 @@ export interface SyncPayloadItem {
 export interface FinancialWorkspace {tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string}
 export const financialWorkspaceKey=(w:FinancialWorkspace)=>`workspace:v2:${w.tenantId}:${w.merchantId}:${w.outletId}:${w.moduleId}:${w.actorRef}`;
 export interface SyncPayloadTxn {
+  approvalGrant?:string;voidReason?:string;voidedAt?:string;
   operationalJobId?:string;
   workspace?:FinancialWorkspace;
   tenders?: Array<{clientPaymentId:string;method:string;amount:number;createdAt:string}>;
