@@ -35,7 +35,7 @@ try{
  const before=await fingerprint();
  for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql','0068_cashier_register_operations.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
- for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql','0074_merchant_health_identity.sql','0075_doku_release_acceptance.sql','0076_workspace_recipes.sql'])await apply('migrations/'+name);
+ for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql','0074_merchant_health_identity.sql','0075_doku_release_acceptance.sql','0076_workspace_recipes.sql','0077_workspace_service_workflows.sql','0078_workspace_commission_payroll.sql'])await apply('migrations/'+name);
  assert.equal(await fingerprint(),before,'Staff billing guard replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
@@ -71,7 +71,7 @@ try{
  for(let replay=0;replay<2;replay++){await admin.query(fs.readFileSync('scripts/db/verification-fixture.sql','utf8'));await admin.query(fs.readFileSync('scripts/db/verification-health.sql','utf8'));}
  assert.equal((await admin.query("SELECT count(*)::int n FROM contract.merchant_revenue WHERE business_id LIKE 'verify:merchant:%'")).rows[0].n,312);
  const cards=fs.readFileSync('scripts/db/metabase-cards.sql','utf8').split(';').map(s=>s.replace(/^\s*--.*$/gm,'').trim()).filter(s=>/^select/i.test(s));assert.equal(cards.length,8);for(const sql of cards)await admin.query(sql);
- const workflows=await workspaceAcceptance(wrap(admin),pos);
+ const workflows=await workspaceAcceptance(wrap(admin),pos,await asService('svc_pos'));
  const isolatedMerchant=(await admin.query('SELECT m.id,t.owner_user_ref FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id WHERE EXISTS(SELECT 1 FROM internal.merchant_modules mm WHERE mm.merchant_id=m.id AND mm.workspace_version=2) LIMIT 1')).rows[0];
  await assert.rejects(()=>loadMerchantSnapshot(ai,{subject:isolatedMerchant.owner_user_ref},isolatedMerchant.id),/EXPLICIT_WORKSPACE_REQUIRED/,'Actual AI service cannot use legacy snapshots for mixed modules');
  evidence.workspaceWorkflows=workflows;

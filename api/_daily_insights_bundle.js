@@ -316,6 +316,9 @@ var INITIAL_BOOKINGS = [
 
 // services/shared/schemaFeatures.ts
 var FEATURES = {
+  workspaceStaffWorkflows: `SELECT to_regprocedure('internal.workspace_service_workflows_installed()') IS NOT NULL AS ok`,
+  workspaceLabor: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_payroll_entries') IS NOT NULL AND to_regprocedure('pos.guard_workspace_labor()') IS NOT NULL AS ok`,
+  workspaceJobs: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_job_events') IS NOT NULL AND to_regclass('pos.workspace_job_receipts') IS NOT NULL AND to_regprocedure('pos.validate_workspace_job_receipt()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transaction_items') AND attname='workspace_options' AND NOT attisdropped) AS ok`,
   workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
   staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
   staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,

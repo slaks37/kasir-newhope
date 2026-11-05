@@ -1,3 +1,6 @@
+import {registerWorkspaceLaborRoutes,adjustWorkspaceCommission} from './workspaceLabor';
+import {priceWorkspaceSelection} from './workspacePricing';
+import {registerWorkspaceJobRoutes,linkWorkspaceJobSale,workspaceJobSelection} from './workspaceJobs';
 import {registerWorkspaceRecipeRoutes,prepareWorkspaceRecipe,consumeWorkspaceRecipe,restoreWorkspaceRecipe} from './workspaceRecipes';
 import {RegisterError,bindRegisterSale,clearRegisterBinding} from './registerOperations';
 import {registerWorkspaceInventoryRoutes,workspaceProduct,lockWorkspaceStock} from './workspaceInventory';
@@ -71,6 +74,8 @@ async function productLimitForTenant(db: Db, tenantId: string): Promise<number> 
 }
 
 interface SyncItem {
+  variantId?:string;
+  selectedModifiers?:Array<{groupId:string;optionId:string}>;
   clientItemId?: string;
   productRef?: string;
   productName: string;
@@ -83,6 +88,7 @@ interface SyncItem {
 }
 
 interface SyncTxn {
+  operationalJobId?:string;
   workspace?:{tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string};
   branchId?:string;
   approvalGrant?:string;
@@ -154,6 +160,8 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
   registerWorkspaceStateRoutes(app,db);
   registerWorkspaceInventoryRoutes(app,db);
   registerWorkspaceRecipeRoutes(app,db);
+  registerWorkspaceJobRoutes(app,db);
+  registerWorkspaceLaborRoutes(app,db);
   registerPrivacyRoutes(app,db);
   registerBusinessDirectory(app,db);
   registerSharedStateRoutes(app,db);
@@ -510,7 +518,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               if(recorded&&x.shiftId&&recorded.client_shift_id!==x.shiftId)throw new FinanceError(409,'TRANSACTION_SHIFT_IMMUTABLE');
             }else if(x.shiftId&&!(await c.query('SELECT id FROM pos.shifts WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 AND (id::text=$5 OR client_shift_id=$5)',[tenantId,merchantId,outletId,workspace.moduleId,x.shiftId])).rows.length)throw new FinanceError(403,'SHIFT_WORKSPACE_MISMATCH');
             if(x.paymentStatus==='CANCELLED'&&!['OWNER','ADMIN','MANAGER'].includes(workspace.role))throw new FinanceError(403,'WORKSPACE_ROLE_FORBIDDEN');
-            const lineSubtotal=x.items.reduce((sum,i)=>sum+i.unitPrice*i.quantity,0);if(Math.abs(lineSubtotal-x.subtotal)>0.011||Math.abs((x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0))-x.totalAmount)>0.011)throw new FinanceError(400,'TRANSACTION_TOTAL_MISMATCH');
+            const lineSubtotal=x.items.reduce((sum,i)=>sum+Math.round(i.unitPrice*i.quantity*100)/100,0);if(Math.abs(lineSubtotal-x.subtotal)>0.011||Math.abs((x.subtotal-(x.discountAmount||0)+(x.taxAmount||0)+(x.serviceChargeAmount||0))-x.totalAmount)>0.011)throw new FinanceError(400,'TRANSACTION_TOTAL_MISMATCH');
           }
           const cashierId = await resolveCashier(
             str(x.cashierRef, 96),
@@ -631,6 +639,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               );
               if (upd.rows.length) {
                 const voidedTxnId = upd.rows[0].id;
+                await adjustWorkspaceCommission(c,voidedTxnId);
                 const cashBalance=Number((await c.query('SELECT COALESCE(SUM(amount),0) AS amount FROM pos.cash_ledger WHERE transaction_id=$1 AND tenant_id=$2',[voidedTxnId,tenantId])).rows[0].amount);
                 if(cashBalance!==0)await c.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,note,occurred_at)
                   VALUES($1,$2,$3,$4,'VOID',$5,$6,'Pembatalan transaksi',$7) ON CONFLICT(tenant_id,client_event_id) DO NOTHING`,
@@ -723,9 +732,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 [tenantId,merchantId,outletId,'payment:'+payment.rows[0].id,total,txnId,ownerRef,x.createdAt||null]);
           });
 
+          if(workspace&&['fnb','laundry','carwash'].includes(workspace.moduleId)&&!x.operationalJobId)throw new FinanceError(409,'CANONICAL_SERVICE_INTAKE_REQUIRED');
+          const hasOptions=workspace&&await hasSchemaFeature(c,'workspaceJobs');
           for (const i of (workspace?[...x.items].sort((a,b)=>(a.productRef||'').localeCompare(b.productRef||'')):x.items)) {
             const productId = await resolveProduct(i);
             if (!productId) continue;
+            const optionSnapshot=workspace?(x.operationalJobId?await workspaceJobSelection(c,workspace,x.operationalJobId,i):priceWorkspaceSelection(await workspaceProduct(c,workspace,i.productRef||'',true),i)):null;
+            if(optionSnapshot&&Math.abs(optionSnapshot.unitPrice-i.unitPrice)>0.011)throw new FinanceError(409,'CATALOG_PRICE_CHANGED_REVIEW_REQUIRED');
             const qty = num(i.quantity, 1);
             const unitPrice = Math.max(0, num(i.unitPrice));
             const recipePlan=workspace&&!isVoid?await prepareWorkspaceRecipe(c,workspace,productId,qty):null;
@@ -735,13 +748,13 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               `INSERT INTO pos.transaction_items
                  (id, transaction_id, tenant_id, product_id, product_name, unit_price,
                   quantity, total_price, business_sector, category_name, unit_cost,
-                  product_description,client_item_id,quantity_exact)
-               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6) RETURNING id`,
+                  product_description,client_item_id,quantity_exact${hasOptions?',workspace_options':''})
+               VALUES (uuidv7(), $1, $2, $3, $4, $5,CEIL($6::numeric)::int, $7, $8, $9, $10, $11,$12,$6${hasOptions?',$13::jsonb':''}) RETURNING id`,
               [
                 txnId,
                 tenantId,
                 productId,
-                i.productName.slice(0, 100),
+                (optionSnapshot?.productName||i.productName).slice(0, 100),
                 unitPrice,
                 qty,
                 totalPrice,
@@ -750,6 +763,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
                 unitCost,
                 str(i.productDescription, 300),
                 str(i.clientItemId,128),
+                ...(hasOptions?[JSON.stringify(optionSnapshot)]:[]),
               ]
             );
 
@@ -794,6 +808,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
               );
             }
           }
+          if(workspace&&x.operationalJobId)await linkWorkspaceJobSale(c,workspace,x.operationalJobId,txnId,x.items,x);
           for(const refund of x.refunds||[])await applyRefund(c,financialScope,txnId,refund);
           accepted++;
         };

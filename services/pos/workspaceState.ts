@@ -1,8 +1,10 @@
+import {hasSchemaFeature} from '../shared/schemaFeatures';
+import {validateWorkspaceOptions} from './workspacePricing';
 import type {Express} from 'express';
 import type {Db} from '../shared/db';
 import {trustedPrincipal} from '../shared/auth';
 import {ModuleAccessError,moduleStateRequirements} from './modules';
-import {resolveWorkspaceScope,type WorkspaceScope} from './workspaceScope';
+import {resolveWorkspaceScope,requireWorkspaceRole,type WorkspaceScope} from './workspaceScope';
 import {validOperations,HISTORY_WINDOWS} from './sharedState';
 import {workspaceProductRef} from './workspaceIdentity';
 import {attachWorkspaceInventory} from './workspaceInventory';
@@ -39,7 +41,7 @@ export function registerWorkspaceStateRoutes(app:Express,db:Db){
    const more=rows.length>1000;if(more)rows.pop();
 
    if(!cursor&&kinds.includes('users')){const user=(await c.query('SELECT id,full_name FROM internal.users WHERE id::text=$1 AND is_active',[principal.subject])).rows[0];if(user)rows.push({scope:scope.namespace,kind:'users',record_id:user.id,value:{id:user.id,name:user.full_name,role:['OWNER','ADMIN'].includes(scope.role)?'ADMIN':scope.role,pin:'',status:'ACTIVE'},revision:1,deleted:false});}
-   if(!cursor&&kinds.includes('staff_members')){const roster=(await c.query(`SELECT DISTINCT u.id,u.full_name,ms.role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=$1 AND ms.is_active AND u.is_active AND (ms.scope_type='TENANT' OR ms.merchant_id=$2 AND(ms.scope_type='MERCHANT' OR ms.outlet_id=$3)) ORDER BY u.full_name,u.id`,[scope.tenantId,scope.merchantId,scope.outletId])).rows;for(const user of roster)rows.push({scope:scope.namespace,kind:'staff_members',record_id:user.id,value:{id:user.id,name:user.full_name,role:user.role,businessId:scope.transportRef,status:'ACTIVE'},revision:1,deleted:false});}
+   if(!cursor&&kinds.includes('staff_members')){const managed=await hasSchemaFeature(c,'staffAccounts');const roster=(await c.query(`SELECT DISTINCT u.id,u.full_name,${managed?'CASE WHEN ms.auth_managed THEN a.role ELSE ms.role END':'ms.role'} AS role FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id ${managed?'LEFT JOIN internal.staff_workspace_assignments a ON a.membership_id=ms.id AND a.tenant_id=ms.tenant_id AND a.merchant_id=$2 AND a.outlet_id=$3 AND a.module_id=$4':''} WHERE $4::text IS NOT NULL AND ms.tenant_id=$1 AND ms.is_active AND u.is_active AND (${managed?"ms.auth_managed AND a.membership_id IS NOT NULL OR NOT ms.auth_managed AND ":''}(ms.scope_type='TENANT' OR ms.merchant_id=$2 AND(ms.scope_type='MERCHANT' OR ms.outlet_id=$3))) AND (ms.role NOT IN('BARISTA','CHEF','WASHER','KAPSTER') OR ms.role=ANY($5::text[])) ORDER BY u.full_name,u.id`,[scope.tenantId,scope.merchantId,scope.outletId,scope.moduleId,scope.moduleId==='fnb'?['BARISTA','CHEF']:scope.moduleId==='carwash'?['WASHER']:scope.moduleId==='barber'?['KAPSTER']:[]])).rows;for(const user of roster)rows.push({scope:scope.namespace,kind:'staff_members',record_id:user.id,value:{id:user.id,name:user.full_name,role:user.role,businessId:scope.transportRef,status:'ACTIVE'},revision:1,deleted:false});}
    return {ok:true,ready:true,scopeProof:true,kinds,business:{businessId:scope.merchantId,tenantId:scope.tenantId,sector:scope.sector},workspace:{outletId:scope.outletId,moduleId:scope.moduleId},records:rows.map(r=>({scope:r.scope,kind:r.kind,recordId:r.record_id,value:r.value,revision:Number(r.revision),deleted:r.deleted})),version,nextCursor:more?rows[Math.min(999,rows.length-1)].kind+'\x01'+rows[Math.min(999,rows.length-1)].record_id:null};
   });res.setHeader('Cache-Control','no-store');return res.json(result);}catch(e){return errorResponse(res,e);}
  });
@@ -49,11 +51,16 @@ export function registerWorkspaceStateRoutes(app:Express,db:Db){
   try{const result=await db.tx(async c=>{
    const scope=await resolveWorkspaceScope(c,principal.subject,req.body);assertWorkspaceKinds(scope,operations.map(op=>op.kind),true);
    if(operations.some(op=>op.kind==='products')&&!['TENANT','MERCHANT'].includes(scope.membershipScope))throw new ModuleAccessError(403,'MODULE_CATALOG_MANAGER_REQUIRED');
+   if(process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS==='1'&&await hasSchemaFeature(c,'workspaceJobs')){
+    if(operations.some(op=>['bookings','kds_tickets','carwash_queue'].includes(op.kind)||op.kind==='order_operations'&&scope.moduleId==='laundry'))throw new ModuleAccessError(403,'CANONICAL_WORKSPACE_COMMAND_REQUIRED');
+    if(['fnb','carwash'].includes(scope.moduleId)&&operations.some(op=>op.kind==='tables'))requireWorkspaceRole(scope,['OWNER','ADMIN','MANAGER']);
+   }
    const versions:any[]=[],conflicts:any[]=[];
    for(const op of operations){
     if(op.kind==='products'&&op.baseRevision>0&&!(await c.query('SELECT id FROM pos.products WHERE tenant_id=$1 AND merchant_id=$2 AND module_id=$3 AND external_ref=$4 FOR UPDATE',[scope.tenantId,scope.merchantId,scope.moduleId,workspaceProductRef(scope.moduleId,op.recordId)])).rows.length){conflicts.push({kind:op.kind,recordId:op.recordId,error:'STATE_CONFLICT'});continue;}
     const rawValue=op.value as Record<string,unknown>|null;
     if(op.kind==='products'&&!op.deleted&&(rawValue?.linkedStockItemId||Array.isArray(rawValue?.recipeIngredients)&&rawValue.recipeIngredients.length))throw new ModuleAccessError(409,'WORKSPACE_RECIPE_NOT_VALIDATED');
+    if(op.kind==='products'&&!op.deleted)validateWorkspaceOptions(rawValue);
     const value=op.deleted?null:{...rawValue,tenantId:scope.tenantId,moduleId:scope.moduleId,outletId:scope.outletId,branchId:scope.outletId,businessId:scope.transportRef,businessSector:scope.sector};
     if(!op.deleted&&(['moduleId','outletId','branchId','businessId','tenantId'] as const).some(field=>rawValue?.[field]!==undefined&&rawValue[field]!==value![field]))throw new ModuleAccessError(403,'WORKSPACE_PAYLOAD_MISMATCH');
     const saved=await c.query(`INSERT INTO pos.shared_state_records(tenant_id,merchant_id,outlet_id,module_id,scope,kind,record_id,value,revision,deleted) SELECT $1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::jsonb,1,$9::boolean WHERE $10::bigint=0 OR $6='products' OR EXISTS(SELECT 1 FROM pos.shared_state_records WHERE tenant_id=$1 AND scope=$5 AND kind=$6 AND record_id=$7 AND revision=$10) ON CONFLICT(tenant_id,scope,kind,record_id) DO UPDATE SET value=excluded.value,deleted=excluded.deleted,revision=CASE WHEN(pos.shared_state_records.value,pos.shared_state_records.deleted) IS DISTINCT FROM(excluded.value,excluded.deleted) THEN pos.shared_state_records.revision+1 ELSE pos.shared_state_records.revision END,updated_at=CASE WHEN(pos.shared_state_records.value,pos.shared_state_records.deleted) IS DISTINCT FROM(excluded.value,excluded.deleted) THEN now() ELSE pos.shared_state_records.updated_at END WHERE pos.shared_state_records.revision=$10 OR excluded.kind='products' RETURNING revision`,[scope.tenantId,scope.merchantId,scope.outletId,scope.moduleId,scope.namespace,op.kind,op.recordId,value,op.deleted,op.baseRevision]);

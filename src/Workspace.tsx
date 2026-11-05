@@ -1,3 +1,4 @@
+const WorkspaceLabor = lazy(() => import('./platform/modules/WorkspaceLabor'));
 import { ModuleWorkspaceGate, useBusinessModule } from './platform/modules/ModuleWorkspaceGate';
 import { moduleScreens } from './platform/modules/screens';
 import { parseModuleRoute } from './platform/modules/routing';
@@ -152,6 +153,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
   const ModuleDashboard = runtime && moduleScreens[runtime.manifest.id].dashboard;
   const ModuleOperations = runtime && moduleScreens[runtime.manifest.id].operations;
   const operationsTab = runtime?.manifest.pages.find(page => page.id === 'operations')?.tab;
+  const domainCashier=!!runtime&&runtime.grant.capabilities?.includes('workflow.jobs')&&['fnb','laundry','carwash'].includes(runtime.manifest.id)&&activeTab==='pos';
   const isOperations = !!runtime && (moduleRoute?.page.id === 'operations' || !moduleRoute && activeTab === operationsTab);
   const groupReport = moduleRoute?.page.id === 'group-reports';
   const moduleAllowed = !runtime || runtime.grant.permissions.includes(activeTab) && runtime.grant.features.includes(activeTab) && (!groupReport || runtime.grant.tenantOwner);
@@ -277,12 +279,12 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
               )}
 
               {runtime && activeTab === 'overview' && ModuleDashboard && <Suspense fallback={<TabLoading/>}><ModuleDashboard/></Suspense>}
-              {isOperations && ModuleOperations && <Suspense fallback={<TabLoading/>}><div className="flex-1 overflow-auto p-4"><ModuleOperations/></div></Suspense>}
+              {(isOperations||domainCashier) && ModuleOperations && <Suspense fallback={<TabLoading/>}><div className="flex-1 overflow-auto p-4"><ModuleOperations/></div></Suspense>}
               {!runtime && activeTab === 'overview' && (
                 <Suspense fallback={<TabLoading/>}><OverviewPage onBackToHome={onGoToHome} /></Suspense>
               )}
 
-              {activeTab === 'pos' && (
+              {activeTab === 'pos' && !domainCashier && (
                 <>
                   {/* Product Catalog & Search Column */}
                   <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-200 relative">
@@ -354,7 +356,7 @@ const POSAppContent: React.FC<POSAppContentProps> = ({ onGoToHome, onLogout }) =
 
               {activeTab === 'labor' && (
                 <Suspense fallback={<TabLoading />}>
-                  <SmartLaborManager />
+                  {runtime?.grant.workspaceVersion===2?<WorkspaceLabor/>:<SmartLaborManager />}
                 </Suspense>
               )}
 

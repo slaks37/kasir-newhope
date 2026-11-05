@@ -41,6 +41,8 @@ const BATCH_SIZE = 200;
 const BACKOFF_MS = [5_000, 15_000, 45_000, 120_000, 300_000];
 
 export interface SyncPayloadItem {
+  variantId?:string;
+  selectedModifiers?:Array<{groupId:string;optionId:string}>;
   clientItemId?: string;
   productRef: string;
   productName: string;
@@ -55,6 +57,7 @@ export interface SyncPayloadItem {
 export interface FinancialWorkspace {tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string}
 export const financialWorkspaceKey=(w:FinancialWorkspace)=>`workspace:v2:${w.tenantId}:${w.merchantId}:${w.outletId}:${w.moduleId}:${w.actorRef}`;
 export interface SyncPayloadTxn {
+  operationalJobId?:string;
   workspace?:FinancialWorkspace;
   tenders?: Array<{clientPaymentId:string;method:string;amount:number;createdAt:string}>;
   shiftId?: string;
@@ -275,6 +278,8 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
     items: order.items.map((i) => ({
       clientItemId: i.id,
       productRef: i.productId,
+      ...(i.variantId?{variantId:i.variantId}:{}),
+      ...(i.selectedModifiers?.length?{selectedModifiers:i.selectedModifiers.map(m=>({groupId:m.groupId,optionId:m.optionId}))}:{}),
       productName: i.variantName ? `${i.name} (${i.variantName})` : i.name,
       unitPrice: i.unitPrice,
       // HPP hasil snapshot saat item masuk keranjang. Keranjang lama yang

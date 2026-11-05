@@ -1,3 +1,4 @@
+import {adjustWorkspaceCommission} from './workspaceLabor';
 import {restoreWorkspaceRecipe} from './workspaceRecipes';
 import {RegisterError,bindRegisterCash,registerCashierFinanceRoutes,openRegisterShift,readRegisterShifts,closeRegisterShift} from './registerOperations';
 import type {WorkspaceScope} from './workspaceScope';
@@ -128,6 +129,7 @@ export async function applyRefund(db:Db,scope:FinancialScope,transactionId:strin
   const cashRefund=command.refundMethod==='CASH'?amount:Math.min(originalCash,Math.max(0,cashPaid));
   if(cashRefund>0)await db.query(`INSERT INTO pos.cash_ledger(tenant_id,merchant_id,outlet_id,client_event_id,event_type,amount,transaction_id,reference_id,note,actor_ref,occurred_at)
     VALUES($1,$2,$3,$4,'REFUND',$5,$6,$7,$8,$9,$10)`,[scope.tenantId,scope.merchantId,scope.outletId,'refund:'+refund.id,-cashRefund,transactionId,refund.id,normalized.reason,scope.actorRef,occurredAt]);
+  await adjustWorkspaceCommission(db,transactionId);
   await writeActivity(db,{tenantId:scope.tenantId,merchantId:scope.merchantId,businessSector:scope.sector,appModule:'POS',eventType:'TRANSACTION_REFUND',transactionId,amountIdr:amount,severity:'WARNING',summary:'Retur transaksi dicatat',detail:{clientRefundId:command.clientRefundId}});
   return {id:refund.id,clientRefundId:command.clientRefundId,amount,subtotal,discount,tax,service,replayed:false};
 }

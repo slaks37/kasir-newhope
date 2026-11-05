@@ -58,6 +58,17 @@ export async function staffAcceptance(admin:Db,staffDb:Db,pos:Db,peerStaffDb:Db=
    assert.equal((await pos.tx(c=>resolveModuleAccess(c,staff,merchant,outlet))).modules[0].tenantOwner,false,'OWNER membership never becomes canonical tenant owner');
   }
   for(const role of ['BARISTA','CHEF','WASHER'])assert.throws(()=>staffAssignments([{...grant,role}]),/STAFF_ROLE_MODULE_MISMATCH/,'Unaccepted module workflow cannot be enabled by invitation');
+  // Extend the same managed identity to the now-canonical three service modules.
+  process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS='1';resetSchemaFeatureCache();
+  try{
+   for(const moduleId of ['fnb','laundry','carwash']){await admin.query('INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis,workspace_version) VALUES($1,$2,$3,true,true,2)',[tenant,merchant,moduleId]);await admin.query("INSERT INTO billing.module_entitlements(tenant_id,merchant_id,module_id,enabled,features,expires_at,grant_reference) VALUES($1,$2,$3,true,ARRAY['overview','pos','tables','inventory','reports','customers','settings'],now()+interval '2 days','synthetic-five-sector-staff')",[tenant,merchant,moduleId]);}
+   const assignments=['fnb','retail','laundry','carwash','barber'].map(moduleId=>({...grant,moduleId,role:'CASHIER'}));
+   const version=(await admin.query('SELECT staff_access_version FROM internal.memberships WHERE id=$1',[accepted.membershipId])).rows[0].staff_access_version;
+   await changeStaffAccess(staffDb,user(owner),{tenantId:tenant,membershipId:accepted.membershipId,version,active:true,canManageStaff:false,assignments});
+   const all=await pos.tx(c=>resolveModuleAccess(c,staff,merchant,outlet));assert.deepEqual(all.modules.map(m=>m.id).sort(),['barber','carwash','fnb','laundry','retail']);
+   for(const moduleId of ['fnb','laundry','carwash']){const own=await pos.tx(c=>resolveWorkspaceScope(c,staff,{businessId:merchant,outletId:outlet,moduleId},['pos']));assert.equal(own.role,'CASHIER');await assert.rejects(()=>pos.tx(c=>resolveWorkspaceScope(c,staff,{businessId:merchant,outletId:outlet2,moduleId},['pos'])),/ISOLATED_WORKSPACE_REQUIRED/);}
+   for(const [moduleId,role] of [['fnb','CHEF'],['laundry','STAFF'],['carwash','WASHER']]){const v=(await admin.query('SELECT staff_access_version FROM internal.memberships WHERE id=$1',[accepted.membershipId])).rows[0].staff_access_version;await changeStaffAccess(staffDb,user(owner),{tenantId:tenant,membershipId:accepted.membershipId,version:v,active:true,canManageStaff:false,assignments:[{...grant,moduleId,role}]});const op=await pos.tx(c=>resolveWorkspaceScope(c,staff,{businessId:merchant,outletId:outlet,moduleId},['tables']));assert.equal(op.role,role);assert(!op.permissions.includes('pos'));assert(!op.permissions.includes('reports'));}
+  }finally{delete process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS;resetSchemaFeatureCache();}
   const version=(await admin.query('SELECT staff_access_version FROM internal.memberships WHERE id=$1',[accepted.membershipId])).rows[0].staff_access_version;
   await changeStaffAccess(staffDb,user(owner),{tenantId:tenant,membershipId:accepted.membershipId,version,active:false,canManageStaff:false,assignments:[grant]});
   await assert.rejects(()=>pos.tx(c=>resolveModuleAccess(c,staff,merchant,outlet)),/MODULE_SCOPE_FORBIDDEN/);

@@ -1,3 +1,5 @@
+import {submitWorkspaceJob,pendingWorkspaceJob,flushWorkspaceJob} from '../../src/lib/sync/workspaceJobQueue';
+import {submitWorkspaceLabor,pendingWorkspaceLabor,flushWorkspaceLabor,renewWorkspaceLaborApproval,type LaborCommand} from '../../src/lib/sync/workspaceLaborQueue';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {initializeFinancialStorage,readFinancialValue,writeFinancialValue,financialDeviceId,type FinancialDisk} from '../../src/platform/runtime/financialStorage';
@@ -61,3 +63,17 @@ Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:
 await initializeFinancialStorage({...adapter,load:async()=>({deviceId:'other-device',entries:[]})});assert.equal(financialDeviceId(),'other-device');assert.equal(readFinancialValue(raceKey),null);
 await assert.rejects(()=>initializeFinancialStorage({...adapter,load:async()=>{throw Error('LOCKED');}}),/LOCKED/);assert.throws(()=>readFinancialValue(key),/NOT_READY/);
 console.log('PASS synthetic native bridge: commit failures, lost commit reply/restart, CAS conflict, all ownership dimensions, device separation, exact ACK/revocation, cash, inventory and shift-close persistence. Not physical-device evidence.');
+
+await initializeFinancialStorage(adapter);
+// Both service intake and payroll retain their original tuple/actor on native restart.
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('JOB_ACK_LOST');}});
+await assert.rejects(()=>submitWorkspaceJob(w,{action:'CREATE',jobId:randomUUID(),customerName:'Synthetic',customerPhone:'000',lines:[{id:'line',productRef:'service',quantity:2.5}]}),/ACK_LOST/);
+await initializeFinancialStorage(adapter);const job=pendingWorkspaceJob(w)!;assert(job);assert.equal(pendingWorkspaceJob({...w,outletId:randomUUID()}),null);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,...job,revision:1,workspace:{...w,actorRef:randomUUID()}})})});await assert.rejects(()=>flushWorkspaceJob(w),/ACK_MISMATCH/);assert.deepEqual(pendingWorkspaceJob(w),job);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{assert.deepEqual(JSON.parse(init.body),job);return {ok:true,json:async()=>({ok:true,...job,revision:1,workspace:w})};}});await flushWorkspaceJob(w);assert.equal(pendingWorkspaceJob(w),null);
+const payroll:LaborCommand={commandId:randomUUID(),businessId:w.merchantId,outletId:w.outletId,moduleId:w.moduleId,staffId:randomUUID(),action:'PAY',periodMonth:'2030-01',periodEnd:'2030-01-31',fingerprint:'immutable',baseSalary:100,allowance:0,deductions:0,cash:{clientEventId:'synthetic-payroll',type:'CASH_OUT',amount:100,occurredAt:'2030-01-31T00:00:00Z',description:'Synthetic',category:'GAJI',recipientOrSource:'staff',registerId:randomUUID(),approvalGrant:'old-synthetic'}};
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('PAYROLL_ACK_LOST');}});await assert.rejects(()=>submitWorkspaceLabor(w,payroll),/ACK_LOST/);await initializeFinancialStorage(adapter);assert.deepEqual(pendingWorkspaceLabor(w),payroll);assert.equal(pendingWorkspaceLabor({...w,actorRef:randomUUID()}),null);
+await renewWorkspaceLaborApproval(w,payroll.commandId,'renewed-synthetic');const renewed=pendingWorkspaceLabor(w)!;assert.deepEqual({...renewed,cash:{...renewed.cash,approvalGrant:'old-synthetic'}},payroll);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,commandId:payroll.commandId,action:'PAY',payrollId:randomUUID(),netSalary:99,workspace:w})})});await assert.rejects(()=>flushWorkspaceLabor(w),/ACK_MISMATCH/);assert(pendingWorkspaceLabor(w));
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{assert.deepEqual(JSON.parse(init.body),renewed);return {ok:true,json:async()=>({ok:true,commandId:payroll.commandId,action:'PAY',payrollId:randomUUID(),netSalary:100,workspace:w})};}});await flushWorkspaceLabor(w);assert.equal(pendingWorkspaceLabor(w),null);
+console.log('PASS native bridge-model job/payroll: restart, original intent, tuple/actor isolation, approval-only renewal and strict ACK');

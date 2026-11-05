@@ -31,7 +31,7 @@ export default function OperationalDashboard({ title, description, labels }: { t
   const canOperate = grant.permissions.includes(operations.permission) && grant.features.includes(operations.permission);
   return <section className="flex-1 overflow-auto bg-slate-50 p-6 md:p-10"><div className="max-w-5xl mx-auto space-y-6">
     <header><p className="text-sm text-slate-500">{manifest.name}</p><h1 className="text-3xl font-bold mt-2">{title}</h1><p className="mt-3 text-slate-600">{description}</p></header>
-    <aside className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold">Batas fitur pilot</p>{manifest.limitations.map(limit => <p key={limit} className="text-sm mt-2">{limit}</p>)}</aside>
+    {!grant.capabilities?.includes('workflow.jobs')&&<aside className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold">Batas fitur pilot</p>{manifest.limitations.map(limit => <p key={limit} className="text-sm mt-2">{limit}</p>)}</aside>}
     <ol className="flex flex-wrap gap-3" aria-label="Alur sektor">{manifest.workflow.map((step, index) => <li key={step} className="rounded-xl bg-white border px-4 py-3">{index + 1}. {step}</li>)}</ol>
     {current.error ? <p role="alert">Ringkasan belum tersedia: {current.error}</p> : !current.metrics ? <p role="status">Memuat ringkasan operasional…</p> : <>
       <div className="grid gap-4 sm:grid-cols-3">{current.metrics.buckets.map(bucket => <article key={bucket.status} className="rounded-2xl border bg-white p-6"><p className="text-slate-600">{labels[bucket.status] || bucket.status}</p><p className="text-3xl font-bold mt-2">{bucket.count}</p></article>)}</div>

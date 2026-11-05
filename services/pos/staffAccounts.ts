@@ -14,8 +14,8 @@ const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 export function staffAssignments(value:unknown):StaffAssignment[]{
  if(!Array.isArray(value)||!value.length||value.length>32)throw new StaffAccessError(400,'STAFF_ASSIGNMENTS_REQUIRED');
  const seen=new Set<string>();return value.map(row=>{
-  if(!row||Object.keys(row).sort().join(',')!=='merchantId,moduleId,outletId,role'||!UUID.test(row.merchantId)||!UUID.test(row.outletId)||!['retail','barber'].includes(row.moduleId)||!STAFF_ROLES.includes(row.role))throw new StaffAccessError(400,'STAFF_ASSIGNMENT_INVALID');
-  // Unaccepted FNB/carwash/laundry v2 workflows cannot be enabled by invitations.
+  if(!row||Object.keys(row).sort().join(',')!=='merchantId,moduleId,outletId,role'||!UUID.test(row.merchantId)||!UUID.test(row.outletId)||!['fnb','retail','laundry','carwash','barber'].includes(row.moduleId)||!STAFF_ROLES.includes(row.role))throw new StaffAccessError(400,'STAFF_ASSIGNMENT_INVALID');
+  // Parse persisted grants independently of rollout; live writes validate readiness below.
   const operational:Record<string,string>={BARISTA:'fnb',CHEF:'fnb',WASHER:'carwash',KAPSTER:'barber'};
   if(operational[row.role]&&operational[row.role]!==row.moduleId)throw new StaffAccessError(400,'STAFF_ROLE_MODULE_MISMATCH');
   const key=[row.merchantId,row.outletId,row.moduleId].join(':');if(seen.has(key))throw new StaffAccessError(400,'STAFF_ASSIGNMENT_DUPLICATE');seen.add(key);
@@ -35,6 +35,7 @@ async function actor(c:Db,p:AuthPrincipal,tenant:string,mutate=false){
 async function validateScopes(c:Db,p:AuthPrincipal,tenant:string,assignments:StaffAssignment[],owner:boolean,manage=false){
  if(manage&&(!owner||assignments.some(a=>a.role!=='ADMIN')))deny('STAFF_DELEGATION_OWNER_REQUIRED');
  for(const a of assignments){
+  if(!['retail','barber'].includes(a.moduleId)&&(process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS!=='1'||!await hasSchemaFeature(c,'workspaceStaffWorkflows')))deny('STAFF_WORKFLOW_NOT_ENABLED');
   const allowed=await c.query(`SELECT 1 FROM internal.outlets o JOIN internal.merchants m ON m.id=o.merchant_id AND m.tenant_id=o.tenant_id JOIN internal.merchant_modules mm ON mm.merchant_id=m.id AND mm.tenant_id=m.tenant_id AND mm.module_id=$4 WHERE o.tenant_id=$1 AND m.id=$2 AND o.id=$3 AND o.is_active AND m.is_active AND mm.enabled AND mm.workspace_version=2`,[tenant,a.merchantId,a.outletId,a.moduleId]);
   if(!allowed.rows.length)deny('STAFF_ASSIGNMENT_SCOPE_FORBIDDEN');
   if(!owner){
@@ -115,7 +116,7 @@ export async function staffDirectory(db:Db,p:AuthPrincipal,tenantId:unknown){
  return staffTransaction(db,async c=>{
   const tenants=(await c.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t JOIN internal.users u ON u.id::text=$1 AND u.is_active WHERE t.is_active AND t.merged_into IS NULL AND(t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships m WHERE m.tenant_id=t.id AND m.user_id=u.id AND m.is_active AND m.auth_managed AND m.can_manage_staff)) ORDER BY t.id`,[p.subject])).rows;
   if(!tenantId)return {ok:true,tenants,tenantId:null};const {owner}=await actor(c,p,String(tenantId));
-  const options=(await c.query(`SELECT m.id AS "merchantId",m.name AS "merchantName",o.id AS "outletId",o.name AS "outletName",mm.module_id AS "moduleId" FROM internal.merchants m JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id JOIN internal.merchant_modules mm ON mm.merchant_id=m.id AND mm.tenant_id=m.tenant_id WHERE m.tenant_id=$1 AND m.is_active AND o.is_active AND mm.enabled AND mm.workspace_version=2 AND mm.module_id IN('barber','retail') ORDER BY m.id,o.id,mm.module_id`,[tenantId])).rows;
+  const options=(await c.query(`SELECT m.id AS "merchantId",m.name AS "merchantName",o.id AS "outletId",o.name AS "outletName",mm.module_id AS "moduleId" FROM internal.merchants m JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=m.tenant_id JOIN internal.merchant_modules mm ON mm.merchant_id=m.id AND mm.tenant_id=m.tenant_id WHERE m.tenant_id=$1 AND m.is_active AND o.is_active AND mm.enabled AND mm.workspace_version=2 AND mm.module_id=ANY($2::text[]) ORDER BY m.id,o.id,mm.module_id`,[tenantId,process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS==='1'&&await hasSchemaFeature(c,'workspaceStaffWorkflows')?['fnb','retail','laundry','carwash','barber']:['retail','barber']])).rows;
   const members=(await c.query(`SELECT ms.id,ms.user_id AS "userId",u.email,u.full_name AS name,ms.is_active AS active,ms.auth_managed AS managed,ms.staff_access_version AS version,ms.can_manage_staff AS "canManageStaff" FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=$1 ORDER BY ms.id LIMIT 200`,[tenantId])).rows;
   const visible=[];for(const m of members){const assignments=await readAssignments(c,m.id);if(!owner){try{if(!assignments.length)continue;await validateScopes(c,p,String(tenantId),assignments,false);}catch{continue;}}visible.push({...m,assignments});}
   const invites=(await c.query('SELECT id,email,status,expires_at AS "expiresAt",assignments,can_manage_staff AS "canManageStaff" FROM internal.staff_invitations WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100',[tenantId])).rows;

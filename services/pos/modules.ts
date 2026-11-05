@@ -53,6 +53,7 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
   // Existing Free behavior remains on legacy routes; no paid feature is implicitly granted.
   if ((await freePlanState(db, scope.tenant_id)).free) throw new ModuleAccessError(403, 'MODULE_PILOT_REQUIRES_PAID_OR_TRIAL');
   const isolated=await hasSchemaFeature(db,'workspaceIsolation')&&await hasSchemaFeature(db,'cashierRegisters');
+  const domainReady=process.env.NEW_HOPE_MODULE_DOMAIN_WORKFLOWS==='1'&&await hasSchemaFeature(db,'workspaceJobs');
   const assignments = await db.query(`SELECT mm.module_id, e.features,e.expires_at,COALESCE((to_jsonb(mm)->>'workspace_version')::int,1) AS workspace_version FROM internal.merchant_modules mm
     JOIN billing.module_entitlements e ON (e.tenant_id,e.merchant_id,e.module_id)=(mm.tenant_id,mm.merchant_id,mm.module_id)
     LEFT JOIN internal.outlet_modules om ON om.tenant_id=mm.tenant_id AND om.merchant_id=mm.merchant_id
@@ -72,10 +73,10 @@ export async function resolveModuleAccess(db: Db, subject: string, businessId: u
     if(scope.auth_managed&&!scope.tenant_owner&&!staffRole)continue;
     const role=staffRole||scope.role;
     const operationalModule:Record<string,string>={BARISTA:'fnb',CHEF:'fnb',WASHER:'carwash',KAPSTER:'barber'};if(operationalModule[role]&&operationalModule[role]!==row.module_id)continue;
-    if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)))continue;
+    if(Number(row.workspace_version)===2&&(!isolated||!['retail','barber'].includes(row.module_id)&&!domainReady))continue;
     // Until sector adapters and legacy outlet caches are disentangled, fail closed.
     if (!manifest || Number(row.workspace_version)!==2 && (manifest.sector !== scope.business_sector || scope.outlet_count !== 1)) continue;
-    modules.push({ id: manifest.id, permissions:staffRole?permissionsForModuleRole(staffRole):permissions, capabilities:Number(row.workspace_version)===2?registerCapabilities(role):[], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version)), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString(),...(staffRole?{staffRole}:{}) });
+    modules.push({ id: manifest.id, permissions:staffRole?permissionsForModuleRole(staffRole):permissions, capabilities:Number(row.workspace_version)===2?[...registerCapabilities(role),...(domainReady?['workflow.jobs',...(['OWNER','ADMIN','MANAGER'].includes(role)?['workflow.manage']:[])]:[])]:[], features: acceptedWorkspaceFeatures(row.features, Number(row.workspace_version),domainReady&&await hasSchemaFeature(db,'workspaceLabor')), tenantOwner: Boolean(scope.tenant_owner), workspaceVersion:Number(row.workspace_version),expiresAt:new Date(row.expires_at).toISOString(),...(staffRole?{staffRole}:{}) });
   }
   return { enabled: true, businessId, outletId, modules };
 }
@@ -192,6 +193,7 @@ export function registerModuleRoutes(app: Express, db: Db) {
         };
         const definition = definitions[manifest.id];
         const isolated=access.modules.find(m=>m.id===manifest.id)?.workspaceVersion===2;
+        if(isolated&&manifest.id!=='retail'&&access.modules.find(m=>m.id===manifest.id)?.capabilities?.includes('workflow.jobs')){await c.query("SELECT set_config('app.outlet_id',$1,true),set_config('app.module_id',$2,true)",[access.outletId,manifest.id]);const jobs=await c.query('SELECT status,count(*)::int AS count FROM pos.operational_jobs WHERE tenant_id=$1 AND merchant_id=$2 AND outlet_id=$3 AND module_id=$4 GROUP BY status ORDER BY status',[(await c.query('SELECT tenant_id FROM internal.merchants WHERE id=$1',[access.businessId])).rows[0].tenant_id,access.businessId,access.outletId,manifest.id]);return {buckets:jobs.rows,total:jobs.rows.reduce((n,r)=>n+r.count,0),generatedAt:new Date().toISOString()};}
         if(isolated&&manifest.id==='retail'){const stock=await c.query(`SELECT CASE WHEN COALESCE(b.stock,0)<=0 THEN 'OUT_OF_STOCK' ELSE 'AVAILABLE' END AS status,count(*)::int count FROM pos.products p LEFT JOIN LATERAL(SELECT sum(current_stock) stock FROM pos.inventory_balances WHERE inventory_item_id=p.inventory_item_id AND outlet_id=$2) b ON true WHERE p.merchant_id=$1 AND p.module_id=$3 AND p.is_available GROUP BY 1 ORDER BY 1`,[access.businessId,access.outletId,manifest.id]);return {buckets:stock.rows,total:stock.rows.reduce((n,r)=>n+r.count,0),generatedAt:new Date().toISOString()};}
         // Aggregate in PostgreSQL, never download a merchant's complete history.
         // Singleton-outlet adapter only; unknown outlet ownership cannot be guessed.

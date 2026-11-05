@@ -87,7 +87,7 @@ public class FinancialDiskPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     @objc func compareAndSet(_ call: CAPPluginCall) {
         lock.lock();defer{lock.unlock()}
-        let prefixes=["newhope_sync_queue_workspace:v2:","newhope_sync_quarantine_workspace:v2:","newhope_cash_outbox_workspace:v2:","newhope_refund_ack_workspace:v2:","newhope_recipe_outbox_v1_workspace:v2:","newhope_inventory_outbox_v1_workspace:v2:","newhope_shift_close_v1_"]
+        let prefixes=["newhope_sync_queue_workspace:v2:","newhope_sync_quarantine_workspace:v2:","newhope_cash_outbox_workspace:v2:","newhope_refund_ack_workspace:v2:","newhope_labor_outbox_v1_workspace:v2:","newhope_job_outbox_v1_workspace:v2:","newhope_recipe_outbox_v1_workspace:v2:","newhope_inventory_outbox_v1_workspace:v2:","newhope_shift_close_v1_"]
         guard let key=call.getString("key"),key.count<1024,prefixes.contains(where:{key.hasPrefix($0)}) else {call.reject("INVALID_FINANCIAL_KEY");return}
         do {try open();try sql("BEGIN IMMEDIATE")
             do {let get=try statement("SELECT value FROM journal WHERE key=?",[key]);defer{sqlite3_finalize(get)};let result=sqlite3_step(get);guard result==SQLITE_ROW || result==SQLITE_DONE else {throw NSError(domain:"FinancialDisk",code:7)};let current:String? = result==SQLITE_ROW ? String(cString:sqlite3_column_text(get,0)):nil

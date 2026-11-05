@@ -1,8 +1,11 @@
-import { lazy } from 'react';
+import React,{lazy} from 'react';
+import {useBusinessModule} from './ModuleWorkspaceGate';
+const WorkspaceOperations=lazy(()=>import('./WorkspaceOperations'));
+function withWorkspaceOperations(Fallback:React.ComponentType){return function Operations(){const runtime=useBusinessModule();return runtime?.grant.workspaceVersion===2&&runtime.grant.capabilities?.includes('workflow.jobs')?<WorkspaceOperations/>:<Fallback/>;};}
 export const moduleScreens = {
   fnb: {
     dashboard: lazy(() => import('../../modules/fnb/Dashboard')),
-    operations: lazy(() => import('../../components/tables/KitchenDisplaySystem').then(m => ({ default: m.KitchenDisplaySystem }))),
+    operations: withWorkspaceOperations(lazy(() => import('../../components/tables/KitchenDisplaySystem').then(m => ({ default: m.KitchenDisplaySystem })))),
   },
   retail: {
     dashboard: lazy(() => import('../../modules/retail/Dashboard')),
@@ -10,14 +13,14 @@ export const moduleScreens = {
   },
   laundry: {
     dashboard: lazy(() => import('../../modules/laundry/Dashboard')),
-    operations: lazy(() => import('../../components/tables/LaundryPipelineView').then(m => ({ default: m.LaundryPipelineView }))),
+    operations: withWorkspaceOperations(lazy(() => import('../../components/tables/LaundryPipelineView').then(m => ({ default: m.LaundryPipelineView })))),
   },
   carwash: {
     dashboard: lazy(() => import('../../modules/carwash/Dashboard')),
-    operations: lazy(() => import('../../components/tables/CarwashPipelineView').then(m => ({ default: m.CarwashPipelineView }))),
+    operations: withWorkspaceOperations(lazy(() => import('../../components/tables/CarwashPipelineView').then(m => ({ default: m.CarwashPipelineView })))),
   },
   barber: {
     dashboard: lazy(() => import('../../modules/barber/Dashboard')),
-    operations: lazy(() => import('../../components/tables/BarbershopBookingView').then(m => ({ default: m.BarbershopBookingView }))),
+    operations: withWorkspaceOperations(lazy(() => import('../../components/tables/BarbershopBookingView').then(m => ({ default: m.BarbershopBookingView })))),
   },
 };
