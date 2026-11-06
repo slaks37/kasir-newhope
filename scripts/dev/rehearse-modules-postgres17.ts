@@ -8,6 +8,7 @@ import pg from 'pg';
 import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 import type {Db} from '../../services/shared/db';
 import {resolveModuleAccess} from '../../services/pos/modules';
+import {workspaceDirectory} from '../../services/pos/workspaceDirectory';
 import {resetSchemaFeatureCache} from '../../services/shared/schemaFeatures';
 import {loadMerchantSnapshot} from '../../services/ai/snapshotData';
 const target=rehearsalTarget(process.env),admin=new pg.Client({connectionString:target,ssl:false});
@@ -70,6 +71,15 @@ try{
  await assert.rejects(()=>pos.query('UPDATE internal.merchant_modules SET enabled=false'),(e:any)=>e.code==='42501');
  await assert.rejects(()=>pos.query('SELECT pin FROM internal.memberships'),(e:any)=>e.code==='42501');
  process.env.NEW_HOPE_MODULE_WORKSPACES='1';resetSchemaFeatureCache();
+ const outletlessMerchant=randomUUID(),tenantStaff=randomUUID();
+ await admin.query("INSERT INTO internal.merchants(id,tenant_id,name,business_sector) VALUES($1,$2,'New Retail','RETAIL')",[outletlessMerchant,tenant]);
+ await admin.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,$2,'Tenant staff')",[tenantStaff,tenantStaff+'@fixture.invalid']);
+ await admin.query("INSERT INTO internal.memberships(user_id,tenant_id,scope_type,role) VALUES($1,$2,'TENANT','MANAGER')",[tenantStaff,tenant]);
+ const ownerDirectory=await pos.tx(c=>workspaceDirectory(c,owner,tenant));
+ assert.deepEqual(ownerDirectory.businesses.find(b=>b.businessId===outletlessMerchant)?.outlets,[],'Owner can select a newly created business before opening an outlet');
+ const staffDirectory=await pos.tx(c=>workspaceDirectory(c,tenantStaff,tenant));
+ assert(staffDirectory.businesses.some(b=>b.businessId===merchant),'Tenant staff still sees an assigned business with an outlet');
+ assert(!staffDirectory.businesses.some(b=>b.businessId===outletlessMerchant),'Staff cannot see an outletless business');
  const access=await pos.tx(c=>resolveModuleAccess(c,staff,merchant,outlet));assert.equal(access.modules[0].id,'fnb');assert(!access.modules[0].permissions.includes('reports'));
  await assert.rejects(()=>pos.tx(c=>resolveModuleAccess(c,staff,otherMerchant,otherOutlet)),/MODULE_SCOPE_FORBIDDEN/);
  for(const role of ['anon','authenticated']){await admin.query('SET ROLE '+role);for(const table of ['internal.merchant_modules','internal.outlet_modules','billing.module_entitlements'])await assert.rejects(()=>admin.query('SELECT * FROM '+table),(e:any)=>e.code==='42501');await admin.query('RESET ROLE');}
