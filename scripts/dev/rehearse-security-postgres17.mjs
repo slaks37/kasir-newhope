@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { rehearsalTarget } from './rehearsal-target.mjs';
+import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 
 const client = new pg.Client({ connectionString: rehearsalTarget(process.env), ssl: false, connectionTimeoutMillis: 5000 });
 const schemas = ['public', 'pos', 'internal', 'billing', 'ai', 'contract'];
@@ -69,7 +69,7 @@ async function fingerprints(objects, columns) {
 await client.connect();
 try {
   const version = (await client.query('SHOW server_version_num')).rows[0].server_version_num;
-  assert.equal(Math.floor(Number(version) / 10000), 17, 'Real PostgreSQL17 required; PGlite/other versions do not satisfy this gate');
+  assert.equal(Math.floor(Number(version) / 10000), rehearsalPostgresMajor(), 'Real PostgreSQL of the configured major is required');
   evidence.postgresVersion = (await client.query('SELECT version() v')).rows[0].v;
   const populated = await client.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN('r','p','v','m','S')");
   assert.equal(populated.rows[0].n, 0, 'Refuse a populated database before any DDL');

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID} from 'node:crypto';
 import pg from 'pg';
-import {rehearsalTarget} from './rehearsal-target.mjs';
+import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 import {planAuthIdentityMigration,applyAuthIdentityMigration,revokeAuthIdentityMigration,resolveAuthIdentity,authIdentityBusinessFingerprint} from '../../services/shared/authIdentity.ts';
 const target=rehearsalTarget(process.env),source=new pg.Client({connectionString:target,ssl:false});
 const restoredUrl=new URL(target);restoredUrl.pathname='/newhope_auth_restore_rehearsal';
@@ -35,7 +35,7 @@ async function snapshot(c){
 let created=false,connected=false;const key=randomBytes(32);
 await source.connect();
 try{
- assert.equal(Math.floor(Number((await source.query('SHOW server_version_num')).rows[0].server_version_num)/10000),17);
+ assert.equal(Math.floor(Number((await source.query('SHOW server_version_num')).rows[0].server_version_num)/10000), rehearsalPostgresMajor());
  assert.equal((await source.query("SELECT count(*)::int AS n FROM internal.staff_access_events")).rows[0].n>0,true,'Require completed synthetic staff acceptance before backup');
  assert.equal((await source.query('SELECT 1 FROM pg_database WHERE datname=$1',['newhope_auth_restore_rehearsal'])).rows.length,0,'Never overwrite an existing restore database');
  const ids=command('docker',['ps','--filter','ancestor=postgres:17','--format','{{.ID}}']).toString().trim().split('\n').filter(Boolean);assert.equal(ids.length,1,'Require one unambiguous disposable PG17 service container');

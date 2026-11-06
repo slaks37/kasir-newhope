@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import pg from 'pg';
-import {rehearsalTarget} from './rehearsal-target.mjs';
+import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 import type {Db} from '../../services/shared/db';
 import {resolveModuleAccess} from '../../services/pos/modules';
 import {resetSchemaFeatureCache} from '../../services/shared/schemaFeatures';
@@ -19,7 +19,7 @@ const apply=async(file:string)=>{await admin.query('BEGIN');try{await admin.quer
 const asService=async(role:string)=>{await admin.query(`ALTER ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'module-rehearsal-only'`);const url=new URL(target);url.username=role;url.password='module-rehearsal-only';const client=new pg.Client({connectionString:url.toString(),ssl:false});await client.connect();connections.push(client);const identity=(await client.query('SELECT current_user AS name,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];assert.equal(identity.name,role);assert(!identity.rolsuper&&!identity.rolbypassrls);return wrap(client);};
 await admin.connect();
 try{
- assert.equal(Math.floor(Number((await admin.query('SHOW server_version_num')).rows[0].server_version_num)/10000),17,'Actual PostgreSQL17 is required');
+ assert.equal(Math.floor(Number((await admin.query('SHOW server_version_num')).rows[0].server_version_num)/10000),rehearsalPostgresMajor(), 'Real PostgreSQL of the configured major is required');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN('r','p','v','m','S')")).rows[0].n,0,'Refuse populated targets');
  await admin.query('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN');
  const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_/.test(f)&&f!=='0001_compat.sql'&&Number(f.slice(0,4))<=62).sort().map(f=>'migrations/'+f)];

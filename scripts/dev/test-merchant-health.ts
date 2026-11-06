@@ -8,7 +8,7 @@ import pg from 'pg';
 import type { Db } from '../../services/shared/db';
 import { runMerchantHealth,recordHealthOutcome } from '../../services/backoffice/merchantHealth';
 import { createMerchantHealthHandler } from '../../src/server/merchantHealthHandler';
-import { rehearsalTarget } from './rehearsal-target.mjs';
+import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 
 const native = process.argv.includes('--postgres17');
 let db: Db;
@@ -17,7 +17,7 @@ if (native) {
   const wrap=(runner:any):Db=>({query:(sql,params)=>runner.query(sql,params),exec:async sql=>{await runner.query(sql);},
     tx:async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const r=await fn(wrap(c));await c.query('COMMIT');return r;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}},close:()=>pool.end()});
   db=wrap(pool);
-  assert.equal(Math.floor(Number((await db.query('SHOW server_version_num')).rows[0].server_version_num)/10000),17);
+  assert.equal(Math.floor(Number((await db.query('SHOW server_version_num')).rows[0].server_version_num)/10000), rehearsalPostgresMajor());
 } else {
   const engine=new PGlite();
   const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length};},exec:sql=>runner.exec(sql),tx:fn=>engine.transaction(tx=>fn(wrap(tx))),close:()=>engine.close()});

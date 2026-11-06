@@ -1,4 +1,4 @@
-name: Security PostgreSQL17 rehearsal
+name: Security PostgreSQL rehearsal
 on:
   pull_request:
   workflow_dispatch:
@@ -6,12 +6,16 @@ permissions:
   contents: read
 jobs:
   rehearsal:
-    name: PostgreSQL17 migrations, authorization and rollback
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [17, 18]
+    name: PostgreSQL${{ matrix.postgres }} migrations, authorization and rollback
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_DB: newhope_security_rehearsal
           POSTGRES_USER: postgres
@@ -24,7 +28,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NEW_HOPE_REHEARSAL_CONFIRM: DISPOSABLE_POSTGRES17
+      NEW_HOPE_REHEARSAL_POSTGRES_MAJOR: ${{ matrix.postgres }}
+      NEW_HOPE_REHEARSAL_CONFIRM: DISPOSABLE_POSTGRES${{ matrix.postgres }}
       NEW_HOPE_REHEARSAL_DATABASE_URL: postgres://postgres:rehearsal-only@127.0.0.1:55432/newhope_security_rehearsal
     steps:
       - uses: actions/checkout@v4
@@ -39,24 +44,28 @@ jobs:
         run: node scripts/dev/rehearse-security-postgres17.mjs
       - name: Merchant health uses production schema and serializes concurrent workers
         run: node --import tsx scripts/dev/test-merchant-health.ts --postgres17
-      - name: DOKU synthetic concurrency and release gates on PostgreSQL17
+      - name: DOKU synthetic concurrency and release gates on PostgreSQL${{ matrix.postgres }}
         run: node --import tsx scripts/dev/rehearse-payments-postgres17.ts
       - name: Save bounded evidence even when a rehearsal fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: postgres17-security-evidence
+          name: postgres${{ matrix.postgres }}-security-evidence
           path: build/security-rehearsal/postgres17.json
           if-no-files-found: warn
           retention-days: 30
 
   module_rehearsal:
-    name: PostgreSQL17 module roles, isolation and replay
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [17, 18]
+    name: PostgreSQL${{ matrix.postgres }} module roles, isolation and replay
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_DB: newhope_security_rehearsal
           POSTGRES_USER: postgres
@@ -67,7 +76,8 @@ jobs:
           --health-cmd "pg_isready -U postgres -d newhope_security_rehearsal"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      NEW_HOPE_REHEARSAL_CONFIRM: DISPOSABLE_POSTGRES17
+      NEW_HOPE_REHEARSAL_POSTGRES_MAJOR: ${{ matrix.postgres }}
+      NEW_HOPE_REHEARSAL_CONFIRM: DISPOSABLE_POSTGRES${{ matrix.postgres }}
       NEW_HOPE_REHEARSAL_DATABASE_URL: postgres://postgres:rehearsal-only@127.0.0.1:55432/newhope_security_rehearsal
     steps:
       - uses: actions/checkout@v4
@@ -83,12 +93,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: postgres17-auth-backup-evidence
+          name: postgres${{ matrix.postgres }}-auth-backup-evidence
           path: build/auth-backup-rehearsal/postgres17.json
           retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: postgres17-module-evidence
+          name: postgres${{ matrix.postgres }}-module-evidence
           path: build/module-rehearsal/postgres17.json
           retention-days: 30

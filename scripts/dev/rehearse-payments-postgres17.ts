@@ -1,10 +1,10 @@
 // CI-only disposable loopback PostgreSQL17. Refuses every remote URL.
 import fs from 'node:fs';import assert from 'node:assert/strict';import pg from 'pg';
-import {rehearsalTarget} from './rehearsal-target.mjs';
+import { rehearsalPostgresMajor, rehearsalTarget } from './rehearsal-target.mjs';
 import {testQrisSubscriptions} from './test-qris-subscriptions';import {testDokuAdversarial} from './test-doku-adversarial';import {testDokuReleaseAcceptance} from './test-doku-release-acceptance';
 import {pastikanPaket} from '../../services/billing/store';import {SAAS_PLANS} from '../../src/config/saasPlans';import type {Db} from '../../services/shared/db';
 const base=rehearsalTarget(process.env),root=new pg.Client({connectionString:base});await root.connect();const name='newhope_payments_rehearsal';
-try{assert.equal((await root.query('SHOW server_version_num')).rows[0].server_version_num.slice(0,2),'17');assert.equal((await root.query('SELECT 1 FROM pg_database WHERE datname=$1',[name])).rowCount,0,'Refuse existing payment rehearsal database');await root.query('CREATE DATABASE '+name);}finally{await root.end();}
+try{assert.equal((await root.query('SHOW server_version_num')).rows[0].server_version_num.slice(0,2), String(rehearsalPostgresMajor()));assert.equal((await root.query('SELECT 1 FROM pg_database WHERE datname=$1',[name])).rowCount,0,'Refuse existing payment rehearsal database');await root.query('CREATE DATABASE '+name);}finally{await root.end();}
 const u=new URL(base);u.pathname='/'+name;const pool=new pg.Pool({connectionString:u.href,max:6});
 const wrap=(q:pg.Pool|pg.PoolClient):Db=>({query:async(s,p)=>{const r=await q.query(s,p as any[]);return{rows:r.rows,rowCount:r.rowCount||0};},exec:async s=>{await q.query(s);},tx:async f=>{if(q!==pool)return f(wrap(q));const c=await pool.connect();try{await c.query('BEGIN');const r=await f(wrap(c));await c.query('COMMIT');return r;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}},close:()=>pool.end()});
 const db=wrap(pool);const start=Date.now();
