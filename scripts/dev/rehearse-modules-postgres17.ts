@@ -11,7 +11,7 @@ import {resolveModuleAccess} from '../../services/pos/modules';
 import {resetSchemaFeatureCache} from '../../services/shared/schemaFeatures';
 import {loadMerchantSnapshot} from '../../services/ai/snapshotData';
 const target=rehearsalTarget(process.env),admin=new pg.Client({connectionString:target,ssl:false});
-const evidence:any={revision:process.env.GITHUB_SHA||'local',status:'RUNNING',scope:'Disposable PostgreSQL17, actual NOBYPASSRLS service logins, synthetic fixture only',checks:{}};
+const evidence:any={revision:process.env.GITHUB_SHA||'local',status:'RUNNING',scope:`Disposable PostgreSQL ${rehearsalPostgresMajor()}, actual NOBYPASSRLS service logins, synthetic fixture only`,checks:{}};
 const connections:pg.Client[]=[];
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const wrap=(client:pg.Client):Db=>({query:async(sql,params)=>{const r=await client.query(sql,params as any[]);return {rows:r.rows,rowCount:r.rowCount??0};},exec:async sql=>{await client.query(sql);},tx:async fn=>{await client.query('BEGIN');try{const value=await fn(wrap(client));await client.query('COMMIT');return value;}catch(e){await client.query('ROLLBACK');throw e;}},close:()=>client.end()});
@@ -83,6 +83,6 @@ try{
  evidence.workspaceWorkflows=workflows;
  evidence.cashierWorkflows=await cashierAcceptance(wrap(admin),pos,await asService('svc_pos'));
  evidence.staffOnboarding=await staffAcceptance(wrap(admin),await asService('svc_staff'),pos,await asService('svc_staff'));
- evidence.checks={postgres17:'PASS',migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log('PASS: PostgreSQL17 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards');
+ evidence.checks={postgresMajor:rehearsalPostgresMajor(),migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log(`PASS: PostgreSQL ${rehearsalPostgresMajor()} 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards`);
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}
 finally{delete process.env.NEW_HOPE_MODULE_WORKSPACES;fs.mkdirSync('build/module-rehearsal',{recursive:true});fs.writeFileSync('build/module-rehearsal/postgres17.json',JSON.stringify(evidence,null,2)+'\n');await Promise.all(connections.map(c=>c.end()));await admin.end();}

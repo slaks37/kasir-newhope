@@ -18,7 +18,7 @@ const migrations = [
   ['20261013033217_ai_provider_consent_records.sql', '0061_ai_provider_consent_records.sql'],
   ['20261013033222_merchant_payment_provenance.sql', '0062_merchant_payment_provenance.sql'],
 ];
-const evidence = { status: 'RUNNING', scope: 'Disposable PostgreSQL17; synthetic identities; no Supabase Auth/API/runtime credentials or production data', startedAt: new Date().toISOString(), revision: process.env.GITHUB_SHA || 'local-unrecorded', migrations: [], checks: {} };
+const evidence = { status: 'RUNNING', scope: `Disposable PostgreSQL ${rehearsalPostgresMajor()}; synthetic identities; no Supabase Auth/API/runtime credentials or production data`, startedAt: new Date().toISOString(), revision: process.env.GITHUB_SHA || 'local-unrecorded', migrations: [], checks: {} };
 async function sqlFile(path) {
   try { await client.query(fs.readFileSync(path, 'utf8')); }
   catch (error) { await client.query('ROLLBACK'); throw new Error(`Migration ${path} failed (SQLSTATE ${error.code || 'unknown'})`, { cause: error }); }
@@ -178,7 +178,7 @@ try {
   assert((await rights(await relations(),browserRoles)).every(row => row[3] === false));
   evidence.checks.capturedRollbackAndReapply = 'PASS; temporary vulnerable state existed only inside disposable test';
   evidence.status = 'PASS';
-  console.log('PASS: PostgreSQL17 migration sequence, existing data/RLS/service preservation, browser and tenant negatives, immutable audit, exact rollback and reapply');
+  console.log(`PASS: PostgreSQL ${rehearsalPostgresMajor()} migration sequence, existing data/RLS/service preservation, browser and tenant negatives, immutable audit, exact rollback and reapply`);
 } catch (error) {
   evidence.status = 'FAIL';
   evidence.failure = { message: error.message, sqlState: error.code || error.cause?.code || null };

@@ -11,7 +11,7 @@ import {planAuthIdentityMigration,applyAuthIdentityMigration,revokeAuthIdentityM
 const target=rehearsalTarget(process.env),source=new pg.Client({connectionString:target,ssl:false});
 const restoredUrl=new URL(target);restoredUrl.pathname='/newhope_auth_restore_rehearsal';
 const restored=new pg.Client({connectionString:restoredUrl.href,ssl:false});
-const evidence={revision:process.env.GITHUB_SHA||'local',status:'RUNNING',scope:'Disposable PostgreSQL17 synthetic fixtures only; no real provider credentials or production access',checks:{}};
+const evidence={revision:process.env.GITHUB_SHA||'local',status:'RUNNING',scope:`Disposable PostgreSQL ${rehearsalPostgresMajor()} synthetic fixtures only; no real provider credentials or production access`,checks:{}};
 const quote=s=>'"'+s.replaceAll('"','""')+'"';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const wrap=c=>({query:async(sql,params)=>{const r=await c.query(sql,params);return {rows:r.rows,rowCount:r.rowCount||0};},exec:async sql=>{await c.query(sql);},tx:async fn=>{await c.query('BEGIN');try{const v=await fn(wrap(c));await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}},close:()=>c.end()});
@@ -38,7 +38,7 @@ try{
  assert.equal(Math.floor(Number((await source.query('SHOW server_version_num')).rows[0].server_version_num)/10000), rehearsalPostgresMajor());
  assert.equal((await source.query("SELECT count(*)::int AS n FROM internal.staff_access_events")).rows[0].n>0,true,'Require completed synthetic staff acceptance before backup');
  assert.equal((await source.query('SELECT 1 FROM pg_database WHERE datname=$1',['newhope_auth_restore_rehearsal'])).rows.length,0,'Never overwrite an existing restore database');
- const ids=command('docker',['ps','--filter','ancestor=postgres:17','--format','{{.ID}}']).toString().trim().split('\n').filter(Boolean);assert.equal(ids.length,1,'Require one unambiguous disposable PG17 service container');
+ const ids=command('docker',['ps','--filter',`ancestor=postgres:${rehearsalPostgresMajor()}`,'--format','{{.ID}}']).toString().trim().split('\n').filter(Boolean);assert.equal(ids.length,1,`Require one unambiguous disposable PG${rehearsalPostgresMajor()} service container`);
  const container=ids[0];const ports=JSON.parse(command('docker',['inspect','--format','{{json .NetworkSettings.Ports}}',container]).toString());assert(ports['5432/tcp'].some(p=>p.HostPort===String(new URL(target).port)),'Container must own the approved disposable target port');
  // Private bytes below are deliberately invalid synthetic credentials. This is
  // restore fidelity, not provider login/MFA acceptance or production key escrow.
@@ -85,8 +85,8 @@ try{
  assert.equal(await resolveAuthIdentity(restoreDb,input),null);assert.equal(await authIdentityBusinessFingerprint(restoreDb),businessBefore,'Rollback cannot rewrite business ownership, staff grants or historical ledgers');
  await assert.rejects(()=>applyAuthIdentityMigration(restoreDb,manifest,plan),/AUTH_IDENTITY/);
  evidence.status='PASS';evidence.snapshot={tables:before.tables,rows:before.rows,dataDigest:before.data};evidence.encryptedBackupDigest=hash(Buffer.concat([iv,tag,ciphertext]));
- evidence.checks={pgDump17:'PASS',authenticatedEncryption:'PASS',wrongKeyAndTamperDenied:'PASS',restoreDataSequencesSecurity:'PASS',explicitMapping:'PASS',rollbackAndForcedReauthentication:'PASS',rollbackFailureClosed:'PASS',financialActorsPreserved:'PASS'};
- console.log('PASS disposable PG17 encrypted backup/restore, exact rows/sequences/RLS/helper owners/ACLs, explicit identity migration and rollback with forced reauthentication; no hosted-provider or production escrow claim');
+ evidence.checks={pgDump:'PASS',authenticatedEncryption:'PASS',wrongKeyAndTamperDenied:'PASS',restoreDataSequencesSecurity:'PASS',explicitMapping:'PASS',rollbackAndForcedReauthentication:'PASS',rollbackFailureClosed:'PASS',financialActorsPreserved:'PASS'};
+ console.log(`PASS disposable PG${rehearsalPostgresMajor()} encrypted backup/restore, exact rows/sequences/RLS/helper owners/ACLs, explicit identity migration and rollback with forced reauthentication; no hosted-provider or production escrow claim`);
 }catch(e){evidence.status='FAIL';evidence.failure={name:e.name,code:e.code,message:e.message};throw e;}
 finally{
  key.fill(0);if(connected)await restored.end();if(created)await source.query('DROP DATABASE newhope_auth_restore_rehearsal');await source.end();

@@ -69,5 +69,5 @@ try {
       assert.equal((await db.query('SELECT status FROM ai.batch_job_runs WHERE id=$1',[overlap.runId])).rows[0].status,'SKIPPED');
     }finally{await c.query('ROLLBACK');await c.end();}
   }
-  console.log(`PASS merchant-health ${native?'PostgreSQL17':'PGlite'}: actual migrations, canonical UUID/scope, terminal outcomes, replay, rollback, history, dry-run, HTTP authorization${native?', concurrent-worker lock':''}`);
+  console.log(`PASS merchant-health ${native?`PostgreSQL ${rehearsalPostgresMajor()}`:'PGlite'}: actual migrations, canonical UUID/scope, terminal outcomes, replay, rollback, history, dry-run, HTTP authorization${native?', concurrent-worker lock':''}`);
 } finally {await db.close();}
