@@ -14,12 +14,23 @@ const TabLoading=()=> <div className="min-h-screen grid place-items-center" role
 
 export function App() {
   const {user,session,loading,restoreError,signOut}=useAuth();
+  const [logoutFailed,setLogoutFailed]=React.useState(false);
   const route=useWorkspaceRoute(),pathname=route.split('?')[0];
   const destination=isNeonAuth&&user&&pathname==='/overview'&&pendingStaffInvitation()?'/staff-invite':guardedPath(route,Boolean(user));
   React.useEffect(()=>{if(!loading&&!restoreError&&destination!==route)navigate(destination,true);},[loading,restoreError,destination,route]);
   const handleGoToLanding=()=>navigate('/');
   const handleOpenPOS=(targetTab?:string)=>navigate(pathForModule((targetTab||'overview') as WorkspaceModule));
   const handleLogout=async()=>{await signOut();navigate('/login',true);};
+  if(restoreError==='identity-mapping')return (
+    <main className="nh-auth min-h-screen grid place-items-center p-6">
+      <section className="max-w-lg space-y-4 rounded-2xl border bg-white p-6">
+        <h1 className="text-xl font-bold">Identitas akun belum terhubung</h1>
+        <p role="alert">Hubungi administrator untuk meninjau kaitan akun, atau keluar untuk masuk dengan akun lain.</p>
+        <button className="rounded-xl bg-amber-400 px-4 py-3 font-bold" onClick={()=>{setLogoutFailed(false);void handleLogout().catch(()=>setLogoutFailed(true));}}>Keluar dan ganti akun</button>
+        {logoutFailed&&<p role="alert">Server belum mengonfirmasi keluar. Coba lagi.</p>}
+      </section>
+    </main>
+  );
   if(restoreError)return <main className="nh-auth min-h-screen grid place-items-center p-6"><section className="max-w-lg space-y-4 rounded-2xl border bg-white p-6"><h1 className="text-xl font-bold">Sesi belum dapat diverifikasi</h1><p role="alert">Koneksi akun belum merespons. Data perangkat dan antrean transaksi tetap disimpan; akun tidak dipindahkan atau dihapus.</p><button className="rounded-xl bg-amber-400 px-4 py-3 font-bold" onClick={()=>window.location.reload()}>Coba hubungkan kembali</button></section></main>;
   if(isLandingPath(pathname))return <Suspense fallback={<TabLoading/>}><HomePage user={user} onNavigate={navigate} isStandaloneLanding={!user} onOpenLogin={()=>navigate('/login')} onOpenRegister={()=>navigate('/register')} onOpenPOS={handleOpenPOS}/></Suspense>;
   if(loading||destination!==route)return <div className="nh-auth min-h-screen grid place-items-center" role="status">Memuat ruang kerja…</div>;

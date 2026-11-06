@@ -37,7 +37,7 @@ export interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  restoreError: boolean;
+  restoreError: 'unavailable' | 'identity-mapping' | null;
   /** True when the selected identity provider is configured. */
   configured: boolean;
   mfaRequired:boolean;
@@ -123,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [restoreError,setRestoreError]=useState(false);
+  const [restoreError,setRestoreError]=useState<AuthContextType['restoreError']>(null);
   const [mfaRequired,setMfaRequired]=useState(false);
   React.useLayoutEffect(()=>{
     setReadScope(user?.id||'anonymous');
@@ -154,8 +154,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const {data:{subscription}}=authRuntime.auth.onAuthStateChange((event,session)=>{if(event==='MFA_REQUIRED'){setSession(null);setUser(null);setMfaRequired(true);setLoading(false);}else receive(session);});
         return()=>subscription.unsubscribe();
       },
-      session=>{setSession(session);setUser(session?.user??null);setMfaRequired(false);setRestoreError(false);setLoading(false);},
-      error=>{const mfa=(error as AuthError)?.code==='MFA_REQUIRED';setMfaRequired(mfa);setRestoreError(!mfa);setLoading(false);}
+      session=>{setSession(session);setUser(session?.user??null);setMfaRequired(false);setRestoreError(null);setLoading(false);},
+      error=>{
+        const code=(error as AuthError)?.code;
+        setMfaRequired(code==='MFA_REQUIRED');
+        setRestoreError(code==='MFA_REQUIRED'?null:code==='IDENTITY_MAPPING_REQUIRED'?'identity-mapping':'unavailable');
+        setLoading(false);
+      }
     );
     return()=>{stop();if(isNeonAuth)authRuntime.auth.stopAutoRefresh();};
   }, []);
