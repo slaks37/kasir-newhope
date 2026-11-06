@@ -15,6 +15,8 @@ import {sealAuthState,openAuthState} from '../../services/shared/nativeAuthState
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {offlineIdentityKeys} from '../../services/shared/offlineIdentity';
 import {verifyOfflineIdentity} from '../../src/lib/auth/offlineIdentity';
+import {createNeonAuthClient} from '../../src/lib/auth/neonClient';
+import {registerCloudAccount} from '../../src/lib/auth/cloudSignup';
 const pg=new PGlite();await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
 for(const file of migrationFiles())await pg.exec(fs.readFileSync(file.path,'utf8'));
 const wire=new PGLiteSocketServer({db:pg,port:0,host:'127.0.0.1',maxConnections:6});await wire.start();
@@ -133,6 +135,49 @@ try{
  assert.equal((await call('/sign-in/email',{email:'new-user@fixture.invalid',password:'Synthetic-Changed-Password-For-Tests-2026'})).status,200);
  assert.equal((await call('/two-factor/verify-totp',{code:await otp.totp(),trustDevice:false})).status,200);
  assert.equal((await call('/revoke-sessions',{})).status,200);assert.equal((await call('/identity')).status,401);
+ // Use the same frontend signup helper and Neon transport as the registration form.
+ const signupRequests:string[]=[];
+ const signupClient=createNeonAuthClient({
+  baseURL:base+'/api/auth',appOrigin:base,
+  fetch:async(input,init)=>{
+   const target=new URL(String(input));
+   assert.equal(target.origin,base);
+   signupRequests.push(target.pathname);
+   const headers=new Headers(init?.headers);headers.set('origin',base);
+   return fetch(origin+target.pathname,{...init,headers});
+  },
+ });
+ const signupInput={
+  email:'owner-signup@fixture.invalid',password:'Synthetic-Owner-Password-2026',
+  fullName:'Signup Owner',storeName:'Signup Store',sector:'FNB',
+  firstOutletName:'Main Outlet',secondOutletName:'',
+ };
+ await pg.exec('DELETE FROM newhope_auth."rateLimit"');
+ const previousMailCount=mail.length;
+ for(const [redirectTo,code] of [[base+'/','AUTH_CALLBACK_REJECTED'],['https://untrusted.fixture.invalid/login','INVALID_CALLBACK_URL'],[base+'/login?next=/overview','AUTH_CALLBACK_REJECTED']]){
+  const denied=await registerCloudAccount({auth:signupClient},{...signupInput,redirectTo});
+  assert.equal(denied.error?.code,code);
+  assert.match(denied.error?.message??'',/verifikasi email ditolak/);
+  assert.equal(denied.session,null);
+  assert.equal(denied.requiresEmailConfirmation,false);
+ }
+ assert.equal(mail.length,previousMailCount);
+ assert.equal((await pg.query('SELECT 1 FROM newhope_auth."user" WHERE email=$1',[signupInput.email])).rows.length,0);
+ await pg.exec('DELETE FROM newhope_auth."rateLimit"');
+ const signup=await registerCloudAccount({auth:signupClient},signupInput);
+ assert.deepEqual(signup,{error:null,session:null,requiresEmailConfirmation:true});
+ assert.deepEqual(signupRequests,Array(4).fill('/api/auth/sign-up/email'),'Signup never restores another session');
+ assert.equal(mail.length,previousMailCount+1);
+ const ownerVerification=new URL(mail.at(-1)!.url);
+ assert.equal(ownerVerification.searchParams.get('callbackURL'),base+'/login');
+ assert.equal((await call('/sign-in/email',{email:signupInput.email,password:signupInput.password})).status,403);
+ const ownerVerified=await fetch(origin+ownerVerification.pathname+ownerVerification.search,{headers:{origin:base},redirect:'manual'});
+ assert.equal(ownerVerified.headers.get('location'),base+'/login');
+ assert.equal((await call('/sign-in/email',{email:signupInput.email,password:signupInput.password})).status,200);
+ const ownerIdentity=await (await call('/identity')).json();
+ assert.equal(ownerIdentity.user.emailVerified,true);
+ assert.notEqual(ownerIdentity.user.id,identity.user.id);
+ await assertNoOwnerBootstrap('frontend signup and verified login require explicit tenant onboarding');
  const sealed=sealAuthState('pending',getAuthConfig().secret,'purpose',1,0);assert.equal(openAuthState(sealed,getAuthConfig().secret,'purpose',500),'pending');assert.throws(()=>openAuthState(sealed,getAuthConfig().secret,'other',500));assert.throws(()=>openAuthState(sealed,getAuthConfig().secret,'purpose',1000));
  console.log('PASS actual Better Auth + isolated SQL: schema parity, verified password signup, canonical identity, no duplicate tenant, session-bound TOTP/recovery, revoke/reset, PKCE one-use native handoff and state sealing. Email captured; Google and hosted/mobile provider sessions remain separate acceptance.');
 }finally{await new Promise<void>(r=>server.close(()=>r()));await runtime.close();await wire.stop();await pg.close();}
