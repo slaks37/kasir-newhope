@@ -10,7 +10,26 @@ const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.que
 const db=wrap(pg),issuer='https://auth.fixture.invalid';
 await db.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
 const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
-for(const file of files)await db.exec(fs.readFileSync(file,'utf8'));
+const legacyUser=randomUUID();
+for(const file of files){
+ if(file==='migrations/0069_neon_auth_identity.sql'){
+  await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,'legacy-neon@fixture.invalid','Legacy Neon owner')",[legacyUser]);
+  await db.exec(`CREATE TABLE internal.auth_identity_bindings (
+   provider text NOT NULL CHECK(provider IN ('supabase','neon','better-auth')),
+   issuer text NOT NULL, provider_subject text NOT NULL,
+   canonical_user_id uuid NOT NULL REFERENCES internal.users(id),
+   is_active boolean NOT NULL DEFAULT true, verification_ref text NOT NULL,
+   created_at timestamptz NOT NULL DEFAULT now(),
+   PRIMARY KEY(provider,issuer,provider_subject), UNIQUE(provider,issuer,canonical_user_id)
+  )`);
+  await db.query("INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref) VALUES('neon',$1,'legacy-google-subject',$2,'legacy-provider-proof')",[issuer,legacyUser]);
+ }
+ await db.exec(fs.readFileSync(file,'utf8'));
+}
+await db.exec(fs.readFileSync('migrations/0079_preserve_legacy_auth_binding_evidence.sql','utf8'));
+const legacyBinding=(await db.query("SELECT provider,canonical_user_id,manifest_digest FROM internal.auth_identity_bindings WHERE provider_subject='legacy-google-subject'")).rows[0];
+assert.deepEqual(legacyBinding,{provider:'neon',canonical_user_id:legacyUser,manifest_digest:null});
+await assert.rejects(()=>db.query("INSERT INTO internal.auth_identity_bindings(provider,issuer,provider_subject,canonical_user_id,verification_ref) VALUES('better-auth',$1,'undocumented-binding',$2,'missing-manifest-proof')",[issuer,legacyUser]),/better_auth_manifest_check/);
 for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort())await db.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
 await db.exec(fs.readFileSync('scripts/db/verification-fixture.sql','utf8'));
 await db.exec('CREATE ROLE svc_backoffice NOLOGIN;');
@@ -37,6 +56,7 @@ await authUser('fresh-opaque-provider-id','fresh@fixture.invalid');
 assert.equal(await enroll('fresh-opaque-provider-id','http://auth.fixture.invalid'),null);
 assert.equal(await enroll('fresh-opaque-provider-id','https://user@auth.fixture.invalid'),null);
 const fresh=await enroll('fresh-opaque-provider-id');assert.match(fresh!,/^[a-f0-9-]{36}$/);assert.notEqual(fresh,'fresh-opaque-provider-id');
+assert.match((await db.query('SELECT manifest_digest FROM internal.auth_identity_bindings WHERE canonical_user_id=$1',[fresh])).rows[0].manifest_digest,/^[a-f0-9]{64}$/);
 assert.equal(await enroll('fresh-opaque-provider-id'),null,'Consumed intent cannot enroll again');
 assert.equal((await db.query('SELECT count(*)::int AS n FROM internal.users')).rows[0].n,usersBefore+1);assert.equal(await tenantCount(),tenantsBefore);assert.equal(await membershipCount(),membersBefore);
 const input={provider:'better-auth' as const,issuer,subject:'fresh-opaque-provider-id',email:'fresh@fixture.invalid',isEmailVerified:true};

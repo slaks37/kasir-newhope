@@ -35,7 +35,7 @@ try{
  const before=await fingerprint();
  for(let replay=0;replay<2;replay++)for(const file of ['0063_module_assignments.sql','0064_membership_tenant_reference.sql','0065_platform_health_identity.sql','0066_module_identity_read_grants.sql','0067_workspace_isolation.sql','0068_cashier_register_operations.sql'])await apply('migrations/'+file);
  assert.equal(await fingerprint(),before,'Replay preserves membership IDs and scope');
- for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql','0074_merchant_health_identity.sql','0075_doku_release_acceptance.sql','0076_workspace_recipes.sql','0077_workspace_service_workflows.sql','0078_workspace_commission_payroll.sql'])await apply('migrations/'+name);
+ for(let replay=0;replay<2;replay++)for(const name of ['0069_neon_auth_identity.sql','0070_neon_auth_runtime.sql','0071_staff_billing_enrollment_guard.sql','0072_authenticated_staff_onboarding.sql','0073_staff_identity_purpose.sql','0074_merchant_health_identity.sql','0075_doku_release_acceptance.sql','0076_workspace_recipes.sql','0077_workspace_service_workflows.sql','0078_workspace_commission_payroll.sql','0079_preserve_legacy_auth_binding_evidence.sql'])await apply('migrations/'+name);
  assert.equal(await fingerprint(),before,'Staff billing guard replay preserves membership IDs and scope');
  assert.equal((await admin.query("SELECT count(*)::int n FROM pg_constraint WHERE conrelid='internal.memberships'::regclass AND confrelid='pos.tenants'::regclass")).rows[0].n,0);
  await apply('docs/security/free-plan-selection.sql');
