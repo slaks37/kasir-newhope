@@ -1,6 +1,8 @@
 import { authenticateBearer } from '../../services/shared/auth';
 import { connectDb } from '../../services/shared/db';
 import { registerBillingRoutes } from '../../services/billing/routes';
+import { pastikanPaket } from '../../services/billing/store';
+import { SAAS_PLANS } from '../config/saasPlans';
 import { DOKU_NOTIFICATION_PATH } from '../../api/_doku';
 import { createServerlessBoundary } from './serverlessBoundary';
 
@@ -24,6 +26,11 @@ export const BILLING_ROUTES = {
 } as const satisfies Record<string, readonly string[]>;
 
 export function createBillingHandler(authenticate = authenticateBearer, connect = () => connectDb({ schema: 'billing', max: 2 })) {
+  const readyDatabase=async()=>{
+    const db=await connect();
+    try{await pastikanPaket(db,SAAS_PLANS);return db;}
+    catch(error){await db.close().catch(()=>{});throw error;}
+  };
   return createServerlessBoundary({
     name: 'billing',
     routes: BILLING_ROUTES,
@@ -33,7 +40,7 @@ export function createBillingHandler(authenticate = authenticateBearer, connect 
     register: (app, db) => registerBillingRoutes(app, db, true),
     unavailableError: 'BILLING_UNAVAILABLE',
     invalidRequestError: 'INVALID_REQUEST',
-  }, authenticate, connect);
+  }, authenticate, readyDatabase);
 }
 
 export default createBillingHandler();

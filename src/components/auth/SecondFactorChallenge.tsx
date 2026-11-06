@@ -1,0 +1,8 @@
+import {useState,type FormEvent} from 'react';
+import {authRuntime} from '../../lib/authRuntime';
+/** Both password and Google first-factor sessions must complete server MFA. */
+export function SecondFactorChallenge({onVerified,onCancel}:{onVerified:()=>Promise<void>|void;onCancel?:()=>Promise<void>|void}){
+ const [code,setCode]=useState(''),[recovery,setRecovery]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const submit=async(e:FormEvent)=>{e.preventDefault();if(busy)return;setBusy(true);setError('');try{const result=await authRuntime.auth.mfa.challengeAndVerify({factorId:'neon-totp',code:code.trim(),recovery});if(result.error)throw result.error;setCode('');await onVerified();}catch(value){setCode('');setError(value instanceof Error?value.message:typeof (value as any)?.message==='string'?(value as any).message:'Kode belum dapat diverifikasi.');}finally{setBusy(false);}};
+ return <form onSubmit={submit} aria-busy={busy} className="nh-auth-form"><h2>Verifikasi keamanan akun</h2><p>Masukkan kode autentikator Anda atau gunakan satu kode pemulihan yang belum pernah dipakai.</p><label><input type="checkbox" checked={recovery} disabled={busy} onChange={e=>{setRecovery(e.target.checked);setCode('');}}/> Gunakan kode pemulihan</label><label>{recovery?'Kode pemulihan':'Kode autentikator'}<input autoComplete="one-time-code" inputMode={recovery?'text':'numeric'} required value={code} disabled={busy} onChange={e=>setCode(e.target.value)} className="nh-input"/></label>{error&&<p role="alert">{error}</p>}<button disabled={busy||!code.trim()} className="nh-auth-submit">{busy?'Memverifikasi…':'Verifikasi'}</button>{onCancel&&<button type="button" disabled={busy} onClick={()=>void onCancel()}>Kembali ke login</button>}</form>;
+}

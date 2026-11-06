@@ -286,7 +286,11 @@ function checkChurnWeightParity() {
     return out;
   };
   const tsWeights = parseObjWeights(ts, 'CHURN_WEIGHTS');
-  const jobWeights = parseObjWeights(job, 'const WEIGHTS');
+  const shared = read('services/backoffice/merchantHealth.ts');
+  if (!job.includes('runMerchantHealth') || !shared?.includes("import { computeChurnRisk } from '../../src/lib/internal/churn'")) {
+    problems.push('Merchant health CLI/API must use shared canonical churn model');
+  }
+  const jobWeights = tsWeights; // CLI and API now call the same implementation.
 
   let compared = 0;
   for (const f of FACTORS) {

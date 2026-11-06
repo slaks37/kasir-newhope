@@ -14,6 +14,7 @@ import pg from "pg";
 
 // services/shared/poolConfig.ts
 function serverlessConnectionString(connectionString, vercel = process.env.VERCEL) {
+  if (process.env.NEWHOPE_BUILD_TARGET === "neon") return connectionString;
   if (vercel !== "1") return connectionString;
   try {
     const url = new URL(connectionString);
@@ -35,6 +36,16 @@ function databasePoolLimits(max, vercel = process.env.VERCEL) {
 function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS) {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1e3 && value <= 12e4 ? value : 8e3;
+}
+function verifiedNeonConnectionString(value) {
+  try {
+    const url = new URL(value);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname.endsWith(".neon.tech")) return value;
+    url.searchParams.set("sslmode", "verify-full");
+    return url.href;
+  } catch {
+    return value;
+  }
 }
 
 // services/shared/databaseStartup.ts
@@ -60,15 +71,16 @@ function konfigurasiSsl(connectionString) {
   const url = connectionString.toLowerCase();
   const lokal = url.includes("@127.0.0.1") || url.includes("@localhost") || url.includes("sslmode=disable");
   if (lokal) return void 0;
+  if (new URL(connectionString).hostname.endsWith(".neon.tech")) return { rejectUnauthorized: true };
   if (process.env.PGSSLROOTCERT) {
     return { ca: fs.readFileSync(process.env.PGSSLROOTCERT, "utf8"), rejectUnauthorized: true };
   }
   return { rejectUnauthorized: false };
 }
 async function connectDb(opts) {
-  const connectionString = serverlessConnectionString(
+  const connectionString = verifiedNeonConnectionString(serverlessConnectionString(
     opts.connectionString || process.env.DATABASE_URL || "postgres://postgres@127.0.0.1:5432/postgres"
-  );
+  ));
   const pool = new pg.Pool({
     connectionString,
     ssl: konfigurasiSsl(connectionString),
@@ -302,6 +314,35 @@ var INITIAL_BOOKINGS = [
   }
 ];
 
+// services/shared/schemaFeatures.ts
+var FEATURES = {
+  workspaceStaffWorkflows: `SELECT to_regprocedure('internal.workspace_service_workflows_installed()') IS NOT NULL AS ok`,
+  workspaceLabor: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_payroll_entries') IS NOT NULL AND to_regprocedure('pos.guard_workspace_labor()') IS NOT NULL AS ok`,
+  workspaceJobs: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_job_events') IS NOT NULL AND to_regclass('pos.workspace_job_receipts') IS NOT NULL AND to_regprocedure('pos.validate_workspace_job_receipt()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transaction_items') AND attname='workspace_options' AND NOT attisdropped) AS ok`,
+  workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
+  staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
+  staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
+  cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
+  moduleScopeGuard: `SELECT to_regprocedure('internal.requires_module_scope(uuid)') IS NOT NULL AS ok`,
+  merchantActivityAppend: `SELECT to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+  workspaceIsolation: `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shared_state_records') AND attname='module_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.products') AND attname='workspace_payload' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='actor_ref' AND NOT attisdropped) AND to_regclass('pos.workspace_commands') IS NOT NULL AND to_regclass('contract.workspace_subscription_metadata') IS NOT NULL AND to_regprocedure('internal.append_merchant_activity(uuid,uuid,text,text,text,uuid,text,text,numeric,text,jsonb,timestamptz)') IS NOT NULL AS ok`,
+  moduleAssignments: `SELECT to_regclass('internal.merchant_modules') IS NOT NULL AND to_regclass('internal.outlet_modules') IS NOT NULL AND to_regclass('billing.module_entitlements') IS NOT NULL AS ok`,
+  /** migration 0054 / 20261004090200 */
+  syncReceiptOutcomes: `SELECT EXISTS (SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('pos.sync_receipts') AND attname = 'outcomes' AND NOT attisdropped) AS ok`,
+  /** migration 0055 / 20261004090300 */
+  sharedStateVersions: `SELECT to_regclass('pos.shared_state_versions') IS NOT NULL AS ok`
+};
+var ABSENT_RECHECK_MS = 6e4;
+var known = /* @__PURE__ */ new Map();
+async function hasSchemaFeature(db, feature, now = Date.now()) {
+  const cached = known.get(feature);
+  if (cached && (cached.ok || now - cached.at < ABSENT_RECHECK_MS)) return cached.ok;
+  const ok = Boolean((await db.query(FEATURES[feature])).rows[0]?.ok);
+  known.set(feature, { ok, at: now });
+  return ok;
+}
+
 // services/ai/snapshotData.ts
 async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE__ */ new Date()) {
   if (!principal?.subject || principal.subject === "local-development") throw new Error("AUTHENTICATION_REQUIRED");
@@ -309,6 +350,8 @@ async function loadMerchantSnapshot(db, principal, businessId, now = /* @__PURE_
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id
     WHERE (m.external_ref=$1 OR m.id::text=$1) AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL AND m.is_active`, [businessId, principal.subject])).rows[0];
   if (!merchant) throw new Error("BUSINESS_NOT_OWNED");
+  if (await hasSchemaFeature(db, "moduleScopeGuard") && (await db.query("SELECT internal.requires_module_scope($1::uuid) AS required", [merchant.id])).rows[0]?.required)
+    throw new Error("EXPLICIT_WORKSPACE_REQUIRED");
   const rows = (await db.query(`SELECT r.*,r.subtotal-COALESCE(f.subtotal,0) AS net_subtotal,
     r.service_charge_amount-COALESCE(f.service,0) AS net_service
     FROM contract.merchant_revenue r LEFT JOIN contract.refund_totals f ON f.transaction_id=r.id AND f.tenant_id=r.tenant_id
@@ -500,9 +543,9 @@ function buildBusinessBrain(s, source = "CLIENT") {
     const lines = recent.flatMap((o) => o.items.filter((i) => i.productId === p.id).map((i) => ({ i, discountFactor: n(o.subtotal) > 0 ? Math.max(0, 1 - n(o.discountTotal) / n(o.subtotal)) : 1 })));
     const qty = sum(lines, (l) => n(l.i.quantity));
     const lineRevenue = sum(lines, (l) => n(l.i.totalPrice) * l.discountFactor);
-    const known = lines.filter((l) => Number.isFinite(l.i.unitCost) && n(l.i.unitCost) > 0);
-    const coverage = qty > 0 ? sum(known, (l) => n(l.i.quantity)) / qty * 100 : 0;
-    const contribution = coverage === 100 ? lineRevenue - sum(known, (l) => n(l.i.unitCost) * n(l.i.quantity)) : null;
+    const known2 = lines.filter((l) => Number.isFinite(l.i.unitCost) && n(l.i.unitCost) > 0);
+    const coverage = qty > 0 ? sum(known2, (l) => n(l.i.quantity)) / qty * 100 : 0;
+    const contribution = coverage === 100 ? lineRevenue - sum(known2, (l) => n(l.i.unitCost) * n(l.i.quantity)) : null;
     const cost = currentCost(p);
     return {
       productId: p.id,

@@ -1,0 +1,2 @@
+import React from 'react';
+export function HomePage({user,onOpenLogin,onOpenPOS}:any){return <main className="min-h-screen grid place-items-center p-6"><section className="max-w-lg space-y-4"><h1 className="text-2xl font-bold">New Hope</h1><p>Ruang kerja merchant. Build native ini untuk pengujian akses dan kompatibilitas; transaksi native belum diaktifkan.</p><button className="bg-amber-400 rounded-xl p-4" onClick={()=>user?onOpenPOS():onOpenLogin()}>{user?'Buka ruang kerja':'Masuk'}</button></section></main>;}

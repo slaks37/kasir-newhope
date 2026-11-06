@@ -73,6 +73,8 @@ export interface ProductBundle {
 }
 
 export interface Product {
+  inventoryTracked?:boolean;
+  catalogRevision?:number;
   id: string;
   sku: string;
   barcode?: string;
@@ -264,6 +266,8 @@ export interface Customer {
 }
 
 export interface Order {
+  /** Present only after a canonical server read; never a local payment ACK. */
+  syncedAt?:string;
   paymentTenders?: Array<{clientPaymentId:string;method:PaymentMethod;amount:number;createdAt:string}>;
   invoiceNumber?: string;
   id: string; // INV-20260810-001
@@ -539,6 +543,12 @@ export interface CashMovement {
 }
 
 export interface Shift {
+  registerId?:string;
+  serverShiftId?:string;
+  moduleIds?:string[];
+  openedBy?:string;
+  version?:string;
+  canClose?:boolean;
   id: string;
   cashierName: string;
   startTime: string;

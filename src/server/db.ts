@@ -35,7 +35,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { databasePoolLimits, serverlessConnectionString } from '../../services/shared/poolConfig';
+import { databasePoolLimits, serverlessConnectionString, verifiedNeonConnectionString } from '../../services/shared/poolConfig';
 
 export type QueryResult<T = any> = { rows: T[]; rowCount: number };
 
@@ -72,7 +72,7 @@ async function createPgDb(connectionString: string): Promise<Db> {
   pg.types.setTypeParser(20, (v: string) => (v === null ? null : Number(v))); // int8
 
   const pool = new pg.Pool({
-    connectionString: serverlessConnectionString(connectionString),
+    connectionString: verifiedNeonConnectionString(serverlessConnectionString(connectionString)),
     ...databasePoolLimits(Number(process.env.PGPOOL_MAX || 10)),
   });
 

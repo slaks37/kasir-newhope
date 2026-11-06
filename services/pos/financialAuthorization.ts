@@ -3,6 +3,7 @@ import type {Express,Request} from 'express';
 import type {Db} from '../shared/db';
 import type {FinancialScope} from './finance';
 import {trustedPrincipal} from '../shared/auth';
+import {createAuthProviderOperations,AuthOperationError} from '../shared/authProviderOperations';
 const scrypt=(pin:string,salt:string)=>new Promise<Buffer>((resolve,reject)=>derive(pin,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024},(error,key)=>error?reject(error):resolve(key)));
 const ACTIONS=new Set(['VOID','REFUND','CASH_OUT','CASH_REVERSE']);
 export class FinancialApprovalError extends Error {
@@ -45,22 +46,14 @@ async function failure(c:Db,s:FinancialScope){
   await c.query('UPDATE pos.financial_pin_attempts SET failures=failures+1 WHERE tenant_id=$1 AND actor_ref=$2',[s.tenantId,s.actorRef]);
   return {status:403,error:'INVALID_FINANCIAL_PIN'};
 }
-/** Fresh password proof is required even for the first enrollment. Never trust
+/** Fresh provider reauthentication is required even for first enrollment. Never trust
  * a client-supplied email/subject or persist the password/upstream auth tokens.
  */
 async function reauthenticateOwner(req:Request,subject:string){
   const principal=trustedPrincipal(req),password=req.body?.ownerPassword;
-  if(!principal?.email||typeof password!=='string'||!password||password.length>1024)return false;
-  const url=(process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL||'').replace(/\/$/,'');
-  const key=process.env.SUPABASE_ANON_KEY||process.env.VITE_SUPABASE_ANON_KEY;
-  if(!url.startsWith('https://')||!key)throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');
-  let response:Response;
-  try{response=await fetch(url+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:key,'content-type':'application/json'},body:JSON.stringify({email:principal.email,password}),redirect:'error',signal:AbortSignal.timeout(5000)});}
-  catch{throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');}
-  if(response.status>=500||response.status===429)throw new FinancialApprovalError(503,'OWNER_REAUTHENTICATION_UNAVAILABLE');
-  if(!response.ok)return false;
-  const data=await response.json();
-  return data.user?.id===subject&&Boolean(data.user?.email_confirmed_at||data.user?.confirmed_at);
+  if(!principal?.email||password!==undefined&&(typeof password!=='string'||password.length>1024))return false;
+  try{return await createAuthProviderOperations().reauthenticate(req,subject,password,principal.email);}
+  catch(error){if(error instanceof AuthOperationError)throw new FinancialApprovalError(error.status,'OWNER_REAUTHENTICATION_UNAVAILABLE');throw error;}
 }
 /** Verified cloud owner only. Local role/name/PIN profiles confer no authority.
  * Failed attempts RETURN normally so their DB transaction commits the counter.
@@ -104,9 +97,9 @@ export function registerFinancialApprovalRoutes(app:Express,db:Db,scopeFor:(c:Db
     if(!await verifyFinancialPin(pin,row.pin_hash))return failure(c,s);
     const token=randomBytes(32).toString('base64url');
     await c.query(`INSERT INTO pos.financial_approval_grants
-      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at)
-      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds')`,
-      [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,reason.trim(),commandHash(command)]);
+      (token_hash,tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,expires_at${s.moduleId?',module_id':''})
+      VALUES($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,now()+interval '90 seconds'${s.moduleId?',$10':''})`,
+      [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,reason.trim(),commandHash(command),...(s.moduleId?[s.moduleId]:[])]);
     return {approvalGrant:token,expiresInSeconds:90,approverRef:s.actorRef};
   });
 }
@@ -114,15 +107,16 @@ export function registerFinancialApprovalRoutes(app:Express,db:Db,scopeFor:(c:Db
  * A consumed grant allows only exact idempotent retries; changed commands fail.
  */
 export async function consumeFinancialApproval(c:Db,s:FinancialScope,action:string,reference:string,command:unknown,token:unknown){
+  if(s.moduleId&&!['OWNER','ADMIN','MANAGER'].includes(s.role||''))throw new FinancialApprovalError(403,'WORKSPACE_ROLE_FORBIDDEN');
   if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_REQUIRED');
   const row=(await c.query(`SELECT * FROM pos.financial_approval_grants WHERE token_hash=$1
     AND tenant_id=$2 AND merchant_id=$3 AND outlet_id=$4 AND actor_ref=$5
     AND action=$6 AND reference=$7 AND command_hash=$8 FOR UPDATE`,
     [digest(token),s.tenantId,s.merchantId,s.outletId,s.actorRef,action,reference,commandHash(command)])).rows[0];
-  if(!row||(!row.consumed_at&&Date.parse(row.expires_at)<=Date.now()))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_INVALID_OR_EXPIRED');
+  if(!row||s.moduleId&&row.module_id!==s.moduleId||(!row.consumed_at&&Date.parse(row.expires_at)<=Date.now()))throw new FinancialApprovalError(403,'FINANCIAL_APPROVAL_INVALID_OR_EXPIRED');
   if(row.consumed_at)return;
   await c.query('UPDATE pos.financial_approval_grants SET consumed_at=now() WHERE token_hash=$1',[row.token_hash]);
   await c.query(`INSERT INTO pos.financial_authorization_audit
-    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[s.tenantId,s.merchantId,s.outletId,s.actorRef,row.approver_ref,action,reference,row.reason,row.command_hash,row.token_hash]);
+    (tenant_id,merchant_id,outlet_id,actor_ref,approver_ref,action,reference,reason,command_hash,grant_hash${s.moduleId?',module_id':''})
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10${s.moduleId?',$11':''})`,[s.tenantId,s.merchantId,s.outletId,s.actorRef,row.approver_ref,action,reference,row.reason,row.command_hash,row.token_hash,...(s.moduleId?[s.moduleId]:[])]);
 }

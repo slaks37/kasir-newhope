@@ -1,3 +1,4 @@
+import {nativeCors} from '../shared/nativeCors';
 /**
  * gateway — satu-satunya pintu yang terlihat dari luar.
  *
@@ -37,6 +38,7 @@ import { Breaker } from '../shared/breaker';
 import { buatLogger, buatRequestId, jalankanDenganKonteks } from '../shared/log';
 import { requireGatewayAuthentication, type AuthPrincipal } from '../shared/auth';
 import mcpHandler from '../../src/server/mcpHandler';
+import neonAuthHandler from '../../src/server/neonAuthHandler';
 
 const log = buatLogger('gateway');
 const PROXY_TIMEOUT_MS = Number(process.env.GATEWAY_TIMEOUT_MS || 35_000);
@@ -73,6 +75,7 @@ const breakers: Record<string, Breaker> = {
 };
 
 const app = express();
+app.use((req,res,next)=>{if(req.path.startsWith('/api/auth/'))return void neonAuthHandler(req,res);next();});
 app.use((req, res, next) => {
   if (req.path === '/api/mcp' || req.path.startsWith('/api/mcp/') || req.path.startsWith('/.well-known/oauth-')) return void mcpHandler(req, res);
   next();
@@ -152,6 +155,7 @@ function pickRoute(url: string) {
 const bolehDiulang = (metode: string) => metode === 'GET' || metode === 'HEAD';
 
 app.use('/api', async (req, res, next) => {
+  if(/^\/api\/v1\/(sync|reports|finance|subscription)(\/|$)/.test(req.originalUrl)&&nativeCors(req,res,['GET','POST','PUT']))return;
   const route = pickRoute(req.originalUrl);
   if (!route) return next();
 
@@ -201,7 +205,7 @@ app.use('/api', async (req, res, next) => {
         // `x-forwarded-host: admin.domainanda.com` dan langsung dianggap berada
         // di lingkungan internal.
         'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-request-id',
-        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+        'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-auth-aal', 'x-auth-mfa-verified-at', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
       ]);
 
       const headers: Record<string, string> = {};
@@ -224,6 +228,8 @@ app.use('/api', async (req, res, next) => {
         headers['x-auth-sub'] = principal.subject;
         if (principal.email) headers['x-auth-email'] = principal.email;
         if (principal.isEmailVerified) headers['x-auth-email-verified'] = 'true';
+        if (principal.aal) headers['x-auth-aal'] = principal.aal;
+        if (Number.isFinite(principal.mfaVerifiedAt)) headers['x-auth-mfa-verified-at'] = String(principal.mfaVerifiedAt);
       }
       // Service menolak request tanpa token ini, termasuk yang masuk langsung
       // ke port internal dengan x-auth-sub palsu.

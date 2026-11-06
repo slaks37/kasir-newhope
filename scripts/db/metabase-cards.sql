@@ -17,7 +17,7 @@
 -- CARD 1 — MRR berjalan -------------------------------------------------------
 -- @display: scalar
 SELECT COALESCE(SUM(mrr_idr), 0) AS "MRR Berjalan (Rp)"
-  FROM v_merchant_health_latest;
+  FROM contract.merchant_health_latest;
 
 
 -- CARD 2 — MRR berisiko -------------------------------------------------------
@@ -26,14 +26,14 @@ SELECT COALESCE(SUM(mrr_idr), 0) AS "MRR Berjalan (Rp)"
 -- money a CSM can still save. Using recognised MRR would show 0 here at the
 -- precise moment the number is supposed to trigger action.
 SELECT COALESCE(SUM(contract_mrr_idr), 0) AS "MRR Berisiko (Rp)"
-  FROM v_merchant_health_latest
+  FROM contract.merchant_health_latest
  WHERE churn_risk_score >= 0.45;
 
 
 -- CARD 3 — Merchant aktif -----------------------------------------------------
 -- @display: scalar
 SELECT COUNT(*) AS "Merchant Aktif"
-  FROM v_merchant_health_latest
+  FROM contract.merchant_health_latest
  WHERE subscription_status = 'ACTIVE';
 
 
@@ -41,7 +41,7 @@ SELECT COUNT(*) AS "Merchant Aktif"
 -- @display: bar
 SELECT health_band AS "Status",
        COUNT(*)    AS "Jumlah Merchant"
-  FROM v_merchant_health_latest
+  FROM contract.merchant_health_latest
  GROUP BY health_band
  ORDER BY CASE health_band
             WHEN 'CRITICAL' THEN 1 WHEN 'AT_RISK' THEN 2
@@ -61,8 +61,8 @@ SELECT h.merchant_id                          AS "Merchant ID",
        h.subscription_status                  AS "Langganan",
        h.contract_mrr_idr                     AS "Nilai Kontrak (Rp)",
        h.distinct_features_used               AS "Fitur Dipakai"
-  FROM v_merchant_health_latest h
-  LEFT JOIN tenants t ON t.id = h.merchant_id
+  FROM contract.merchant_health_latest h
+  LEFT JOIN internal.merchants t ON t.id = h.merchant_id
  WHERE h.churn_risk_score >= 0.45
  ORDER BY h.contract_mrr_idr DESC, h.churn_risk_score DESC;
 
@@ -72,7 +72,7 @@ SELECT h.merchant_id                          AS "Merchant ID",
 SELECT feature_key      AS "Fitur",
        merchants_using  AS "Merchant Memakai",
        events           AS "Total Pemakaian"
-  FROM v_feature_adoption_30d
+  FROM contract.feature_adoption_30d
  ORDER BY merchants_using DESC
  LIMIT 15;
 
@@ -88,7 +88,7 @@ SELECT DATE(asked_at)                                                   AS "Tang
        COALESCE(SUM(credits_charged), 0)                                AS "Credit Terpakai",
        ROUND(100.0 * COUNT(*) FILTER (WHERE credits_charged = 0)
              / NULLIF(COUNT(*), 0), 1)                                  AS "Zero-Cost Rate (%)"
-  FROM ai_query_logs
+  FROM ai.ai_query_logs
  WHERE asked_at >= CURRENT_DATE - INTERVAL '30 days'
  GROUP BY 1
  ORDER BY 1 DESC;
@@ -104,7 +104,7 @@ SELECT l.accessed_at        AS "Waktu",
        l.action             AS "Aksi",
        l.merchant_id        AS "Merchant",
        l.justification      AS "Alasan"
-  FROM internal_access_log l
-  JOIN internal_users u ON u.id = l.internal_user_id
+  FROM internal.internal_access_log l
+  JOIN internal.internal_users u ON u.id = l.internal_user_id
  ORDER BY l.accessed_at DESC
  LIMIT 200;

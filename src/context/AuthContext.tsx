@@ -1,8 +1,9 @@
+import {isNative,authRedirect} from '../platform/runtime/platform';
 /**
- * AuthContext — sesi Supabase Auth sebagai React context.
+ * AuthContext — sesi identitas aplikasi sebagai React context.
  *
  * Menyediakan:
- *   - `user`    : objek user Supabase (null kalau belum login)
+ *   - `user`    : identitas actor kanonis (null kalau belum login)
  *   - `session` : sesi aktif (null kalau belum login)
  *   - `loading` : true selama pengecekan sesi awal
  *   - `signInWithGoogle()` : OAuth via Google
@@ -11,13 +12,12 @@
  *   - `signOut()` : logout
  *
  * AuthProvider harus membungkus seluruh app SEBELUM komponen yang butuh data
- * user. Session di-persist oleh Supabase di localStorage; buka tab baru tidak
- * perlu login ulang.
+ * user. Provider Neon memverifikasi cookie/sesi server secara langsung.
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import type { User, Session, AuthError } from '@supabase/auth-js';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import type { User, Session, AuthError } from '../lib/auth/types';
+import {authRuntime,isAuthConfigured,isNeonAuth} from '../lib/authRuntime';
 import { hashPin, verifyPinHash } from '../lib/auth/pinSecurity';
 import { BusinessSector } from '../types';
 import { registerCloudAccount } from '../lib/auth/cloudSignup';
@@ -37,9 +37,11 @@ export interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  restoreError: boolean;
-  /** True kalau Supabase env vars sudah terisi. */
+  restoreError: 'unavailable' | 'identity-mapping' | null;
+  /** True when the selected identity provider is configured. */
   configured: boolean;
+  mfaRequired:boolean;
+  verifySecondFactor:(code:string,recovery?:boolean)=>Promise<{error:AuthError|null}>;
   signInWithGoogle: () => Promise<{ error: AuthError | null }>;
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUpWithEmail: (
@@ -121,14 +123,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [restoreError,setRestoreError]=useState(false);
+  const [restoreError,setRestoreError]=useState<AuthContextType['restoreError']>(null);
+  const [mfaRequired,setMfaRequired]=useState(false);
   React.useLayoutEffect(()=>{
     setReadScope(user?.id||'anonymous');
     if(user?.id)try{claimCheckoutIntent(user.id);}catch{/* Form hints never block authentication. */}
   },[user?.id]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!isAuthConfigured) {
+      if(isNative()||isNeonAuth){setLoading(false);return;}
       try {
         const saved = localStorage.getItem(LOCAL_SESSION_KEY);
         if (saved) {
@@ -143,35 +147,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    return restoreAuthSession<Session|null>(
-      supabase.auth.getSession().then(({data})=>data.session),
+    if(isNeonAuth)authRuntime.auth.startAutoRefresh();
+    const stop=restoreAuthSession<Session|null>(
+      authRuntime.auth.getSession().then(({data,error})=>{if(error)throw error;return data.session;}),
       receive=>{
-        const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>receive(session));
+        const {data:{subscription}}=authRuntime.auth.onAuthStateChange((event,session)=>{if(event==='MFA_REQUIRED'){setSession(null);setUser(null);setMfaRequired(true);setLoading(false);}else receive(session);});
         return()=>subscription.unsubscribe();
       },
-      session=>{setSession(session);setUser(session?.user??null);setRestoreError(false);setLoading(false);},
-      error=>{console.warn('[auth] Session restoration failed:',error);setRestoreError(true);setLoading(false);}
+      session=>{setSession(session);setUser(session?.user??null);setMfaRequired(false);setRestoreError(null);setLoading(false);},
+      error=>{
+        const code=(error as AuthError)?.code;
+        setMfaRequired(code==='MFA_REQUIRED');
+        setRestoreError(code==='MFA_REQUIRED'?null:code==='IDENTITY_MAPPING_REQUIRED'?'identity-mapping':'unavailable');
+        setLoading(false);
+      }
     );
+    return()=>{stop();if(isNeonAuth)authRuntime.auth.stopAutoRefresh();};
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    if (!isSupabaseConfigured) {
+    if(isNative())return (await import('../platform/runtime/nativeLifecycle')).nativeGoogleLogin();
+    if (!isAuthConfigured) {
+      if(isNeonAuth)return {error:{code:'AUTH_NOT_CONFIGURED',message:'Autentikasi Neon belum dikonfigurasi.'}};
       const sess = createLocalSession('demo.google@newhope.id', 'Google Demo User');
       localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
       setUser(sess.user);
       setSession(sess.session);
       return { error: null };
     }
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await authRuntime.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: isNeonAuth?window.location.origin+'/overview':authRedirect(),
       },
     });
     return { error };
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
+    if((isNative()||isNeonAuth)&&!isAuthConfigured)return {error:{message:'Konfigurasi autentikasi native belum tersedia.'} as AuthError};
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !password) {
       return { error: { message: 'Email dan password wajib diisi.' } as AuthError };
@@ -180,20 +194,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const localUsers = getLocalUsers();
     const userRecord = localUsers[cleanEmail];
 
-    if (isSupabaseConfigured) {
+    if (isAuthConfigured) {
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await authRuntime.auth.signInWithPassword({
           email: cleanEmail,
           password,
         });
 
         if (!error && data.session) {
           setSession(data.session);
-          setUser(data.user);
+          setUser(data.user);setMfaRequired(false);
           return { error: null };
         }
 
         if (error) {
+          if(error.code==='MFA_REQUIRED'){setMfaRequired(true);return {error};}
           const msg = error.message.toLowerCase();
           if (msg.includes('invalid login credentials') || msg.includes('invalid_grant')) {
             return {
@@ -244,7 +259,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUpWithEmail = useCallback(
     async (email: string, password: string, options?: string | SignUpOptions) => {
-      const cleanEmail = email.trim().toLowerCase();
+      if((isNative()||isNeonAuth)&&!isAuthConfigured)return {error:{message:'Konfigurasi autentikasi native belum tersedia.'} as AuthError};
+    const cleanEmail = email.trim().toLowerCase();
       const opts: SignUpOptions = typeof options === 'string' ? { storeName: options } : options || {};
       const fullName = opts.fullName?.trim() || opts.storeName?.trim() || cleanEmail.split('@')[0];
       const storeName = opts.storeName?.trim() || 'Toko Baru';
@@ -252,13 +268,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!cleanEmail || !password) return { error: { message: 'Email dan password wajib diisi.' } as AuthError };
       if (password.length < 8) return { error: { message: 'Password minimal 8 karakter.' } as AuthError };
 
-      if (isSupabaseConfigured) {
+      if (isAuthConfigured) {
         // Cloud signup must never create a synthetic offline session or cache a password.
-        const result = await registerCloudAccount(supabase, {
+        const result = await registerCloudAccount(authRuntime, {
           email: cleanEmail, password, fullName, storeName, sector,
           firstOutletName: opts.firstOutletName?.trim() || `${storeName} — Cabang Utama`,
           secondOutletName: opts.secondOutletName?.trim() || '',
-          redirectTo: window.location.origin,
+          redirectTo: isNeonAuth ? undefined : authRedirect(),
         });
         if (result.session) {
           setSession(result.session);
@@ -283,18 +299,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sessionStorage.removeItem('nhpos_internal_identity');
     localStorage.removeItem('nhpos_internal_identity');
 
-    if (isSupabaseConfigured) {
+    if (isAuthConfigured) {
       try {
-        await supabase.auth.signOut();
+        const result=await authRuntime.auth.signOut();if(result.error)throw result.error;
       } catch (e) {
-        console.error('Supabase signOut error', e);
+        if(isNeonAuth)throw e;console.warn('Logout belum dikonfirmasi server.');
       }
     }
 
     setUser(null);
-    setSession(null);
+    setSession(null);setMfaRequired(false);
   }, []);
 
+  const verifySecondFactor=async(code:string,recovery=false)=>{const result=await authRuntime.auth.mfa.challengeAndVerify({factorId:'neon-totp',code,recovery});if(result.error)return {error:result.error};const restored=await authRuntime.auth.getSession();if(restored.error)return {error:restored.error};setSession(restored.data.session);setUser(restored.data.session?.user||null);setMfaRequired(false);return {error:null};};
   return (
     <AuthCtx.Provider
       value={{
@@ -302,7 +319,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         loading,
         restoreError,
-        configured: isSupabaseConfigured,
+        configured: isAuthConfigured,
+        mfaRequired,verifySecondFactor,
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
