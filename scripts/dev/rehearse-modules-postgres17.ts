@@ -54,7 +54,13 @@ try{
  assert.equal((await billing.query("SELECT pg_has_role(current_user,'svc_membership_probe','MEMBER') AS member")).rows[0].member,false);
  for(const service of [internal,billing,pos,ai])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
  await assert.rejects(()=>ai.query('SELECT * FROM internal.merchant_modules'),(e:any)=>e.code==='42501','AI receives only the narrow scope guard');
- assert.equal((await pos.query("SELECT has_sequence_privilege(current_user,'public.uuidv7_counter','USAGE') AS usage,has_sequence_privilege(current_user,'public.uuidv7_counter','UPDATE') AS reset")).rows[0].reset,false,'POS cannot reset the UUID counter');
+ const counter = (await pos.query("SELECT to_regclass('public.uuidv7_counter')::oid AS oid")).rows[0].oid;
+ if (rehearsalPostgresMajor() === 17) {
+   assert.notEqual(counter, null, 'PostgreSQL17 fixture must exercise the compatibility sequence');
+   assert.equal((await pos.query("SELECT has_sequence_privilege(current_user,$1::oid,'UPDATE') AS reset",[counter])).rows[0].reset,false,'POS cannot reset the UUID counter');
+ } else {
+   assert.equal(counter, null, 'Fresh PostgreSQL18 uses built-in UUIDv7 without a compatibility sequence');
+ }
  const context=async(db:Db,tid:string,mid:string,fn:(c:Db)=>Promise<void>)=>db.tx(async c=>{await c.query("SELECT set_config('app.tenant_id',$1,true),set_config('app.merchant_id',$2,true)",[tid,mid]);await fn(c);});
  for(const [tid,mid]of[[tenant,merchant],[otherTenant,otherMerchant]])await context(internal,tid,mid,async c=>{await c.query("INSERT INTO internal.merchant_modules(tenant_id,merchant_id,module_id,enabled,guard_legacy_apis) VALUES($1,$2,'fnb',true,true)",[tid,mid]);});
  await context(billing,tenant,merchant,async c=>{await c.query("INSERT INTO billing.module_entitlements(tenant_id,merchant_id,module_id,enabled,features,expires_at,grant_reference) VALUES($1,$2,'fnb',true,ARRAY['overview','pos','tables','reports'],now()+interval '1 day','approved-synthetic-rehearsal')",[tenant,merchant]);});
