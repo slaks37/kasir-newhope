@@ -6813,6 +6813,15 @@ function jobCheckoutAmounts(p, subtotal, billed = { subtotal: 0, tax: 0, service
   };
 }
 
+// src/lib/reports/calendarDate.ts
+function calendarDate(zone = "Asia/Jakarta", offsetDays = 0, now = /* @__PURE__ */ new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const part = (type) => parts.find((p) => p.type === type)?.value;
+  const date2 = /* @__PURE__ */ new Date(`${part("year")}-${part("month")}-${part("day")}T12:00:00Z`);
+  date2.setUTCDate(date2.getUTCDate() + offsetDays);
+  return date2.toISOString().slice(0, 10);
+}
+
 // services/pos/workspaceLabor.ts
 var UUID6 = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 var managers = ["OWNER", "ADMIN", "MANAGER"];
@@ -6930,7 +6939,7 @@ function registerWorkspaceLaborRoutes(app, db) {
         if (!UUID6.test(staff))
           throw new ModuleAccessError(400, "INVALID_STAFF");
         const end = String(
-          req.query.periodEnd || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
+          req.query.periodEnd || calendarDate()
         );
         if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || !Number.isFinite(Date.parse(end)))
           throw new ModuleAccessError(400, "INVALID_PAYROLL_PERIOD");

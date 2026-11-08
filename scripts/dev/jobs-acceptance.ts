@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {calendarDate} from '../../src/lib/reports/calendarDate';
 import { randomUUID } from "node:crypto";
 import type { Db } from "../../services/shared/db";
 import { workflowStages } from "../../src/platform/modules/domainWorkflow";
@@ -425,12 +426,15 @@ export async function jobsAcceptance(
         ).status,
         404,
       );
-      const periodEnd = new Date().toISOString().slice(0, 10),
+      const periodEnd = calendarDate(),
         laborQuery =
           laborPath + "?" + new URLSearchParams({ ...s, staffId, periodEnd });
       const earned = await request(laborQuery, undefined, "manager");
       assert.equal(earned.status, 200, JSON.stringify(earned));
       assert.equal(earned.data.ledger.length, 2);
+      const defaultPeriod=await request(laborPath+'?'+new URLSearchParams({...s,staffId}),undefined,'manager');
+      assert.equal(defaultPeriod.data.quote.periodEnd,periodEnd,'API default uses the same Jakarta date as payroll UI');
+      assert.equal(defaultPeriod.data.quote.commission,earned.data.quote.commission,'Omitted period includes current Jakarta-day commission');
       const commission = moduleId === "barber" ? 50 : 31.25;
       assert.equal(
         earned.data.quote.commission,

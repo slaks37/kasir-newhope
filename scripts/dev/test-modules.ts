@@ -1,4 +1,5 @@
 import { kindsForModule } from '../../src/lib/sync/moduleKinds';
+import {stagingGrantAcceptance} from './staging-grant-acceptance';
 import { calendarDate } from '../../src/lib/reports/client';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,6 +17,9 @@ import { modulePath, parseModuleRoute } from '../../src/platform/modules/routing
 import { guardedPath, isLandingPath, moduleForPath, safeReturnPath } from '../../src/lib/navigation/routes';
 assert.equal(calendarDate('Asia/Jakarta',0,new Date('2026-10-25T17:05:00Z')), '2026-10-26', 'Booking day uses WIB across UTC midnight boundary');
 assert.equal(calendarDate('Asia/Jakarta',-1,new Date('2026-10-25T17:05:00Z')), '2026-10-25');
+assert.equal(calendarDate('Asia/Jakarta',0,new Date('2026-12-31T16:59:59Z')),'2026-12-31');
+assert.equal(calendarDate('Asia/Jakarta',0,new Date('2026-12-31T17:00:00Z')),'2027-01-01','Payroll includes the current Jakarta day from midnight WIB');
+assert.equal(calendarDate('Asia/Jakarta',0,new Date('2027-01-01T00:00:00Z')),'2027-01-01');
 assert(kindsForModule('tables','BARBERSHOP').includes('staff_members') && kindsForModule('tables','BARBERSHOP').includes('products'), 'Direct barber booking hydrates roster and service catalog');
 assert(!kindsForModule('tables','FNB').includes('carwash_queue') && !kindsForModule('tables','FNB').includes('bookings'), 'Inactive sector records are not hydrated');
 assert(kindsForModule('tables','CARWASH').includes('staff_members') && !kindsForModule('tables','CARWASH').includes('kds_tickets'));
@@ -187,5 +191,6 @@ try {
     assert.equal((await c.query('SELECT * FROM internal.merchant_modules')).rows.length, 1, 'RLS limits service to exact merchant');
     assert.equal((await c.query('SELECT * FROM billing.module_entitlements')).rows.length, 1);
   });
-  console.log('PASS: all five manifests/routes, module/page entitlement, member RBAC, tenant/merchant/outlet isolation, sibling namespace, real dashboard aggregates, rollout compatibility, additive migration replay and service/browser RLS');
+  await stagingGrantAcceptance(db);
+  console.log('PASS: staging QA grant dry-run, expiry, capacity, scope, audit and replay; all five manifests/routes, module/page entitlement, member RBAC, tenant/merchant/outlet isolation, sibling namespace, real dashboard aggregates, rollout compatibility, additive migration replay and service/browser RLS');
 } finally { await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); delete process.env.NEW_HOPE_MODULE_WORKSPACES; }

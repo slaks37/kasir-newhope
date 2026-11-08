@@ -14,6 +14,7 @@ import { FinancialApprovalError } from "./financialAuthorization";
 import { RegisterError, bindRegisterCash } from "./registerOperations";
 import { BillingError } from "../billing/engine";
 import { jobMoney } from "../../src/platform/modules/jobAmounts";
+import {calendarDate} from '../../src/lib/reports/calendarDate';
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const managers = ["OWNER", "ADMIN", "MANAGER"];
 const args = (s: WorkspaceScope, staff: string) => [
@@ -176,7 +177,7 @@ export function registerWorkspaceLaborRoutes(app: Express, db: Db) {
         if (!UUID.test(staff))
           throw new ModuleAccessError(400, "INVALID_STAFF");
         const end = String(
-          req.query.periodEnd || new Date().toISOString().slice(0, 10),
+          req.query.periodEnd || calendarDate(),
         );
         if (
           !/^\d{4}-\d{2}-\d{2}$/.test(end) ||

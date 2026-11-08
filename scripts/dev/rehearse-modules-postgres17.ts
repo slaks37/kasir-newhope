@@ -1,4 +1,5 @@
 import {staffAcceptance} from './staff-acceptance';
+import {stagingGrantAcceptance} from './staging-grant-acceptance';
 import {cashierAcceptance} from './cashier-acceptance';
 import {workspaceAcceptance} from './workspace-acceptance';
 import assert from 'node:assert/strict';
@@ -93,6 +94,7 @@ try{
  evidence.workspaceWorkflows=workflows;
  evidence.cashierWorkflows=await cashierAcceptance(wrap(admin),pos,await asService('svc_pos'));
  evidence.staffOnboarding=await staffAcceptance(wrap(admin),await asService('svc_staff'),pos,await asService('svc_staff'));
+ evidence.stagingModuleProvisioning=await stagingGrantAcceptance(wrap(admin));
  evidence.checks={postgresMajor:rehearsalPostgresMajor(),migrationReplay:'PASS',membershipPreservation:'PASS',actualServiceLogins:'PASS',rls:'PASS',noPinPrivilege:'PASS',independentCashierRole:'PASS',crossScopeDenied:'PASS',canonicalFixtureReplay312:'PASS',biCards8:'PASS'};evidence.status='PASS';console.log(`PASS: PostgreSQL ${rehearsalPostgresMajor()} 0063/0064 replay, identity FK preservation, real service-role logins/RLS, independent cashier grant, canonical fixture replay and all 8 BI cards`);
 }catch(e:any){evidence.status='FAIL';evidence.failure={message:e.message,code:e.code};throw e;}
 finally{delete process.env.NEW_HOPE_MODULE_WORKSPACES;fs.mkdirSync('build/module-rehearsal',{recursive:true});fs.writeFileSync('build/module-rehearsal/postgres17.json',JSON.stringify(evidence,null,2)+'\n');await Promise.all(connections.map(c=>c.end()));await admin.end();}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import {calendarDate} from '../../lib/reports/calendarDate';
 import { useBusinessModule } from "./ModuleWorkspaceGate";
 import { useWorkspaceBusiness } from "../../context/WorkspaceBusinessContext";
 import { useAuth } from "../../context/AuthContext";
@@ -29,7 +30,7 @@ export default function WorkspaceLabor() {
       moduleId: w.moduleId,
     };
   const [staff, setStaff] = useState(actor.id),
-    [end, setEnd] = useState(new Date().toISOString().slice(0, 10)),
+    [end, setEnd] = useState(() => calendarDate()),
     [data, setData] = useState<any>(null),
     [kind, setKind] = useState("PERCENTAGE"),
     [rate, setRate] = useState(0),
