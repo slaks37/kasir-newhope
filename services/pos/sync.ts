@@ -29,7 +29,7 @@ import {consumeFinancialApproval,FinancialApprovalError} from './financialAuthor
  */
 
 import type express from 'express';
-import {authorizeNativeModule,registerModuleRoutes} from './modules';
+import {authorizeNativeModule,moduleWorkspacesEnabled,registerModuleRoutes} from './modules';
 import {registerStaffAccountRoutes} from './staffAccounts';
 import {registerBusinessDirectory} from './businessDirectory';
 import {BusinessScopeError,resolveBusinessScope} from './businessScope';
@@ -42,6 +42,8 @@ import { applyTenders } from './tenders';
 import { SECTORS, writeActivity, type Sector } from './activity';
 import {registerPrivacyRoutes} from './privacy';
 import { canAccessBusiness, trustedPrincipal, tenantForPrincipal } from '../shared/auth';
+import {authProvider} from '../shared/betterAuthConfig';
+import {ownerOnboardingStaffStatus} from './ownerOnboarding';
 import { registerSharedStateRoutes } from './sharedState';
 import { registerReportRoutes } from './reports';
 import { registerFinanceRoutes, applyRefund, FinanceError, type RefundCommand } from './finance';
@@ -175,22 +177,34 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
     const sector = str(req.body?.sector,16);
     const storeName = str(req.body?.storeName,100);
     if (!sector || !SECTOR_SET.has(sector) || !storeName) return res.status(400).json({ok:false,error:'INVALID_BUSINESS'});
+    const requestedTenantId=outletRef(req.body?.tenantId);
+    if(req.body?.tenantId!==undefined&&!requestedTenantId)return res.status(400).json({ok:false,error:'INVALID_TENANT_ID'});
     const create=req.body?.intent==='create';
     const requestKey=str(req.body?.requestKey,36);
     if(create&&!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey||''))return res.status(400).json({ok:false,error:'BUSINESS_REQUEST_KEY_REQUIRED'});
     const businessId = create?`${principal.subject}_business_${requestKey}`:`${principal.subject}_${sector}`;
     try {
       const result = await db.tx(async c => {
-        await assertBusinessCanBeClaimed(c,businessId,principal.subject);
-        let tenantId = await tenantForPrincipal(c,principal);
+        const guardedOnboarding = Boolean(requestedTenantId) || moduleWorkspacesEnabled() || authProvider() === 'neon';
+        const staff = await ownerOnboardingStaffStatus(c,principal.subject);
+        if(!staff && (guardedOnboarding || await hasSchemaFeature(c,'staffIdentityPurpose') || await hasSchemaFeature(c,'staffAccounts')))
+          throw new BillingError(503,'OWNER_ONBOARDING_NOT_READY');
+        if(staff?.staffOnly)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+        const ownedTenant = async () => (await c.query<{id:string}>(`SELECT id FROM internal.tenants
+          WHERE owner_user_ref=$1 AND merged_into IS NULL AND ($2::uuid IS NULL OR id=$2 AND is_active)
+          ORDER BY (external_ref=$1) DESC NULLS LAST,created_at,id LIMIT 1 FOR UPDATE`,[principal.subject,requestedTenantId])).rows[0]?.id;
+        let tenantId = await ownedTenant();
         if (!tenantId) {
+          if(requestedTenantId)throw new BillingError(403,'TENANT_OWNERSHIP_REQUIRED');
+          if(staff?.hasStaffAssignment)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+          if(guardedOnboarding && !principal.isEmailVerified)throw new BillingError(403,'EMAIL_VERIFICATION_REQUIRED');
           const created = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
-            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
-            DO UPDATE SET name=EXCLUDED.name RETURNING id`,[storeName,principal.subject]);
-          tenantId = created.rows[0].id;
+            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT DO NOTHING RETURNING id`,[storeName,principal.subject]);
+          tenantId = created.rows[0]?.id ?? await ownedTenant();
         }
-        if (!tenantId) throw new BillingError(409,'TENANT_NOT_PROVISIONED');
-        await c.query('SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE',[tenantId]);
+        if (!tenantId) throw new BillingError(409,'TENANT_OWNERSHIP_CONFLICT');
+        const claimed = await assertBusinessCanBeClaimed(c,businessId,principal.subject,create?undefined:sector);
+        if(claimed && claimed.tenant_id!==tenantId)throw new BillingError(409,'BUSINESS_OWNERSHIP_CONFLICT');
         await assertTenantWritable(c,tenantId);
         if(create){
           const ready=await c.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'");
@@ -200,7 +214,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
           const previous=(await c.query('SELECT id,business_sector,name FROM internal.merchants WHERE tenant_id=$1 AND external_ref=$2',[tenantId,businessId])).rows[0];
           if(previous){if(previous.business_sector!==sector||previous.name!==storeName)throw new BillingError(409,'BUSINESS_REQUEST_KEY_CONFLICT');return {tenantId,merchantId:previous.id};}
         }
-        const existing=create?null:await resolveBusinessScope(c,principal.subject,sector,req.body?.businessId);
+        const existing=create?null:await resolveBusinessScope(c,principal.subject,sector,req.body?.businessId,tenantId);
         if(existing)return {tenantId,merchantId:existing.merchantId};
         const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
           VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
@@ -210,6 +224,7 @@ export function registerSyncRoutes(app: express.Express, db: Db): void {
       });
       return res.json({ok:true,...result});
     } catch (error) {
+      if(error instanceof SyncAccessError)return res.status(403).json({ok:false,error:error.message});
       return res.status(error instanceof BillingError || error instanceof ModuleAccessError||error instanceof BusinessScopeError ? error.status : 500).json({ok:false,error:error instanceof BillingError || error instanceof ModuleAccessError||error instanceof BusinessScopeError ? error.message : 'BUSINESS_SETUP_FAILED'});
     }
   });

@@ -40,7 +40,7 @@ export async function stagingGrantAcceptance(db:Db){
  assert.equal((await db.query('SELECT count(*)::int AS n FROM internal.outlets WHERE tenant_id=$1',[tenant])).rows[0].n,1);
  assert.equal((await db.query("SELECT status,plan_id FROM billing.subscriptions WHERE tenant_id=$1",[tenant])).rows[0].status,'TRIAL');
  assertStagingGrantConnection(`postgres://neondb_owner:synthetic@${stagingGrantTarget.host}/neondb?sslmode=verify-full`);
- for(const host of ['production.neon.tech',stagingGrantTarget.host+'-pooler'])assert.throws(()=>assertStagingGrantConnection(`postgres://neondb_owner:synthetic@${host}/neondb?sslmode=verify-full`),/STAGING_CONNECTION_REJECTED/);
+ for(const host of ['production.neon.tech','ep-gentle-silence-az2bwpz6.c-3.ap-southeast-1.aws.neon.tech',stagingGrantTarget.host+'-pooler'])assert.throws(()=>assertStagingGrantConnection(`postgres://neondb_owner:synthetic@${host}/neondb?sslmode=verify-full`),/STAGING_CONNECTION_REJECTED/);
  assert.throws(()=>assertStagingGrantConnection(`postgres://neondb_owner:synthetic@${stagingGrantTarget.host}/neondb?sslmode=verify-full&host=production.neon.tech`),/STAGING_CONNECTION_REJECTED/);
  return {dryRun:'PASS',idempotency:'PASS',ownerAndQaScope:'PASS',expiryAndSubscription:'PASS',capacity:'PASS',drift:'PASS',audit:'PASS',urlPin:'PASS'};
 }

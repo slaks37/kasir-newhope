@@ -178,6 +178,9 @@ var init_schemaFeatures = __esm({
       workspaceLabor: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_payroll_entries') IS NOT NULL AND to_regprocedure('pos.guard_workspace_labor()') IS NOT NULL AS ok`,
       workspaceJobs: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_job_events') IS NOT NULL AND to_regclass('pos.workspace_job_receipts') IS NOT NULL AND to_regprocedure('pos.validate_workspace_job_receipt()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transaction_items') AND attname='workspace_options' AND NOT attisdropped) AS ok`,
       workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
+      posOwnerOnboardingGuard: `SELECT
+    has_function_privilege(to_regrole('svc_pos'),to_regprocedure('internal.is_staff_only_identity(text)'),'EXECUTE')
+    AND has_function_privilege(to_regrole('svc_pos'),to_regprocedure('internal.has_active_staff_assignment(text)'),'EXECUTE') AS ok`,
       staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
       staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
       cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
@@ -3881,10 +3884,10 @@ var BusinessScopeError = class extends Error {
     this.status = status;
   }
 };
-async function resolveBusinessScope(db, subject2, sector, businessId) {
+async function resolveBusinessScope(db, subject2, sector, businessId, ownedTenantId) {
   if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
     throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject: subject2 });
+  const tenantId = ownedTenantId ?? await tenantForPrincipal(db, { subject: subject2 });
   if (!tenantId) {
     if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
     return null;
@@ -4852,13 +4855,36 @@ function registerStaffAccountRoutes(app, db, send = sendBetterAuthEmail) {
 
 // services/pos/workspaceDirectory.ts
 init_schemaFeatures();
-async function workspaceDirectory(db, subject2, requestedTenant) {
+
+// services/pos/ownerOnboarding.ts
+init_schemaFeatures();
+async function ownerOnboardingStaffStatus(db, subject2) {
+  if (!await hasSchemaFeature(db, "posOwnerOnboardingGuard")) return null;
+  const { rows } = await db.query(`SELECT
+    internal.is_staff_only_identity($1) AS "staffOnly",
+    internal.has_active_staff_assignment($1) AS "hasStaffAssignment"`, [subject2]);
+  return rows[0];
+}
+
+// services/pos/workspaceDirectory.ts
+async function workspaceDirectory(db, subject2, requestedTenant, isEmailVerified = false) {
   if (!moduleWorkspacesEnabled() || !await hasSchemaFeature(db, "workspaceIsolation")) throw new ModuleAccessError(403, "ISOLATED_WORKSPACE_REQUIRED");
   const managedStaff = await hasSchemaFeature(db, "staffAccounts");
-  const tenants = (await db.query(`SELECT DISTINCT t.id,t.name FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject2])).rows;
-  const tenantId = typeof requestedTenant === "string" ? tenants.find((t) => t.id === requestedTenant)?.id : tenants.length === 1 ? tenants[0].id : null;
+  const tenants = (await db.query(`SELECT t.id,t.name,t.owner_user_ref=$1 AS owned FROM internal.tenants t WHERE t.is_active AND t.merged_into IS NULL AND (t.owner_user_ref=$1 OR EXISTS(SELECT 1 FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND u.id::text=$1 AND u.is_active AND ms.is_active)) ORDER BY t.id`, [subject2])).rows;
+  const selectedTenant = typeof requestedTenant === "string" ? tenants.find((t) => t.id === requestedTenant) : tenants.length === 1 ? tenants[0] : null;
+  const tenantId = selectedTenant?.id ?? null;
   if (requestedTenant && !tenantId) throw new ModuleAccessError(403, "TENANT_MEMBERSHIP_REQUIRED");
-  if (!tenantId) return { ok: true, tenantId: null, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [], workspaceAuth: true };
+  const staff = subject2 !== "local-development" && isEmailVerified && (selectedTenant?.owned || !tenants.length) ? await ownerOnboardingStaffStatus(db, subject2) : null;
+  let canSetUpBusiness = false;
+  if (staff && !staff.staffOnly) {
+    canSetUpBusiness = Boolean(selectedTenant?.owned);
+    if (!tenants.length && !staff.hasStaffAssignment) {
+      const { rows } = await db.query(`SELECT 1 FROM internal.tenants
+     WHERE (owner_user_ref=$1 AND merged_into IS NULL) OR external_ref=$1 LIMIT 1`, [subject2]);
+      canSetUpBusiness = rows.length === 0;
+    }
+  }
+  if (!tenantId) return { ok: true, tenantId: null, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [], workspaceAuth: true, canSetUpBusiness };
   await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
   const result = await db.query(`SELECT ${managedStaff ? "ms.id AS membership_id,ms.auth_managed," : ""}t.owner_user_ref=$2 AS tenant_owner,m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,o.id outlet_id,o.name outlet_name,o.address,o.is_active outlet_active,CASE WHEN t.owner_user_ref=$2 THEN 'OWNER' ELSE ms.role END role FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id LEFT JOIN internal.outlets o ON o.merchant_id=m.id AND o.tenant_id=t.id LEFT JOIN LATERAL(SELECT role${managedStaff ? ",ms.id,ms.auth_managed" : ""} FROM internal.memberships ms JOIN internal.users u ON u.id=ms.user_id WHERE ms.tenant_id=t.id AND ms.is_active AND u.is_active AND u.id::text=$2 AND(ms.scope_type='TENANT' OR ms.merchant_id=m.id AND(ms.scope_type='MERCHANT' OR ms.outlet_id=o.id)) ORDER BY CASE ms.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 WHEN 'MANAGER' THEN 2 WHEN 'CASHIER' THEN 3 ELSE 4 END LIMIT 1) ms ON true WHERE t.id=$1 AND(t.owner_user_ref=$2 OR (o.id IS NOT NULL AND ms.role IS NOT NULL)) ORDER BY m.id,o.id`, [tenantId, subject2]);
   const businesses = /* @__PURE__ */ new Map();
@@ -4878,7 +4904,7 @@ async function workspaceDirectory(db, subject2, requestedTenant) {
   }
   await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
   const subscription = (await db.query("SELECT * FROM contract.workspace_subscription_metadata WHERE tenant_id=$1", [tenantId])).rows[0];
-  return { ok: true, tenantId, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [...businesses.values()], workspaceAuth: true, capabilities: { multiBusiness: true }, subscription: subscription ? serializeSubscription(subscription) : null };
+  return { ok: true, tenantId, tenants: tenants.map((t) => ({ tenantId: t.id, name: t.name })), businesses: [...businesses.values()], workspaceAuth: true, canSetUpBusiness, capabilities: { multiBusiness: true }, subscription: subscription ? serializeSubscription(subscription) : null };
 }
 
 // services/pos/businessDirectory.ts
@@ -4889,7 +4915,7 @@ function registerBusinessDirectory(app, db) {
     if (!principal) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
     try {
       res.setHeader("Cache-Control", "no-store");
-      if (req.query.workspace === "2") return res.json(await db.tx((c) => workspaceDirectory(c, principal.subject, req.query.tenantId)));
+      if (req.query.workspace === "2") return res.json(await db.tx((c) => workspaceDirectory(c, principal.subject, req.query.tenantId, principal.isEmailVerified)));
       const tenantId = await tenantForPrincipal(db, principal);
       if (!tenantId) return res.json({ ok: true, tenantId: null, businesses: [] });
       const result = await db.query(`SELECT m.id,m.tenant_id,m.name,m.business_sector,m.is_active,m.external_ref,
@@ -5016,6 +5042,7 @@ function registerPrivacyRoutes(app, db) {
 
 // services/pos/sync.ts
 init_auth();
+init_betterAuthConfig();
 
 // services/pos/reports.ts
 init_auth();
@@ -5540,22 +5567,34 @@ function registerSyncRoutes(app, db) {
     const sector = str(req.body?.sector, 16);
     const storeName = str(req.body?.storeName, 100);
     if (!sector || !SECTOR_SET2.has(sector) || !storeName) return res.status(400).json({ ok: false, error: "INVALID_BUSINESS" });
+    const requestedTenantId = outletRef(req.body?.tenantId);
+    if (req.body?.tenantId !== void 0 && !requestedTenantId) return res.status(400).json({ ok: false, error: "INVALID_TENANT_ID" });
     const create = req.body?.intent === "create";
     const requestKey = str(req.body?.requestKey, 36);
     if (create && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestKey || "")) return res.status(400).json({ ok: false, error: "BUSINESS_REQUEST_KEY_REQUIRED" });
     const businessId = create ? `${principal.subject}_business_${requestKey}` : `${principal.subject}_${sector}`;
     try {
       const result = await db.tx(async (c) => {
-        await assertBusinessCanBeClaimed(c, businessId, principal.subject);
-        let tenantId = await tenantForPrincipal(c, principal);
+        const guardedOnboarding = Boolean(requestedTenantId) || moduleWorkspacesEnabled() || authProvider() === "neon";
+        const staff = await ownerOnboardingStaffStatus(c, principal.subject);
+        if (!staff && (guardedOnboarding || await hasSchemaFeature(c, "staffIdentityPurpose") || await hasSchemaFeature(c, "staffAccounts")))
+          throw new BillingError(503, "OWNER_ONBOARDING_NOT_READY");
+        if (staff?.staffOnly) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+        const ownedTenant = async () => (await c.query(`SELECT id FROM internal.tenants
+          WHERE owner_user_ref=$1 AND merged_into IS NULL AND ($2::uuid IS NULL OR id=$2 AND is_active)
+          ORDER BY (external_ref=$1) DESC NULLS LAST,created_at,id LIMIT 1 FOR UPDATE`, [principal.subject, requestedTenantId])).rows[0]?.id;
+        let tenantId = await ownedTenant();
         if (!tenantId) {
+          if (requestedTenantId) throw new BillingError(403, "TENANT_OWNERSHIP_REQUIRED");
+          if (staff?.hasStaffAssignment) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+          if (guardedOnboarding && !principal.isEmailVerified) throw new BillingError(403, "EMAIL_VERIFICATION_REQUIRED");
           const created2 = await c.query(`INSERT INTO internal.tenants(id,name,external_ref,owner_user_ref)
-            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
-            DO UPDATE SET name=EXCLUDED.name RETURNING id`, [storeName, principal.subject]);
-          tenantId = created2.rows[0].id;
+            VALUES(uuidv7(),$1,$2,$2) ON CONFLICT DO NOTHING RETURNING id`, [storeName, principal.subject]);
+          tenantId = created2.rows[0]?.id ?? await ownedTenant();
         }
-        if (!tenantId) throw new BillingError(409, "TENANT_NOT_PROVISIONED");
-        await c.query("SELECT id FROM internal.tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+        if (!tenantId) throw new BillingError(409, "TENANT_OWNERSHIP_CONFLICT");
+        const claimed = await assertBusinessCanBeClaimed(c, businessId, principal.subject, create ? void 0 : sector);
+        if (claimed && claimed.tenant_id !== tenantId) throw new BillingError(409, "BUSINESS_OWNERSHIP_CONFLICT");
         await assertTenantWritable(c, tenantId);
         if (create) {
           const ready3 = await c.query("SELECT 1 FROM pg_constraint WHERE conrelid='pos.shared_state_records'::regclass AND conname='shared_state_business_namespace'");
@@ -5568,7 +5607,7 @@ function registerSyncRoutes(app, db) {
             return { tenantId, merchantId: previous.id };
           }
         }
-        const existing = create ? null : await resolveBusinessScope(c, principal.subject, sector, req.body?.businessId);
+        const existing = create ? null : await resolveBusinessScope(c, principal.subject, sector, req.body?.businessId, tenantId);
         if (existing) return { tenantId, merchantId: existing.merchantId };
         const created = await c.query(`INSERT INTO internal.merchants(id,tenant_id,name,business_sector,external_ref)
           VALUES(uuidv7(),$1,$2,$3,$4) ON CONFLICT(external_ref) WHERE external_ref IS NOT NULL
@@ -5578,6 +5617,7 @@ function registerSyncRoutes(app, db) {
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
+      if (error instanceof SyncAccessError) return res.status(403).json({ ok: false, error: error.message });
       return res.status(error instanceof BillingError || error instanceof ModuleAccessError || error instanceof BusinessScopeError ? error.status : 500).json({ ok: false, error: error instanceof BillingError || error instanceof ModuleAccessError || error instanceof BusinessScopeError ? error.message : "BUSINESS_SETUP_FAILED" });
     }
   });

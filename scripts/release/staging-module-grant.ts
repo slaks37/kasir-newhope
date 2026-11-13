@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto';
 import {SAAS_PLANS} from '../../src/config/saasPlans';
+import {isolatedAcceptanceTarget} from './isolated-acceptance-target.mjs';
 
-export const stagingGrantTarget={projectId:'steep-sea-66546931',branchId:'br-red-smoke-aznyozaq',database:'neondb',host:'ep-gentle-silence-az2bwpz6.c-3.ap-southeast-1.aws.neon.tech'} as const;
+export const stagingGrantTarget=isolatedAcceptanceTarget;
 export interface StagingModuleGrant {tenantId:string;merchantId:string;outletId:string;ownerId:string;expiresAt:string;reference:string}
 const modules=['fnb','retail','laundry','carwash','barber'];
 const features=['overview','pos','tables','inventory','reports','customers','labor','settings'];
@@ -64,7 +65,7 @@ END $staging_grant$;`};
 
 export function assertStagingGrantConnection(raw:string){
  const u=new URL(raw);
- if(!['postgres:','postgresql:'].includes(u.protocol)||u.hostname!==stagingGrantTarget.host||u.pathname!=='/neondb'||u.username!=='neondb_owner'||u.hash||[...u.searchParams.keys()].some(k=>k!=='sslmode')||u.searchParams.get('sslmode')!=='verify-full')throw Error('STAGING_CONNECTION_REJECTED');
+ if(!['postgres:','postgresql:'].includes(u.protocol)||u.hostname!==stagingGrantTarget.host||u.pathname!=='/'+stagingGrantTarget.database||u.username!=='neondb_owner'||u.hash||[...u.searchParams.keys()].some(k=>k!=='sslmode')||u.searchParams.get('sslmode')!=='verify-full')throw Error('STAGING_CONNECTION_REJECTED');
 }
 
 /** Produce the complete scoped connector call, rather than accepting a default branch. */

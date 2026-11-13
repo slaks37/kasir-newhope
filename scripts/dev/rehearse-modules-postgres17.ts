@@ -2,6 +2,7 @@ import {staffAcceptance} from './staff-acceptance';
 import {stagingGrantAcceptance} from './staging-grant-acceptance';
 import {cashierAcceptance} from './cashier-acceptance';
 import {workspaceAcceptance} from './workspace-acceptance';
+import {ownerOnboardingAcceptance} from './owner-onboarding-acceptance';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
@@ -54,6 +55,14 @@ try{
  await assert.rejects(()=>billing.query('UPDATE internal.memberships SET is_active=false'),(e:any)=>e.code==='42501');
  await assert.rejects(()=>pos.query('SELECT internal.has_active_staff_assignment($1)',[staff]),(e:any)=>e.code==='42501');
  assert.equal((await billing.query("SELECT pg_has_role(current_user,'svc_membership_probe','MEMBER') AS member")).rows[0].member,false);
+ evidence.ownerOnboarding=await ownerOnboardingAcceptance(wrap(admin),pos,async()=>{
+  for(let replay=0;replay<2;replay++)await apply('migrations/0080_pos_owner_onboarding_guard.sql');
+ });
+ assert.equal((await pos.query('SELECT internal.is_staff_only_identity($1) AS blocked',[preInviteStaff])).rows[0].blocked,true);
+ assert.equal((await pos.query('SELECT internal.has_active_staff_assignment($1) AS assigned',[staff])).rows[0].assigned,true);
+ assert.equal((await pos.query("SELECT pg_has_role(current_user,'svc_membership_probe','MEMBER') AS member")).rows[0].member,false);
+ await assert.rejects(()=>pos.query('SELECT auth_staff_only FROM internal.users'),(e:any)=>e.code==='42501');
+ await assert.rejects(()=>ai.query('SELECT internal.is_staff_only_identity($1)',[preInviteStaff]),(e:any)=>e.code==='42501');
  for(const service of [internal,billing,pos,ai])assert.match((await service.query('SELECT uuidv7()::text id')).rows[0].id,/^[a-f0-9]{8}-[a-f0-9]{4}-7/);
  await assert.rejects(()=>ai.query('SELECT * FROM internal.merchant_modules'),(e:any)=>e.code==='42501','AI receives only the narrow scope guard');
  const counter = (await pos.query("SELECT to_regclass('public.uuidv7_counter')::oid AS oid")).rows[0].oid;

@@ -1,7 +1,7 @@
 import React,{createContext,useContext,useEffect,useState,useRef,useCallback} from 'react';
 import {isNeonAuth} from '../lib/authRuntime';
 import {useAuth} from './AuthContext';
-import {useBusinessDirectory,type Directory} from '../lib/workspace/businessDirectory';
+import {initializeWorkspaceTrial,useBusinessDirectory,workspaceOnboarding,type Directory} from '../lib/workspace/businessDirectory';
 import {selectionKey,verifiedSelection,type BusinessSelection} from '../lib/workspace/selection';
 import type {BusinessIdentity} from '../lib/workspace/businessIdentity';
 import type {BusinessSector} from '../types';
@@ -50,6 +50,7 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
   const [name,setName]=useState(user?.user_metadata?.store_name||'Toko Saya');
   const [sector,setSector]=useState<BusinessSector>(user?.user_metadata?.business_sector||'FNB');
   const [busy,setBusy]=useState(false),[setupError,setSetupError]=useState('');
+  const onboarding=workspaceOnboarding(directory,directoryVerified,networkOnline,Boolean(error||accountError));
   let legacy:{businessSector?:string;activeBranchId?:string}={};
   try{legacy=JSON.parse(localStorage.getItem('newhope_user_'+owner+'_settings')||'{}');}catch{}
   let selected=directory?.tenantId?verifiedSelection(owner,directory.tenantId,directory.businesses.filter(b=>b.legacyAlias||directory.capabilities?.multiBusiness),hint,
@@ -71,18 +72,28 @@ export function WorkspaceBusinessProvider({children}:{children:React.ReactNode})
   };
   useEffect(()=>{if(selected)try{localStorage.setItem(selectionKey(owner),JSON.stringify(selected));}catch{setSetupError('Pilihan perangkat belum dapat disimpan. Data bisnis tetap tersimpan.');}},[owner,selected?.businessId,selected?.outletId]);
   const provision=async()=>{setBusy(true);setSetupError('');try{
-    const response=await fetch('/api/v1/sync/business',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sector,storeName:name})});
+    const tenantId=directory?.workspaceAuth?directory.tenantId:undefined;
+    const response=await fetch('/api/v1/sync/business',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sector,storeName:name,...(tenantId?{tenantId}:{})})});
     const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||'BUSINESS_SETUP_FAILED');
-    setHint({businessId:data.merchantId});window.dispatchEvent(new Event('outlets-updated'));
-  }catch(error){setSetupError(error instanceof Error?error.message:'BUSINESS_SETUP_FAILED');}finally{setBusy(false);}};
+    setHint({businessId:data.merchantId});
+    if(directory?.workspaceAuth&&!directory.subscription)await initializeWorkspaceTrial(data.tenantId);
+  }catch{setSetupError('Penyiapan bisnis belum selesai. Coba lagi.');}finally{window.dispatchEvent(new Event('outlets-updated'));setBusy(false);}};
+  const retryTrial=async(tenantId:string)=>{setBusy(true);setSetupError('');try{
+    await initializeWorkspaceTrial(tenantId);
+  }catch{setSetupError('Paket percobaan belum dapat disiapkan. Coba lagi.');}finally{window.dispatchEvent(new Event('outlets-updated'));setBusy(false);}};
+  const businessSetupForm=<form onSubmit={e=>{e.preventDefault();void provision();}} className="space-y-3"><label className="block">Nama bisnis<input required maxLength={100} value={name} disabled={busy} onChange={e=>setName(e.target.value)} className="block w-full rounded border p-2"/></label><label className="block">Jenis bisnis<select value={sector} disabled={busy} onChange={e=>setSector(e.target.value as BusinessSector)} className="block w-full rounded border p-2">{['FNB','RETAIL','LAUNDRY','BARBERSHOP','CARWASH'].map(s=><option key={s}>{s}</option>)}</select></label><button disabled={busy} className="rounded-lg bg-amber-400 p-3">{busy?'Menyiapkan…':'Siapkan bisnis'}</button></form>;
   if(accountError==='STAFF_WORKSPACE_SELECTION_REQUIRED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akun staf ini sudah terhubung ke bisnis. Ruang kerja staf belum diaktifkan pada lingkungan ini. Hubungi pemilik bisnis; akun staf tidak otomatis membuat toko atau langganan baru.</p></main>;
   if(error==='WORKSPACE_ACCESS_REVOKED'||accountError==='WORKSPACE_ACCESS_REVOKED')return <main className="min-h-screen bg-slate-50 p-8"><p role="alert">Akses bisnis perlu diverifikasi kembali. Cache dan antrean tetap disimpan; data tidak dikirim sampai akses diizinkan server.</p></main>;
-  if(directory?.workspaceAuth&&!directory.tenantId&&directory.tenants?.length)return <main className="p-8 space-y-3"><h1>Pilih organisasi</h1>{directory.tenants.map(t=><button key={t.tenantId} className="block border rounded p-3" onClick={()=>{localStorage.setItem('newhope_directory_tenant_'+owner,t.tenantId);window.dispatchEvent(new Event('outlets-updated'));}}>{t.name}</button>)}</main>;
-  if(directory?.workspaceAuth&&directory.tenantId&&!subscription)return <main role="alert" className="p-8">Paket organisasi belum tersedia. Minta pemilik memeriksa langganan.</main>;
+  if(onboarding==='select-tenant')return <main className="p-8 space-y-3"><h1>Pilih organisasi</h1>{directory?.tenants?.map(t=><button key={t.tenantId} className="block border rounded p-3" onClick={()=>{localStorage.setItem('newhope_directory_tenant_'+owner,t.tenantId);window.dispatchEvent(new Event('outlets-updated'));}}>{t.name}</button>)}</main>;
+  if(onboarding==='wait-for-access')return <main role="alert" className="p-8">Organisasi belum tersedia untuk akun ini. Hubungi pemilik bisnis untuk memeriksa akses Anda.</main>;
+  if(onboarding==='create-business'||onboarding==='initialize-trial')return <main className="min-h-screen bg-slate-50 p-8"><section className="mx-auto max-w-lg rounded-2xl border bg-white p-6 space-y-4"><h1 className="text-xl font-bold">{onboarding==='create-business'?'Siapkan bisnis pertama':'Siapkan paket percobaan'}</h1>
+    {onboarding==='create-business'?businessSetupForm:<button disabled={busy} onClick={()=>void retryTrial(directory!.tenantId!)} className="rounded-lg bg-amber-400 p-3">{busy?'Menyiapkan…':'Lanjutkan penyiapan'}</button>}
+    {setupError&&<p role="alert">{setupError}</p>}</section></main>;
+  if(directory?.workspaceAuth&&directory.tenantId&&!directory.subscription&&!error&&!accountError)return <main role="alert" className="p-8">Paket organisasi belum tersedia. Minta pemilik memeriksa langganan.</main>;
   if(!directory||!subscription)return <main className="min-h-screen bg-slate-50 p-8"><p role={error||accountError?'alert':'status'}>{error||accountError?'Cloud belum dapat dihubungi. Sistem mencoba kembali otomatis; data perangkat tetap tersimpan.':'Memverifikasi bisnis dan paket di cloud…'}</p></main>;
   if(!business||!selected)return <main className="min-h-screen bg-slate-50 p-8"><section className="mx-auto max-w-lg rounded-2xl border bg-white p-6 space-y-4"><h1 className="text-xl font-bold">Pilih bisnis</h1>
     {directory.businesses.filter(b=>b.status==='ACTIVE'&&b.transportRef).map(b=><button key={b.businessId} disabled={!b.legacyAlias&&!directory.capabilities?.multiBusiness} className="block w-full rounded-xl border p-4 text-left disabled:opacity-50" onClick={()=>{try{select(b.businessId);}catch{setSetupError('Pilihan belum dapat disimpan. Coba kembali setelah penyimpanan perangkat tersedia.');}}}>{b.name} · {b.sector}{!b.legacyAlias&&!directory.capabilities?.multiBusiness?' · menunggu migrasi server':''}</button>)}
-    {!directory.businesses.length&&<form onSubmit={e=>{e.preventDefault();void provision();}} className="space-y-3"><label className="block">Nama bisnis<input required maxLength={100} value={name} onChange={e=>setName(e.target.value)} className="block w-full rounded border p-2"/></label><label className="block">Jenis bisnis<select value={sector} onChange={e=>setSector(e.target.value as BusinessSector)} className="block w-full rounded border p-2">{['FNB','RETAIL','LAUNDRY','BARBERSHOP','CARWASH'].map(s=><option key={s}>{s}</option>)}</select></label><button disabled={busy} className="rounded-lg bg-amber-400 p-3">{busy?'Menyiapkan…':'Siapkan bisnis'}</button></form>}
+    {!directory.businesses.length&&(!directory.workspaceAuth||directory.canSetUpBusiness&&directoryVerified&&networkOnline&&!error&&!accountError)&&businessSetupForm}
     {directory.businesses.length>0&&!directory.businesses.some(b=>b.status==='ACTIVE'&&b.transportRef)&&<p>Bisnis belum memiliki identitas aktif yang dapat dipakai. Hubungi administrator; data tidak dipindahkan otomatis.</p>}
     {setupError&&<p role="alert">{setupError}</p>}</section></main>;
   if(!selected.outletId&&business.outlets.filter(o=>o.status==='ACTIVE').length>1)return <main className="min-h-screen bg-slate-50 p-8"><section className="mx-auto max-w-lg rounded-2xl border bg-white p-6 space-y-4"><h1 className="text-xl font-bold">Pilih outlet · {business.name}</h1>{business.outlets.filter(o=>o.status==='ACTIVE').map(o=><button key={o.outletId} onClick={()=>select(business.businessId,o.outletId)} className="block w-full rounded-xl border p-4 text-left">{o.name} · {o.address}</button>)}</section></main>;

@@ -12,7 +12,7 @@ import {BusinessScopeError,resolveBusinessScope} from '../pos/businessScope';
 import { SAAS_PLANS } from '../../src/config/saasPlans';
 import { isFreePlan } from '../../src/config/freePlanPolicy';
 import { validateFreeBranchSelection, FreePlanAccessError } from './freePlan';
-import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, subscriptionStatus, activateFreeTrial } from './engine';
+import { BillingError, assertOutletCapacity, assertTenantWritable, createQuote, reconcilePayment, serializeInvoice, serializeSubscription, subscriptionStatus, activateFreeTrial, ensureSubscription } from './engine';
 import { createDokuCheckout, isDokuConfigured, verifyDokuWebhookSignature, getDokuAllowedChannels, generateDigest, DOKU_NOTIFICATION_PATH, checkDokuOrderStatus } from '../../api/_doku';
 
 /** A missing or out-of-range coordinate is stored as NULL ("not set"), never 0 — 0,0 is a real place in the Atlantic. */
@@ -34,14 +34,15 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
       res.status(err instanceof BillingError?err.status:500).json({ok:false,error:err instanceof BillingError?err.message:'BILLING_UNAVAILABLE'});
     }
   };
+  const assertOwnerIdentity=async(c:Db,subject:string)=>{
+    const purpose=await c.query('SELECT internal.is_staff_only_identity($1) AS staff_only',[subject]);
+    if(purpose.rows[0]?.staff_only)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
+  };
   const tenant=async(req:express.Request,allowProvision=true)=>{
     const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== 'production' && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === '1';
     if (!principal || (principal.subject==='local-development' && !allowLocal)) throw new BillingError(401,'AUTHENTICATION_REQUIRED');
-    if(await hasSchemaFeature(db,'staffIdentityPurpose')) {
-      const purpose=await db.query('SELECT internal.is_staff_only_identity($1) AS staff_only',[principal.subject]);
-      if(purpose.rows[0]?.staff_only)throw new BillingError(403,'STAFF_WORKSPACE_SELECTION_REQUIRED');
-    }
+    if(await hasSchemaFeature(db,'staffIdentityPurpose'))await assertOwnerIdentity(db,principal.subject);
     let id=await tenantForPrincipal(db,principal);
     if (!id && allowProvision && principal.subject!=='local-development') {
       if(await hasSchemaFeature(db,'staffAccounts')) {
@@ -64,7 +65,27 @@ export function registerBillingRoutes(app:express.Express,db:Db,viaGateway=false
   };
   app.get('/api/v1/subscription/plans',(_req,res)=>res.json({ok:true,plans:SAAS_PLANS}));
   app.get('/api/v1/subscription/status',run(async(req,res)=>res.json(await subscriptionStatus(db,await tenant(req)))));
-  app.post('/api/v1/subscription/start-trial',run(async(req,res)=>res.json({ok:true,subscription:await activateFreeTrial(db,await tenant(req))})));
+  app.post('/api/v1/subscription/start-trial',run(async(req,res)=>{
+    if(req.body?.intent!=='initialize')return res.json({ok:true,subscription:await activateFreeTrial(db,await tenant(req))});
+    const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
+    if(!principal||principal.subject==='local-development')throw new BillingError(401,'AUTHENTICATION_REQUIRED');
+    if(!principal.isEmailVerified)throw new BillingError(403,'EMAIL_VERIFICATION_REQUIRED');
+    const tenantId=req.body.tenantId;
+    if(typeof tenantId!=='string'||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(tenantId)){
+      throw new BillingError(400,'INVALID_TENANT_ID');
+    }
+    const subscription=await db.tx(async c=>{
+      if(!await hasSchemaFeature(c,'staffIdentityPurpose'))throw new BillingError(503,'BILLING_UNAVAILABLE');
+      await assertOwnerIdentity(c,principal.subject);
+      const {rows}=await c.query(`SELECT t.id FROM internal.tenants t
+        WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+          AND EXISTS(SELECT 1 FROM internal.merchants m WHERE m.tenant_id=t.id AND m.is_active)
+        FOR UPDATE OF t`,[tenantId,principal.subject]);
+      if(!rows[0])throw new BillingError(403,'TENANT_OWNERSHIP_REQUIRED');
+      return serializeSubscription(await ensureSubscription(c,rows[0].id));
+    });
+    return res.json({ok:true,subscription});
+  }));
   app.post('/api/v1/subscription/free-plan',run(async(req,res)=>{
     const principal=viaGateway?trustedPrincipal(req):await authenticateBearer(req);
     if(!principal || principal.subject==='local-development') throw new BillingError(401,'AUTHENTICATION_REQUIRED');

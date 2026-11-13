@@ -178,6 +178,9 @@ var init_schemaFeatures = __esm({
       workspaceLabor: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_payroll_entries') IS NOT NULL AND to_regprocedure('pos.guard_workspace_labor()') IS NOT NULL AS ok`,
       workspaceJobs: `SELECT to_regclass('pos.workspace_commission_rules') IS NOT NULL AND to_regclass('pos.workspace_job_events') IS NOT NULL AND to_regclass('pos.workspace_job_receipts') IS NOT NULL AND to_regprocedure('pos.validate_workspace_job_receipt()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transaction_items') AND attname='workspace_options' AND NOT attisdropped) AS ok`,
       workspaceRecipes: `SELECT to_regclass('pos.workspace_recipe_consumption') IS NOT NULL AND to_regprocedure('pos.validate_recipe_movement()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.inventory_transactions') AND attname='recipe_consumption_id' AND NOT attisdropped) AS ok`,
+      posOwnerOnboardingGuard: `SELECT
+    has_function_privilege(to_regrole('svc_pos'),to_regprocedure('internal.is_staff_only_identity(text)'),'EXECUTE')
+    AND has_function_privilege(to_regrole('svc_pos'),to_regprocedure('internal.has_active_staff_assignment(text)'),'EXECUTE') AS ok`,
       staffIdentityPurpose: `SELECT to_regprocedure('internal.is_staff_only_identity(text)') IS NOT NULL AS ok`,
       staffAccounts: `SELECT to_regclass('internal.staff_invitations') IS NOT NULL AND to_regclass('internal.staff_workspace_assignments') IS NOT NULL AND EXISTS(SELECT FROM pg_attribute WHERE attrelid=to_regclass('internal.memberships') AND attname='auth_managed' AND NOT attisdropped) AS ok`,
       cashierRegisters: `SELECT (SELECT count(*)=2 FROM pg_policy WHERE polrelid IN(to_regclass('pos.cash_registers'),to_regclass('pos.shifts')) AND polname='workspace_scope' AND position('workspace_modules' in pg_get_expr(polqual,polrelid))>0) AND to_regclass('pos.shift_variance_events') IS NOT NULL AND to_regprocedure('pos.bind_register_money()') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.transactions') AND attname='register_shift_id' AND NOT attisdropped) AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('pos.shifts') AND attname='close_command' AND NOT attisdropped) AS ok`,
@@ -1508,10 +1511,10 @@ var BusinessScopeError = class extends Error {
     this.status = status;
   }
 };
-async function resolveBusinessScope(db, subject2, sector, businessId) {
+async function resolveBusinessScope(db, subject2, sector, businessId, ownedTenantId) {
   if (businessId !== void 0 && (typeof businessId !== "string" || !businessId || businessId.length > 128))
     throw new BusinessScopeError(400, "INVALID_BUSINESS_ID");
-  const tenantId = await tenantForPrincipal(db, { subject: subject2 });
+  const tenantId = ownedTenantId ?? await tenantForPrincipal(db, { subject: subject2 });
   if (!tenantId) {
     if (businessId !== void 0) throw new BusinessScopeError(403, "BUSINESS_ACCESS_DENIED");
     return null;
@@ -1559,14 +1562,15 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
       res.status(err instanceof BillingError ? err.status : 500).json({ ok: false, error: err instanceof BillingError ? err.message : "BILLING_UNAVAILABLE" });
     }
   };
+  const assertOwnerIdentity = async (c, subject2) => {
+    const purpose = await c.query("SELECT internal.is_staff_only_identity($1) AS staff_only", [subject2]);
+    if (purpose.rows[0]?.staff_only) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
+  };
   const tenant = async (req, allowProvision = true) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     const allowLocal = process.env.NODE_ENV !== "production" && process.env.AUTH_ALLOW_LOCAL_DEVELOPMENT === "1";
     if (!principal || principal.subject === "local-development" && !allowLocal) throw new BillingError(401, "AUTHENTICATION_REQUIRED");
-    if (await hasSchemaFeature(db, "staffIdentityPurpose")) {
-      const purpose = await db.query("SELECT internal.is_staff_only_identity($1) AS staff_only", [principal.subject]);
-      if (purpose.rows[0]?.staff_only) throw new BillingError(403, "STAFF_WORKSPACE_SELECTION_REQUIRED");
-    }
+    if (await hasSchemaFeature(db, "staffIdentityPurpose")) await assertOwnerIdentity(db, principal.subject);
     let id = await tenantForPrincipal(db, principal);
     if (!id && allowProvision && principal.subject !== "local-development") {
       if (await hasSchemaFeature(db, "staffAccounts")) {
@@ -1589,7 +1593,27 @@ function registerBillingRoutes(app, db, viaGateway = false, checkoutProvider = c
   };
   app.get("/api/v1/subscription/plans", (_req, res) => res.json({ ok: true, plans: SAAS_PLANS }));
   app.get("/api/v1/subscription/status", run(async (req, res) => res.json(await subscriptionStatus(db, await tenant(req)))));
-  app.post("/api/v1/subscription/start-trial", run(async (req, res) => res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant(req)) })));
+  app.post("/api/v1/subscription/start-trial", run(async (req, res) => {
+    if (req.body?.intent !== "initialize") return res.json({ ok: true, subscription: await activateFreeTrial(db, await tenant(req)) });
+    const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
+    if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
+    if (!principal.isEmailVerified) throw new BillingError(403, "EMAIL_VERIFICATION_REQUIRED");
+    const tenantId = req.body.tenantId;
+    if (typeof tenantId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new BillingError(400, "INVALID_TENANT_ID");
+    }
+    const subscription = await db.tx(async (c) => {
+      if (!await hasSchemaFeature(c, "staffIdentityPurpose")) throw new BillingError(503, "BILLING_UNAVAILABLE");
+      await assertOwnerIdentity(c, principal.subject);
+      const { rows } = await c.query(`SELECT t.id FROM internal.tenants t
+        WHERE t.id=$1 AND t.owner_user_ref=$2 AND t.is_active AND t.merged_into IS NULL
+          AND EXISTS(SELECT 1 FROM internal.merchants m WHERE m.tenant_id=t.id AND m.is_active)
+        FOR UPDATE OF t`, [tenantId, principal.subject]);
+      if (!rows[0]) throw new BillingError(403, "TENANT_OWNERSHIP_REQUIRED");
+      return serializeSubscription(await ensureSubscription(c, rows[0].id));
+    });
+    return res.json({ ok: true, subscription });
+  }));
   app.post("/api/v1/subscription/free-plan", run(async (req, res) => {
     const principal = viaGateway ? trustedPrincipal(req) : await authenticateBearer(req);
     if (!principal || principal.subject === "local-development") throw new BillingError(401, "AUTHENTICATION_REQUIRED");
