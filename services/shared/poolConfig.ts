@@ -4,6 +4,7 @@
  * SQL uses unnamed pg queries and transaction-local RLS settings.
  */
 export function serverlessConnectionString(connectionString: string, vercel = process.env.VERCEL): string {
+  if(process.env.NEWHOPE_BUILD_TARGET==='neon')return connectionString;
   if (vercel !== '1') return connectionString;
   try {
     const url = new URL(connectionString);
@@ -34,4 +35,15 @@ export function databasePoolLimits(max: number, vercel = process.env.VERCEL) {
 export function statementTimeoutMs(raw = process.env.DB_STATEMENT_TIMEOUT_MS): number {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : 8_000;
+}
+
+/** Neon always verifies the peer certificate, independent of pg major defaults.
+ * Preserve host, identity and channel binding; never weaken another provider. */
+export function verifiedNeonConnectionString(value: string): string {
+  try {
+    const url = new URL(value);
+    if (!['postgres:','postgresql:'].includes(url.protocol) || !url.hostname.endsWith('.neon.tech')) return value;
+    url.searchParams.set('sslmode','verify-full');
+    return url.href;
+  } catch { return value; }
 }

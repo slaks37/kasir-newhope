@@ -1,9 +1,10 @@
 import {useEffect,useState} from 'react';
 import {coalescedRead,refreshCoordinator} from '../sync/refreshCoordinator';
+import type {SaaSSubscription} from '../../types';
 import type {BusinessIdentity} from './businessIdentity';
 import {readOfflineBootstrap} from './offlineBootstrap';
 
-export type Directory={tenantId:string|null;businesses:BusinessIdentity[];capabilities?:{multiBusiness:boolean}};
+export type Directory={tenantId:string|null;businesses:BusinessIdentity[];workspaceAuth?:boolean;subscription?:SaaSSubscription|null;tenants?:Array<{tenantId:string;name:string}>;capabilities?:{multiBusiness:boolean};canSetUpBusiness?:boolean};
 const sectors=new Set(['FNB','RETAIL','LAUNDRY','BARBERSHOP','CARWASH']);
 const uuid=(value:unknown)=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
 /** Reject incomplete/mixed-tenant snapshots instead of guessing their parent. */
@@ -25,11 +26,25 @@ export function readBusinessDirectory(data:unknown):Directory{
       outletIds.add(outlet.outletId);
     }
   }
-  return {tenantId:value.tenantId,businesses:value.businesses,capabilities:value.capabilities};
+  return {tenantId:value.tenantId,businesses:value.businesses,capabilities:value.capabilities,...(value.workspaceAuth?{workspaceAuth:true,subscription:value.subscription,tenants:value.tenants,canSetUpBusiness:value.canSetUpBusiness===true}: {})};
+}
+
+export function workspaceOnboarding(directory:Directory|null, verified:boolean, online:boolean, failed:boolean){
+  if(!directory?.workspaceAuth||!verified||!online||failed)return null;
+  if(!directory.tenantId)return directory.tenants?.length?'select-tenant':directory.canSetUpBusiness?'create-business':'wait-for-access';
+  if(!directory.subscription&&directory.canSetUpBusiness)return directory.businesses.some(b=>b.status==='ACTIVE')?'initialize-trial':directory.businesses.length?null:'create-business';
+  return null;
+}
+
+export async function initializeWorkspaceTrial(tenantId:string){
+  const response=await fetch('/api/v1/subscription/start-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intent:'initialize',tenantId})});
+  const result=await response.json();
+  if(!response.ok||!result.ok||result.subscription?.tenantId!==tenantId)throw Error('WORKSPACE_TRIAL_UNAVAILABLE');
 }
 export async function fetchBusinessDirectory(owner:string,signal?:AbortSignal):Promise<Directory>{
   return coalescedRead('business-directory:'+owner,async()=>{
-    const response=await fetch('/api/v1/sync/business',{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    const tenant=localStorage.getItem('newhope_directory_tenant_'+owner);const query=import.meta.env.VITE_MODULE_WORKSPACES==='1'?'?workspace=2'+(tenant?'&tenantId='+encodeURIComponent(tenant):''):'';
+    const response=await fetch('/api/v1/sync/business'+query,{cache:'no-store',signal:AbortSignal.timeout(15000)});
     if(response.status===401||response.status===403)throw Error('WORKSPACE_ACCESS_REVOKED');
     if(!response.ok)throw Error('BUSINESS_DIRECTORY_UNAVAILABLE');
     return readBusinessDirectory(await response.json());

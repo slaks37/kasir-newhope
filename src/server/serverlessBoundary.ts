@@ -1,3 +1,4 @@
+import {nativeCors} from '../../services/shared/nativeCors';
 import express from 'express';
 import { AuthUnavailableError, authenticateBearer, type AuthPrincipal } from '../../services/shared/auth';
 import type { Db } from '../../services/shared/db';
@@ -9,7 +10,7 @@ import { normalizeVercelUrl } from './vercelUrl';
  * salah satunya.
  */
 export const TRUSTED_IDENTITY_HEADERS = [
-  'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
+  'x-auth-sub', 'x-auth-email', 'x-auth-email-verified', 'x-auth-aal', 'x-auth-mfa-verified-at', 'x-internal-user', 'x-env-override', 'x-newhope-gateway-token',
 ] as const;
 
 export function stripIdentityHeaders(req: { headers: Record<string, unknown> }): void {
@@ -21,6 +22,8 @@ export function applyPrincipal(req: { headers: Record<string, unknown> }, princi
   req.headers['x-auth-sub'] = principal.subject;
   if (principal.email) req.headers['x-auth-email'] = principal.email;
   if (principal.isEmailVerified) req.headers['x-auth-email-verified'] = 'true';
+  if (principal.aal) req.headers['x-auth-aal'] = principal.aal;
+  if (Number.isFinite(principal.mfaVerifiedAt)) req.headers['x-auth-mfa-verified-at'] = String(principal.mfaVerifiedAt);
 }
 
 const MAX_RAW_BODY = 1_048_576;
@@ -82,6 +85,7 @@ export function createServerlessBoundary(
     res.setHeader('Cache-Control', 'no-store');
     const path = String(req.url || '').split('?')[0].replace(/\/+$/, '');
     if (!Object.hasOwn(options.routes, path)) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+    if ((options.name==='sync'||options.name==='billing'&&path.startsWith('/api/v1/subscription/'))&&nativeCors(req,res,options.routes[path]))return;
     if (!options.routes[path].includes(req.method)) return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
 
     if (publicRoutes.has(path)) {

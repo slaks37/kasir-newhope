@@ -1,0 +1,36 @@
+import type { BusinessModuleId } from "./contracts";
+export const workflowStages: Record<BusinessModuleId, readonly string[]> = {
+  fnb: ["QUEUED", "PREPARING", "READY", "SERVED", "CLOSED"],
+  retail: ["QUEUED", "READY", "COLLECTED"],
+  laundry: [
+    "RECEIVED",
+    "WASHING",
+    "DRYING",
+    "IRONING",
+    "PACKING",
+    "READY",
+    "COLLECTED",
+  ],
+  carwash: ["QUEUED", "WASHING", "DRYING", "INSPECTION", "READY", "DELIVERED"],
+  barber: ["SCHEDULED", "CONFIRMED", "IN_PROGRESS", "COMPLETED"],
+};
+export const workflowLabels: Record<string, string> = {
+  QUEUED: "Antrean",
+  PREPARING: "Dimasak",
+  READY: "Siap",
+  SERVED: "Disajikan",
+  COLLECTED: "Diambil",
+  RECEIVED: "Diterima",
+  WASHING: "Dicuci",
+  DRYING: "Dikeringkan",
+  IRONING: "Disetrika",
+  PACKING: "Dikemas",
+  INSPECTION: "Pemeriksaan",
+  DELIVERED: "Diserahkan",
+  SCHEDULED: "Terjadwal",
+  CONFIRMED: "Dikonfirmasi",
+  IN_PROGRESS: "Dikerjakan",
+  COMPLETED: "Selesai",
+  CLOSED: "Ditutup",
+  CANCELLED: "Dibatalkan",
+};

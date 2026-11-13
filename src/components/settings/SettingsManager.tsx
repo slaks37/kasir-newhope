@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { usePOSFields } from '../../context/POSDomains';
 import { StoreSettings, StoreBranch, BusinessSector } from '../../types';
 import { UserManagementTab } from './UserManagementTab';
+import {AccountSecurityPanel} from '../auth/AccountSecurityPanel';
 import {PrivacyRequestsTab} from './PrivacyRequestsTab';
 import { SubscriptionBillingTab } from './SubscriptionBillingTab';
 import {
@@ -246,6 +247,7 @@ export const SettingsManager: React.FC = () => {
 
   return (
     <div className="nh-page nh-settings flex-1 min-w-0 bg-slate-50/70 p-6 overflow-y-auto space-y-6">
+      <AccountSecurityPanel/>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

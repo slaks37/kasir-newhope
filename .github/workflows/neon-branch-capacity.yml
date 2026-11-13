@@ -1,0 +1,56 @@
+name: Neon branch capacity
+on:
+  schedule:
+    - cron: '23 1 * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  capacity:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_BRANCH_MONITOR_API_KEY }}
+    steps:
+      - name: Check capacity and flag cleanup review
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${NEON_API_KEY:?Configure the Neon branch monitor secret in GitHub Actions}"
+          inventory=$(curl --silent --show-error --fail --max-time 20 --retry 2 \
+            --header "Authorization: Bearer $NEON_API_KEY" \
+            'https://console.neon.tech/api/v2/projects/steep-sea-66546931/branches?limit=100')
+          count=$(jq -er '
+            select((.pagination.next // "") == "") |
+            .branches | arrays | length
+          ' <<< "$inventory")
+          echo "Neon branch capacity: $count/10" >> "$GITHUB_STEP_SUMMARY"
+          if (( count >= 7 )); then
+            echo "::warning::Neon branch usage is $count/10."
+          fi
+          if (( count >= 8 )); then
+            echo "::warning::Cleanup review required. Confirm external dependencies and named deletion authorization."
+            {
+              echo
+              echo '| Branch | ID | Parent | Expiration | Child branches |'
+              echo '| --- | --- | --- | --- | --- |'
+              jq -r '
+                .branches as $branches |
+                $branches[] |
+                select((.default or .primary or .protected) | not) |
+                select(.name != "main" and .name != "staging"
+                  and .name != "release-recovery-20261104"
+                  and .name != "pr21-prelaunch-clean-2026-10-16") |
+                . as $candidate |
+                [.name, .id, (.parent_id // "none"), (.expires_at // "none"),
+                 ([$branches[] | select(.parent_id == $candidate.id) | .id] | join(", "))] |
+                "| " + (map(gsub("[^A-Za-z0-9._/:, +@-]"; "?")) | join(" | ")) + " |"
+              ' <<< "$inventory"
+              echo
+              echo 'Check each candidate for Vercel, Auth/OAuth, cron, webhook, and other external references.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if (( count >= 9 )); then
+            echo "::error::Optional branch creation is prohibited at $count/10."
+            exit 1
+          fi

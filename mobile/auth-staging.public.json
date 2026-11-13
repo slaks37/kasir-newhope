@@ -1,0 +1,6 @@
+{
+  "VITE_AUTH_PROVIDER": "neon",
+  "VITE_NEWHOPE_AUTH_URL": "https://kasir-newhope-git-codex-neon-auth-cros-312050-slaks37s-projects.vercel.app/api/auth",
+  "VITE_NATIVE_API_ORIGIN": "https://auth-staging.newhope.space",
+  "VITE_NEWHOPE_OFFLINE_PUBLIC_KEY": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"iWW4IecClQNySHVxb-6X987kuLWChAxJEJHDN5T_MIM\",\"y\":\"Q1dSLFvfN0gqd9o2p0wf1dfK6N1HeTN7IVAhWr0H9z8\",\"kid\":\"t99YEx0Hd7XfA7ul\"}"
+}

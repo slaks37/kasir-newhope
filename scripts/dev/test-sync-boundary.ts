@@ -61,7 +61,7 @@ for (const [url,method,status] of [
 assert.equal(connections,0);
 // Public routes never trust forged identity headers and reach the same billing runtime.
 const seen:Array<Record<string,unknown>>=[];
-const fakeDb={} as any;
+const fakeDb={query:async()=>({rows:[],rowCount:0}),close:async()=>{}} as any;
 const call=(handler:any,req:any)=>new Promise<{code:number;body:any}>(resolve=>{let code=200;const res:any={setHeader(){},set(){return res;},status(n:number){code=n;return res;},json(b:any){resolve({code,body:b});return res;}};void handler(req,res);});
 const publicBilling=createBillingHandler(async()=>{throw new Error('Public routes must not authenticate');},async()=>fakeDb);
 {
