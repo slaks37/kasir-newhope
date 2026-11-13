@@ -13,6 +13,7 @@ import {registerBillingRoutes} from '../../services/billing/routes';
 import {ensureSubscription} from '../../services/billing/engine';
 import {pastikanPaket} from '../../services/billing/store';
 import {SAAS_PLANS} from '../../src/config/saasPlans';
+import {migrationFiles} from '../db/migration-files.mjs';
 
 const isolated=process.argv.includes('--isolated');if(isolated)process.env.NEW_HOPE_MODULE_WORKSPACES='1';
 const cashier=randomUUID(),secondCashier=randomUUID(),outletC=randomUUID();
@@ -20,11 +21,7 @@ const pg=new PGlite(),owner=randomUUID(),tenant=randomUUID(),businessA=randomUUI
 const wrap=(runner:any):Db=>({query:async(sql,params)=>{const r=await runner.query(sql,params);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows||0};},exec:async sql=>{await runner.exec(sql);},tx:async fn=>pg.transaction(c=>fn(wrap(c))),close:()=>pg.close()});
 const db=wrap(pg);
 await pg.exec('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN;');
-const files=['migrations/0001_compat.sql','schema.sql','schema_hybrid_pos.sql',...fs.readdirSync('migrations').filter(f=>/^\d{4}_.*\.sql$/.test(f)&&f!=='0001_compat.sql').sort().map(f=>'migrations/'+f)];
-for(const file of files)await pg.exec(fs.readFileSync(file,'utf8'));
-await pg.exec(fs.readFileSync('docs/security/free-plan-selection.sql','utf8'));
-for(const file of fs.readdirSync('supabase/migrations').filter(f=>f.endsWith('_business_scoped_operational_state.sql')).sort())await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
-if(isolated){await pg.exec(fs.readFileSync('migrations/0067_workspace_isolation.sql','utf8'));await pg.exec(fs.readFileSync('migrations/0068_cashier_register_operations.sql','utf8'));}
+for(const {path} of migrationFiles())await pg.exec(fs.readFileSync(path,'utf8'));
 await pastikanPaket(db,SAAS_PLANS);
 await db.query("INSERT INTO internal.users(id,email,full_name) VALUES($1,'fixture@localhost.invalid','Fixture Owner')",[owner]);
 await db.query("INSERT INTO internal.tenants(id,name,owner_user_ref,owner_user_id) VALUES($1,'Browser fixture',$2::text,$2::uuid)",[tenant,owner]);

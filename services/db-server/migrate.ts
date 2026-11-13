@@ -13,28 +13,9 @@
 import '../shared/env';
 import { ringkasTujuanDb, ringkasEnv } from '../shared/env';
 import fs from 'node:fs';
-import path from 'node:path';
 import pg from 'pg';
 import { applyAtomicMigration } from './atomicMigration';
-
-const MIGRATIONS = [
-  // Penambal versi PostgreSQL — WAJIB paling awal. Menyediakan uuidv7() di
-  // PostgreSQL < 18 (Supabase, RDS, Cloud SQL umumnya masih 15-17).
-  'migrations/0001_compat.sql',
-  'schema.sql',
-  'schema_hybrid_pos.sql',
-  ...fs.readdirSync(path.join(process.cwd(), 'migrations'))
-    .filter((file) => /^\d{4}_.*\.sql$/.test(file) && file !== '0001_compat.sql')
-    .sort()
-    .map((file) => `migrations/${file}`),
-  // SQL artifacts already applied through Supabase migration history.
-  'docs/security/free-plan-selection.sql',
-  'docs/security/free-plan-ai-credit-access.sql',
-  'docs/security/restrict-browser-rls-policies.sql',
-  'docs/security/intelligence-cache.sql',
-  'docs/security/intelligence-wallet.sql',
-  ...fs.readdirSync(path.join(process.cwd(),'supabase/migrations')).filter(file=>file.endsWith('_business_scoped_operational_state.sql')).sort().map(file=>'supabase/migrations/'+file),
-];
+import { migrationFiles } from '../../scripts/db/migration-files.mjs';
 
 async function main() {
   console.log(`[migrate] ${ringkasEnv()}`);
@@ -84,10 +65,8 @@ async function main() {
   );
 
   let applied = 0;
-  for (const file of MIGRATIONS) {
+  for (const {name:file,path:full} of migrationFiles()) {
     if (done.has(file)) continue;
-
-    const full = path.join(process.cwd(), file);
     if (!fs.existsSync(full)) {
       console.log(`  LEWAT  ${file} (tidak ada)`);
       continue;
