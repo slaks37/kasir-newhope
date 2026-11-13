@@ -39,10 +39,10 @@ const preview={NEWHOPE_BUILD_TARGET:'neon',VERCEL_ENV:'preview',AUTH_PROVIDER:'n
 assert.equal(selectedNeonPreview({}),false);assert.equal(selectedNeonPreview(preview),true);
 for(const override of [{VERCEL_ENV:'production'},{VERCEL_ENV:undefined},{AUTH_PROVIDER:'supabase'},{VITE_AUTH_PROVIDER:'supabase'},{NEWHOPE_NEON_AUTH_STAGING:'0'},{NEW_HOPE_MODULE_WORKSPACES:'1'},{VITE_MODULE_WORKSPACES:'1'}])assert.throws(()=>selectedNeonPreview({...preview,...override}));
 console.log('PASS Neon artifact selection: explicit Preview only, provider agreement and both rollout flags OFF required');
-const domainAcceptance={...preview,APP_ENV:'staging',NEWHOPE_ISOLATED_DOMAIN_ACCEPTANCE:acceptanceTarget.branchId,NEW_HOPE_MODULE_WORKSPACES:'1',VITE_MODULE_WORKSPACES:'1',NEW_HOPE_MODULE_DOMAIN_WORKFLOWS:'1',DOKU_PAYMENTS_ENABLED:'0',DATABASE_URL:'postgres://newhope_recovery_app:synthetic@'+acceptanceTarget.host+'/neondb',BETTER_AUTH_DATABASE_URL:'postgres://newhope_recovery_auth:synthetic@'+acceptanceTarget.host+'/neondb'};
-assert.equal(validateIsolatedAcceptance(domainAcceptance,Date.parse('2026-11-05T00:00:00Z')),true);
-for(const override of [{VERCEL_ENV:'production'},{APP_ENV:'production'},{DOKU_PAYMENTS_ENABLED:'1'},{NEWHOPE_ISOLATED_DOMAIN_ACCEPTANCE:'other-branch'},{NEW_HOPE_MODULE_DOMAIN_WORKFLOWS:'0'},{DATABASE_URL:'postgres://postgres:synthetic@production.invalid/neondb'},{BETTER_AUTH_DATABASE_URL:domainAcceptance.DATABASE_URL}])assert.throws(()=>validateIsolatedAcceptance({...domainAcceptance,...override},Date.parse('2026-11-05T00:00:00Z')));
-assert.throws(()=>validateIsolatedAcceptance(domainAcceptance,Date.parse('2026-11-12T00:00:00Z')));
+const domainAcceptance={...preview,APP_ENV:'staging',NEWHOPE_ISOLATED_DOMAIN_ACCEPTANCE:acceptanceTarget.branchId,NEW_HOPE_MODULE_WORKSPACES:'1',VITE_MODULE_WORKSPACES:'1',NEW_HOPE_MODULE_DOMAIN_WORKFLOWS:'1',DOKU_PAYMENTS_ENABLED:'0',DATABASE_URL:'postgres://newhope_pr35_qa_app:synthetic@'+acceptanceTarget.host+'/neondb',BETTER_AUTH_DATABASE_URL:'postgres://newhope_pr35_qa_auth:synthetic@'+acceptanceTarget.host+'/neondb'};
+assert.equal(validateIsolatedAcceptance(domainAcceptance,Date.parse('2026-11-13T00:00:00Z')),true);
+for(const override of [{VERCEL_ENV:'production'},{APP_ENV:'production'},{DOKU_PAYMENTS_ENABLED:'1'},{NEWHOPE_ISOLATED_DOMAIN_ACCEPTANCE:'other-branch'},{NEW_HOPE_MODULE_DOMAIN_WORKFLOWS:'0'},{DATABASE_URL:'postgres://postgres:synthetic@production.invalid/neondb'},{BETTER_AUTH_DATABASE_URL:domainAcceptance.DATABASE_URL}])assert.throws(()=>validateIsolatedAcceptance({...domainAcceptance,...override},Date.parse('2026-11-13T00:00:00Z')));
+assert.throws(()=>validateIsolatedAcceptance(domainAcceptance,Date.parse('2026-11-27T12:00:00Z')));
 console.log('PASS isolated domain acceptance: exact reviewed branch/host/database/restricted roles, Preview/staging only, payments OFF and expiry; production always denied');
 
 
