@@ -42,7 +42,7 @@ export async function ownerOnboardingAcceptance(admin:Db,pos:Db,installGuard:()=
     return {status:response.status,data:await response.json()};
   };
   const payload={sector:'FNB',storeName:'First fixture business'};
-  const expectDenied=async(role:keyof typeof subjects,status:number,error:string,body=payload)=>{
+  const expectDenied=async(role:keyof typeof subjects,status:number,error:string,body:Record<string,unknown>=payload)=>{
     assert.deepEqual(await request(role,undefined,body),{status,data:{ok:false,error}});
   };
   const previous=process.env.NEW_HOPE_MODULE_WORKSPACES;
