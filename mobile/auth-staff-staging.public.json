@@ -1,0 +1,6 @@
+{
+  "VITE_AUTH_PROVIDER": "neon",
+  "VITE_NATIVE_API_ORIGIN": "https://kasir-newhope-git-codex-phase2-staff-o-518137-slaks37s-projects.vercel.app",
+  "VITE_NEWHOPE_AUTH_URL": "https://kasir-newhope-git-codex-phase2-staff-o-518137-slaks37s-projects.vercel.app/api/auth",
+  "VITE_NEWHOPE_OFFLINE_PUBLIC_KEY": "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"BJZqXVdI_Qy4gGkxuIIbNPSpt5ZnVYwe5rPX16x722Y\",\"y\":\"g8k7aAhViyZc0pXRRKu0CGISnL4Z-D5YYVI0BulTcb4\",\"kid\":\"b6TryqNxTd5b3VCv\"}"
+}

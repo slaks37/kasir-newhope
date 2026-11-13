@@ -9,10 +9,10 @@ export class BusinessScopeError extends Error {
  * resolve an exact owner_sector alias, or an unambiguous single business only.
  * Never choose the first same-sector merchant based on creation/sort order.
  */
-export async function resolveBusinessScope(db:Db,subject:string,sector:string,businessId?:unknown){
+export async function resolveBusinessScope(db:Db,subject:string,sector:string,businessId?:unknown,ownedTenantId?:string){
   if(businessId!==undefined&&(typeof businessId!=='string'||!businessId||businessId.length>128))
     throw new BusinessScopeError(400,'INVALID_BUSINESS_ID');
-  const tenantId=await tenantForPrincipal(db,{subject});
+  const tenantId=ownedTenantId??await tenantForPrincipal(db,{subject});
   if(!tenantId){if(businessId!==undefined)throw new BusinessScopeError(403,'BUSINESS_ACCESS_DENIED');return null;}
   const result=await db.query(`SELECT m.id AS merchant_id,m.name AS business_name,m.external_ref
     FROM internal.merchants m JOIN internal.tenants t ON t.id=m.tenant_id

@@ -1,3 +1,5 @@
+import {paymentAvailability} from './paymentReadiness';
+import {isQrisCheckoutInvoice,invoicePaymentUrl,providerOrderTerminal,financialReviewHold,FINANCIAL_HOLD_REASONS} from './invoicePaymentPolicy';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../shared/db';
 import { billingQuote, lifecycleStage, subscriptionAccess } from '../../src/config/subscriptionPolicy';
@@ -62,11 +64,20 @@ export function serializeSubscription(s: any) {
     trialEndsAt:s.trial_ends_at ? iso(s.trial_ends_at) : null,
     hasUsedTrial:Boolean(s.has_used_trial) };
 }
-export function serializeInvoice(i: any) {
+/** Display observations without mistaking expiry/failure for a refund. */
+export function invoicePaymentState(i: any, now=Date.now()): string {
+  if(i.payment_status==='PAID' || i.payment_status==='REFUNDED') return i.payment_status;
+  const observed=String(i.reconciliation_note || '').replace('PROVIDER_','');
+  if(observed==='ORDER_EXPIRED')return 'EXPIRED';
+  if(['FAILED','EXPIRED','CANCELLED'].includes(observed)) return observed;
+  if(new Date(i.due_date).getTime()<=now) return 'EXPIRED';
+  return i.payment_status;
+}
+export function serializeInvoice(i: any,currentRevision?:number,allowPaymentLink=false) {
   return { id:i.id,invoiceNumber:i.invoice_number,subscriptionId:i.subscription_id,tenantId:i.tenant_id,
-    amount:Number(i.amount),currency:i.currency,paymentStatus:i.payment_status,paymentGatewayRef:i.payment_gateway_ref,
-    paymentLinkUrl:i.payment_link_url,paidAt:i.paid_at,dueDate:i.due_date,createdAt:i.created_at,
-    planName:i.quote?.planName || 'Tagihan legacy',billingCycle:i.quote?.billingCycle,
+    amount:Number(i.amount),currency:i.currency,paymentStatus:invoicePaymentState(i),paymentGatewayRef:i.payment_gateway_ref,
+    paymentLinkUrl:allowPaymentLink?invoicePaymentUrl(i,currentRevision):null,paidAt:i.paid_at,dueDate:i.due_date,createdAt:i.created_at,
+    planId:i.quote?.planId,planName:i.quote?.planName || 'Tagihan legacy',billingCycle:i.quote?.billingCycle,
     extraOutlets:i.quote?.extraOutlets,reconciliationStatus:i.reconciliation_status };
 }
 export async function outletUsage(db: Db, tenantId: string) {
@@ -95,10 +106,12 @@ export async function subscriptionStatus(db: Db, tenantId: string) {
   const free=access.status==='FREE';
   const requiresRenewal = !free && (access.accessMode !== 'FULL' || access.daysLeft <= 3);
   const retainedOutlets=await outletUsage(db,tenantId);
+  const availability=await paymentAvailability(db,tenantId);
   return { ok:true,subscription:{...sub,status:access.status,accessMode:access.accessMode,isActive:!!tenant.rows[0]?.is_active},plan:sub.plan,
     ...access,activeDays,totalPeriodDays,requiresRenewal,renewalDueDate:sub.currentPeriodEnd,trialDay,lifecycleStage:lifecycleStage(trialDay),trialDays:TRIAL_DAYS,hasUsedTrial:Boolean(s.has_used_trial),
     outlets:{used:free?(sub.freeSelection?1:0):retainedOutlets,retained:retainedOutlets,included:sub.plan?.maxOutlets ?? 2,extra:free?0:Number(s.extra_outlets),limit:free?1:(sub.plan?.maxOutlets ?? 2)+Number(s.extra_outlets)},
-    invoices:invoices.rows.map(serializeInvoice) };
+    paymentAvailability:availability,
+    invoices:invoices.rows.map(i=>serializeInvoice(i,Number(s.revision),availability.enabled)) };
 }
 export async function createQuote(db: Db, tenantId: string, input: any) {
   const s = await ensureSubscription(db,tenantId);
@@ -107,10 +120,11 @@ export async function createQuote(db: Db, tenantId: string, input: any) {
 }
 
 export interface PaymentNotice { eventKey:string; invoiceNumber:string; reference:string; amount:number; currency:string; success:boolean;
-  channel?:string;validationIssue?:string;contentDigest?:string;payload?:any }
+  integration?:'DOKU_CHECKOUT';channel?:string;providerChannel?:string;validationIssue?:string;contentDigest?:string;payload?:any }
 export async function reconcilePayment(db: Db, notice: PaymentNotice) {
   if (!notice.eventKey || !notice.invoiceNumber || !notice.reference || !Number.isFinite(notice.amount)) throw new BillingError(400,'INVALID_PAYMENT_NOTICE');
   return db.tx(async c => {
+    if(notice.integration==='DOKU_CHECKOUT')await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['doku-reference:'+notice.reference]);
     // Lock subscription via tenant BEFORE invoice: same order as admin/outlet
     // operations, and serialize different invoices for the same subscription.
     const lookup = await c.query('SELECT tenant_id FROM billing.invoices WHERE invoice_number=$1',[notice.invoiceNumber]);
@@ -121,28 +135,39 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
     let sub:any;
     if (inv) {
       sub=(await c.query('SELECT * FROM billing.subscriptions WHERE id=$1 FOR UPDATE',[inv.subscription_id])).rows[0];
-      if (inv.payment_status==='PAID' && inv.reconciliation_status==='APPLIED') { outcome='DUPLICATE';reason='ALREADY_APPLIED'; }
+      const reused=notice.integration==='DOKU_CHECKOUT'&&(await c.query("SELECT invoice_number FROM billing.payment_events WHERE gateway_reference=$1 AND outcome='APPLIED' AND invoice_number<>$2 LIMIT 1",[notice.reference,notice.invoiceNumber])).rowCount>0;
+      if(!notice.success&&notice.payload?.status==='FAILED'&&inv.payment_status==='PAID'&&inv.reconciliation_status==='APPLIED'){outcome='DUPLICATE';reason='FAILED_ATTEMPT_IGNORED';}
+      else if(notice.validationIssue==='REFUND_REQUIRES_REVIEW' || notice.validationIssue==='REVERSAL_REQUIRES_REVIEW') reason=notice.validationIssue;
+      else if(reused)reason='PROVIDER_REFERENCE_REUSED';
       else if (Number(inv.amount)!==notice.amount || inv.currency!==notice.currency) reason='AMOUNT_OR_CURRENCY_MISMATCH';
       else if (notice.validationIssue) reason=notice.validationIssue;
+      else if (notice.integration==='DOKU_CHECKOUT' && !isQrisCheckoutInvoice(inv)) reason='LEGACY_INVOICE_NEEDS_REVIEW';
       else if (inv.quote?.allowedChannels && !inv.quote.allowedChannels.includes(notice.channel)) reason='INVOICE_CHANNEL_MISMATCH';
-      else if (!notice.success) { outcome='FAILED';reason='CHECKOUT_ATTEMPT_FAILED'; }
+      else if (financialReviewHold(inv))reason=financialReviewHold(inv)!;
+      else if (inv.payment_status==='PAID' && inv.reconciliation_status==='APPLIED') {
+        if(inv.payment_gateway_ref!==notice.reference)reason='PROVIDER_REFERENCE_CONFLICT';
+        else {outcome='DUPLICATE';reason='ALREADY_APPLIED';}
+      }
+      else if (!notice.success) { outcome=notice.payload?.status==='PENDING'?'PENDING':'FAILED';reason='PROVIDER_'+(['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED'].includes(notice.payload?.status)?notice.payload.status:'FAILED'); }
       else if (!inv.quote) reason='LEGACY_INVOICE_NEEDS_REVIEW';
+      else if (providerOrderTerminal(inv))reason='TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW';
       else if (inv.quote.revision!==Number(sub.revision)) reason='STALE_SUBSCRIPTION_REVISION';
+      else if(Date.parse(inv.quote.periodEnd)<=Date.now())reason='QUOTE_PERIOD_EXPIRED';
       else if (await outletUsage(c,inv.tenant_id)>inv.quote.maxOutlets) reason='OUTLET_LIMIT_BELOW_USAGE';
       else {outcome='APPLIED';reason='VERIFIED';}
     }
     // Allowlist audit metadata only. Never store full notification, card/VA
     // numbers, customer details, authorization headers or signatures.
-    const payload={contentDigest:notice.contentDigest || null,status:notice.success?'SUCCESS':notice.payload?.status==='FAILED'?'FAILED':'OTHER',
-      channel:(notice.channel || '').slice(0,100),requestTimestamp:typeof notice.payload?.requestTimestamp==='string'?notice.payload.requestTimestamp.slice(0,30):null};
+    const payload={contentDigest:notice.contentDigest || null,status:notice.success?'SUCCESS':['FAILED','PENDING','EXPIRED','CANCELLED','ORDER_EXPIRED','REFUNDED','PARTIAL_REFUNDED','REVERSED','VOIDED'].includes(notice.payload?.status)?notice.payload.status:'OTHER',
+      channel:(notice.channel || '').slice(0,100),providerChannel:(notice.providerChannel || notice.channel || '').slice(0,100),requestTimestamp:typeof notice.payload?.requestTimestamp==='string'?notice.payload.requestTimestamp.slice(0,30):null};
     const event=await c.query(`INSERT INTO billing.payment_events(event_key,invoice_number,gateway_reference,amount,currency,outcome,reason,payload)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(event_key) DO NOTHING RETURNING id`,
       [notice.eventKey,notice.invoiceNumber,notice.reference,notice.amount,notice.currency,outcome,reason,JSON.stringify(payload)]);
     if (!event.rowCount) {
-      const previous=(await c.query('SELECT invoice_number,amount,currency,payload FROM billing.payment_events WHERE event_key=$1',[notice.eventKey])).rows[0];
+      const previous=(await c.query('SELECT invoice_number,amount,currency,payload,outcome,reason FROM billing.payment_events WHERE event_key=$1',[notice.eventKey])).rows[0];
       if(previous.invoice_number!==notice.invoiceNumber || Number(previous.amount)!==notice.amount || previous.currency!==notice.currency ||
         (previous.payload?.contentDigest && previous.payload.contentDigest!==notice.contentDigest)) throw new BillingError(409,'PAYMENT_EVENT_KEY_CONFLICT');
-      return {ok:true,outcome:'DUPLICATE'};
+      return {ok:true,outcome:['APPLIED','DUPLICATE'].includes(previous.outcome)?'DUPLICATE':previous.outcome,reason:previous.reason,replayed:true};
     }
     if (outcome==='APPLIED') {
       const q=inv.quote;
@@ -152,10 +177,20 @@ export async function reconcilePayment(db: Db, notice: PaymentNotice) {
         [sub.id,q.planId,q.billingCycle,q.extraOutlets,q.recurringAmount,q.periodStart,q.periodEnd]);
       await c.query(`UPDATE billing.invoices SET payment_status='PAID',paid_at=now(),payment_gateway_ref=$2,
         reconciliation_status='APPLIED',reconciliation_note=$3 WHERE id=$1`,[inv.id,notice.reference,reason]);
-    } else if (inv && outcome!=='DUPLICATE' && outcome!=='FAILED') {
+    } else if (inv && outcome!=='DUPLICATE' && outcome!=='FAILED' && outcome!=='PENDING') {
       // A mismatch never grants access or invents a refund. Keep it visible in
       // reconciliation for an operator to investigate against gateway evidence.
-      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`,[inv.id,outcome,reason]);
+      await c.query(`UPDATE billing.invoices SET reconciliation_status=$2,reconciliation_note=$3 WHERE id=$1`,[inv.id,outcome,financialReviewHold(inv) || (providerOrderTerminal(inv)?(notice.success?'TERMINAL_ORDER_PAYMENT_REQUIRES_REVIEW':inv.reconciliation_note):reason)]);
+      if(inv.payment_status==='PAID'&&['REFUND_REQUIRES_REVIEW','REVERSAL_REQUIRES_REVIEW'].includes(reason)&&inv.quote?.revision===Number(sub.revision)-1)
+        await c.query("UPDATE billing.subscriptions SET status='SUSPENDED',updated_at=now() WHERE id=$1",[sub.id]);
+    }
+    if(inv && ['FAILED','PENDING'].includes(outcome) && inv.payment_status!=='PAID' && !providerOrderTerminal(inv)) {
+      // A failed attempt can be followed by success; retain immutable attempts.
+      await c.query('UPDATE billing.invoices SET reconciliation_note=$2 WHERE id=$1',[inv.id,reason]);
+    }
+    if(inv && notice.success && providerOrderTerminal(inv) && outcome==='REVIEW') {
+      await c.query(`UPDATE billing.invoices SET reconciliation_status='REVIEW',reconciliation_note=CASE WHEN reconciliation_note=ANY($4::text[]) THEN reconciliation_note ELSE 'RELATED_LATE_PAYMENT_REQUIRES_REVIEW' END
+        WHERE tenant_id=$1 AND payment_status='PENDING' AND id<>$2 AND quote->>'revision'=$3::text`,[inv.tenant_id,inv.id,inv.quote.revision,FINANCIAL_HOLD_REASONS]);
     }
     return {ok:true,outcome,reason};
   });

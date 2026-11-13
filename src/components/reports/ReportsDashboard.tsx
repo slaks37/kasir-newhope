@@ -1,3 +1,4 @@
+import {useBusinessModule} from '../../platform/modules/ModuleContext';
 import {PaymentReconciliationSummary} from './PaymentReconciliationSummary';
 import React, { useState, useMemo, useEffect } from 'react';
 import { useReportWorkspace } from '../../context/POSDomains';
@@ -64,6 +65,7 @@ import {
 import { notify } from '../../lib/ui/notify';
 
 export const ReportsDashboard: React.FC = () => {
+  const isolatedModule=useBusinessModule()?.grant.workspaceVersion===2;
   const {
     syncStatus, forceSync, cloudError,
     products,
@@ -442,7 +444,7 @@ export const ReportsDashboard: React.FC = () => {
             {/* Card 4: Estimasi Kas Fisik Di Laci (Expected Cash) */}
             <div className="bg-slate-50/60 backdrop-blur-xs border border-slate-200 rounded-2xl p-4.5 space-y-2">
               <div className="flex items-center justify-between text-slate-600 text-xs font-black uppercase tracking-wider">
-                <span>Ekspektasi Kas Di Laci</span>
+                <span>{isolatedModule?'Arus Kas Modul':'Ekspektasi Kas Di Laci'}</span>
                 <div className="p-2 bg-emerald-500/20 text-emerald-700 rounded-xl">
                   <Wallet className="w-4 h-4" />
                 </div>
@@ -451,7 +453,7 @@ export const ReportsDashboard: React.FC = () => {
                 {formatRupiah(todayMetrics.expectedCashInDrawer)}
               </div>
               <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/60 font-medium">
-                <span>Modal + Tunai + In - Out</span>
+                <span>{isolatedModule?'Saldo laci fisik: buka Kelola Shift':'Modal + Tunai + In - Out'}</span>
                 <span className="text-emerald-300 font-bold">Tunai: {formatRupiah(todayMetrics.todayCashSales)}</span>
               </div>
             </div>

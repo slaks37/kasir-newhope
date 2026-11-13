@@ -1,0 +1,5 @@
+{
+  "note": "Templates only. Never deploy before owning the domain and substituting the signed app identity. Custom-scheme PKCE is the current implementation; HTTPS callback handling is not enabled.",
+  "apple-app-site-association": {"applinks":{"details":[{"appIDs":["TEAM_ID.space.newhope.kasir"],"components":[{"/":"/mobile/auth/callback"}]}]}},
+  "assetlinks": [{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"space.newhope.kasir","sha256_cert_fingerprints":["RELEASE_CERTIFICATE_SHA256_REQUIRED"]}}]
+}

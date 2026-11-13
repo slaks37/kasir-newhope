@@ -1,3 +1,5 @@
+import { useBusinessModule } from '../platform/modules/ModuleWorkspaceGate';
+import { ModuleNavigation } from '../platform/modules/ModuleNavigation';
 import React, { useState } from 'react';
 import { usePOSFields } from '../context/POSDomains';
 import { PermissionFeature } from '../types';
@@ -52,6 +54,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     shift,
   } = usePOSFields(["activeTab","setActiveTab","products","heldOrders","hasPermission","settings","currentUser","shift"]);
   const { t } = useTranslation();
+  const runtime = useBusinessModule();
 
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
@@ -127,6 +130,7 @@ export const MobileNavBar: React.FC<MobileNavBarProps> = ({
     },
   ];
 
+  if (runtime) return <ModuleNavigation mobile/>;
   return (
     <>
       {/* Bottom Navigation Bar (Visible only on mobile/tablet < 1024px) */}

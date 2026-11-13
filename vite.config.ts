@@ -1,9 +1,11 @@
+import {validateProviderAgreement} from './scripts/release/provider-agreement.mjs';
+import {offlinePublicKey} from './src/lib/auth/offlineIdentity';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {defineConfig, type Plugin} from 'vite';
+import {defineConfig,loadEnv, type Plugin} from 'vite';
 import {serviceWorkerSource} from './src/pwa/serviceWorker';
 
 /**
@@ -39,13 +41,14 @@ function cashierServiceWorker(): Plugin {
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig(() => {
+export default defineConfig(({mode}) => {
+ const env={...loadEnv(mode,projectDir,'VITE_'),...process.env};
+ validateProviderAgreement(env);
+ if(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY)offlinePublicKey(env.VITE_NEWHOPE_OFFLINE_PUBLIC_KEY);
   return {
     plugins: [react(), tailwindcss(), cashierServiceWorker()],
     resolve: {
-      alias: {
-        '@': projectDir,
-      },
+      alias: [...(env.VITE_AUTH_PROVIDER==='neon'?[{find:/^(?:\.{1,2}\/)+(?:(?:lib\/)?supabase|legacyNativeAuth)$/,replacement:path.resolve(projectDir,'src/lib/auth/legacyDisabled.ts')}]:[]),{find:'@',replacement:projectDir}],
     },
     build: {
       manifest:true,

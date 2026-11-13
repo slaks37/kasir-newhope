@@ -1,3 +1,5 @@
+import {isNative} from '../../platform/runtime/platform';
+import {readFinancialValue,writeFinancialValue,assertBrowserFinancialWrite} from '../../platform/runtime/financialStorage';
 /**
  * Durable financial outbox. The server ledger is authoritative; these records
  * are only pending commands and must never be counted as server revenue.
@@ -39,6 +41,8 @@ const BATCH_SIZE = 200;
 const BACKOFF_MS = [5_000, 15_000, 45_000, 120_000, 300_000];
 
 export interface SyncPayloadItem {
+  variantId?:string;
+  selectedModifiers?:Array<{groupId:string;optionId:string}>;
   clientItemId?: string;
   productRef: string;
   productName: string;
@@ -50,7 +54,12 @@ export interface SyncPayloadItem {
   totalPrice: number;
 }
 
+export interface FinancialWorkspace {tenantId:string;merchantId:string;outletId:string;moduleId:string;actorRef:string}
+export const financialWorkspaceKey=(w:FinancialWorkspace)=>`workspace:v2:${w.tenantId}:${w.merchantId}:${w.outletId}:${w.moduleId}:${w.actorRef}`;
 export interface SyncPayloadTxn {
+  approvalGrant?:string;voidReason?:string;voidedAt?:string;
+  operationalJobId?:string;
+  workspace?:FinancialWorkspace;
   tenders?: Array<{clientPaymentId:string;method:string;amount:number;createdAt:string}>;
   shiftId?: string;
   clientTxnId: string;
@@ -97,8 +106,8 @@ export interface SyncStatus {
 export interface QuarantinedSale { txn: SyncPayloadTxn; error: string; at: string }
 
 export function readQuarantine(businessId: string): QuarantinedSale[] {
-  try { const rows = JSON.parse(localStorage.getItem(QUARANTINE_PREFIX + businessId) || '[]'); return Array.isArray(rows) ? rows : []; }
-  catch { return []; }
+  try { const rows = JSON.parse(readFinancialValue(QUARANTINE_PREFIX + businessId) || '[]'); if(Array.isArray(rows))return rows;throw Error('LOCAL_QUARANTINE_CORRUPT'); }
+  catch(error) { if(isNative())throw error;return []; }
 }
 
 function writeQuarantine(businessId: string, rows: QuarantinedSale[]) {
@@ -107,6 +116,7 @@ function writeQuarantine(businessId: string, rows: QuarantinedSale[]) {
 
 /** Kirim ulang penjualan dari karantina (mis. setelah pemetaan outlet/produk diperbaiki). */
 export function requeueQuarantined(businessId: string, clientTxnId: string): boolean {
+  assertBrowserFinancialWrite();
   const rows = readQuarantine(businessId);
   const row = rows.find(entry => entry.txn.clientTxnId === clientTxnId);
   if (!row) return false;
@@ -119,6 +129,8 @@ export function requeueQuarantined(businessId: string, clientTxnId: string): boo
 type SyncMeta = Omit<SyncStatus, 'pending' | 'inFlight'>;
 
 export interface SyncTarget {
+  workspace?:FinancialWorkspace;
+  queueId?:string;
   canonicalBusinessId?:string;
   legacyAlias?:string|null;
   businessId: string;
@@ -132,7 +144,7 @@ const queueKey = (businessId: string) => `${QUEUE_PREFIX}${businessId}`;
 const metaKey = (businessId: string) => `${META_PREFIX}${businessId}`;
 
 function readQueue(businessId: string): SyncPayloadTxn[] {
-  const raw = localStorage.getItem(queueKey(businessId));
+  const raw = readFinancialValue(queueKey(businessId));
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -267,6 +279,8 @@ export function orderToPayload(order: Order, cashierRole?: string): SyncPayloadT
     items: order.items.map((i) => ({
       clientItemId: i.id,
       productRef: i.productId,
+      ...(i.variantId?{variantId:i.variantId}:{}),
+      ...(i.selectedModifiers?.length?{selectedModifiers:i.selectedModifiers.map(m=>({groupId:m.groupId,optionId:m.optionId}))}:{}),
       productName: i.variantName ? `${i.name} (${i.variantName})` : i.name,
       unitPrice: i.unitPrice,
       // HPP hasil snapshot saat item masuk keranjang. Keranjang lama yang
@@ -474,6 +488,9 @@ export async function pullCatalog(
  * baris ini, transaksinya tetap terkirim nanti.
  */
 export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
+  assertBrowserFinancialWrite();
+  if(businessId.startsWith('workspace:v2:')&&(!txn.workspace||financialWorkspaceKey(txn.workspace)!==businessId||txn.branchId!==txn.workspace.outletId))throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
+  if(txn.workspace&&financialWorkspaceKey(txn.workspace)!==businessId)throw Error('WORKSPACE_QUEUE_MISMATCH');
   const q = readQueue(businessId);
   // Anti-ganda di sisi klien juga. Menekan "bayar" dua kali, atau void yang
   // masuk untuk transaksi yang masih mengantri, tidak boleh menghasilkan dua
@@ -486,6 +503,7 @@ export function enqueue(businessId: string, txn: SyncPayloadTxn): void {
 
 /** A historical snapshot must never overwrite a newer pending void or payment. */
 export function enqueueLegacyTransaction(businessId: string, txn: SyncPayloadTxn): 'queued' | 'conflict' {
+  assertBrowserFinancialWrite();
   const q = readQueue(businessId);
   const existing = q.findIndex(row => row.clientTxnId === txn.clientTxnId);
   if (existing >= 0 && financialPayloadFingerprint(q[existing]) !== financialPayloadFingerprint(txn)) {
@@ -512,7 +530,7 @@ let flushing = new Set<string>();
  * penjualan.
  */
 export async function flush(target: SyncTarget, force = false): Promise<SyncStatus> {
-  const { businessId } = target;
+  const businessId = target.queueId||target.businessId;
 
   // Satu pengiriman per unit usaha pada satu waktu. Dua pengiriman paralel akan
   // sama-sama membaca antrian yang sama lalu saling menimpa saat memangkasnya.
@@ -520,7 +538,7 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
 
   let all: SyncPayloadTxn[];
   let held:Set<string>;
-  try { all = readQueue(businessId); held=new Set(legacyFinancialHolds(businessId).orders); }
+  try { all = readQueue(businessId);if(target.workspace&& (financialWorkspaceKey(target.workspace)!==businessId||all.some(t=>!t.workspace||financialWorkspaceKey(t.workspace)!==businessId||t.branchId!==target.workspace!.outletId)))throw Error('WORKSPACE_QUEUE_MISMATCH');if(!target.workspace&&all.some(t=>t.workspace))throw Error('EXPLICIT_WORKSPACE_REQUIRED'); held=new Set(legacyFinancialHolds(businessId).orders); }
   catch(error) {
     writeMeta(businessId,{lastError:error instanceof Error?error.message:'LOCAL_QUEUE_READ_FAILED',failures:1,lastErrorAt:new Date().toISOString()});
     return getStatus(businessId);
@@ -553,13 +571,15 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
   const batch = ready.filter(txn => (txn.branchId || target.outletId) === firstOutlet).slice(0, BATCH_SIZE);
 
   try {
+    const requestKey=await batchKey(`${businessId}:${firstOutlet || 'legacy'}`,batch);
     const res = await fetch('/api/v1/sync/transactions', {
       signal:AbortSignal.timeout(15000),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        idempotencyKey: await batchKey(`${businessId}:${firstOutlet || 'legacy'}`, batch),
-        businessId,
+        idempotencyKey: requestKey,
+        businessId:target.workspace?target.workspace.merchantId:target.businessId,
+        ...(target.workspace?{moduleId:target.workspace.moduleId}:{}),
         outletId: firstOutlet,
         sector: target.sector,
         storeName: target.storeName,
@@ -574,11 +594,11 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     }
     const data = await res.json();
     if (!data?.ok) throw new Error(data?.error || 'SYNC_FAILED');
+    if(isNative()&&data.idempotencyKey!==requestKey)throw Error('SYNC_ACK_MISMATCH');
 
     // Baru sekarang aman memangkas — dan hanya baris yang benar-benar dikirim.
     // Transaksi yang masuk antrian SELAMA pengiriman berlangsung harus tetap
     // tinggal, jadi antrian dibaca ulang, bukan memakai `all` yang sudah basi.
-    const current = readQueue(businessId);
     // Penjualan yang ditolak server dipindah ke karantina — tetap tersimpan utuh
     // dan terlihat di Sync Center — agar tidak menahan penjualan berikutnya.
     const rejected = new Map<string, string>((Array.isArray(data.rejected) ? data.rejected : [])
@@ -586,14 +606,11 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     if (rejected.size) {
       const at = new Date().toISOString();
       const kept = readQuarantine(businessId).filter(row => !rejected.has(row.txn.clientTxnId));
-      writeQuarantine(businessId, [...kept, ...batch.filter(t => rejected.has(t.clientTxnId)).map(txn => ({ txn, error: rejected.get(txn.clientTxnId)!, at }))]);
+      await writeFinancialValue(QUARANTINE_PREFIX+businessId,JSON.stringify( [...kept, ...batch.filter(t => rejected.has(t.clientTxnId)).map(txn => ({ txn, error: rejected.get(txn.clientTxnId)!, at }))]));
     }
     acknowledgeLegacyTransactions(businessId, batch.filter(t => !rejected.has(t.clientTxnId)));
     const sent = new Map(batch.map((t) => [t.clientTxnId, financialPayloadFingerprint(t)]));
-    writeQueue(
-      businessId,
-      current.filter((t) => sent.get(t.clientTxnId) !== financialPayloadFingerprint(t))
-    );
+    await writeFinancialValue(queueKey(businessId),JSON.stringify(readQueue(businessId).filter((t) => sent.get(t.clientTxnId) !== financialPayloadFingerprint(t))));
 
     writeMeta(businessId, {
       lastSyncedAt: new Date().toISOString(),
@@ -620,4 +637,21 @@ export async function flush(target: SyncTarget, force = false): Promise<SyncStat
     return flush(target);
   }
   return after;
+}
+
+export async function enqueueDurable(businessId:string,txn:SyncPayloadTxn):Promise<void>{
+ if(!isNative()){enqueue(businessId,txn);return;}
+ if(!txn.workspace||financialWorkspaceKey(txn.workspace)!==businessId||txn.branchId!==txn.workspace.outletId)throw Error('IMMUTABLE_WORKSPACE_REQUIRED');
+ const rows=readQueue(businessId),prior=rows.find(t=>t.clientTxnId===txn.clientTxnId);
+ if(prior){if(financialPayloadFingerprint(prior)!==financialPayloadFingerprint(txn))throw Error('NATIVE_PENDING_TRANSACTION_IMMUTABLE');return;}
+ await writeFinancialValue(queueKey(businessId),JSON.stringify([...rows,txn]));
+}
+
+/** Keep the quarantine copy until the queued copy is durably committed. */
+export async function requeueQuarantinedDurable(businessId:string,clientTxnId:string):Promise<boolean>{
+ if(!isNative())return requeueQuarantined(businessId,clientTxnId);
+ const row=readQuarantine(businessId).find(entry=>entry.txn.clientTxnId===clientTxnId);if(!row)return false;
+ await enqueueDurable(businessId,row.txn);
+ await writeFinancialValue(QUARANTINE_PREFIX+businessId,JSON.stringify(readQuarantine(businessId).filter(entry=>entry.txn.clientTxnId!==clientTxnId)));
+ return true;
 }

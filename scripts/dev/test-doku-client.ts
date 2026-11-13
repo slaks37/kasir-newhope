@@ -1,9 +1,15 @@
+import {futureDokuExpiry} from './doku-synthetic-release';
 // Mocked outbound HTTP only; never counts as DOKU sandbox evidence.
 import assert from 'node:assert/strict';
 import {captureSandboxCheckout} from '../batch/doku-sandbox-evidence';
-import {createDokuCheckout,getDokuApiUrl,generateDigest,generateSignature,generateGetSignature,checkDokuOrderStatus} from '../../api/_doku';
+import {createDokuCheckout,getDokuApiUrl,getDokuClientId,validateDokuBrandClientId,generateDigest,generateSignature,generateGetSignature,checkDokuOrderStatus} from '../../api/_doku';
 
 const secret='MOCK_SECRET_NEVER_EXPORT',client='MOCK_CLIENT';
+for(const id of ['BSN-0000-123456789',' bsn-0000-123456789 ',"'BSN-0000-123456789'"]) {
+  assert.throws(()=>validateDokuBrandClientId(id),/DOKU_BRAND_CLIENT_ID_REQUIRED/);
+  await assert.rejects(()=>captureSandboxCheckout(id,secret,(async()=>{throw Error('BUSINESS_ID_MUST_NOT_REACH_PROVIDER');}) as typeof fetch),/DOKU_BRAND_CLIENT_ID_REQUIRED/);
+}
+for(const id of ['BRN-0000-123456789','MCH-0000-123456789','OCO-0000-123456789'])assert.equal(validateDokuBrandClientId(id),id);
 const transport=(async(url:any,init:any)=>{
   assert.equal(url,'https://api-sandbox.doku.com/checkout/v1/payment');
   assert.equal(init.redirect,'error');
@@ -18,6 +24,7 @@ assert.equal(bad.result,'NOT PASS');assert.ok(!JSON.stringify(bad).includes('PRI
 await assert.rejects(()=>captureSandboxCheckout('',secret,transport),/CREDENTIALS_REQUIRED/);
 const saved={...process.env},savedFetch=globalThis.fetch;
 try {
+  process.env.DOKU_CLIENT_ID='BSN-0000-123456789';assert.throws(getDokuClientId,/DOKU_BRAND_CLIENT_ID_REQUIRED/);
   for(const invalid of ['https://not-doku.invalid','https://sandbox.evil.test','https://api.doku.com.evil.test',
     'http://api.doku.com','https://api.doku.com?env=sandbox','https://api.doku.com/sandbox',
     'https://user:pass@api.doku.com']){
@@ -27,6 +34,18 @@ try {
   process.env.DOKU_API_URL='https://api-sandbox.doku.com';process.env.DOKU_CLIENT_ID=client;process.env.DOKU_SECRET_KEY=secret;
   globalThis.fetch=(async()=>new Response(JSON.stringify({error:{message:'PRIVATE_PROVIDER_RESPONSE'}}),{status:422})) as typeof fetch;
   await assert.rejects(()=>createDokuCheckout({order:{invoice_number:'test',amount:10000},payment:{payment_due_date:60}}),e=>String(e)==='Error: DOKU_API_ERROR_HTTP_422');
+
+  // The requested payment-method list must be preserved in the signed
+  // Checkout request; no implicit extra channel can be offered by our body.
+  globalThis.fetch=(async(url:any,init:any)=>{
+    assert.equal(url,'https://api-sandbox.doku.com/checkout/v1/payment');
+    const parsed=JSON.parse(String(init.body));
+    assert.deepEqual(parsed.payment.payment_method_types,['QRIS']);
+    assert.equal(init.headers.Signature,generateSignature(client,init.headers['Request-Id'],init.headers['Request-Timestamp'],'/checkout/v1/payment',generateDigest(String(init.body)),secret));
+    return new Response(JSON.stringify({response:{order:parsed.order,payment:{url:'https://sandbox.doku.com/SYNTHETIC',expired_date:futureDokuExpiry()}}}),{status:200});
+  }) as typeof fetch;
+  const qris=await createDokuCheckout({order:{invoice_number:'NH-SYNTHETIC',amount:10000},payment:{payment_due_date:60,payment_method_types:['QRIS']}});
+  assert.ok(qris.paymentUrl.endsWith('/SYNTHETIC'));
 
   // Test GET signature and order status inquiry
   globalThis.fetch=(async(url:any,init:any)=>{

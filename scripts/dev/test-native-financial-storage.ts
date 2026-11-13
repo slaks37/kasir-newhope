@@ -1,0 +1,87 @@
+import {submitWorkspaceAdjustment,pendingWorkspaceAdjustment,flushWorkspaceAdjustment,renewWorkspaceAdjustment,type Adjustment} from '../../src/lib/sync/workspaceAdjustmentQueue';
+import {submitWorkspaceJob,pendingWorkspaceJob,flushWorkspaceJob} from '../../src/lib/sync/workspaceJobQueue';
+import {submitWorkspaceLabor,pendingWorkspaceLabor,flushWorkspaceLabor,renewWorkspaceLaborApproval,type LaborCommand} from '../../src/lib/sync/workspaceLaborQueue';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {initializeFinancialStorage,readFinancialValue,writeFinancialValue,financialDeviceId,type FinancialDisk} from '../../src/platform/runtime/financialStorage';
+import {enqueueDurable,enqueue,financialWorkspaceKey,getPendingTransactions,readQuarantine,requeueQuarantinedDurable,flush,type SyncPayloadTxn} from '../../src/lib/sync/queue';
+import {enqueueCashCommandDurable,flushCashQueue,getCashSyncStatus,type CashCommand} from '../../src/lib/sync/financialQueue';
+import {enqueueRegisterCloseDurable,pendingRegisterClose,flushRegisterClose} from '../../src/lib/sync/registerCloseQueue';
+import {submitWorkspaceInventory,pendingWorkspaceInventory,flushWorkspaceInventory} from '../../src/lib/sync/workspaceInventoryQueue';
+const web=new Map<string,string>(),disk=new Map<string,string>(),deviceId=randomUUID();
+Object.defineProperty(globalThis,'Capacitor',{configurable:true,value:{isNativePlatform:()=>true}});
+Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>web.get(k)??null,setItem:(k:string,v:string)=>web.set(k,v),removeItem:(k:string)=>web.delete(k)}});
+Object.defineProperty(globalThis,'window',{configurable:true,value:{dispatchEvent:()=>true}});
+Object.defineProperty(globalThis,'navigator',{configurable:true,value:{onLine:true}});
+let failBeforeCommit=false,loseCommitReply=false;
+let beforeCommit:((key:string)=>Promise<void>)|undefined;
+// Synthetic bridge model. Physical SQLite/process-death acceptance is separate.
+const adapter:FinancialDisk={load:async()=>({deviceId,entries:[...disk].map(([key,value])=>({key,value}))}),compareAndSet:async({key,expected,value})=>{
+ await Promise.resolve();if(beforeCommit)await beforeCommit(key);
+ if(failBeforeCommit)throw Error('DISK_FULL');
+ if((disk.get(key)??null)!==expected)throw Error('FINANCIAL_STORAGE_CONFLICT');
+ if(value===null)disk.delete(key);else disk.set(key,value);
+ if(loseCommitReply)throw Error('BRIDGE_REPLY_LOST');
+}};
+assert.throws(()=>readFinancialValue('any'),/NOT_READY/);
+await initializeFinancialStorage(adapter);assert.equal(financialDeviceId(),deviceId);
+const w={tenantId:randomUUID(),merchantId:randomUUID(),outletId:randomUUID(),moduleId:'retail',actorRef:randomUUID()};
+const id=financialWorkspaceKey(w),key='newhope_sync_queue_'+id;
+const txn:SyncPayloadTxn={workspace:w,branchId:w.outletId,clientTxnId:randomUUID(),subtotal:100,discountAmount:0,taxAmount:0,serviceChargeAmount:0,totalAmount:100,paymentMethod:'CASH',paymentStatus:'PAID',items:[]};
+assert.throws(()=>enqueue(id,txn),/DURABLE_WRITE_REQUIRED/);
+await assert.rejects(()=>enqueueDurable('owner_RETAIL',txn),/WORKSPACE_REQUIRED/);
+failBeforeCommit=true;await assert.rejects(()=>enqueueDurable(id,txn),/DISK_FULL/);assert.equal(getPendingTransactions(id).length,0);assert.equal(disk.size,0);
+failBeforeCommit=false;loseCommitReply=true;await assert.rejects(()=>enqueueDurable(id,txn),/REPLY_LOST/);assert(disk.has(key));assert.equal(getPendingTransactions(id).length,0);
+loseCommitReply=false;await initializeFinancialStorage(adapter);assert.deepEqual(getPendingTransactions(id),[txn]);await enqueueDurable(id,txn);assert.equal(getPendingTransactions(id).length,1);
+await assert.rejects(()=>enqueueDurable(id,{...txn,totalAmount:99}),/IMMUTABLE/);
+for(const field of Object.keys(w))assert.equal(getPendingTransactions(financialWorkspaceKey({...w,[field]:randomUUID()})).length,0);
+assert(![...web.keys()].some(k=>k.startsWith('newhope_sync_queue_')),'Financial bytes never fall back to browser storage');
+const raceKey='newhope_sync_queue_'+financialWorkspaceKey({...w,actorRef:randomUUID()});
+const raced=await Promise.allSettled([writeFinancialValue(raceKey,'first'),writeFinancialValue(raceKey,'second')]);assert.equal(raced.filter(r=>r.status==='fulfilled').length,1);assert.equal(readFinancialValue(raceKey),disk.get(raceKey));
+const target={workspace:w,queueId:id,businessId:w.merchantId,outletId:w.outletId,sector:'RETAIL' as const,storeName:'Synthetic',ownerRef:w.actorRef};
+let responseMode='lost';const sent:string[]=[];
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{sent.push(init.body);if(responseMode==='lost')throw Error('NETWORK_ACK_LOST');const body=JSON.parse(init.body);return {ok:responseMode!=='revoked',status:responseMode==='revoked'?403:200,json:async()=>responseMode==='revoked'?{ok:false,error:'WORKSPACE_ROLE_FORBIDDEN'}:responseMode==='bad'?{ok:true}:{ok:true,idempotencyKey:body.idempotencyKey,accepted:1,rejected:[]}};}});
+for(const mode of ['lost','bad','revoked']){responseMode=mode;const status=await flush(target,true);assert.equal(status.pending,1,mode);assert(status.lastError);await initializeFinancialStorage(adapter);assert.deepEqual(getPendingTransactions(id),[txn]);}
+responseMode='ok';assert.equal((await flush(target,true)).pending,0);assert(sent.every(s=>s===sent[0]),'Retry sends exactly the same event and batch identity');
+// A sale queued while quarantine is committing must survive batch pruning.
+await enqueueDurable(id,txn);const concurrent={...txn,clientTxnId:randomUUID()};
+beforeCommit=async key=>{if(key.startsWith('newhope_sync_quarantine_')){beforeCommit=undefined;await enqueueDurable(id,concurrent);}};
+let attempts=0;
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{if(attempts++)throw Error('NEXT_BATCH_OFFLINE');const body=JSON.parse(init.body);return {ok:true,json:async()=>({ok:true,idempotencyKey:body.idempotencyKey,rejected:[{clientTxnId:txn.clientTxnId,error:'INVALID_ITEM'}]})};}});
+await flush(target,true);assert.deepEqual(getPendingTransactions(id),[concurrent]);assert.equal(readQuarantine(id).length,1);
+await requeueQuarantinedDurable(id,txn.clientTxnId);assert.equal(getPendingTransactions(id).length,2);assert.equal(readQuarantine(id).length,0);
+const cash:CashCommand={workspace:w,action:'cash',body:{sector:'RETAIL',outletId:w.outletId,clientEventId:randomUUID(),type:'CASH_IN',amount:10,category:'OTHER',description:'Synthetic',occurredAt:new Date().toISOString()}};
+await enqueueCashCommandDurable(id,cash);
+assert.equal((await flushCashQueue({...target,workspace:{...w,actorRef:randomUUID()}},true)).lastError,'WORKSPACE_CASH_QUEUE_MISMATCH');
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:'wrong'})})});assert.equal((await flushCashQueue(target,true)).pending,1);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:cash.body.clientEventId})})});await flushCashQueue(target,true);assert.equal(getCashSyncStatus(id).pending,0);
+const close={businessId:w.merchantId,outletId:w.outletId,moduleId:w.moduleId,registerId:randomUUID(),clientShiftId:randomUUID(),clientCloseId:randomUUID(),expectedVersion:'a'.repeat(64),actualCash:100,notes:'synthetic'};
+await enqueueRegisterCloseDurable(w,close);await initializeFinancialStorage(adapter);assert.equal(pendingRegisterClose(w,close.registerId)?.command.clientCloseId,close.clientCloseId);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,shift:{...close,id:close.clientShiftId,status:'CLOSED'}})})});await flushRegisterClose(w,close.registerId);assert.equal(pendingRegisterClose(w,close.registerId),null);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('INVENTORY_ACK_LOST');}});await assert.rejects(()=>submitWorkspaceInventory(w,{action:'RECEIVE',lines:[{productRef:'synthetic-product',quantity:1}]}),/ACK_LOST/);
+await initializeFinancialStorage(adapter);const inventory=pendingWorkspaceInventory(w)!;assert(inventory);assert.equal(pendingWorkspaceInventory({...w,moduleId:'barber'}),null);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,commandId:inventory.commandId,action:'RECEIVE',lineCount:1,moduleIds:['retail'],financialRecorded:false})})});await flushWorkspaceInventory(w);assert.equal(pendingWorkspaceInventory(w),null);
+await initializeFinancialStorage({...adapter,load:async()=>({deviceId:'other-device',entries:[]})});assert.equal(financialDeviceId(),'other-device');assert.equal(readFinancialValue(raceKey),null);
+await assert.rejects(()=>initializeFinancialStorage({...adapter,load:async()=>{throw Error('LOCKED');}}),/LOCKED/);assert.throws(()=>readFinancialValue(key),/NOT_READY/);
+console.log('PASS synthetic native bridge: commit failures, lost commit reply/restart, CAS conflict, all ownership dimensions, device separation, exact ACK/revocation, cash, inventory and shift-close persistence. Not physical-device evidence.');
+
+await initializeFinancialStorage(adapter);
+// Both service intake and payroll retain their original tuple/actor on native restart.
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('JOB_ACK_LOST');}});
+await assert.rejects(()=>submitWorkspaceJob(w,{action:'CREATE',jobId:randomUUID(),customerName:'Synthetic',customerPhone:'000',lines:[{id:'line',productRef:'service',quantity:2.5}]}),/ACK_LOST/);
+await initializeFinancialStorage(adapter);const job=pendingWorkspaceJob(w)!;assert(job);assert.equal(pendingWorkspaceJob({...w,outletId:randomUUID()}),null);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,...job,revision:1,workspace:{...w,actorRef:randomUUID()}})})});await assert.rejects(()=>flushWorkspaceJob(w),/ACK_MISMATCH/);assert.deepEqual(pendingWorkspaceJob(w),job);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{assert.deepEqual(JSON.parse(init.body),job);return {ok:true,json:async()=>({ok:true,...job,revision:1,workspace:w})};}});await flushWorkspaceJob(w);assert.equal(pendingWorkspaceJob(w),null);
+const payroll:LaborCommand={commandId:randomUUID(),businessId:w.merchantId,outletId:w.outletId,moduleId:w.moduleId,staffId:randomUUID(),action:'PAY',periodMonth:'2030-01',periodEnd:'2030-01-31',fingerprint:'immutable',baseSalary:100,allowance:0,deductions:0,cash:{clientEventId:'synthetic-payroll',type:'CASH_OUT',amount:100,occurredAt:'2030-01-31T00:00:00Z',description:'Synthetic',category:'GAJI',recipientOrSource:'staff',registerId:randomUUID(),approvalGrant:'old-synthetic'}};
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('PAYROLL_ACK_LOST');}});await assert.rejects(()=>submitWorkspaceLabor(w,payroll),/ACK_LOST/);await initializeFinancialStorage(adapter);assert.deepEqual(pendingWorkspaceLabor(w),payroll);assert.equal(pendingWorkspaceLabor({...w,actorRef:randomUUID()}),null);
+await renewWorkspaceLaborApproval(w,payroll.commandId,'renewed-synthetic');const renewed=pendingWorkspaceLabor(w)!;assert.deepEqual({...renewed,cash:{...renewed.cash,approvalGrant:'old-synthetic'}},payroll);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,commandId:payroll.commandId,action:'PAY',payrollId:randomUUID(),netSalary:99,workspace:w})})});await assert.rejects(()=>flushWorkspaceLabor(w),/ACK_MISMATCH/);assert(pendingWorkspaceLabor(w));
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{assert.deepEqual(JSON.parse(init.body),renewed);return {ok:true,json:async()=>({ok:true,commandId:payroll.commandId,action:'PAY',payrollId:randomUUID(),netSalary:100,workspace:w})};}});await flushWorkspaceLabor(w);assert.equal(pendingWorkspaceLabor(w),null);
+console.log('PASS native bridge-model job/payroll: restart, original intent, tuple/actor isolation, approval-only renewal and strict ACK');
+
+const adjustment:Adjustment={action:'REFUND',commandId:randomUUID(),body:{businessId:w.merchantId,outletId:w.outletId,moduleId:w.moduleId,sector:'RETAIL',clientTxnId:randomUUID(),clientEventId:'',refund:{clientRefundId:'',occurredAt:new Date().toISOString(),refundMethod:'CASH',reason:'Synthetic',items:[{clientItemId:'line',quantity:0.5}],approvalGrant:'old-synthetic'}}};adjustment.body.clientEventId=adjustment.commandId;adjustment.body.refund.clientRefundId=adjustment.commandId;
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>{throw Error('ADJUSTMENT_ACK_LOST');}});await assert.rejects(()=>submitWorkspaceAdjustment(w,adjustment),/ACK_LOST/);await initializeFinancialStorage(adapter);assert.deepEqual(pendingWorkspaceAdjustment(w),adjustment);assert.equal(pendingWorkspaceAdjustment({...w,moduleId:'barber'}),null);
+await renewWorkspaceAdjustment(w,adjustment.commandId,'renewed-synthetic');const pendingAdjustment=pendingWorkspaceAdjustment(w)!;assert(pendingAdjustment.action==='REFUND');assert.deepEqual({...pendingAdjustment,body:{...pendingAdjustment.body,refund:{...pendingAdjustment.body.refund,approvalGrant:'old-synthetic'}}},adjustment);
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>({ok:true,json:async()=>({ok:true,clientEventId:adjustment.commandId,refund:{clientRefundId:'wrong'}})})});await assert.rejects(()=>flushWorkspaceAdjustment(w),/ACK_MISMATCH/);assert(pendingWorkspaceAdjustment(w));
+Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url:string,init:any)=>{assert.deepEqual(JSON.parse(init.body),pendingAdjustment.body);return {ok:true,json:async()=>({ok:true,clientEventId:adjustment.commandId,refund:{clientRefundId:adjustment.commandId}})};}});await flushWorkspaceAdjustment(w);assert.equal(pendingWorkspaceAdjustment(w),null);
+console.log('PASS native bridge-model receipt adjustment: lost ACK/restart, approval-only renewal, original financial intent, scope and strict refund ACK');
